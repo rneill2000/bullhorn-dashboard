@@ -618,7 +618,7 @@ function renderClients(data,bhTotal){
   var clientsWithPlaced=f.filter(function(r){return r.activePlacements>0;}).length;
   var cols=[
     {key:"name",label:"Company",render:function(r){return '<span class="name-link">'+esc(r.name)+'</span>';},exportVal:function(r){return r.name||"";}},
-    {key:"industry",label:"Industry",exportVal:function(r){return r.industry||"";}},
+    {key:"owner",label:"Account Owner",render:function(r){return r.owner?'\uD83D\uDC64 '+esc(r.owner):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.owner||"";}},
     {key:"location",label:"Location",render:function(r){return '\uD83D\uDCCD '+esc(r.location);},exportVal:function(r){return r.location||"";}},
     {key:"activePlacements",label:"Consultants",render:function(r){
       var n=r.activePlacements||0;
