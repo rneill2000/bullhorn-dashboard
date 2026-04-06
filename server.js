@@ -504,7 +504,7 @@ app.get("/api/clients", async (req, res) => {
     const [data, placData] = await Promise.all([
       bhFetchAll("query/ClientCorporation", {
         where,
-        fields: "id,name,address,status,dateLastModified,owner(firstName,lastName)",
+        fields: "id,name,address,status,dateLastModified,owner",
         orderBy: "-dateLastModified",
       }),
       bhFetchAll("query/Placement", {
@@ -548,7 +548,7 @@ app.get("/api/clients", async (req, res) => {
     const clients = (data.data || []).map((c) => ({
       id: c.id,
       name: c.name || "",
-      owner: c.owner ? (c.owner.firstName + " " + c.owner.lastName).trim() : "",
+      owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
       location: c.address
         ? [c.address.city, c.address.state].filter(Boolean).join(", ")
         : "",
