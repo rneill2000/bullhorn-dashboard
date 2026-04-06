@@ -170,7 +170,7 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
 app.get("/api/status", async (req, res) => {
   try {
     await authenticate();
-    res.json({ connected: true, restUrl: session.restUrl });
+    res.json({ connected: true, restUrl: session.restUrl, version: "2.1.0" });
   } catch (e) {
     res.json({ connected: false, error: e.message });
   }
