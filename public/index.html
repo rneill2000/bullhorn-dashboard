@@ -336,7 +336,7 @@ function renderDetailContent(c) {
 
   // Professional details
   h += '<div class="detail-section"><h4>Professional Details</h4><div class="detail-grid">';
-  h += '<div class="detail-field"><div class="lbl">Salary</div><div class="val">'+esc(c.salary||"\u2014")+'</div></div>';
+  h += '<div class="detail-field"><div class="lbl">Bill Rate</div><div class="val">'+esc(c.salary||"\u2014")+'</div></div>';
   h += '<div class="detail-field"><div class="lbl">Available</div><div class="val">'+esc(c.available||"\u2014")+'</div></div>';
   if(c.company) h += '<div class="detail-field"><div class="lbl">Current Company</div><div class="val">'+esc(c.company)+'</div></div>';
   if(c.education) h += '<div class="detail-field"><div class="lbl">Education</div><div class="val">'+esc(c.education)+'</div></div>';
@@ -478,7 +478,7 @@ function renderJobs(data,bhTotal){
     {key:"priority",label:"Priority",render:function(r){var c=priorityColors[r.priority]||"#94a3b8";return r.priority?'<span class="badge" style="background:'+c+'18;color:'+c+';border:1px solid '+c+'40;font-weight:700">'+esc(r.priority)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.priority||"";}},
     {key:"type",label:"Type",exportVal:function(r){return r.type||"";}},
     {key:"location",label:"Location",render:function(r){return '\uD83D\uDCCD '+esc(r.location);},exportVal:function(r){return r.location||"";}},
-    {key:"salary",label:"Salary",render:function(r){return '<span class="fw600">'+esc(r.salary)+'</span>';},exportVal:function(r){return r.salary||"";}},
+    {key:"salary",label:"Bill Rate",render:function(r){return '<span class="fw600">'+esc(r.salary)+'</span>';},exportVal:function(r){return r.salary||"";}},
     {key:"openings",label:"Openings",render:function(r){return '<span class="fw600" style="color:'+(r.openings>0?"#10b981":"#94a3b8")+'">'+r.openings+'</span>';},exportVal:function(r){return String(r.openings||0);}},
     {key:"submissions",label:"Subs",exportVal:function(r){return String(r.submissions||0);}},
     {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}}
