@@ -112,6 +112,32 @@ tbody tr:hover{background:#eff6ff}
 .stats-row-5{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:28px}
 .loading-spinner{display:inline-block;width:16px;height:16px;border:2px solid #e2e8f0;border-top-color:#176087;border-radius:50%;animation:spin .6s linear infinite;margin-right:8px;vertical-align:middle}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* Tearsheet */
+.ts-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;justify-content:center;align-items:flex-start;padding:40px;overflow-y:auto}
+.ts-overlay.open{display:flex}
+.ts-sheet{background:#fff;max-width:700px;width:100%;border-radius:16px;padding:48px;box-shadow:0 20px 60px rgba(0,0,0,.15);position:relative}
+.ts-sheet .ts-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8;padding:8px}
+.ts-sheet .ts-close:hover{color:#0f172a}
+.ts-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:16px;border-bottom:3px solid #176087}
+.ts-brand .ts-logo{font-size:24px;font-weight:800;color:#176087}
+.ts-brand .ts-sub{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em}
+.ts-name{font-size:28px;font-weight:700;color:#0E2E47;margin-bottom:4px}
+.ts-title{font-size:16px;color:#64748b;margin-bottom:16px}
+.ts-section{margin-bottom:24px}
+.ts-section h4{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#176087;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}
+.ts-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:14px}
+.ts-row .ts-label{color:#94a3b8;font-size:12px}
+.ts-row .ts-val{color:#0f172a;font-weight:500;margin-bottom:8px}
+.ts-notes{font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap}
+.ts-actions{display:flex;gap:10px;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0}
+.ts-actions button{padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+/* Smart Lists */
+.sl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
+.sl-card{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:20px;cursor:pointer;transition:box-shadow .15s,border-color .15s}
+.sl-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.08);border-color:#176087}
+.sl-card .sl-name{font-size:16px;font-weight:700;color:#0E2E47;margin-bottom:4px}
+.sl-card .sl-count{font-size:28px;font-weight:800;color:#176087}
+.sl-card .sl-sub{font-size:12px;color:#94a3b8;margin-top:4px}
 /* Ask Anura chat */
 .ask-container{max-width:800px;margin:0 auto}
 .ask-messages{min-height:200px;max-height:520px;overflow-y:auto;margin-bottom:16px;display:flex;flex-direction:column;gap:12px}
@@ -172,6 +198,10 @@ tbody tr:hover{background:#eff6ff}
 <div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>
 <div class="detail-panel" id="detail-panel">
   <div id="detail-content"></div>
+</div>
+<!-- Tearsheet overlay -->
+<div class="ts-overlay" id="ts-overlay" onclick="if(event.target===this)closeTearsheet()">
+  <div class="ts-sheet" id="ts-content"></div>
 </div>
 
 <script>
@@ -360,10 +390,74 @@ function closeDetail() {
   document.getElementById("detail-overlay").classList.remove("open");
 }
 
+function openTearsheet() {
+  var c = window._lastDetailCandidate;
+  if (!c) return;
+  var h = '<button class="ts-close" onclick="closeTearsheet()">\u2715</button>';
+  h += '<div class="ts-brand"><div><div class="ts-logo">Anura Connect</div><div class="ts-sub">Candidate Tearsheet</div></div></div>';
+  h += '<div class="ts-name">' + esc(c.firstName + " " + c.lastName) + '</div>';
+  h += '<div class="ts-title">' + esc(c.title || "") + '  \u2022  ' + badge(c.status) + '</div>';
+
+  // Contact Info
+  h += '<div class="ts-section"><h4>Contact Information</h4><div class="ts-row">';
+  h += '<div><div class="ts-label">Email</div><div class="ts-val">' + esc(c.email || "\u2014") + '</div></div>';
+  h += '<div><div class="ts-label">Phone</div><div class="ts-val">' + esc(c.phone || "\u2014") + '</div></div>';
+  if (c.mobile) { h += '<div><div class="ts-label">Mobile</div><div class="ts-val">' + esc(c.mobile) + '</div></div>'; }
+  h += '<div><div class="ts-label">Location</div><div class="ts-val">' + esc(c.location || "\u2014") + '</div></div>';
+  h += '</div></div>';
+
+  // Certifications & Grade
+  h += '<div class="ts-section"><h4>Certifications & Grade</h4><div class="ts-row">';
+  h += '<div><div class="ts-label">Primary Certifications</div><div class="ts-val" style="color:#176087;font-weight:700">' + esc(c.primaryCert || "\u2014") + '</div></div>';
+  h += '<div><div class="ts-label">Secondary Certifications</div><div class="ts-val">' + esc(c.secondaryCert || "\u2014") + '</div></div>';
+  h += '<div><div class="ts-label">Epic Role</div><div class="ts-val">' + esc(c.epicRole || "\u2014") + '</div></div>';
+  var gc = {"A": "#16a34a", "B": "#f59e0b", "C": "#ef4444"};
+  h += '<div><div class="ts-label">Grade</div><div class="ts-val" style="font-weight:700;color:' + (gc[c.grade] || "#64748b") + '">' + esc(c.grade || "\u2014") + '</div></div>';
+  if (c.preferredRole) { h += '<div><div class="ts-label">Preferred Roles</div><div class="ts-val">' + esc(c.preferredRole) + '</div></div>'; }
+  h += '</div></div>';
+
+  // Availability & Pay
+  h += '<div class="ts-section"><h4>Availability & Compensation</h4><div class="ts-row">';
+  h += '<div><div class="ts-label">Pay Rate</div><div class="ts-val" style="font-weight:700;color:#10b981">' + esc(c.salary || "\u2014") + '</div></div>';
+  h += '<div><div class="ts-label">Available</div><div class="ts-val">' + esc(c.available || "\u2014") + '</div></div>';
+  if (c.source) { h += '<div><div class="ts-label">Source</div><div class="ts-val">' + esc(c.source) + '</div></div>'; }
+  if (c.owner) { h += '<div><div class="ts-label">Owner</div><div class="ts-val">' + esc(c.owner) + '</div></div>'; }
+  h += '</div></div>';
+
+  // Notes / Description
+  var hasNotes = (c.notes && typeof c.notes === "string" && c.notes.trim()) || c.description;
+  if (hasNotes) {
+    h += '<div class="ts-section"><h4>Notes & Background</h4>';
+    if (c.notes && typeof c.notes === "string" && c.notes.trim()) h += '<div class="ts-notes">' + esc(c.notes) + '</div>';
+    if (c.description) h += '<div class="ts-notes" style="margin-top:8px">' + c.description.replace(/<[^>]*>/g, "") + '</div>';
+    h += '</div>';
+  }
+
+  // Actions
+  h += '<div class="ts-actions">';
+  h += '<button style="background:#176087;color:#fff;border:none" onclick="printTearsheet()">Print / Save PDF</button>';
+  h += '<button style="background:#fff;color:#176087;border:1px solid #176087" onclick="closeTearsheet()">Close</button>';
+  h += '</div>';
+
+  document.getElementById("ts-content").innerHTML = h;
+  document.getElementById("ts-overlay").classList.add("open");
+}
+function closeTearsheet() { document.getElementById("ts-overlay").classList.remove("open"); }
+function printTearsheet() {
+  var content = document.getElementById("ts-content").innerHTML;
+  var w = window.open("", "_blank");
+  w.document.write('<html><head><title>Tearsheet - Anura Connect</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px;max-width:700px;margin:0 auto;color:#0f172a}.ts-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:16px;border-bottom:3px solid #176087}.ts-logo{font-size:24px;font-weight:800;color:#176087}.ts-sub{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em}.ts-name{font-size:28px;font-weight:700;color:#0E2E47;margin-bottom:4px}.ts-title{font-size:16px;color:#64748b;margin-bottom:16px}.ts-section{margin-bottom:24px}.ts-section h4{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#176087;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}.ts-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:14px}.ts-label{color:#94a3b8;font-size:12px}.ts-val{color:#0f172a;font-weight:500;margin-bottom:8px}.ts-notes{font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap}.ts-close,.ts-actions{display:none}.badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600;background:#e2e8f0;color:#475569}@media print{body{padding:20px}}</style></head><body>' + content + '</body></html>');
+  w.document.close();
+  w.print();
+}
+
 function renderDetailContent(c) {
+  window._lastDetailCandidate = c;
   var h = '<div class="detail-header"><div><div class="detail-name">'+esc(c.firstName+" "+c.lastName)+'</div>';
   h += '<div class="detail-title">'+esc(c.title||"")+'</div>';
-  h += '<div style="margin-top:8px">'+badge(c.status)+'</div></div>';
+  h += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">'+badge(c.status);
+  h += '<button style="padding:4px 12px;border-radius:6px;border:1px solid #176087;background:#fff;color:#176087;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openTearsheet()">\uD83D\uDCC4 Tearsheet</button>';
+  h += '</div></div>';
   h += '<button class="detail-close" onclick="closeDetail()">\u2715</button></div>';
 
   // Contact info
@@ -452,6 +546,7 @@ var NAV=[
   {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
   {key:"placements",label:"Placements",emoji:"\uD83D\uDCCB"},
   {key:"clients",label:"Clients",emoji:"\uD83C\uDFE2"},
+  {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
   {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
   {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
   {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"}
@@ -967,6 +1062,58 @@ function renderReports(stats){
 
 /* ═══ ASK ANURA ═══ */
 var _askHistory = [];
+var _slExpanded = null;
+function renderSmartLists(data) {
+  var lists = data.lists || [];
+  var html = '<div class="stats-row">';
+  html += statCard("\uD83D\uDCCB", "Smart Lists", lists.length, "By primary certification", "#176087");
+  html += statCard("\uD83D\uDC65", "Total Candidates", data.total || 0, "With certifications", "#10b981");
+  html += '</div>';
+
+  if (_slExpanded !== null) {
+    // Show expanded list view
+    var list = lists.find(function(l) { return l.name === _slExpanded; });
+    if (list) {
+      html += '<div style="margin-bottom:16px;display:flex;align-items:center;gap:12px">';
+      html += '<button class="btn-outline" onclick="_slExpanded=null;loadPage()" style="font-size:13px;padding:6px 14px">\u2190 All Lists</button>';
+      html += '<h3 style="font-size:18px;font-weight:700;color:#0E2E47;margin:0">' + esc(list.name) + '</h3>';
+      html += '<span style="font-size:13px;color:#94a3b8">' + list.candidates.length + ' candidates</span>';
+      html += '<button class="btn-export" onclick="exportSmartList(\'' + esc(list.name).replace(/'/g, "\\'") + '\')" style="margin-left:auto">\uD83D\uDCE5 Export CSV</button>';
+      html += '</div>';
+      var cols = [
+        {key:"name",label:"Name",render:function(r){return '<span class="name-link">' + esc(r.name) + '</span>';},exportVal:function(r){return r.name;}},
+        {key:"title",label:"Title",exportVal:function(r){return r.title||"";}},
+        {key:"grade",label:"Grade",render:function(r){var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};return r.grade?'<span class="fw600" style="color:'+(gc[r.grade]||"#64748b")+'">'+esc(r.grade)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.grade||"";}},
+        {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}},
+        {key:"available",label:"Available",render:function(r){return r.available?'\uD83D\uDD52 '+esc(r.available):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.available||"";}},
+        {key:"salary",label:"Pay Rate",render:function(r){return '<span class="fw600">'+esc(r.salary)+'</span>';},exportVal:function(r){return r.salary||"";}},
+        {key:"location",label:"Location",render:function(r){return r.location?'\uD83D\uDCCD '+esc(r.location):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.location||"";}},
+        {key:"email",label:"Email",render:function(r){return r.email?'<a href="mailto:'+esc(r.email)+'" style="color:#176087;font-size:13px" onclick="event.stopPropagation()">'+esc(r.email)+'</a>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.email||"";}}
+      ];
+      _lastData.smartlist = list.candidates;
+      window.slCols = cols;
+      html += '<div class="table-wrap">' + makeTable(cols, list.candidates, "slClick") + '</div>';
+    }
+  } else {
+    // Show grid of all lists
+    html += '<div class="sl-grid">';
+    lists.forEach(function(l) {
+      var activeCount = l.candidates.filter(function(c){return c.status==="Active";}).length;
+      var placedCount = l.candidates.filter(function(c){return c.status==="Placed";}).length;
+      html += '<div class="sl-card" onclick="_slExpanded=\'' + esc(l.name).replace(/'/g, "\\'") + '\';loadPage()">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+      html += '<div><div class="sl-name">' + esc(l.name) + '</div>';
+      html += '<div class="sl-sub">' + activeCount + ' active \u2022 ' + placedCount + ' placed</div></div>';
+      html += '<div class="sl-count">' + l.candidates.length + '</div>';
+      html += '</div></div>';
+    });
+    html += '</div>';
+  }
+  return html;
+}
+function slClick(idx) { var c = _lastData.smartlist[idx]; if (c) openDetail(c.id); }
+function exportSmartList(name) { if (window.slCols && _lastData.smartlist) exportCSV(name.replace(/\s+/g, "_") + "_candidates.csv", window.slCols, _lastData.smartlist); }
+
 function renderAsk() {
   var html = '<div class="ask-container">';
   html += '<div style="text-align:center;margin-bottom:24px"><div style="font-size:40px;margin-bottom:8px">\uD83E\uDD16</div>';
@@ -1237,6 +1384,9 @@ async function loadPage(){
         var candR=await loadCandidates("","All","","","","","");
         _lastData.candidates=candR.data;
         h=renderReports(st);break;
+      case "smartlists":
+        var slr=await apiFetch("smart-lists");
+        h=renderSmartLists(slr);break;
     }
   }catch(e){
     console.error(e);

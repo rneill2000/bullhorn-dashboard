@@ -1016,6 +1016,50 @@ app.get("/api/touch-report", async (req, res) => {
 });
 
 // ── Ask Anura: natural language data queries ─────
+// ── Smart Lists (by primary cert) ─────────────────
+app.get("/api/smart-lists", async (req, res) => {
+  try {
+    // Fetch all non-deleted candidates with primary certs
+    const data = await bhFetchAll("search/Candidate", {
+      query: "isDeleted:0 AND customText1:[* TO *]",
+      fields: "id,firstName,lastName,occupation,status,customText1,customText2,customText5,customText6,salary,dateAvailable,address,email",
+      sort: "-dateLastModified",
+    });
+
+    // Group by primary cert
+    const lists = {};
+    (data.data || []).forEach((c) => {
+      const cert = (typeof c.customText1 === "string" ? c.customText1 : (Array.isArray(c.customText1) ? c.customText1.join(", ") : "")).trim();
+      if (!cert) return;
+      // Use first cert if comma-separated
+      const primaryKey = cert.split(",")[0].trim();
+      if (!primaryKey) return;
+      if (!lists[primaryKey]) lists[primaryKey] = { name: primaryKey, candidates: [] };
+      lists[primaryKey].candidates.push({
+        id: c.id,
+        name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+        title: c.occupation || "",
+        status: c.status || "",
+        primaryCert: cert,
+        secondaryCert: typeof c.customText2 === "string" ? c.customText2 : (Array.isArray(c.customText2) ? c.customText2.join(", ") : ""),
+        epicRole: typeof c.customText5 === "string" ? c.customText5 : "",
+        grade: c.customText6 || "",
+        salary: c.salary ? "$" + Number(c.salary).toLocaleString() : "—",
+        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString("en-US") : "",
+        location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
+        email: c.email || "",
+      });
+    });
+
+    // Sort lists by count descending
+    const sorted = Object.values(lists).sort((a, b) => b.candidates.length - a.candidates.length);
+    res.json({ lists: sorted, total: data.total });
+  } catch (e) {
+    console.error("[Smart Lists]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/ask", async (req, res) => {
   try {
     const question = (req.query.q || "").toLowerCase().trim();
