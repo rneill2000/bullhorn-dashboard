@@ -50,10 +50,12 @@ header.top-bar h1{font-size:22px;font-weight:700;color:#0f172a}
 .chip.on{border-color:#176087;background:#176087;color:#fff}
 .sep{width:1px;height:24px;background:#e2e8f0}
 .count-line{font-size:13px;color:#94a3b8;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
-.table-wrap{background:#fff;border-radius:12px;border:1px solid #f1f5f9;overflow:hidden}
-table{width:100%;border-collapse:collapse;font-size:14px}
-th{text-align:left;padding:10px 14px;color:#64748b;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;border-bottom:2px solid #f1f5f9}
-td{padding:12px 14px;color:#334155;white-space:nowrap;border-bottom:1px solid #f8fafc}
+.table-wrap{background:#fff;border-radius:12px;border:1px solid #f1f5f9;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px;table-layout:auto}
+th{text-align:left;padding:10px 14px;color:#64748b;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;border-bottom:2px solid #f1f5f9;position:relative;min-width:60px}
+th .col-resize{position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;background:transparent;z-index:2}
+th .col-resize:hover,th .col-resize.active{background:#176087;opacity:.3;border-radius:2px}
+td{padding:12px 14px;color:#334155;white-space:nowrap;border-bottom:1px solid #f8fafc;overflow:hidden;text-overflow:ellipsis;max-width:300px}
 tbody tr{cursor:pointer;transition:background .1s}
 tbody tr:hover{background:#eff6ff}
 .badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600}
@@ -247,8 +249,9 @@ function esc(s){return s==null?"":String(s).replace(/&/g,"&amp;").replace(/</g,"
 
 function makeTable(cols,rows,onRowClick){
   if(!rows.length)return '<div class="empty-state"><div class="big">\u26A0</div><div class="title">No results found</div><div class="sub">Try adjusting your search or filters</div></div>';
-  var h='<table><thead><tr>';
-  cols.forEach(function(c){h+='<th>'+c.label+'</th>';});
+  var tid='tbl-'+Date.now();
+  var h='<table id="'+tid+'"><thead><tr>';
+  cols.forEach(function(c){h+='<th>'+c.label+'<div class="col-resize"></div></th>';});
   h+='</tr></thead><tbody>';
   rows.forEach(function(r,idx){
     var click=onRowClick?' onclick="'+onRowClick+'('+idx+')"':'';
@@ -257,7 +260,31 @@ function makeTable(cols,rows,onRowClick){
     h+='</tr>';
   });
   h+='</tbody></table>';
+  setTimeout(function(){initColResize(tid);},50);
   return h;
+}
+function initColResize(tableId){
+  var tbl=document.getElementById(tableId);
+  if(!tbl)return;
+  tbl.style.tableLayout='fixed';
+  // Set initial widths from auto sizing
+  var ths=tbl.querySelectorAll('thead th');
+  ths.forEach(function(th){th.style.width=th.offsetWidth+'px';});
+  tbl.style.width=tbl.offsetWidth+'px';
+  ths.forEach(function(th){
+    var handle=th.querySelector('.col-resize');
+    if(!handle)return;
+    var startX,startW;
+    handle.addEventListener('mousedown',function(e){
+      e.preventDefault();e.stopPropagation();
+      startX=e.pageX;startW=th.offsetWidth;
+      handle.classList.add('active');
+      function onMove(ev){th.style.width=Math.max(40,startW+(ev.pageX-startX))+'px';}
+      function onUp(){handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);}
+      document.addEventListener('mousemove',onMove);
+      document.addEventListener('mouseup',onUp);
+    });
+  });
 }
 function statCard(emoji,label,value,sub,color){
   color=color||"#176087";
