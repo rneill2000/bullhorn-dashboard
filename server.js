@@ -868,6 +868,307 @@ app.get("/api/stale-candidates", async (req, res) => {
   }
 });
 
+// ── Touch Report: who needs check-ins ─────────
+app.get("/api/touch-report", async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 14;
+    const cutoff = new Date(Date.now() - days * 86400000)
+      .toISOString()
+      .split("T")[0]
+      .replace(/-/g, "");
+    const nowMs = Date.now();
+
+    // Fetch stale candidates (active, not touched in X days)
+    const candData = await bhFetchAll("search/Candidate", {
+      query: `isDeleted:0 AND status:"Active" AND dateLastModified:[19700101 TO ${cutoff}]`,
+      fields:
+        "id,firstName,lastName,occupation,status,dateLastModified,customText1,customText6,email,phone,owner",
+      sort: "dateLastModified",
+    });
+    const candidates = (candData.data || []).map((c) => ({
+      id: c.id,
+      type: "Candidate",
+      name: (c.firstName || "") + " " + (c.lastName || ""),
+      title: c.occupation || "",
+      primaryCert: c.customText1 || "",
+      grade: c.customText6 || "",
+      email: c.email || "",
+      phone: c.phone || "",
+      owner: c.owner
+        ? (c.owner.firstName || "") + " " + (c.owner.lastName || "")
+        : "",
+      lastTouched: c.dateLastModified
+        ? new Date(c.dateLastModified).toLocaleDateString()
+        : "Never",
+      daysSince: c.dateLastModified
+        ? Math.floor((nowMs - c.dateLastModified) / 86400000)
+        : 999,
+    }));
+
+    // Fetch active placements (consultants currently placed)
+    const placData = await bhFetchAll("query/Placement", {
+      where: `status = 'Approved' AND dateEnd >= ${nowMs}`,
+      fields:
+        "id,candidate,jobOrder,dateEnd,dateLastModified,payRate,clientBillRate",
+      orderBy: "dateLastModified",
+    });
+    const consultants = (placData.data || []).map((p) => ({
+      id: p.id,
+      type: "Consultant",
+      name: p.candidate
+        ? (p.candidate.firstName || "") + " " + (p.candidate.lastName || "")
+        : "Unknown",
+      candidateId: p.candidate ? p.candidate.id : null,
+      job: p.jobOrder ? p.jobOrder.title || "Job #" + p.jobOrder.id : "",
+      endsOn: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : "",
+      lastTouched: p.dateLastModified
+        ? new Date(p.dateLastModified).toLocaleDateString()
+        : "Never",
+      daysSince: p.dateLastModified
+        ? Math.floor((nowMs - p.dateLastModified) / 86400000)
+        : 999,
+      payRate: p.payRate ? "$" + p.payRate + "/hr" : "—",
+      billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
+    }));
+    const staleConsultants = consultants.filter((c) => c.daysSince >= days);
+
+    // Fetch stale clients
+    const clientData = await bhFetchAll("search/ClientCorporation", {
+      query: `isDeleted:0 AND dateLastModified:[19700101 TO ${cutoff}]`,
+      fields: "id,name,status,dateLastModified,address,phone",
+      sort: "dateLastModified",
+    });
+    const clients = (clientData.data || []).map((c) => ({
+      id: c.id,
+      type: "Client",
+      name: c.name || "",
+      status: c.status || "",
+      phone: c.phone || "",
+      location: c.address
+        ? [c.address.city, c.address.state].filter(Boolean).join(", ")
+        : "",
+      lastTouched: c.dateLastModified
+        ? new Date(c.dateLastModified).toLocaleDateString()
+        : "Never",
+      daysSince: c.dateLastModified
+        ? Math.floor((nowMs - c.dateLastModified) / 86400000)
+        : 999,
+    }));
+
+    res.json({
+      days,
+      candidates: { data: candidates, total: candData.total || candidates.length },
+      consultants: { data: staleConsultants, total: staleConsultants.length },
+      clients: { data: clients, total: clientData.total || clients.length },
+    });
+  } catch (e) {
+    console.error("[Touch Report]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Ask Anura: natural language data queries ─────
+app.get("/api/ask", async (req, res) => {
+  try {
+    const question = (req.query.q || "").toLowerCase().trim();
+    if (!question) return res.json({ answer: "Ask me anything about your Bullhorn data!", data: [] });
+
+    let answer = "";
+    let data = [];
+    const nowMs = Date.now();
+
+    // Pattern matching for common staffing questions
+    const certMatch = question.match(/(?:who has|with|certified in|cert(?:ified)?)\s+(pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity)/i);
+    const gradeMatch = question.match(/(?:grade|tier)\s+(a|b|c)/i);
+    const roleMatch = question.match(/(?:who is|show me)\s+(ts|is|dev|analyst|trainer)/i);
+    const daysMatch = question.match(/(\d+)\s*days?/);
+    const daysCutoff = daysMatch ? parseInt(daysMatch[1]) : 30;
+
+    if (question.match(/how many\s+(active\s+)?candidates/)) {
+      const r = await bhFetchAll("search/Candidate", { query: 'isDeleted:0 AND status:"Active"', fields: "id", });
+      answer = `You have **${r.total}** active candidates in Bullhorn.`;
+
+    } else if (question.match(/how many\s+(open\s+)?jobs/)) {
+      const r = await bhFetchAll("search/JobOrder", { query: 'isDeleted:0 AND status:"Accepting Candidates"', fields: "id", });
+      answer = `You have **${r.total}** open jobs accepting candidates.`;
+
+    } else if (question.match(/how many\s+(active\s+)?placements/)) {
+      const r = await bhFetchAll("query/Placement", { where: `status = 'Approved' AND dateEnd >= ${nowMs}`, fields: "id", });
+      answer = `You have **${r.total}** active placements.`;
+
+    } else if (question.match(/how many\s+clients/)) {
+      const r = await bhFetchAll("search/ClientCorporation", { query: "isDeleted:0", fields: "id", });
+      answer = `You have **${r.total}** clients in Bullhorn.`;
+
+    } else if (question.match(/urgent|hot/) && question.match(/jobs/)) {
+      const typeVal = question.match(/urgent/) ? 1 : 2;
+      const label = typeVal === 1 ? "Urgent" : "Hot";
+      const r = await bhFetchAll("search/JobOrder", {
+        query: `isDeleted:0 AND type:${typeVal}`,
+        fields: "id,title,clientCorporation,status,numOpenings,submissions,type",
+        sort: "-dateLastModified",
+      });
+      const jobs = (r.data || []).map(j => ({
+        id: j.id,
+        title: j.title || "",
+        client: j.clientCorporation ? j.clientCorporation.name : "",
+        status: j.status || "",
+        openings: j.numOpenings || 0,
+        submissions: j.submissions ? j.submissions.total : 0,
+      }));
+      answer = `Found **${r.total}** ${label} jobs:`;
+      data = jobs;
+
+    } else if (question.match(/expir/) && question.match(/placement/)) {
+      const in90 = nowMs + 90 * 86400000;
+      const r = await bhFetchAll("query/Placement", {
+        where: `status = 'Approved' AND dateEnd >= ${nowMs} AND dateEnd <= ${in90}`,
+        fields: "id,candidate,jobOrder,dateEnd,payRate,clientBillRate",
+        orderBy: "dateEnd",
+      });
+      const placements = (r.data || []).map(p => ({
+        id: p.id,
+        candidate: p.candidate ? (p.candidate.firstName + " " + p.candidate.lastName) : "Unknown",
+        job: p.jobOrder ? p.jobOrder.title || "" : "",
+        endsOn: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : "",
+        daysLeft: p.dateEnd ? Math.floor((p.dateEnd - nowMs) / 86400000) : 0,
+      }));
+      answer = `**${r.total}** placements expiring in the next 90 days:`;
+      data = placements;
+
+    } else if (question.match(/available\s+(now|today|this week|soon)/)) {
+      const past = new Date(nowMs - 14 * 86400000).toISOString().split("T")[0].replace(/-/g, "");
+      const future = new Date(nowMs + 14 * 86400000).toISOString().split("T")[0].replace(/-/g, "");
+      const r = await bhFetchAll("search/Candidate", {
+        query: `isDeleted:0 AND status:"Active" AND dateAvailable:[${past} TO ${future}]`,
+        fields: "id,firstName,lastName,occupation,customText1,customText6,dateAvailable",
+        sort: "dateAvailable",
+      });
+      const cands = (r.data || []).map(c => ({
+        id: c.id,
+        name: (c.firstName || "") + " " + (c.lastName || ""),
+        title: c.occupation || "",
+        cert: c.customText1 || "",
+        grade: c.customText6 || "",
+        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
+      }));
+      answer = `**${r.total}** candidates available now or soon:`;
+      data = cands;
+
+    } else if (certMatch) {
+      const cert = certMatch[1];
+      const r = await bhFetchAll("search/Candidate", {
+        query: `isDeleted:0 AND (customText1:${cert}* OR customText2:${cert}*)`,
+        fields: "id,firstName,lastName,occupation,customText1,customText2,customText6,status,dateAvailable",
+        sort: "-dateLastModified",
+      });
+      const cands = (r.data || []).map(c => ({
+        id: c.id,
+        name: (c.firstName || "") + " " + (c.lastName || ""),
+        title: c.occupation || "",
+        primaryCert: c.customText1 || "",
+        secondaryCert: c.customText2 || "",
+        grade: c.customText6 || "",
+        status: c.status || "",
+        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
+      }));
+      answer = `Found **${r.total}** candidates with **${cert.toUpperCase()}** certification:`;
+      data = cands;
+
+    } else if (gradeMatch) {
+      const grade = gradeMatch[1].toUpperCase();
+      const r = await bhFetchAll("search/Candidate", {
+        query: `isDeleted:0 AND customText6:"${grade}"`,
+        fields: "id,firstName,lastName,occupation,customText1,customText6,status,dateAvailable",
+        sort: "-dateLastModified",
+      });
+      const cands = (r.data || []).map(c => ({
+        id: c.id,
+        name: (c.firstName || "") + " " + (c.lastName || ""),
+        title: c.occupation || "",
+        cert: c.customText1 || "",
+        grade: c.customText6 || "",
+        status: c.status || "",
+      }));
+      answer = `Found **${r.total}** Grade **${grade}** candidates:`;
+      data = cands;
+
+    } else if (question.match(/who\s+(hasn.t|has not|hasn't)\s+been\s+(touched|contacted|updated)/) || question.match(/stale|untouched|neglected/)) {
+      const cutoff = new Date(nowMs - daysCutoff * 86400000).toISOString().split("T")[0].replace(/-/g, "");
+      const r = await bhFetchAll("search/Candidate", {
+        query: `isDeleted:0 AND status:"Active" AND dateLastModified:[19700101 TO ${cutoff}]`,
+        fields: "id,firstName,lastName,occupation,dateLastModified,customText1,customText6",
+        sort: "dateLastModified",
+      });
+      const cands = (r.data || []).map(c => ({
+        id: c.id,
+        name: (c.firstName || "") + " " + (c.lastName || ""),
+        title: c.occupation || "",
+        cert: c.customText1 || "",
+        grade: c.customText6 || "",
+        lastTouched: c.dateLastModified ? new Date(c.dateLastModified).toLocaleDateString() : "Never",
+        daysSince: c.dateLastModified ? Math.floor((nowMs - c.dateLastModified) / 86400000) : 999,
+      }));
+      answer = `**${r.total}** active candidates haven't been updated in ${daysCutoff}+ days:`;
+      data = cands;
+
+    } else if (question.match(/top\s+client/) || question.match(/biggest\s+client/)) {
+      const r = await bhFetchAll("query/Placement", { where: `status = 'Approved' AND dateEnd >= ${nowMs}`, fields: "id,candidate,jobOrder,clientBillRate", });
+      const clientCount = {};
+      (r.data || []).forEach(p => {
+        const name = p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.name : "Unknown";
+        clientCount[name] = (clientCount[name] || 0) + 1;
+      });
+      const sorted = Object.entries(clientCount).sort((a, b) => b[1] - a[1]).slice(0, 10);
+      data = sorted.map(([name, count]) => ({ client: name, activePlacements: count }));
+      answer = `Top clients by active placements:`;
+
+    } else if (question.match(/revenue|margin|billing/)) {
+      const r = await bhFetchAll("query/Placement", {
+        where: `status = 'Approved' AND dateEnd >= ${nowMs}`,
+        fields: "id,payRate,clientBillRate,employmentType",
+      });
+      let totalBill = 0, totalPay = 0, count = 0;
+      (r.data || []).forEach(p => {
+        if (p.clientBillRate && p.payRate) {
+          totalBill += p.clientBillRate;
+          totalPay += p.payRate;
+          count++;
+        }
+      });
+      const avgMargin = count > 0 ? ((totalBill - totalPay) / totalBill * 100).toFixed(1) : 0;
+      const monthlyMargin = (totalBill - totalPay) * 40 * 4;
+      answer = `Across **${count}** active placements with rates:\n- Avg bill rate: **$${(totalBill/count).toFixed(0)}/hr**\n- Avg pay rate: **$${(totalPay/count).toFixed(0)}/hr**\n- Avg margin: **${avgMargin}%**\n- Est. monthly gross margin: **$${monthlyMargin.toLocaleString()}**`;
+
+    } else {
+      // Fallback: try a general candidate search
+      const r = await bhFetchAll("search/Candidate", {
+        query: `isDeleted:0 AND (firstName:${question.split(" ")[0]}* OR lastName:${question.split(" ")[0]}* OR customText1:${question.split(" ")[0]}*)`,
+        fields: "id,firstName,lastName,occupation,customText1,customText6,status",
+        sort: "-dateLastModified",
+      });
+      if (r.total > 0) {
+        data = (r.data || []).map(c => ({
+          id: c.id,
+          name: (c.firstName || "") + " " + (c.lastName || ""),
+          title: c.occupation || "",
+          cert: c.customText1 || "",
+          grade: c.customText6 || "",
+          status: c.status || "",
+        }));
+        answer = `Found **${r.total}** results for "${question}":`;
+      } else {
+        answer = `I'm not sure how to answer that yet. Try questions like:\n- "How many active candidates?"\n- "Show urgent jobs"\n- "Who has PB certification?"\n- "Who hasn't been touched in 30 days?"\n- "Available now"\n- "Expiring placements"\n- "Grade A candidates"\n- "Revenue and margins"`;
+      }
+    }
+
+    res.json({ answer, data });
+  } catch (e) {
+    console.error("[Ask]", e.message);
+    res.status(500).json({ error: e.message, answer: "Sorry, something went wrong: " + e.message, data: [] });
+  }
+});
+
 // Serve the dashboard
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));

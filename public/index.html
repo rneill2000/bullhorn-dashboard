@@ -110,6 +110,32 @@ tbody tr:hover{background:#eff6ff}
 .stats-row-5{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:28px}
 .loading-spinner{display:inline-block;width:16px;height:16px;border:2px solid #e2e8f0;border-top-color:#176087;border-radius:50%;animation:spin .6s linear infinite;margin-right:8px;vertical-align:middle}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* Ask Anura chat */
+.ask-container{max-width:800px;margin:0 auto}
+.ask-messages{min-height:200px;max-height:520px;overflow-y:auto;margin-bottom:16px;display:flex;flex-direction:column;gap:12px}
+.ask-msg{padding:14px 18px;border-radius:14px;max-width:85%;font-size:14px;line-height:1.6;word-wrap:break-word}
+.ask-msg.user{background:#176087;color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+.ask-msg.bot{background:#fff;color:#334155;align-self:flex-start;border:1px solid #e2e8f0;border-bottom-left-radius:4px}
+.ask-msg.bot strong{color:#0E2E47}
+.ask-input-row{display:flex;gap:10px}
+.ask-input-row input{flex:1;padding:12px 18px;border-radius:12px;border:1px solid #e2e8f0;font-size:14px;font-family:inherit}
+.ask-input-row input:focus{border-color:#176087;outline:none}
+.ask-input-row button{padding:12px 24px;border-radius:12px;border:none;background:#176087;color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+.ask-input-row button:hover{background:#0E2E47}
+.ask-suggestions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.ask-sug{padding:8px 14px;border-radius:20px;border:1px solid #e2e8f0;background:#fff;font-size:12px;color:#475569;cursor:pointer;font-family:inherit;transition:all .15s}
+.ask-sug:hover{border-color:#176087;background:#eff6ff;color:#176087}
+.ask-data-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+.ask-data-table th{text-align:left;padding:8px 10px;background:#f8fafc;color:#64748b;font-weight:600;font-size:11px;text-transform:uppercase;border-bottom:2px solid #e2e8f0}
+.ask-data-table td{padding:8px 10px;border-bottom:1px solid #f1f5f9}
+/* Touch report */
+.touch-tabs{display:flex;gap:4px;margin-bottom:20px}
+.touch-tab{padding:10px 20px;border-radius:10px 10px 0 0;border:1px solid #e2e8f0;border-bottom:none;background:#f8fafc;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;color:#64748b}
+.touch-tab.on{background:#fff;color:#176087;font-weight:600;border-color:#e2e8f0}
+.urgency-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.urgency-high{background:#ef4444}
+.urgency-med{background:#f59e0b}
+.urgency-low{background:#10b981}
 @media(max-width:900px){.chart-grid{grid-template-columns:1fr} aside{width:200px} .detail-panel{width:100%}}
 </style>
 </head>
@@ -398,6 +424,8 @@ var NAV=[
   {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
   {key:"placements",label:"Placements",emoji:"\uD83D\uDCCB"},
   {key:"clients",label:"Clients",emoji:"\uD83C\uDFE2"},
+  {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
+  {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
   {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"}
 ];
 function renderNav(){
@@ -850,6 +878,200 @@ function renderReports(stats){
   return html;
 }
 
+/* ═══ ASK ANURA ═══ */
+var _askHistory = [];
+function renderAsk() {
+  var html = '<div class="ask-container">';
+  html += '<div style="text-align:center;margin-bottom:24px"><div style="font-size:40px;margin-bottom:8px">\uD83E\uDD16</div>';
+  html += '<h2 style="font-size:20px;color:#0E2E47;margin-bottom:4px">Ask Anura</h2>';
+  html += '<p style="font-size:14px;color:#64748b">Ask questions about your Bullhorn data in plain English</p></div>';
+
+  html += '<div class="ask-suggestions">';
+  var suggestions = [
+    "How many active candidates?",
+    "Show urgent jobs",
+    "Who has PB certification?",
+    "Available now",
+    "Expiring placements",
+    "Grade A candidates",
+    "Who hasn\u2019t been touched in 30 days?",
+    "Revenue and margins",
+    "Hot jobs",
+    "How many open jobs?"
+  ];
+  suggestions.forEach(function(s) {
+    html += '<button class="ask-sug" onclick="askQuestion(\'' + s.replace(/'/g, "\\'") + '\')">' + s + '</button>';
+  });
+  html += '</div>';
+
+  html += '<div class="ask-messages" id="ask-messages">';
+  if (_askHistory.length === 0) {
+    html += '<div class="ask-msg bot">\uD83D\uDC4B Hi Rachel! Ask me anything about your Bullhorn data \u2014 candidates, jobs, placements, certifications, availability, margins, and more.</div>';
+  } else {
+    _askHistory.forEach(function(m) {
+      html += '<div class="ask-msg ' + m.role + '">' + m.html + '</div>';
+    });
+  }
+  html += '</div>';
+
+  html += '<div class="ask-input-row">';
+  html += '<input type="text" id="ask-input" placeholder="Ask a question about your data\u2026" onkeydown="if(event.key===\'Enter\')askQuestion()">';
+  html += '<button onclick="askQuestion()">\u2192 Ask</button>';
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+
+async function askQuestion(presetQ) {
+  var input = document.getElementById("ask-input");
+  var q = presetQ || (input ? input.value.trim() : "");
+  if (!q) return;
+  if (input) input.value = "";
+
+  _askHistory.push({ role: "user", html: esc(q) });
+  renderAskMessages();
+
+  // Show loading
+  _askHistory.push({ role: "bot", html: '<span class="loading-spinner"></span> Thinking\u2026' });
+  renderAskMessages();
+
+  try {
+    var r = await apiFetch("ask", { q: q });
+    _askHistory.pop(); // remove loading
+
+    var responseHtml = (r.answer || "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
+
+    // If there's data, render a table
+    if (r.data && r.data.length > 0) {
+      var keys = Object.keys(r.data[0]).filter(function(k) { return k !== "id"; });
+      responseHtml += '<table class="ask-data-table"><thead><tr>';
+      keys.forEach(function(k) {
+        responseHtml += '<th>' + k.replace(/([A-Z])/g, " $1").replace(/^./, function(s){return s.toUpperCase();}) + '</th>';
+      });
+      responseHtml += '</tr></thead><tbody>';
+      r.data.slice(0, 20).forEach(function(row) {
+        responseHtml += '<tr>';
+        keys.forEach(function(k) { responseHtml += '<td>' + esc(String(row[k] || "\u2014")) + '</td>'; });
+        responseHtml += '</tr>';
+      });
+      responseHtml += '</tbody></table>';
+      if (r.data.length > 20) responseHtml += '<div style="font-size:12px;color:#94a3b8;margin-top:8px">Showing 20 of ' + r.data.length + ' results</div>';
+    }
+
+    _askHistory.push({ role: "bot", html: responseHtml });
+  } catch (e) {
+    _askHistory.pop();
+    _askHistory.push({ role: "bot", html: '\u26A0\uFE0F Sorry, something went wrong: ' + esc(e.message) });
+  }
+  renderAskMessages();
+}
+
+function renderAskMessages() {
+  var el = document.getElementById("ask-messages");
+  if (!el) return;
+  var h = "";
+  _askHistory.forEach(function(m) { h += '<div class="ask-msg ' + m.role + '">' + m.html + '</div>'; });
+  el.innerHTML = h;
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ═══ TOUCHES PAGE ═══ */
+var _touchTab = "candidates";
+var _touchDays = 14;
+function renderTouches(report) {
+  var html = '<div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">';
+  html += '<label style="font-size:14px;color:#64748b">Show untouched in past</label>';
+  html += '<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:14px;font-family:inherit" onchange="_touchDays=parseInt(this.value);loadPage()">';
+  [7, 14, 21, 30, 60, 90].forEach(function(d) {
+    html += '<option value="' + d + '"' + (d === _touchDays ? ' selected' : '') + '>' + d + ' days</option>';
+  });
+  html += '</select>';
+  html += '<button class="btn-export" onclick="exportTouches()">\uD83D\uDCE5 Export CSV</button>';
+  html += '</div>';
+
+  // Summary cards
+  html += '<div class="stats-row">';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#fef2f2">\uD83D\uDC65</div><div><div class="stat-label">Stale Candidates</div><div class="stat-value">' + (report.candidates.total || 0) + '</div></div></div>';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#fff7ed">\uD83D\uDCBC</div><div><div class="stat-label">Stale Consultants</div><div class="stat-value">' + (report.consultants.total || 0) + '</div></div></div>';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#eff6ff">\uD83C\uDFE2</div><div><div class="stat-label">Stale Clients</div><div class="stat-value">' + (report.clients.total || 0) + '</div></div></div>';
+  html += '</div>';
+
+  // Tabs
+  html += '<div class="touch-tabs">';
+  html += '<button class="touch-tab' + (_touchTab === "candidates" ? " on" : "") + '" onclick="_touchTab=\'candidates\';loadPage()">Candidates (' + report.candidates.total + ')</button>';
+  html += '<button class="touch-tab' + (_touchTab === "consultants" ? " on" : "") + '" onclick="_touchTab=\'consultants\';loadPage()">Consultants (' + report.consultants.total + ')</button>';
+  html += '<button class="touch-tab' + (_touchTab === "clients" ? " on" : "") + '" onclick="_touchTab=\'clients\';loadPage()">Clients (' + report.clients.total + ')</button>';
+  html += '</div>';
+
+  // Table
+  html += '<div class="table-wrap"><table><thead><tr>';
+  if (_touchTab === "candidates") {
+    html += '<th>Name</th><th>Title</th><th>Cert</th><th>Grade</th><th>Owner</th><th>Last Touched</th><th>Days</th><th>Urgency</th>';
+    html += '</tr></thead><tbody>';
+    (report.candidates.data || []).forEach(function(c) {
+      var urg = c.daysSince >= 60 ? "high" : c.daysSince >= 30 ? "med" : "low";
+      html += '<tr style="cursor:pointer" onclick="openDetail(' + c.id + ')">';
+      html += '<td class="fw600">' + esc(c.name) + '</td>';
+      html += '<td>' + esc(c.title) + '</td>';
+      html += '<td>' + esc(c.primaryCert) + '</td>';
+      html += '<td>' + esc(c.grade) + '</td>';
+      html += '<td>' + esc(c.owner) + '</td>';
+      html += '<td>' + esc(c.lastTouched) + '</td>';
+      html += '<td class="fw600">' + c.daysSince + 'd</td>';
+      html += '<td><span class="urgency-dot urgency-' + urg + '"></span>' + (urg === "high" ? "Overdue" : urg === "med" ? "Due" : "OK") + '</td>';
+      html += '</tr>';
+    });
+  } else if (_touchTab === "consultants") {
+    html += '<th>Consultant</th><th>Current Job</th><th>Pay Rate</th><th>Bill Rate</th><th>Ends On</th><th>Last Touched</th><th>Days</th><th>Urgency</th>';
+    html += '</tr></thead><tbody>';
+    (report.consultants.data || []).forEach(function(c) {
+      var urg = c.daysSince >= 60 ? "high" : c.daysSince >= 30 ? "med" : "low";
+      html += '<tr>';
+      html += '<td class="fw600">' + esc(c.name) + '</td>';
+      html += '<td>' + esc(c.job) + '</td>';
+      html += '<td>' + esc(c.payRate) + '</td>';
+      html += '<td>' + esc(c.billRate) + '</td>';
+      html += '<td>' + esc(c.endsOn) + '</td>';
+      html += '<td>' + esc(c.lastTouched) + '</td>';
+      html += '<td class="fw600">' + c.daysSince + 'd</td>';
+      html += '<td><span class="urgency-dot urgency-' + urg + '"></span>' + (urg === "high" ? "Overdue" : urg === "med" ? "Due" : "OK") + '</td>';
+      html += '</tr>';
+    });
+  } else {
+    html += '<th>Client</th><th>Status</th><th>Location</th><th>Phone</th><th>Last Touched</th><th>Days</th><th>Urgency</th>';
+    html += '</tr></thead><tbody>';
+    (report.clients.data || []).forEach(function(c) {
+      var urg = c.daysSince >= 60 ? "high" : c.daysSince >= 30 ? "med" : "low";
+      html += '<tr>';
+      html += '<td class="fw600">' + esc(c.name) + '</td>';
+      html += '<td>' + badge(c.status) + '</td>';
+      html += '<td>' + esc(c.location) + '</td>';
+      html += '<td>' + esc(c.phone) + '</td>';
+      html += '<td>' + esc(c.lastTouched) + '</td>';
+      html += '<td class="fw600">' + c.daysSince + 'd</td>';
+      html += '<td><span class="urgency-dot urgency-' + urg + '"></span>' + (urg === "high" ? "Overdue" : urg === "med" ? "Due" : "OK") + '</td>';
+      html += '</tr>';
+    });
+  }
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function exportTouches() {
+  // Export current touch tab as CSV
+  var el = document.querySelector(".table-wrap table");
+  if (!el) return;
+  var rows = Array.from(el.querySelectorAll("tr"));
+  var csv = rows.map(function(r) {
+    return Array.from(r.querySelectorAll("th,td")).map(function(c) { return '"' + c.textContent.replace(/"/g, '""') + '"'; }).join(",");
+  }).join("\n");
+  var blob = new Blob([csv], { type: "text/csv" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "touch-report-" + _touchTab + ".csv";
+  a.click();
+}
+
 /* ═══ RENDER ═══ */
 var _debounceTimer=null;
 function render(){
@@ -886,6 +1108,11 @@ async function loadPage(){
       case "clients":
         var clr=await loadClients(q,sf);
         h=renderClients(clr.data,clr.total);break;
+      case "touches":
+        var touchR=await apiFetch("touch-report",{days:_touchDays});
+        h=renderTouches(touchR);break;
+      case "ask":
+        h=renderAsk();break;
       case "reports":
         var st=await loadStats();
         var placR=await loadPlacements("","All","All");
