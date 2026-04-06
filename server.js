@@ -1038,10 +1038,12 @@ app.get("/api/ask", async (req, res) => {
       "epiccare": "EpicCare", "optime": "OpTime", "grand central": "Grand Central",
       "hyperspace": "Hyperspace", "my chart": "MyChart", "mychart": "MyChart",
     };
-    const certMatch = question.match(/(?:who has|with|certified in|cert(?:ified|ification)?(?:\s+(?:of|in|for))?\s+)(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i);
+    const certMatch = question.match(/(?:who has|with|certified in|cert(?:ified|ification)?(?:\s+(?:of|in|for))?)\s+(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i);
     const primaryCertMatch = question.match(/primary\s+cert(?:ification|ified)?\s+(?:of|in|for|is)?\s*(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i);
-    // Also catch "list/show/give candidates with <cert>" patterns
+    // Also catch "list/show/give candidates with <cert>" and "<cert> candidates" patterns
     const listCertMatch = question.match(/(?:list|show|give|find|get|all)\s+.*(?:candidates?|consultants?|people)\s+.*(?:with|who have|certified|certification)\s+.*?(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i);
+    // Catch "<cert> candidates" pattern — e.g. "give me all the professional billing candidates"
+    const certBeforeNounMatch = question.match(/(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)\s+(?:candidates?|consultants?|people|resources?)/i);
     const gradeMatch = question.match(/(?:grade|tier)\s+(a|b|c)/i);
     const roleMatch = question.match(/(?:who is|show me)\s+(ts|is|dev|analyst|trainer)/i);
     const daysMatch = question.match(/(\d+)\s*days?/);
@@ -1118,8 +1120,8 @@ app.get("/api/ask", async (req, res) => {
       answer = `**${r.total}** candidates available now or soon:`;
       data = cands;
 
-    } else if (primaryCertMatch || listCertMatch || certMatch) {
-      const match = primaryCertMatch || listCertMatch || certMatch;
+    } else if (primaryCertMatch || listCertMatch || certBeforeNounMatch || certMatch) {
+      const match = primaryCertMatch || listCertMatch || certBeforeNounMatch || certMatch;
       const rawCert = match[1].trim().toLowerCase();
       const certLabel = CERT_ALIASES[rawCert] || rawCert;
       const isPrimaryOnly = !!primaryCertMatch || question.includes("primary");
