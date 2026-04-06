@@ -1026,16 +1026,14 @@ app.get("/api/smart-lists", async (req, res) => {
       sort: "-dateLastModified",
     });
 
-    // Group by primary cert
+    // Group by ALL primary certs (candidates with multiple certs appear in each list)
     const lists = {};
     (data.data || []).forEach((c) => {
       const cert = (typeof c.customText1 === "string" ? c.customText1 : (Array.isArray(c.customText1) ? c.customText1.join(", ") : "")).trim();
       if (!cert) return;
-      // Use first cert if comma-separated
-      const primaryKey = cert.split(",")[0].trim();
-      if (!primaryKey) return;
-      if (!lists[primaryKey]) lists[primaryKey] = { name: primaryKey, candidates: [] };
-      lists[primaryKey].candidates.push({
+      // Split by comma — candidate appears in EVERY cert list they hold
+      const certKeys = cert.split(",").map(s => s.trim()).filter(Boolean);
+      const candidateObj = {
         id: c.id,
         name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
         title: c.occupation || "",
@@ -1048,6 +1046,10 @@ app.get("/api/smart-lists", async (req, res) => {
         available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString("en-US") : "",
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
         email: c.email || "",
+      };
+      certKeys.forEach((key) => {
+        if (!lists[key]) lists[key] = { name: key, candidates: [] };
+        lists[key].candidates.push(candidateObj);
       });
     });
 
