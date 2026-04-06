@@ -1249,7 +1249,7 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-/* ═══ START ═══ */
+/* ═══ START SERVER ═══ */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`\n  Bullhorn Dashboard running at http://localhost:${PORT}\n`);
