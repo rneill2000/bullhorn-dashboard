@@ -408,7 +408,7 @@ var savedSearches = JSON.parse(localStorage.getItem("bh_saved_searches")||"[]");
 var filters = {};
 var advOpen = false;
 
-function setPage(pg){ currentPage=pg; filters={}; advOpen=false; loadPage(); }
+function setPage(pg){ currentPage=pg; filters={}; advOpen=false; if(pg==="jobs") filters.status="Accepting Candidates"; if(pg==="consultants") filters.status="Placed"; loadPage(); }
 function getQ(){ return (filters.q||"").toLowerCase(); }
 function matchQ(text){ return text.toLowerCase().indexOf(getQ())>=0; }
 function toggleAdv(){ advOpen=!advOpen; loadPage(); }
@@ -420,6 +420,7 @@ function candClick(idx){ var c=_lastData.candidates[idx]; if(c) openDetail(c.id,
 var NAV=[
   {key:"home",label:"Home",emoji:"\uD83C\uDFE0"},
   {key:"candidates",label:"Candidates",emoji:"\uD83D\uDC65"},
+  {key:"consultants",label:"Consultants",emoji:"\uD83D\uDC54"},
   {key:"jobs",label:"Jobs",emoji:"\uD83D\uDCBC"},
   {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
   {key:"placements",label:"Placements",emoji:"\uD83D\uDCCB"},
@@ -437,7 +438,9 @@ function renderNav(){
 /* ═══ PAGE RENDERERS ═══ */
 function renderCandidates(data,bhTotal){
   var sf=filters.status||"All";
-  var ss=["All","Active","Placed","Inactive","Not Screened","Active-Reviewed"];
+  // Exclude Placed candidates — they show on the Consultants page
+  if(sf==="All") data=(data||[]).filter(function(r){return r.status!=="Placed";});
+  var ss=["All","Active","Inactive","Not Screened","Active-Reviewed"];
   var f=data||[];
   _lastData.candidates=f;
   var displayTotal=bhTotal||f.length;
@@ -491,10 +494,47 @@ function renderCandidates(data,bhTotal){
   return html;
 }
 
+function renderConsultants(data,bhTotal){
+  // Consultants = candidates with status "Placed"
+  var f=(data||[]).filter(function(r){return r.status==="Placed";});
+  _lastData.consultants=f;
+  var displayTotal=f.length;
+  var cols=[
+    {key:"name",label:"Name",render:function(r){return '<span class="name-link">'+esc(r.firstName+" "+r.lastName)+'</span>';},exportVal:function(r){return r.firstName+" "+r.lastName;}},
+    {key:"title",label:"Title",exportVal:function(r){return r.title||"";}},
+    {key:"primaryCert",label:"Primary Cert",render:function(r){return r.primaryCert?'<span style="font-size:12px;color:#176087;max-width:200px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.primaryCert)+'">'+esc(r.primaryCert)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.primaryCert||"";}},
+    {key:"grade",label:"Grade",render:function(r){var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};return r.grade?'<span class="fw600" style="color:'+(gc[r.grade]||"#64748b")+'">'+esc(r.grade)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.grade||"";}},
+    {key:"location",label:"Location",render:function(r){return r.location?'\uD83D\uDCCD '+esc(r.location):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.location||"";}},
+    {key:"email",label:"Email",render:function(r){return r.email?'<a href="mailto:'+esc(r.email)+'" style="color:#176087;font-size:13px" onclick="event.stopPropagation()">'+esc(r.email)+'</a>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.email||"";}},
+    {key:"status",label:"Status",render:function(r){return '<span class="badge" style="background:#10b98118;color:#10b981;border:1px solid #10b98140">Active Consultant</span>';},exportVal:function(r){return "Placed";}}
+  ];
+
+  var html='<div class="stats-row">';
+  html+=statCard("\uD83D\uDC54","Active Consultants",displayTotal,"Currently placed","#10b981");
+  html+='</div>';
+  html+='<div class="toolbar">';
+  html+='<div class="search-wrap"><span class="ico">\uD83D\uDD0D</span><input type="text" placeholder="Search consultants by name, title, or certification\u2026" value="'+esc(filters.q||"")+'" oninput="filters.q=this.value;render()"></div>';
+  html+='</div>';
+
+  // Apply text search filter
+  var q=getQ();
+  if(q){
+    f=f.filter(function(r){
+      return matchQ(r.firstName+" "+r.lastName)||matchQ(r.title||"")||matchQ(r.primaryCert||"")||matchQ(r.location||"");
+    });
+  }
+
+  html+='<div class="count-line"><span>'+displayTotal+' consultant'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
+  html+='<button class="btn-export" onclick="exportCSV(\'consultants.csv\',consultCols,_lastData.consultants)">\uD83D\uDCE5 Export CSV</button></div>';
+  html+='<div class="table-wrap">'+makeTable(cols,f,"candClick")+'</div>';
+  window.consultCols=cols;
+  return html;
+}
+
 function renderJobs(data,bhTotal){
   var sf=filters.status||"All";
   var pf=filters.priority||"All";
-  var ss=["All","Open","Filled","Accepting Candidates"];
+  var ss=["All","Accepting Candidates","Open","Placed","Covered","Filled","Lost"];
   var ps=["All","Urgent","Hot","Warm","Cold"];
   var f=data||[];
   _lastData.jobs=f;
@@ -509,7 +549,9 @@ function renderJobs(data,bhTotal){
     {key:"salary",label:"Bill Rate",render:function(r){return '<span class="fw600">'+esc(r.salary)+'</span>';},exportVal:function(r){return r.salary||"";}},
     {key:"openings",label:"Openings",render:function(r){return '<span class="fw600" style="color:'+(r.openings>0?"#10b981":"#94a3b8")+'">'+r.openings+'</span>';},exportVal:function(r){return String(r.openings||0);}},
     {key:"submissions",label:"Subs",exportVal:function(r){return String(r.submissions||0);}},
-    {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}}
+    {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}},
+    {key:"dateAdded",label:"Date Added",render:function(r){return r.dateAdded?'\uD83D\uDCC5 '+esc(r.dateAdded):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.dateAdded||"";}},
+    {key:"daysOpen",label:"Days Open",render:function(r){if(r.daysOpen===null||r.daysOpen===undefined)return '<span class="muted">\u2014</span>';var c=r.daysOpen>60?"#dc2626":r.daysOpen>30?"#f59e0b":"#10b981";return '<span class="fw600" style="color:'+c+'">'+r.daysOpen+'d</span>';},exportVal:function(r){return r.daysOpen!==null&&r.daysOpen!==undefined?String(r.daysOpen):"";}}
   ];
   var html='<div class="toolbar">';
   html+='<div class="search-wrap"><span class="ico">\uD83D\uDD0D</span><input type="text" placeholder="Search jobs by title, client, location\u2026" value="'+esc(filters.q||"")+'" oninput="filters.q=this.value;render()"></div>';
@@ -1096,6 +1138,9 @@ async function loadPage(){
       case "candidates":
         var cr=await loadCandidates(q,sf,loc,filters.cert||"",filters.avail||"",filters.grade||"",filters.epicRole||"");
         h=renderCandidates(cr.data,cr.total);break;
+      case "consultants":
+        var conr=await loadCandidates(q,"Placed","","","","","");
+        h=renderConsultants(conr.data,conr.total);break;
       case "jobs":
         var pf=filters.priority||"All";
         var jr=await loadJobs(q,sf,pf==="All"?"":pf);

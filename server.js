@@ -366,24 +366,32 @@ app.get("/api/jobs", async (req, res) => {
     const data = await bhFetchAll("search/JobOrder", {
       query,
       fields:
-        "id,title,clientCorporation,address,employmentType,salary,status,numOpenings,submissions,startDate,type",
+        "id,title,clientCorporation,address,employmentType,salary,status,numOpenings,submissions,startDate,dateAdded,type",
       sort: "-dateLastModified",
     });
 
-    const jobs = (data.data || []).map((j) => ({
-      id: j.id,
-      title: j.title || "",
-      client: j.clientCorporation ? j.clientCorporation.name : "",
-      location: j.address
-        ? [j.address.city, j.address.state].filter(Boolean).join(", ")
-        : "",
-      type: j.employmentType || "",
-      salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
-      status: j.status || "Unknown",
-      priority: PRIORITY_LABELS[j.type] || "",
-      openings: j.numOpenings || 0,
-      submissions: j.submissions ? j.submissions.total : 0,
-    }));
+    const jobs = (data.data || []).map((j) => {
+      const dateAdded = j.dateAdded ? new Date(j.dateAdded).toLocaleDateString("en-US") : "";
+      const daysOpen = j.dateAdded && (j.status === "Accepting Candidates" || j.status === "Open")
+        ? Math.floor((Date.now() - j.dateAdded) / 86400000)
+        : null;
+      return {
+        id: j.id,
+        title: j.title || "",
+        client: j.clientCorporation ? j.clientCorporation.name : "",
+        location: j.address
+          ? [j.address.city, j.address.state].filter(Boolean).join(", ")
+          : "",
+        type: j.employmentType || "",
+        salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
+        status: j.status || "Unknown",
+        priority: PRIORITY_LABELS[j.type] || "",
+        openings: j.numOpenings || 0,
+        submissions: j.submissions ? j.submissions.total : 0,
+        dateAdded: dateAdded,
+        daysOpen: daysOpen,
+      };
+    });
 
     res.json({ data: jobs, total: data.total });
   } catch (e) {
