@@ -1004,18 +1004,31 @@ async function askQuestion(presetQ) {
     // If there's data, render a table
     if (r.data && r.data.length > 0) {
       var keys = Object.keys(r.data[0]).filter(function(k) { return k !== "id"; });
-      responseHtml += '<table class="ask-data-table"><thead><tr>';
+      var askId = "ask-table-" + Date.now();
+      var total = r.data.length;
+      var previewCount = Math.min(20, total);
+      responseHtml += '<table class="ask-data-table" id="' + askId + '"><thead><tr>';
       keys.forEach(function(k) {
         responseHtml += '<th>' + k.replace(/([A-Z])/g, " $1").replace(/^./, function(s){return s.toUpperCase();}) + '</th>';
       });
       responseHtml += '</tr></thead><tbody>';
-      r.data.slice(0, 20).forEach(function(row) {
-        responseHtml += '<tr>';
+      r.data.forEach(function(row, idx) {
+        var hidden = idx >= previewCount ? ' style="display:none" class="ask-extra-row"' : '';
+        var clickAttr = row.id ? ' style="cursor:pointer'+(idx >= previewCount ? ';display:none':'')+ '" class="'+(idx >= previewCount ? 'ask-extra-row':'')+'" onclick="openDetail('+row.id+')"' : hidden;
+        responseHtml += '<tr' + clickAttr + '>';
         keys.forEach(function(k) { responseHtml += '<td>' + esc(String(row[k] || "\u2014")) + '</td>'; });
         responseHtml += '</tr>';
       });
       responseHtml += '</tbody></table>';
-      if (r.data.length > 20) responseHtml += '<div style="font-size:12px;color:#94a3b8;margin-top:8px">Showing 20 of ' + r.data.length + ' results</div>';
+      if (total > previewCount) {
+        responseHtml += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">';
+        responseHtml += '<span style="font-size:12px;color:#94a3b8">Showing ' + previewCount + ' of ' + total + ' results</span>';
+        responseHtml += '<button style="font-size:12px;padding:4px 12px;border-radius:6px;border:1px solid #176087;background:#fff;color:#176087;cursor:pointer;font-weight:600" onclick="this.parentElement.querySelector(\'span\').textContent=\'Showing all ' + total + ' results\';this.style.display=\'none\';document.querySelectorAll(\'#' + askId + ' .ask-extra-row\').forEach(function(r){r.style.display=\'\'})">View All ' + total + '</button>';
+        responseHtml += '<button style="font-size:12px;padding:4px 12px;border-radius:6px;border:1px solid #10b981;background:#10b981;color:#fff;cursor:pointer;font-weight:600" onclick="exportAskData(\''+askId+'\')">Export CSV</button>';
+        responseHtml += '</div>';
+      }
+      // Store data for CSV export
+      window['_askExport_'+askId] = {keys:keys, data:r.data};
     }
 
     _askHistory.push({ role: "bot", html: responseHtml });
@@ -1024,6 +1037,20 @@ async function askQuestion(presetQ) {
     _askHistory.push({ role: "bot", html: '\u26A0\uFE0F Sorry, something went wrong: ' + esc(e.message) });
   }
   renderAskMessages();
+}
+
+function exportAskData(tableId) {
+  var exp = window['_askExport_'+tableId];
+  if (!exp) return;
+  var csv = exp.keys.map(function(k){return '"'+k.replace(/([A-Z])/g," $1").replace(/^./,function(s){return s.toUpperCase();})+'"';}).join(",")+"\n";
+  exp.data.forEach(function(row){
+    csv += exp.keys.map(function(k){return '"'+String(row[k]||"").replace(/"/g,'""')+'"';}).join(",")+"\n";
+  });
+  var blob = new Blob([csv],{type:"text/csv"});
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "ask-anura-results.csv";
+  a.click();
 }
 
 function renderAskMessages() {
