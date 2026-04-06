@@ -1026,7 +1026,22 @@ app.get("/api/ask", async (req, res) => {
     const nowMs = Date.now();
 
     // Pattern matching for common staffing questions
-    const certMatch = question.match(/(?:who has|with|certified in|cert(?:ified)?)\s+(pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity)/i);
+    // Map full cert names to their abbreviations/search terms
+    const CERT_ALIASES = {
+      "professional billing": "Professional Billing", "pb": "Professional Billing",
+      "hospital billing": "Hospital Billing", "hb": "Hospital Billing",
+      "cadence": "Cadence", "willow": "Willow", "beaker": "Beaker",
+      "cupid": "Cupid", "tapestry": "Tapestry", "cogito": "Cogito",
+      "bridges": "Bridges", "radiant": "Radiant", "prelude": "Prelude",
+      "phoenix": "Phoenix", "resolute": "Resolute", "rover": "Rover",
+      "clarity": "Clarity", "ambulatory": "Ambulatory", "inpatient": "Inpatient",
+      "epiccare": "EpicCare", "optime": "OpTime", "grand central": "Grand Central",
+      "hyperspace": "Hyperspace", "my chart": "MyChart", "mychart": "MyChart",
+    };
+    const certMatch = question.match(/(?:who has|with|certified in|cert(?:ified|ification)?(?:\s+(?:of|in|for))?\s+)(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i);
+    const primaryCertMatch = question.match(/primary\s+cert(?:ification|ified)?\s+(?:of|in|for|is)?\s*(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i);
+    // Also catch "list/show/give candidates with <cert>" patterns
+    const listCertMatch = question.match(/(?:list|show|give|find|get|all)\s+.*(?:candidates?|consultants?|people)\s+.*(?:with|who have|certified|certification)\s+.*?(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i);
     const gradeMatch = question.match(/(?:grade|tier)\s+(a|b|c)/i);
     const roleMatch = question.match(/(?:who is|show me)\s+(ts|is|dev|analyst|trainer)/i);
     const daysMatch = question.match(/(\d+)\s*days?/);
@@ -1103,11 +1118,19 @@ app.get("/api/ask", async (req, res) => {
       answer = `**${r.total}** candidates available now or soon:`;
       data = cands;
 
-    } else if (certMatch) {
-      const cert = certMatch[1];
+    } else if (primaryCertMatch || listCertMatch || certMatch) {
+      const match = primaryCertMatch || listCertMatch || certMatch;
+      const rawCert = match[1].trim().toLowerCase();
+      const certLabel = CERT_ALIASES[rawCert] || rawCert;
+      const isPrimaryOnly = !!primaryCertMatch || question.includes("primary");
+      // Build search term — use the first word for Lucene wildcard matching
+      const searchTerm = certLabel.split(" ")[0];
+      const certQuery = isPrimaryOnly
+        ? `isDeleted:0 AND customText1:${searchTerm}*`
+        : `isDeleted:0 AND (customText1:${searchTerm}* OR customText2:${searchTerm}*)`;
       const r = await bhFetchAll("search/Candidate", {
-        query: `isDeleted:0 AND (customText1:${cert}* OR customText2:${cert}*)`,
-        fields: "id,firstName,lastName,occupation,customText1,customText2,customText6,status,dateAvailable",
+        query: certQuery,
+        fields: "id,firstName,lastName,occupation,customText1,customText2,customText6,status,dateAvailable,address",
         sort: "-dateLastModified",
       });
       const cands = (r.data || []).map(c => ({
@@ -1118,9 +1141,11 @@ app.get("/api/ask", async (req, res) => {
         secondaryCert: c.customText2 || "",
         grade: c.customText6 || "",
         status: c.status || "",
+        location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
         available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
       }));
-      answer = `Found **${r.total}** candidates with **${cert.toUpperCase()}** certification:`;
+      const scope = isPrimaryOnly ? "primary" : "any";
+      answer = `Found **${r.total}** candidates with **${certLabel}** as ${scope} certification:`;
       data = cands;
 
     } else if (gradeMatch) {
@@ -1171,7 +1196,7 @@ app.get("/api/ask", async (req, res) => {
       data = sorted.map(([name, count]) => ({ client: name, activePlacements: count }));
       answer = `Top clients by active placements:`;
 
-    } else if (question.match(/revenue|margin|billing/)) {
+    } else if (question.match(/revenue|margin/) || (question.match(/billing/) && !question.match(/professional\s+billing|hospital\s+billing/))) {
       const r = await bhFetchAll("query/Placement", {
         where: `status = 'Approved' AND dateEnd >= ${nowMs}`,
         fields: "id,payRate,clientBillRate,employmentType",
