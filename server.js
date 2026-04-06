@@ -500,12 +500,50 @@ app.get("/api/clients", async (req, res) => {
       where += ` AND status='${status}'`;
     }
 
-    const data = await bhFetchAll("query/ClientCorporation", {
-      where,
-      fields:
-        "id,name,industryList,address,status,dateLastModified",
-      orderBy: "-dateLastModified",
+    // Fetch clients and active placements in parallel
+    const [data, placData] = await Promise.all([
+      bhFetchAll("query/ClientCorporation", {
+        where,
+        fields: "id,name,industryList,address,status,dateLastModified",
+        orderBy: "-dateLastModified",
+      }),
+      bhFetchAll("query/Placement", {
+        where: "status='Approved' OR status='Active'",
+        fields: "id,jobOrder,candidate",
+      }),
+    ]);
+
+    // Count active placements per client
+    const placCountByClient = {};
+    (placData.data || []).forEach((p) => {
+      const clientId = p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.id : null;
+      if (clientId) {
+        placCountByClient[clientId] = (placCountByClient[clientId] || 0) + 1;
+      }
     });
+
+    // If jobOrder doesn't have nested clientCorporation, we need a different approach
+    // Let's also try to get clientCorporation from the placement's jobOrder
+    // Fetch placements with jobOrder.clientCorporation
+    let placByClient = {};
+    try {
+      const placFull = await bhFetchAll("query/Placement", {
+        where: "status='Approved' OR status='Active'",
+        fields: "id,jobOrder(clientCorporation(id,name)),candidate(firstName,lastName)",
+      });
+      (placFull.data || []).forEach((p) => {
+        const clientId = p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.id : null;
+        if (clientId) {
+          if (!placByClient[clientId]) placByClient[clientId] = [];
+          placByClient[clientId].push({
+            candidateName: p.candidate ? (p.candidate.firstName + " " + p.candidate.lastName) : "Unknown",
+          });
+        }
+      });
+    } catch (e2) {
+      // Fallback: just use basic count
+      console.log("[Clients] Could not fetch nested placement data:", e2.message);
+    }
 
     const clients = (data.data || []).map((c) => ({
       id: c.id,
@@ -515,6 +553,8 @@ app.get("/api/clients", async (req, res) => {
         ? [c.address.city, c.address.state].filter(Boolean).join(", ")
         : "",
       status: c.status || "Unknown",
+      activePlacements: placByClient[c.id] ? placByClient[c.id].length : (placCountByClient[c.id] || 0),
+      placedConsultants: placByClient[c.id] || [],
     }));
 
     res.json({ data: clients, total: data.total });

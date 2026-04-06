@@ -614,13 +614,31 @@ function renderClients(data,bhTotal){
   var f=data||[];
   _lastData.clients=f;
   var displayTotal=bhTotal||f.length;
+  var totalPlaced=f.reduce(function(s,r){return s+(r.activePlacements||0);},0);
+  var clientsWithPlaced=f.filter(function(r){return r.activePlacements>0;}).length;
   var cols=[
     {key:"name",label:"Company",render:function(r){return '<span class="name-link">'+esc(r.name)+'</span>';},exportVal:function(r){return r.name||"";}},
     {key:"industry",label:"Industry",exportVal:function(r){return r.industry||"";}},
     {key:"location",label:"Location",render:function(r){return '\uD83D\uDCCD '+esc(r.location);},exportVal:function(r){return r.location||"";}},
+    {key:"activePlacements",label:"Consultants",render:function(r){
+      var n=r.activePlacements||0;
+      if(n===0) return '<span class="muted">0</span>';
+      var names=(r.placedConsultants||[]).map(function(c){return c.candidateName;}).join(", ");
+      return '<span class="fw600" style="color:#10b981;cursor:help" title="'+esc(names)+'">\uD83D\uDC54 '+n+'</span>';
+    },exportVal:function(r){return String(r.activePlacements||0);}},
+    {key:"consultantNames",label:"Consultant Names",render:function(r){
+      var list=r.placedConsultants||[];
+      if(list.length===0) return '<span class="muted">\u2014</span>';
+      return list.map(function(c){return '<span style="display:inline-block;background:#10b98118;color:#10b981;border:1px solid #10b98140;border-radius:12px;padding:2px 8px;font-size:12px;margin:1px 2px">'+esc(c.candidateName)+'</span>';}).join(" ");
+    },exportVal:function(r){return (r.placedConsultants||[]).map(function(c){return c.candidateName;}).join("; ");}},
     {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}}
   ];
-  var html='<div class="toolbar">';
+  var html='<div class="stats-row">';
+  html+=statCard("\uD83C\uDFE2","Total Clients",displayTotal,"In your CRM","#176087");
+  html+=statCard("\uD83D\uDC54","Placed Consultants",totalPlaced,"Active at clients","#10b981");
+  html+=statCard("\u2B50","Clients w/ Placements",clientsWithPlaced,"Have active consultants","#f59e0b");
+  html+='</div>';
+  html+='<div class="toolbar">';
   html+='<div class="search-wrap"><span class="ico">\uD83D\uDD0D</span><input type="text" placeholder="Search clients by name, industry, or location\u2026" value="'+esc(filters.q||"")+'" oninput="filters.q=this.value;render()"></div>';
   html+='<div class="chips">';
   ss.forEach(function(s){html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+'</button>';});
