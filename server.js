@@ -12,12 +12,12 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const crypto = require("crypto");
 require("dotenv").config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
 
 /* ═══ CONFIG ═══ */
 const BH = {
@@ -27,10 +27,125 @@ const BH = {
   password: process.env.BULLHORN_API_PASSWORD || "",
   authUrl: "https://auth.bullhornstaffing.com/oauth",
   restLoginUrl: "https://rest.bullhornstaffing.com/rest-services/login",
+  redirectUri: process.env.BULLHORN_REDIRECT_URI || "http://localhost:3000/auth/callback",
 };
 
 /* ═══ SESSION STATE ═══ */
+// Backend API session (shared, uses API service account)
 let session = { bhRestToken: null, restUrl: null, expiresAt: 0 };
+
+// User sessions — maps sessionToken → user info
+const userSessions = {};
+function parseCookies(req) {
+  const raw = req.headers.cookie || "";
+  const out = {};
+  raw.split(";").forEach(function (c) {
+    const parts = c.trim().split("=");
+    if (parts.length >= 2) out[parts[0]] = decodeURIComponent(parts.slice(1).join("="));
+  });
+  return out;
+}
+function getUser(req) {
+  const cookies = parseCookies(req);
+  const tok = cookies.bh_session;
+  return tok && userSessions[tok] ? userSessions[tok] : null;
+}
+
+/* ═══ USER SSO ROUTES ═══ */
+
+// Step 1: Redirect user to Bullhorn login page
+app.get("/auth/login", (req, res) => {
+  const params = new URLSearchParams({
+    client_id: BH.clientId,
+    response_type: "code",
+    redirect_uri: BH.redirectUri,
+  });
+  res.redirect(`${BH.authUrl}/authorize?${params}`);
+});
+
+// Step 2: Bullhorn redirects back with ?code=xxx
+app.get("/auth/callback", async (req, res) => {
+  try {
+    const code = req.query.code;
+    if (!code) throw new Error("No authorization code returned");
+
+    // Exchange code for access token
+    const tokenParams = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: BH.clientId,
+      client_secret: BH.clientSecret,
+      redirect_uri: BH.redirectUri,
+    });
+    const tokenRes = await fetch(`${BH.authUrl}/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: tokenParams.toString(),
+    });
+    if (!tokenRes.ok) throw new Error("Token exchange failed: " + await tokenRes.text());
+    const tokenData = await tokenRes.json();
+
+    // Get REST session for this user
+    const loginParams = new URLSearchParams({ version: "*", access_token: tokenData.access_token, ttl: "60" });
+    const loginRes = await fetch(`${BH.restLoginUrl}?${loginParams}`, { method: "POST" });
+    if (!loginRes.ok) throw new Error("REST login failed: " + await loginRes.text());
+    const loginData = await loginRes.json();
+
+    // Get the logged-in user's ID
+    const settingsRes = await fetch(`${loginData.restUrl}settings/userId?BhRestToken=${loginData.BhRestToken}`);
+    const settingsData = await settingsRes.json();
+    const userId = settingsData.userId || settingsData.id;
+
+    // Fetch user details from CorporateUser entity
+    const userRes = await fetch(`${loginData.restUrl}entity/CorporateUser/${userId}?fields=id,firstName,lastName,email,username,primaryDepartment,jobAssignments&BhRestToken=${loginData.BhRestToken}`);
+    const userData = await userRes.json();
+    const user = userData.data || userData;
+
+    // Create session
+    const sessionToken = crypto.randomBytes(32).toString("hex");
+    userSessions[sessionToken] = {
+      id: user.id,
+      firstName: user.firstName || "",
+      lastName: user.lastName || "",
+      email: user.email || "",
+      username: user.username || "",
+      name: ((user.firstName || "") + " " + (user.lastName || "")).trim(),
+      loggedInAt: Date.now(),
+    };
+
+    console.log(`[SSO] User logged in: ${userSessions[sessionToken].name} (ID: ${user.id})`);
+
+    // Set cookie and redirect to dashboard
+    const isSecure = BH.redirectUri.startsWith("https");
+    res.setHeader("Set-Cookie", `bh_session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${isSecure ? "; Secure" : ""}`);
+    res.redirect("/");
+  } catch (e) {
+    console.error("[SSO Callback]", e.message);
+    res.redirect("/?auth_error=" + encodeURIComponent(e.message));
+  }
+});
+
+// Get current logged-in user
+app.get("/auth/me", (req, res) => {
+  const user = getUser(req);
+  if (user) {
+    res.json({ loggedIn: true, user });
+  } else {
+    res.json({ loggedIn: false });
+  }
+});
+
+// Logout
+app.get("/auth/logout", (req, res) => {
+  const cookies = parseCookies(req);
+  const tok = cookies.bh_session;
+  if (tok && userSessions[tok]) delete userSessions[tok];
+  res.setHeader("Set-Cookie", "bh_session=; Path=/; HttpOnly; Max-Age=0");
+  res.redirect("/");
+});
+
+// Serve static AFTER auth routes so /auth/* isn't caught by static middleware
+app.use(express.static(path.join(__dirname, "public")));
 
 /* ═══ AUTH FLOW ═══ */
 async function authenticate() {
@@ -170,9 +285,10 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
 app.get("/api/status", async (req, res) => {
   try {
     await authenticate();
-    res.json({ connected: true, restUrl: session.restUrl, version: "2.1.0" });
+    const user = getUser(req);
+    res.json({ connected: true, restUrl: session.restUrl, version: "3.0.0", user: user || null });
   } catch (e) {
-    res.json({ connected: false, error: e.message });
+    res.json({ connected: false, error: e.message, user: null });
   }
 });
 
@@ -560,6 +676,79 @@ app.get("/api/clients", async (req, res) => {
     res.json({ data: clients, total: data.total });
   } catch (e) {
     console.error("[Clients]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Personal Dashboard ──────────────────────────
+app.get("/api/my-dashboard", async (req, res) => {
+  try {
+    const user = getUser(req);
+    if (!user) return res.status(401).json({ error: "Not logged in" });
+    const uid = user.id;
+
+    // Fetch my clients, my jobs, my active placements in parallel
+    const [myClients, myJobs, myPlacements] = await Promise.all([
+      bhFetchAll("query/ClientCorporation", {
+        where: `owner.id=${uid}`,
+        fields: "id,name,address,status,dateLastModified",
+        orderBy: "-dateLastModified",
+      }),
+      bhFetchAll("search/JobOrder", {
+        query: `isDeleted:0 AND owner.id:${uid}`,
+        fields: "id,title,clientCorporation,status,numOpenings,submissions,dateAdded,employmentType,type",
+        sort: "-dateLastModified",
+      }),
+      bhFetchAll("query/Placement", {
+        where: `(status='Approved' OR status='Actively On Contract') AND jobOrder.owner.id=${uid}`,
+        fields: "id,candidate,jobOrder,status,dateBegin,dateEnd,payRate,clientBillRate,employmentType",
+        orderBy: "-dateBegin",
+      }),
+    ]);
+
+    // Transform data
+    const clients = (myClients.data || []).map(c => ({
+      id: c.id,
+      name: c.name || "",
+      location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
+      status: c.status || "",
+    }));
+
+    const PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
+    const jobs = (myJobs.data || []).map(j => ({
+      id: j.id,
+      title: j.title || "",
+      client: j.clientCorporation ? j.clientCorporation.name : "",
+      status: j.status || "",
+      priority: PRIORITY_LABELS[j.type] || "",
+      openings: j.numOpenings || 0,
+      submissions: j.submissions ? j.submissions.total : 0,
+      dateAdded: j.dateAdded ? new Date(j.dateAdded).toLocaleDateString("en-US") : "",
+    }));
+
+    const placements = (myPlacements.data || []).map(p => ({
+      id: p.id,
+      candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+      job: p.jobOrder ? p.jobOrder.title : "",
+      client: p.jobOrder?.clientCorporation ? p.jobOrder.clientCorporation.name : "",
+      status: p.status || "",
+      startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString("en-US") : "",
+      endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString("en-US") : null,
+      billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : null,
+      payRate: p.payRate ? "$" + p.payRate + "/hr" : null,
+    }));
+
+    const openJobs = jobs.filter(j => j.status === "Accepting Candidates" || j.status === "Open");
+    const activeClients = clients.filter(c => c.status === "Active Account" || c.status === "Active");
+
+    res.json({
+      user: { name: user.name, firstName: user.firstName },
+      myClients: { data: clients, active: activeClients.length, total: myClients.total },
+      myJobs: { data: jobs, open: openJobs.length, total: myJobs.total },
+      myPlacements: { data: placements, total: myPlacements.total },
+    });
+  } catch (e) {
+    console.error("[My Dashboard]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
