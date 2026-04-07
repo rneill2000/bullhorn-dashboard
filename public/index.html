@@ -277,14 +277,38 @@ function ptBadge(t){var d=t==="Direct Hire";return '<span class="badge" style="b
 function stars(n){var s="";for(var i=1;i<=5;i++)s+='<span style="color:'+(i<=n?"#f59e0b":"#d1d5db")+'">'+(i<=n?"\u2605":"\u2606")+'</span>';return '<span class="stars">'+s+'</span>';}
 function esc(s){return s==null?"":String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 
+var _sortCol=null,_sortDir="asc";
+function sortTable(colKey){
+  if(_sortCol===colKey){_sortDir=_sortDir==="asc"?"desc":"asc";}else{_sortCol=colKey;_sortDir="asc";}
+  render();
+}
+function applySorting(rows,cols){
+  if(!_sortCol)return rows;
+  var col=null;for(var i=0;i<cols.length;i++){if(cols[i].key===_sortCol){col=cols[i];break;}}
+  if(!col)return rows;
+  var sorted=rows.slice().sort(function(a,b){
+    var av=col.exportVal?col.exportVal(a):(a[col.key]||"");
+    var bv=col.exportVal?col.exportVal(b):(b[col.key]||"");
+    var an=parseFloat(String(av).replace(/[^0-9.\-]/g,"")),bn=parseFloat(String(bv).replace(/[^0-9.\-]/g,""));
+    if(!isNaN(an)&&!isNaN(bn))return _sortDir==="asc"?an-bn:bn-an;
+    av=String(av).toLowerCase();bv=String(bv).toLowerCase();
+    if(av<bv)return _sortDir==="asc"?-1:1;if(av>bv)return _sortDir==="asc"?1:-1;return 0;
+  });
+  return sorted;
+}
 function makeTable(cols,rows,onRowClick){
   if(!rows.length)return '<div class="empty-state"><div class="big">\u26A0</div><div class="title">No results found</div><div class="sub">Try adjusting your search or filters</div></div>';
+  var sorted=applySorting(rows,cols);
   var tid='tbl-'+Date.now();
   var h='<table id="'+tid+'"><thead><tr>';
-  cols.forEach(function(c){h+='<th>'+c.label+'<div class="col-resize"></div></th>';});
+  cols.forEach(function(c){
+    var arrow=_sortCol===c.key?(_sortDir==="asc"?" \u25B2":" \u25BC"):"";
+    h+='<th style="cursor:pointer;user-select:none" onclick="sortTable(\''+c.key+'\')">'+c.label+arrow+'<div class="col-resize"></div></th>';
+  });
   h+='</tr></thead><tbody>';
-  rows.forEach(function(r,idx){
-    var click=onRowClick?' onclick="'+onRowClick+'('+idx+')"':'';
+  sorted.forEach(function(r,idx){
+    var origIdx=rows.indexOf(r);
+    var click=onRowClick?' onclick="'+onRowClick+'('+(origIdx>=0?origIdx:idx)+')"':'';
     h+='<tr'+click+'>';
     cols.forEach(function(c){h+='<td>'+(c.render?c.render(r):esc(r[c.key]))+'</td>';});
     h+='</tr>';
@@ -529,7 +553,7 @@ var savedSearches = JSON.parse(localStorage.getItem("bh_saved_searches")||"[]");
 var filters = {};
 var advOpen = false;
 
-function setPage(pg){ currentPage=pg; filters={}; advOpen=false; if(pg==="jobs") filters.status="Accepting Candidates"; if(pg==="consultants") filters.status="Placed"; loadPage(); }
+function setPage(pg){ currentPage=pg; filters={}; advOpen=false; _sortCol=null; _sortDir="asc"; if(pg==="jobs") filters.status="Accepting Candidates"; if(pg==="consultants") filters.status="Placed"; loadPage(); }
 function getQ(){ return (filters.q||"").toLowerCase(); }
 function matchQ(text){ return text.toLowerCase().indexOf(getQ())>=0; }
 function toggleAdv(){ advOpen=!advOpen; loadPage(); }
@@ -656,9 +680,12 @@ function renderConsultants(data,bhTotal){
 function renderJobs(data,bhTotal){
   var sf=filters.status||"All";
   var pf=filters.priority||"All";
+  var jtf=filters.jobType||"All";
   var ss=["All","Accepting Candidates","Open","Placed","Covered","Filled","Lost"];
   var ps=["All","Urgent","Hot","Warm","Cold"];
+  var jts=["All","Contract","Direct Hire","Temp to Hire","Permanent"];
   var f=data||[];
+  if(jtf!=="All"){f=f.filter(function(j){return j.type===jtf;});}
   _lastData.jobs=f;
   var displayTotal=bhTotal||f.length;
   var priorityColors={"Urgent":"#dc2626","Hot":"#f59e0b","Warm":"#53A2BE","Cold":"#94a3b8"};
@@ -680,6 +707,8 @@ function renderJobs(data,bhTotal){
   html+='<div class="chips">';
   ps.forEach(function(s){var style=s!=="All"&&pf===s?' style="background:'+priorityColors[s]+';border-color:'+priorityColors[s]+';color:#fff"':'';html+='<button class="chip'+(pf===s?" on":"")+'"'+style+' onclick="filters.priority=\''+s+'\';render()">'+s+'</button>';});
   html+='</div><div class="sep"></div><div class="chips">';
+  jts.forEach(function(s){html+='<button class="chip'+(jtf===s?" on":"")+'" onclick="filters.jobType=\''+s+'\';render()">'+s+'</button>';});
+  html+='</div><div class="sep"></div><div class="chips">';
   ss.forEach(function(s){html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+'</button>';});
   html+='</div></div>';
   html+='<div class="count-line"><span>'+displayTotal+' job'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
@@ -691,14 +720,14 @@ function renderJobs(data,bhTotal){
 
 function renderPlacements(data,bhTotal){
   var sf=filters.status||"All",tf=filters.type||"All";
-  var ss=["All","Active","Ended","Submitted","Direct Hire Completed"];
+  var ss=["All","Actively On Contract","Submitted","Direct Hire Completed","Contract Completed","Completed","Terminated","Drop Out"];
   var ts=["All","Direct Hire","Consultant"];
   var f=data||[];
   _lastData.placements=f;
   var displayTotal=bhTotal||f.length;
   var dhC=f.filter(function(p){return p.pt==="Direct Hire";}).length;
   var cC=f.filter(function(p){return p.pt==="Consultant";}).length;
-  var actC=f.filter(function(p){return p.status==="Active";}).length;
+  var actC=f.filter(function(p){return p.status==="Actively On Contract";}).length;
   var cols=[
     {key:"candidate",label:"Candidate",render:function(r){return '<span class="name-link">'+esc(r.candidate)+'</span>';},exportVal:function(r){return r.candidate||"";}},
     {key:"pt",label:"Type",render:function(r){return ptBadge(r.pt);},exportVal:function(r){return r.pt||"";}},

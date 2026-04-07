@@ -508,7 +508,7 @@ app.get("/api/clients", async (req, res) => {
         orderBy: "-dateLastModified",
       }),
       bhFetchAll("query/Placement", {
-        where: "status='Approved' OR status='Active'",
+        where: "status='Approved' OR status='Actively On Contract'",
         fields: "id,jobOrder,candidate",
       }),
     ]);
@@ -528,7 +528,7 @@ app.get("/api/clients", async (req, res) => {
     let placByClient = {};
     try {
       const placFull = await bhFetchAll("query/Placement", {
-        where: "status='Approved' OR status='Active'",
+        where: "status='Approved' OR status='Actively On Contract'",
         fields: "id,jobOrder(clientCorporation(id,name)),candidate(firstName,lastName)",
       });
       (placFull.data || []).forEach((p) => {
