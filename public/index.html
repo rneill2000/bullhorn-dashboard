@@ -192,6 +192,7 @@ tbody tr:hover{background:#eff6ff}
       <button class="btn-outline" onclick="loadPage()">&#x1F504; Sync</button>
     </div>
   </header>
+  <div id="sync-banner" style="display:none;align-items:center;gap:8px;padding:8px 32px;font-size:12px;font-weight:500;border-bottom:1px solid #bbf7d0"></div>
   <div class="content" id="content"></div>
 </main>
 <!-- Detail panel -->
@@ -217,14 +218,35 @@ async function apiFetch(endpoint, params) {
   if (!res.ok) throw new Error("API " + res.status);
   return res.json();
 }
+var dbSyncStatus = null;
 async function checkConnection() {
   try {
     var r = await apiFetch("status");
     apiConnected = r.connected;
     if (r.user) { currentUser = r.user; } else { currentUser = null; }
+    if (r.db) { dbSyncStatus = r.db; }
   } catch(e) { apiConnected = false; currentUser = null; }
   updateStatusBadge();
   updateUserBox();
+  updateSyncBanner();
+}
+function updateSyncBanner() {
+  var el = document.getElementById("sync-banner");
+  if (!el) return;
+  if (!dbSyncStatus || !dbSyncStatus.enabled) { el.style.display = "none"; return; }
+  var ls = dbSyncStatus.lastSync;
+  if (!ls || !ls.time) { el.style.display = "none"; return; }
+  var ago = Math.round((Date.now() - new Date(ls.time).getTime()) / 60000);
+  var agoText = ago < 1 ? "just now" : ago + "m ago";
+  if (ls.success) {
+    el.style.display = "flex";
+    el.style.background = "#f0fdf4"; el.style.borderColor = "#bbf7d0"; el.style.color = "#166534";
+    el.innerHTML = "\uD83D\uDDD8 Data synced " + agoText + " &mdash; " + esc(ls.message);
+  } else {
+    el.style.display = "flex";
+    el.style.background = "#fefce8"; el.style.borderColor = "#fef08a"; el.style.color = "#854d0e";
+    el.innerHTML = "\u26A0\uFE0F Sync issue " + agoText + " &mdash; " + esc(ls.message);
+  }
 }
 function updateUserBox() {
   var box = document.getElementById("user-box");

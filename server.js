@@ -14,6 +14,7 @@ const cors = require("cors");
 const path = require("path");
 const crypto = require("crypto");
 require("dotenv").config();
+const db = require("./db");
 
 const app = express();
 app.use(cors());
@@ -287,9 +288,36 @@ app.get("/api/status", async (req, res) => {
   try {
     await authenticate();
     const user = getUser(req);
-    res.json({ connected: true, restUrl: session.restUrl, version: "3.0.0", user: user || null });
+    res.json({ connected: true, restUrl: session.restUrl, version: "3.1.0", user: user || null, db: db.getSyncStatus() });
   } catch (e) {
-    res.json({ connected: false, error: e.message, user: null });
+    res.json({ connected: false, error: e.message, user: null, db: db.getSyncStatus() });
+  }
+});
+
+// Sync status — detailed view of database sync state
+app.get("/api/sync-status", async (req, res) => {
+  try {
+    const details = await db.getSyncDetails();
+    res.json(details);
+  } catch (e) {
+    res.json({ enabled: false, error: e.message });
+  }
+});
+
+// Force sync — trigger an immediate incremental or full sync
+app.post("/api/sync", async (req, res) => {
+  try {
+    if (!db.ready) return res.json({ success: false, message: "Database not enabled" });
+    const type = req.body.type === "full" ? "full" : "incremental";
+    // Run sync in background, respond immediately
+    if (type === "full") {
+      db.fullSync().catch(function (err) { console.error("[Sync] Manual full sync error:", err.message); });
+    } else {
+      db.incrementalSync().catch(function (err) { console.error("[Sync] Manual incremental sync error:", err.message); });
+    }
+    res.json({ success: true, message: type + " sync started" });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -2120,13 +2148,33 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
+/* ═══ DATABASE INIT ═══ */
+db.init();
+
 /* ═══ START SERVER ═══ */
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`\n  Bullhorn Dashboard running at http://localhost:${PORT}\n`);
   if (!BH.clientId || !BH.password) {
     console.log(
       "  ⚠️  Missing credentials — copy .env.example to .env and fill in your Bullhorn API details\n"
     );
+  }
+
+  // Initialize database sync layer (non-blocking — failures don't crash the server)
+  if (db.isEnabled()) {
+    try {
+      await db.createTables();
+      db.setBullhornFetchers(bhFetchAll, bhFetch);
+      // Delay first sync slightly so the server is ready to handle requests
+      setTimeout(function () {
+        db.startSyncLoop(5 * 60 * 1000).catch(function (err) {
+          console.error("[DB] Sync loop failed to start:", err.message);
+        });
+      }, 5000);
+    } catch (err) {
+      console.error("[DB] Failed to initialize:", err.message);
+      console.log("[DB] Dashboard will continue without cache layer");
+    }
   }
 });
