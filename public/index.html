@@ -616,6 +616,9 @@ var NAV_BASE=[
   {key:"clients",label:"Clients",emoji:"\uD83C\uDFE2"},
   {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
   {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
+  {key:"aimatch",label:"AI Match",emoji:"\uD83E\uDDE0"},
+  {key:"relationships",label:"Relationships",emoji:"\u2764\uFE0F"},
+  {key:"trends",label:"Trends",emoji:"\uD83D\uDCC8"},
   {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
   {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"},
   {key:"portal",label:"Portal",emoji:"\uD83D\uDCE8"}
@@ -1877,6 +1880,243 @@ function copyPortalLink(){
   }
 }
 
+/* ═══ AI MATCH PAGE ═══ */
+var _aiMatchJobId=null;
+var _aiMatchResult=null;
+function renderAIMatch(){
+  var h='<div style="margin-bottom:20px">';
+  h+='<p style="color:#64748b;font-size:14px;margin-bottom:16px">Select a job to find the best-fit candidates using AI-powered analysis. Claude analyzes certifications, availability, location, grade, and experience to rank and explain each match.</p>';
+  h+='<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">';
+  h+='<select id="ai-job-select" style="padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;font-size:14px;min-width:350px;font-family:inherit"><option value="">Select a job...</option></select>';
+  h+='<button class="btn-primary" onclick="runAIMatch()" style="padding:10px 20px">\uD83E\uDDE0 Run AI Match</button>';
+  h+='</div></div>';
+  h+='<div id="ai-match-results">';
+  if(_aiMatchResult){
+    h+=renderAIMatchResults(_aiMatchResult);
+  } else {
+    h+='<div class="empty-state"><div class="big">\uD83E\uDDE0</div><div class="title">AI-Powered Candidate Matching</div><div class="sub">Select a job above to find your best candidates with AI-generated insights</div></div>';
+  }
+  h+='</div>';
+  return h;
+}
+async function populateAIJobDropdown(){
+  try{
+    var jr=await apiFetch("jobs",{status:"Accepting Candidates"});
+    var sel=document.getElementById("ai-job-select");
+    if(!sel)return;
+    (jr.data||[]).forEach(function(j){
+      var opt=document.createElement("option");
+      opt.value=j.id; opt.textContent=j.title+(j.client?" — "+j.client:"");
+      sel.appendChild(opt);
+    });
+    if(_aiMatchJobId) sel.value=_aiMatchJobId;
+  }catch(e){}
+}
+async function runAIMatch(){
+  var sel=document.getElementById("ai-job-select");
+  if(!sel||!sel.value){alert("Please select a job first");return;}
+  _aiMatchJobId=sel.value;
+  var resultsDiv=document.getElementById("ai-match-results");
+  resultsDiv.innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> AI is analyzing candidates\u2026 this may take a few seconds</div>';
+  try{
+    _aiMatchResult=await apiFetch("ai-match/"+_aiMatchJobId);
+    resultsDiv.innerHTML=renderAIMatchResults(_aiMatchResult);
+  }catch(e){
+    resultsDiv.innerHTML='<div style="color:#dc2626;padding:20px">Error: '+esc(e.message)+'</div>';
+  }
+}
+function renderAIMatchResults(r){
+  var h='';
+  // AI Insights panel
+  if(r.ai){
+    h+='<div style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1px solid #bfdbfe;border-radius:12px;padding:20px 24px;margin-bottom:20px">';
+    h+='<div style="font-size:15px;font-weight:700;color:#0f172a;margin-bottom:8px">\uD83E\uDDE0 AI Analysis</div>';
+    if(r.ai.insights) h+='<div style="font-size:14px;color:#334155;margin-bottom:12px">'+esc(r.ai.insights)+'</div>';
+    if(r.ai.topPick&&r.ai.topPick.reason){
+      h+='<div style="background:#fff;border-radius:8px;padding:12px 16px;margin-bottom:10px;border:1px solid #d1fae5">';
+      h+='<span style="font-weight:600;color:#059669">\u2B50 Top Pick:</span> '+esc(r.ai.topPick.reason)+'</div>';
+    }
+    if(r.ai.recommendations&&r.ai.recommendations.length>0){
+      h+='<div style="font-size:13px;font-weight:600;color:#475569;margin-bottom:4px">Recommendations:</div>';
+      r.ai.recommendations.forEach(function(rec){h+='<div style="font-size:13px;color:#475569;padding:2px 0">\u2022 '+esc(rec)+'</div>';});
+    }
+    h+='</div>';
+  }
+  // Job info bar
+  h+='<div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap">';
+  h+='<div class="stat-card" style="flex:1;min-width:150px"><div class="stat-label">Job</div><div style="font-size:15px;font-weight:600">'+esc(r.job.title)+'</div></div>';
+  h+='<div class="stat-card" style="flex:1;min-width:120px"><div class="stat-label">Client</div><div style="font-size:15px;font-weight:600">'+esc(r.job.client||"—")+'</div></div>';
+  h+='<div class="stat-card" style="flex:1;min-width:100px"><div class="stat-label">Location</div><div style="font-size:15px;font-weight:600">'+esc(r.job.location||"—")+'</div></div>';
+  h+='<div class="stat-card" style="flex:1;min-width:100px"><div class="stat-label">Matches</div><div style="font-size:15px;font-weight:600">'+r.totalScored+' scored</div></div>';
+  h+='</div>';
+  // Candidate table
+  h+='<div class="table-wrap"><table><thead><tr><th>Rank</th><th>Name</th><th>Certs</th><th>Grade</th><th>Availability</th><th>Location</th><th>Score</th><th>Why</th></tr></thead><tbody>';
+  var aiNotes={};
+  if(r.ai&&r.ai.candidateNotes){r.ai.candidateNotes.forEach(function(n){aiNotes[n.index]=n.note;});}
+  (r.candidates||[]).forEach(function(c,i){
+    var scoreColor=c.score>=70?"#059669":c.score>=50?"#d97706":c.score>=30?"#dc2626":"#94a3b8";
+    h+='<tr onclick="openDetail('+c.id+')">';
+    h+='<td style="font-weight:700;color:#176087">#'+(i+1)+'</td>';
+    h+='<td><span class="name-link">'+esc(c.firstName+" "+c.lastName)+'</span><br><span class="muted" style="font-size:12px">'+esc(c.title)+'</span></td>';
+    h+='<td style="font-size:12px">'+esc(c.primaryCert||"—")+'</td>';
+    h+='<td>'+esc(c.grade||"—")+'</td>';
+    h+='<td>'+esc(c.available)+'</td>';
+    h+='<td>'+esc(c.location||"—")+'</td>';
+    h+='<td><span style="font-weight:700;color:'+scoreColor+'">'+c.score+'</span></td>';
+    h+='<td style="font-size:12px;max-width:200px;white-space:normal">';
+    if(c.factors&&c.factors.length>0) h+=c.factors.map(function(f){return esc(f);}).join(", ");
+    if(aiNotes[i+1]) h+='<br><span style="color:#176087;font-style:italic">\uD83E\uDDE0 '+esc(aiNotes[i+1])+'</span>';
+    h+='</td></tr>';
+  });
+  h+='</tbody></table></div>';
+  return h;
+}
+
+/* ═══ RELATIONSHIPS PAGE ═══ */
+var _relTab="candidates";
+var _relSort="risk";
+function renderRelationships(data){
+  var h='';
+  // Summary cards
+  var s=data.summary||{};
+  h+='<div class="stats-row" style="margin-bottom:20px">';
+  h+='<div class="stat-card"><div class="stat-icon" style="background:#fef2f2">\uD83D\uDEA8</div><div><div class="stat-label">Critical</div><div class="stat-value" style="color:#dc2626">'+((s.critical)||0)+'</div></div></div>';
+  h+='<div class="stat-card"><div class="stat-icon" style="background:#fff7ed">\u26A0\uFE0F</div><div><div class="stat-label">At Risk</div><div class="stat-value" style="color:#d97706">'+((s.atRisk)||0)+'</div></div></div>';
+  h+='<div class="stat-card"><div class="stat-icon" style="background:#eff6ff">\uD83D\uDC4D</div><div><div class="stat-label">Good</div><div class="stat-value" style="color:#176087">'+((s.good)||0)+'</div></div></div>';
+  h+='<div class="stat-card"><div class="stat-icon" style="background:#f0fdf4">\uD83D\uDCAA</div><div><div class="stat-label">Strong</div><div class="stat-value" style="color:#059669">'+((s.strong)||0)+'</div></div></div>';
+  h+='</div>';
+  // Tabs + sort
+  h+='<div class="toolbar">';
+  h+='<div class="chips">';
+  h+='<button class="chip'+(_relTab==="candidates"?" on":"")+'" onclick="_relTab=\'candidates\';loadPage()">Candidates</button>';
+  h+='<button class="chip'+(_relTab==="client_contacts"?" on":"")+'" onclick="_relTab=\'client_contacts\';loadPage()">Client Contacts</button>';
+  h+='<button class="chip'+(_relTab==="all"?" on":"")+'" onclick="_relTab=\'all\';loadPage()">All</button>';
+  h+='</div><div class="sep"></div>';
+  h+='<select style="padding:6px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:13px;font-family:inherit" onchange="_relSort=this.value;loadPage()">';
+  h+='<option value="risk"'+(_relSort==="risk"?" selected":"")+'>Most at risk first</option>';
+  h+='<option value="healthy"'+(_relSort==="healthy"?" selected":"")+'>Healthiest first</option>';
+  h+='<option value="alpha"'+(_relSort==="alpha"?" selected":"")+'>Alphabetical</option>';
+  h+='</select></div>';
+  h+='<div class="count-line">'+data.total+' relationships tracked</div>';
+  // Table
+  h+='<div class="table-wrap"><table><thead><tr><th>Health</th><th>Name</th><th>Type</th>';
+  if(_relTab!=="client_contacts") h+='<th>Cert / Role</th><th>Grade</th>';
+  if(_relTab!=="candidates") h+='<th>Client</th>';
+  h+='<th>Owner</th><th>Last Touch</th><th>Alerts</th></tr></thead><tbody>';
+  (data.data||[]).forEach(function(r){
+    var healthBg=r.healthColor==="green"?"#dcfce7":r.healthColor==="blue"?"#dbeafe":r.healthColor==="orange"?"#fef3c7":"#fecaca";
+    var healthTxt=r.healthColor==="green"?"#166534":r.healthColor==="blue"?"#1e40af":r.healthColor==="orange"?"#92400e":"#991b1b";
+    h+='<tr'+(r.type==="candidate"?' onclick="openDetail('+r.id+')" style="cursor:pointer"':' style="cursor:default"')+'>';
+    h+='<td><span style="display:inline-flex;align-items:center;gap:6px"><span style="background:'+healthBg+';color:'+healthTxt+';padding:4px 10px;border-radius:99px;font-size:12px;font-weight:700">'+r.health+'</span><span style="font-size:11px;color:'+healthTxt+'">'+esc(r.healthLabel)+'</span></span></td>';
+    h+='<td><span class="name-link">'+esc(r.name)+'</span><br><span class="muted" style="font-size:12px">'+esc(r.title||"")+'</span></td>';
+    h+='<td style="font-size:12px">'+esc(r.type==="candidate"?"Candidate":"Client Contact")+'</td>';
+    if(_relTab!=="client_contacts") h+='<td style="font-size:12px">'+esc(r.primaryCert||"—")+'</td><td>'+esc(r.grade||"—")+'</td>';
+    if(_relTab!=="candidates") h+='<td style="font-size:12px">'+esc(r.client||"—")+'</td>';
+    h+='<td style="font-size:12px">'+esc(r.owner||"—")+'</td>';
+    h+='<td>'+esc(r.lastTouched)+'<br><span class="muted" style="font-size:11px">'+r.daysSinceTouch+' days ago</span></td>';
+    h+='<td style="max-width:250px;white-space:normal;font-size:12px">';
+    if(r.alerts&&r.alerts.length>0){r.alerts.forEach(function(a){h+='<div style="color:#dc2626;margin-bottom:2px">\u26A0\uFE0F '+esc(a)+'</div>';});}
+    if(r.activePlacement){h+='<div style="color:#059669">\u2705 Placed: '+esc(r.activePlacement.job)+' at '+esc(r.activePlacement.client)+'</div>';}
+    h+='</td></tr>';
+  });
+  h+='</tbody></table></div>';
+  return h;
+}
+
+/* ═══ TRENDS PAGE ═══ */
+function renderTrends(data){
+  var h='';
+  h+='<p style="color:#64748b;font-size:14px;margin-bottom:20px">Market intelligence generated from your Bullhorn data. Use these insights for sales conversations, pricing decisions, and resource planning.</p>';
+  // Supply/Demand section
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">';
+  // Cert demand
+  h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
+  h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDD25 Certification Demand (Open Jobs)</div>';
+  (data.certDemand||[]).slice(0,10).forEach(function(d){
+    var maxJobs=data.certDemand[0]?data.certDemand[0].openJobs:1;
+    var pct=Math.round((d.openJobs/maxJobs)*100);
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+    h+='<span style="font-size:13px;min-width:160px;font-weight:500">'+esc(d.cert)+'</span>';
+    h+='<div style="flex:1;height:20px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#176087,#53A2BE);border-radius:4px"></div></div>';
+    h+='<span style="font-size:12px;font-weight:700;min-width:30px;text-align:right">'+d.openJobs+'</span>';
+    h+='</div>';
+  });
+  h+='</div>';
+  // Supply/demand ratio
+  h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
+  h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\u2696\uFE0F Supply vs Demand Ratio</div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:8px">Lower ratio = harder to fill. Below 1.0 means shortage.</div>';
+  (data.supplyDemand||[]).filter(function(sd){return sd.demand>0;}).slice(0,10).forEach(function(sd){
+    var color=sd.ratio<1?"#dc2626":sd.ratio<3?"#d97706":"#059669";
+    var badge=sd.status==="shortage"?"\uD83D\uDEA8 Shortage":sd.status==="tight"?"\u26A0\uFE0F Tight":"\u2705 Available";
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:13px">';
+    h+='<span style="min-width:140px;font-weight:500">'+esc(sd.cert)+'</span>';
+    h+='<span style="font-weight:700;color:'+color+';min-width:40px">'+((sd.ratio!==null)?sd.ratio+"x":"—")+'</span>';
+    h+='<span style="font-size:11px">'+badge+' ('+sd.supply+' candidates / '+sd.demand+' jobs)</span>';
+    h+='</div>';
+  });
+  h+='</div></div>';
+  // Rate trends
+  if(data.rateTrends&&data.rateTrends.length>0){
+    h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px;margin-bottom:20px">';
+    h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDCB0 Rate Trends (Contract Placements by Month)</div>';
+    h+='<div class="table-wrap"><table><thead><tr><th>Month</th><th>Avg Bill Rate</th><th>Avg Pay Rate</th><th>Avg Margin</th><th>Placements</th></tr></thead><tbody>';
+    data.rateTrends.slice(-12).forEach(function(rt){
+      h+='<tr><td style="font-weight:600">'+esc(rt.month)+'</td>';
+      h+='<td>$'+rt.avgBillRate+'/hr</td>';
+      h+='<td>$'+rt.avgPayRate+'/hr</td>';
+      h+='<td style="color:#059669;font-weight:600">$'+rt.avgMargin+'/hr</td>';
+      h+='<td>'+rt.placements+'</td></tr>';
+    });
+    h+='</tbody></table></div></div>';
+  }
+  // Geographic demand + placement velocity side by side
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">';
+  if(data.geoDemand&&data.geoDemand.length>0){
+    h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
+    h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDDFA\uFE0F Geographic Demand</div>';
+    data.geoDemand.slice(0,10).forEach(function(g){
+      var maxG=data.geoDemand[0]?data.geoDemand[0].openJobs:1;
+      var pct=Math.round((g.openJobs/maxG)*100);
+      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+      h+='<span style="font-size:13px;min-width:40px;font-weight:600">'+esc(g.state)+'</span>';
+      h+='<div style="flex:1;height:18px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#059669,#34d399);border-radius:4px"></div></div>';
+      h+='<span style="font-size:12px;font-weight:700;min-width:30px;text-align:right">'+g.openJobs+'</span>';
+      h+='</div>';
+    });
+    h+='</div>';
+  }
+  if(data.velocityTrends&&data.velocityTrends.length>0){
+    h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
+    h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDE80 Placement Velocity (by Month)</div>';
+    data.velocityTrends.slice(-12).forEach(function(v){
+      var maxV=Math.max.apply(null,data.velocityTrends.slice(-12).map(function(x){return x.placements;}));
+      var pct=Math.round((v.placements/maxV)*100);
+      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">';
+      h+='<span style="font-size:12px;min-width:60px;font-weight:500">'+esc(v.month)+'</span>';
+      h+='<div style="flex:1;height:16px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#7c3aed,#a78bfa);border-radius:4px"></div></div>';
+      h+='<span style="font-size:12px;font-weight:700;min-width:24px;text-align:right">'+v.placements+'</span>';
+      h+='</div>';
+    });
+    h+='</div>';
+  }
+  h+='</div>';
+  // Pipeline snapshot
+  if(data.pipeline&&data.pipeline.length>0){
+    h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px;margin-bottom:20px">';
+    h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDCC9 Opportunity Pipeline</div>';
+    h+='<div class="table-wrap"><table><thead><tr><th>Status</th><th>Count</th><th>Total Value</th></tr></thead><tbody>';
+    data.pipeline.forEach(function(p){
+      h+='<tr><td style="font-weight:600">'+esc(p.status||"Unknown")+'</td>';
+      h+='<td>'+p.count+'</td>';
+      h+='<td>$'+(p.totalValue||0).toLocaleString()+'</td></tr>';
+    });
+    h+='</tbody></table></div></div>';
+  }
+  h+='<div style="font-size:11px;color:#94a3b8;margin-top:12px">Generated '+esc(data.generatedAt?new Date(data.generatedAt).toLocaleString():"—")+' from your Bullhorn data</div>';
+  return h;
+}
+
 /* ═══ RENDER ═══ */
 var _debounceTimer=null;
 function render(){
@@ -1936,6 +2176,14 @@ async function loadPage(){
         h=renderSmartLists(slr);break;
       case "portal":
         h=await renderPortal();break;
+      case "aimatch":
+        h=renderAIMatch();break;
+      case "relationships":
+        var relData=await apiFetch("relationship-scores",{type:_relTab||"candidates",sort:_relSort||"risk",limit:200});
+        h=renderRelationships(relData);break;
+      case "trends":
+        var trendData=await apiFetch("trends");
+        h=renderTrends(trendData);break;
     }
   }catch(e){
     console.error(e);
@@ -1944,6 +2192,7 @@ async function loadPage(){
   document.getElementById("content").innerHTML=h;
   // Post-render hooks
   if(currentPage==="smartmatch") populateJobDropdown();
+  if(currentPage==="aimatch") populateAIJobDropdown();
   if(currentPage==="portal"&&_portalTab==="generate"&&_portalSelectedClient){
     var genTmpl=document.querySelector('input[name="gen-template"]:checked');
     if(genTmpl) loadPrefillFields(genTmpl.value);

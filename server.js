@@ -1039,6 +1039,465 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
   }
 });
 
+// ═══ AI-POWERED MATCHING (Claude API) ═══════════════════════════
+app.get("/api/ai-match/:jobId", async (req, res) => {
+  try {
+    var jobId = parseInt(req.params.jobId);
+    var apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(400).json({ error: "ANTHROPIC_API_KEY not configured" });
+
+    // Get job details from Postgres or Bullhorn
+    var job = null;
+    if (db.ready) {
+      job = await db.getOne("SELECT * FROM jobs WHERE id = $1", [jobId]);
+    }
+    if (!job) {
+      var bhJob = await bhFetch("entity/JobOrder/" + jobId, {
+        fields: "id,title,description,publicDescription,employmentType,status,clientCorporation,customText1,customText2,customText3,customText4,customText5,customText6,customText7,address,salary,payRate,clientBillRate,numOpenings,startDate,skillList,yearsRequired"
+      });
+      job = bhJob.data || bhJob;
+    }
+
+    // Get candidate pool from Postgres
+    var candidates = [];
+    if (db.ready) {
+      candidates = (await db.query(
+        "SELECT id, first_name, last_name, occupation, custom_text1, custom_text2, custom_text5, custom_text6, custom_text7, status, address_city, address_state, salary, hourly_rate, date_available, email, phone, skill_list, experience, description FROM candidates WHERE status NOT IN ('Placed', 'Inactive', 'Do Not Contact') ORDER BY date_last_modified DESC NULLS LAST"
+      )).rows;
+    } else {
+      var bhCands = await bhFetchAll("search/Candidate", {
+        query: 'isDeleted:0 AND (status:"Active" OR status:"Available")',
+        fields: "id,firstName,lastName,occupation,customText1,customText2,customText5,customText6,customText7,status,address,salary,hourlyRate,dateAvailable,email,phone,skillList,experience,description",
+        sort: "-dateLastModified"
+      });
+      candidates = (bhCands.data || []).map(function (c) {
+        return {
+          id: c.id, first_name: c.firstName, last_name: c.lastName,
+          occupation: c.occupation, custom_text1: Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1,
+          custom_text2: Array.isArray(c.customText2) ? c.customText2.join(", ") : c.customText2,
+          custom_text5: c.customText5, custom_text6: c.customText6, custom_text7: c.customText7,
+          status: c.status, address_city: c.address ? c.address.city : "",
+          address_state: c.address ? c.address.state : "",
+          salary: c.salary, hourly_rate: c.hourlyRate,
+          date_available: c.dateAvailable, email: c.email, phone: c.phone,
+          skill_list: c.skillList, experience: c.experience, description: c.description
+        };
+      });
+    }
+
+    // Build job profile for Claude
+    var jobTitle = job.title || job.job_title || "";
+    var jobDesc = job.description || job.public_description || job.publicDescription || "";
+    var jobCerts = job.custom_text1 || (job.customText1 ? (Array.isArray(job.customText1) ? job.customText1.join(", ") : job.customText1) : "");
+    var jobLocation = job.address_city ? (job.address_city + ", " + job.address_state) : (job.address ? [job.address.city, job.address.state].filter(Boolean).join(", ") : "");
+    var jobClient = job.client_name || (job.clientCorporation ? job.clientCorporation.name : "");
+    var jobRate = job.client_bill_rate || job.clientBillRate || job.salary || "";
+    var jobType = job.employment_type || job.employmentType || "";
+
+    // Pre-score candidates with weighted factors
+    var now = Date.now();
+    var scored = candidates.map(function (c) {
+      var score = 0;
+      var factors = [];
+      var certs = ((c.custom_text1 || "") + ", " + (c.custom_text2 || "")).toLowerCase();
+      var jobCertsLower = (jobCerts || "").toLowerCase();
+
+      // Cert matching (strongest signal)
+      if (jobCertsLower) {
+        var reqCerts = jobCertsLower.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+        var matched = 0;
+        reqCerts.forEach(function (rc) {
+          if (certs.indexOf(rc) >= 0) matched++;
+        });
+        if (reqCerts.length > 0) {
+          var certPct = Math.round((matched / reqCerts.length) * 100);
+          score += certPct * 0.4; // 40% weight
+          if (matched > 0) factors.push(matched + "/" + reqCerts.length + " certs match");
+        }
+      }
+
+      // Availability (20% weight)
+      if (c.date_available) {
+        var daysUntil = (c.date_available - now) / 86400000;
+        if (daysUntil <= 0) { score += 20; factors.push("Available now"); }
+        else if (daysUntil <= 14) { score += 16; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 30) { score += 10; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+      }
+
+      // Grade (15% weight)
+      var grade = (c.custom_text6 || "").toUpperCase();
+      if (grade === "A") { score += 15; factors.push("Grade A"); }
+      else if (grade === "B") { score += 10; factors.push("Grade B"); }
+      else if (grade === "C") { score += 5; }
+
+      // Location proximity (10% weight)
+      if (jobLocation && c.address_state) {
+        var jobState = (jobLocation.split(",").pop() || "").trim().toLowerCase();
+        if (c.address_state.toLowerCase() === jobState) { score += 10; factors.push("Same state"); }
+      }
+
+      // Status (10% weight)
+      if (c.status === "Active" || c.status === "Available") { score += 10; }
+
+      // Experience (5% weight)
+      if (c.experience && c.experience >= 5) { score += 5; factors.push(c.experience + " yrs exp"); }
+
+      return {
+        id: c.id, firstName: c.first_name || "", lastName: c.last_name || "",
+        title: c.occupation || "",
+        primaryCert: c.custom_text1 || "", secondaryCert: c.custom_text2 || "",
+        epicRole: c.custom_text5 || "", grade: c.custom_text6 || "",
+        status: c.status || "",
+        location: [c.address_city, c.address_state].filter(Boolean).join(", "),
+        available: c.date_available ? new Date(c.date_available).toLocaleDateString() : "—",
+        email: c.email || "", phone: c.phone || "",
+        score: Math.round(score),
+        factors: factors,
+        _forAI: {
+          name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+          certs: c.custom_text1 || "", secondaryCerts: c.custom_text2 || "",
+          role: c.occupation || "", grade: c.custom_text6 || "",
+          experience: c.experience || "", skills: c.skill_list || "",
+        }
+      };
+    });
+
+    // Sort by pre-score and take top 30 for AI analysis
+    scored.sort(function (a, b) { return b.score - a.score; });
+    var topCandidates = scored.slice(0, 30);
+
+    // Call Claude API for deep analysis
+    var aiInsights = null;
+    try {
+      var candidateSummaries = topCandidates.slice(0, 15).map(function (c, i) {
+        return (i + 1) + ". " + c._forAI.name + " — Certs: " + (c._forAI.certs || "none") + " | Secondary: " + (c._forAI.secondaryCerts || "none") + " | Role: " + c._forAI.role + " | Grade: " + (c._forAI.grade || "?") + " | Exp: " + (c._forAI.experience || "?") + " yrs | Score: " + c.score;
+      }).join("\n");
+
+      var aiPrompt = "You are an expert Epic healthcare IT staffing advisor for Anura Connect. Analyze this job and candidate matches.\n\n"
+        + "JOB: " + jobTitle + "\nClient: " + jobClient + "\nLocation: " + jobLocation + "\nType: " + jobType + "\nRate: " + jobRate + "\nRequired Certs: " + jobCerts + "\nDescription: " + (jobDesc || "Not provided").substring(0, 500) + "\n\n"
+        + "TOP CANDIDATES (pre-scored):\n" + candidateSummaries + "\n\n"
+        + "Respond in JSON format ONLY (no markdown, no code fences):\n"
+        + '{"topPick":{"candidateIndex":1,"reason":"..."},"insights":"2-3 sentence market insight about this role/cert demand","recommendations":["action item 1","action item 2"],"candidateNotes":[{"index":1,"note":"..."},{"index":2,"note":"..."},{"index":3,"note":"..."}]}';
+
+      var aiRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1024,
+          messages: [{ role: "user", content: aiPrompt }]
+        })
+      });
+
+      if (aiRes.ok) {
+        var aiData = await aiRes.json();
+        var aiText = aiData.content && aiData.content[0] ? aiData.content[0].text : "";
+        try { aiInsights = JSON.parse(aiText); } catch (pe) {
+          // Try to extract JSON from response
+          var jsonMatch = aiText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) { try { aiInsights = JSON.parse(jsonMatch[0]); } catch (e2) {} }
+        }
+      }
+    } catch (aiErr) {
+      console.log("[AI Match] Claude API error (non-blocking):", aiErr.message);
+    }
+
+    // Clean up _forAI from response
+    topCandidates.forEach(function (c) { delete c._forAI; });
+
+    res.json({
+      job: { id: jobId, title: jobTitle, client: jobClient, location: jobLocation, type: jobType, certs: jobCerts },
+      candidates: topCandidates,
+      totalScored: scored.length,
+      ai: aiInsights,
+    });
+  } catch (e) {
+    console.error("[AI Match]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ RELATIONSHIP INTELLIGENCE ═══════════════════════════════════
+app.get("/api/relationship-scores", async (req, res) => {
+  try {
+    var type = req.query.type || "candidates"; // candidates | client_contacts | all
+    var limit = parseInt(req.query.limit) || 50;
+    var sort = req.query.sort || "risk"; // risk | healthy | alpha
+    var nowMs = Date.now();
+
+    var results = [];
+
+    // Candidate relationship health
+    if (type === "candidates" || type === "all") {
+      var candRows = [];
+      if (db.ready) {
+        candRows = (await db.query(
+          "SELECT id, first_name, last_name, status, occupation, custom_text1, custom_text6, email, phone, owner_name, date_last_modified, date_last_comment, date_available FROM candidates WHERE status NOT IN ('Inactive', 'Do Not Contact', 'Archive') ORDER BY date_last_modified ASC NULLS FIRST"
+        )).rows;
+      }
+
+      // Get placement history for redeployment tracking
+      var activePlacements = {};
+      var endingPlacements = {};
+      if (db.ready) {
+        var placRows = (await db.query("SELECT candidate_id, candidate_name, job_title, client_name, date_end, status FROM placements WHERE status IN ('Approved', 'Actively On Contract')")).rows;
+        placRows.forEach(function (p) {
+          if (p.candidate_id) {
+            activePlacements[p.candidate_id] = p;
+            if (p.date_end && p.date_end <= nowMs + 60 * 86400000) {
+              endingPlacements[p.candidate_id] = p;
+            }
+          }
+        });
+
+        // Get submission counts per candidate (recent 90 days)
+        var recentCutoff = nowMs - 90 * 86400000;
+        var subCounts = {};
+        try {
+          var subRows = (await db.query("SELECT candidate_id, COUNT(*) as cnt FROM submissions WHERE date_added >= $1 AND (is_deleted IS NULL OR is_deleted = false) GROUP BY candidate_id", [recentCutoff])).rows;
+          subRows.forEach(function (r) { subCounts[r.candidate_id] = parseInt(r.cnt); });
+        } catch (e) {}
+      }
+
+      candRows.forEach(function (c) {
+        var daysSinceTouch = c.date_last_modified ? Math.floor((nowMs - c.date_last_modified) / 86400000) : 999;
+        var daysSinceComment = c.date_last_comment ? Math.floor((nowMs - c.date_last_comment) / 86400000) : 999;
+        var bestTouch = Math.min(daysSinceTouch, daysSinceComment);
+
+        // Calculate health score (0-100)
+        var health = 100;
+        if (bestTouch > 7) health -= 10;
+        if (bestTouch > 14) health -= 15;
+        if (bestTouch > 30) health -= 20;
+        if (bestTouch > 60) health -= 25;
+        if (bestTouch > 90) health -= 20;
+
+        // Bonus for active placement
+        var placement = activePlacements[c.id];
+        if (placement) health = Math.min(100, health + 15);
+
+        // Penalty if placement ending and no recent submissions
+        var ending = endingPlacements[c.id];
+        var recentSubs = (subCounts && subCounts[c.id]) || 0;
+        if (ending && recentSubs === 0) health -= 20;
+
+        // Grade bonus
+        var grade = (c.custom_text6 || "").toUpperCase();
+        if (grade === "A") health = Math.min(100, health + 5);
+
+        health = Math.max(0, Math.min(100, health));
+
+        var alerts = [];
+        if (bestTouch > 30) alerts.push("No contact in " + bestTouch + " days");
+        if (ending && recentSubs === 0) alerts.push("Placement ending " + new Date(ending.date_end).toLocaleDateString() + " — no redeployment activity");
+        if (c.date_available && c.date_available <= nowMs + 14 * 86400000 && c.date_available >= nowMs - 7 * 86400000 && !placement) {
+          alerts.push("Available soon — needs outreach");
+        }
+
+        var healthLabel = health >= 80 ? "Strong" : health >= 60 ? "Good" : health >= 40 ? "At Risk" : "Critical";
+        var healthColor = health >= 80 ? "green" : health >= 60 ? "blue" : health >= 40 ? "orange" : "red";
+
+        results.push({
+          id: c.id, type: "candidate",
+          name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+          title: c.occupation || "", primaryCert: c.custom_text1 || "",
+          grade: c.custom_text6 || "", status: c.status || "",
+          email: c.email || "", phone: c.phone || "",
+          owner: c.owner_name || "",
+          health: health, healthLabel: healthLabel, healthColor: healthColor,
+          daysSinceTouch: bestTouch,
+          lastTouched: c.date_last_modified ? new Date(c.date_last_modified).toLocaleDateString() : "Never",
+          activePlacement: placement ? { job: placement.job_title, client: placement.client_name, ends: placement.date_end ? new Date(placement.date_end).toLocaleDateString() : null } : null,
+          recentSubmissions: recentSubs,
+          alerts: alerts,
+        });
+      });
+    }
+
+    // Client contact relationship health
+    if (type === "client_contacts" || type === "all") {
+      if (db.ready) {
+        var contactRows = (await db.query(
+          "SELECT id, first_name, last_name, name, email, phone, occupation, division, client_id, client_name, owner_name, date_last_modified, date_last_comment FROM client_contacts WHERE (is_deleted IS NULL OR is_deleted = false) ORDER BY date_last_modified ASC NULLS FIRST"
+        )).rows;
+
+        contactRows.forEach(function (cc) {
+          var daysSinceTouch = cc.date_last_modified ? Math.floor((nowMs - cc.date_last_modified) / 86400000) : 999;
+          var health = 100;
+          if (daysSinceTouch > 14) health -= 15;
+          if (daysSinceTouch > 30) health -= 20;
+          if (daysSinceTouch > 60) health -= 25;
+          if (daysSinceTouch > 90) health -= 25;
+          health = Math.max(0, Math.min(100, health));
+
+          var alerts = [];
+          if (daysSinceTouch > 30) alerts.push("No contact in " + daysSinceTouch + " days");
+
+          var healthLabel = health >= 80 ? "Strong" : health >= 60 ? "Good" : health >= 40 ? "At Risk" : "Critical";
+          var healthColor = health >= 80 ? "green" : health >= 60 ? "blue" : health >= 40 ? "orange" : "red";
+
+          results.push({
+            id: cc.id, type: "client_contact",
+            name: cc.name || ((cc.first_name || "") + " " + (cc.last_name || "")).trim(),
+            title: cc.occupation || "", division: cc.division || "",
+            client: cc.client_name || "", clientId: cc.client_id,
+            email: cc.email || "", phone: cc.phone || "",
+            owner: cc.owner_name || "",
+            health: health, healthLabel: healthLabel, healthColor: healthColor,
+            daysSinceTouch: daysSinceTouch,
+            lastTouched: cc.date_last_modified ? new Date(cc.date_last_modified).toLocaleDateString() : "Never",
+            alerts: alerts,
+          });
+        });
+      }
+    }
+
+    // Sort
+    if (sort === "risk") {
+      results.sort(function (a, b) { return a.health - b.health; });
+    } else if (sort === "healthy") {
+      results.sort(function (a, b) { return b.health - a.health; });
+    } else {
+      results.sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
+    }
+
+    // Summary stats
+    var critical = results.filter(function (r) { return r.health < 40; }).length;
+    var atRisk = results.filter(function (r) { return r.health >= 40 && r.health < 60; }).length;
+    var good = results.filter(function (r) { return r.health >= 60 && r.health < 80; }).length;
+    var strong = results.filter(function (r) { return r.health >= 80; }).length;
+
+    res.json({
+      data: results.slice(0, limit),
+      total: results.length,
+      summary: { critical: critical, atRisk: atRisk, good: good, strong: strong },
+    });
+  } catch (e) {
+    console.error("[Relationship Scores]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ TREND ANALYTICS (from your own data) ════════════════════════
+app.get("/api/trends", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available for trend analysis" });
+
+    var nowMs = Date.now();
+
+    // 1. Certification Demand — which certs appear most in active jobs
+    var certDemand = [];
+    try {
+      var jobCerts = (await db.query("SELECT custom_text1 FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND custom_text1 IS NOT NULL AND custom_text1 != ''")).rows;
+      var certCounts = {};
+      jobCerts.forEach(function (j) {
+        var certs = (j.custom_text1 || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+        certs.forEach(function (c) { certCounts[c] = (certCounts[c] || 0) + 1; });
+      });
+      certDemand = Object.entries(certCounts).map(function (e) { return { cert: e[0], openJobs: e[1] }; })
+        .sort(function (a, b) { return b.openJobs - a.openJobs; }).slice(0, 20);
+    } catch (e) {}
+
+    // 2. Certification Supply — how many candidates per cert
+    var certSupply = [];
+    try {
+      var candCerts = (await db.query("SELECT custom_text1 FROM candidates WHERE status = 'Active' AND custom_text1 IS NOT NULL AND custom_text1 != ''")).rows;
+      var supplyCounts = {};
+      candCerts.forEach(function (c) {
+        var certs = (c.custom_text1 || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+        certs.forEach(function (cert) { supplyCounts[cert] = (supplyCounts[cert] || 0) + 1; });
+      });
+      certSupply = Object.entries(supplyCounts).map(function (e) { return { cert: e[0], activeCandidates: e[1] }; })
+        .sort(function (a, b) { return b.activeCandidates - a.activeCandidates; }).slice(0, 20);
+    } catch (e) {}
+
+    // 3. Supply/Demand ratio — most competitive certs
+    var supplyDemandMap = {};
+    certDemand.forEach(function (d) { supplyDemandMap[d.cert] = { cert: d.cert, demand: d.openJobs, supply: 0 }; });
+    certSupply.forEach(function (s) {
+      if (supplyDemandMap[s.cert]) { supplyDemandMap[s.cert].supply = s.activeCandidates; }
+      else { supplyDemandMap[s.cert] = { cert: s.cert, demand: 0, supply: s.activeCandidates }; }
+    });
+    var supplyDemand = Object.values(supplyDemandMap).map(function (sd) {
+      sd.ratio = sd.demand > 0 ? Math.round((sd.supply / sd.demand) * 10) / 10 : null;
+      sd.status = sd.ratio === null ? "no demand" : sd.ratio < 1 ? "shortage" : sd.ratio < 3 ? "tight" : "available";
+      return sd;
+    }).sort(function (a, b) { return (a.ratio || 999) - (b.ratio || 999); });
+
+    // 4. Rate trends — average bill/pay rates for active placements by month
+    var rateTrends = [];
+    try {
+      var placRates = (await db.query("SELECT date_begin, pay_rate, client_bill_rate, employment_type FROM placements WHERE pay_rate > 0 AND client_bill_rate > 0 AND date_begin IS NOT NULL ORDER BY date_begin ASC")).rows;
+      var monthBuckets = {};
+      placRates.forEach(function (p) {
+        if (p.employment_type === "Direct Hire" || p.employment_type === "Permanent") return;
+        var d = new Date(p.date_begin);
+        var key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+        if (!monthBuckets[key]) monthBuckets[key] = { month: key, billRates: [], payRates: [] };
+        monthBuckets[key].billRates.push(Number(p.client_bill_rate));
+        monthBuckets[key].payRates.push(Number(p.pay_rate));
+      });
+      rateTrends = Object.values(monthBuckets).map(function (b) {
+        var avgBill = b.billRates.reduce(function (s, v) { return s + v; }, 0) / b.billRates.length;
+        var avgPay = b.payRates.reduce(function (s, v) { return s + v; }, 0) / b.payRates.length;
+        return {
+          month: b.month, avgBillRate: Math.round(avgBill * 100) / 100,
+          avgPayRate: Math.round(avgPay * 100) / 100,
+          avgMargin: Math.round((avgBill - avgPay) * 100) / 100,
+          placements: b.billRates.length,
+        };
+      }).sort(function (a, b) { return a.month.localeCompare(b.month); });
+    } catch (e) {}
+
+    // 5. Placement velocity — new placements per month
+    var velocityTrends = [];
+    try {
+      var placDates = (await db.query("SELECT date_added FROM placements WHERE date_added IS NOT NULL ORDER BY date_added ASC")).rows;
+      var velBuckets = {};
+      placDates.forEach(function (p) {
+        var d = new Date(p.date_added);
+        var key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+        velBuckets[key] = (velBuckets[key] || 0) + 1;
+      });
+      velocityTrends = Object.entries(velBuckets).map(function (e) {
+        return { month: e[0], placements: e[1] };
+      }).sort(function (a, b) { return a.month.localeCompare(b.month); });
+    } catch (e) {}
+
+    // 6. Geographic demand — where are the jobs
+    var geoDemand = [];
+    try {
+      var geoRows = (await db.query("SELECT address_state, COUNT(*) as cnt FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND address_state IS NOT NULL AND address_state != '' GROUP BY address_state ORDER BY cnt DESC LIMIT 20")).rows;
+      geoDemand = geoRows.map(function (r) { return { state: r.address_state, openJobs: parseInt(r.cnt) }; });
+    } catch (e) {}
+
+    // 7. Pipeline snapshot — opportunities by status
+    var pipeline = [];
+    try {
+      var pipeRows = (await db.query("SELECT status, COUNT(*) as cnt, SUM(COALESCE(deal_value, 0)) as total_value FROM opportunities WHERE (is_deleted IS NULL OR is_deleted = false) GROUP BY status ORDER BY cnt DESC")).rows;
+      pipeline = pipeRows.map(function (r) { return { status: r.status, count: parseInt(r.cnt), totalValue: Math.round(Number(r.total_value)) }; });
+    } catch (e) {}
+
+    res.json({
+      certDemand: certDemand,
+      certSupply: certSupply,
+      supplyDemand: supplyDemand,
+      rateTrends: rateTrends,
+      velocityTrends: velocityTrends,
+      geoDemand: geoDemand,
+      pipeline: pipeline,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error("[Trends]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Dashboard Summary (for landing page) ──────
 app.get("/api/dashboard", async (req, res) => {
   try {
