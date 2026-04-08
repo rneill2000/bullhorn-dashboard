@@ -1619,20 +1619,24 @@ app.get("/api/portal/clients", async (req, res) => {
   try {
     await authenticate();
     const data = await bhFetchAll("query/ClientCorporation", {
-      where: "isDeleted=false",
-      fields: "id,name,status,owner(id,firstName,lastName,email)",
+      where: "id IS NOT NULL",
+      fields: "id,name,status,owner",
       orderBy: "name",
     });
     const clients = (data.data || []).map(function (c) {
+      var ownerObj = null;
+      if (c.owner) {
+        ownerObj = {
+          id: c.owner.id || null,
+          name: ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim(),
+          email: c.owner.email || "",
+        };
+      }
       return {
         id: c.id,
         name: c.name || "",
         status: c.status || "",
-        owner: c.owner ? {
-          id: c.owner.id,
-          name: ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim(),
-          email: c.owner.email || "",
-        } : null,
+        owner: ownerObj,
       };
     });
     res.json({ data: clients, total: clients.length });
