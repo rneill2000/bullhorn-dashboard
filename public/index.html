@@ -621,6 +621,7 @@ var NAV_BASE=[
   {key:"trends",label:"Trends",emoji:"\uD83D\uDCC8"},
   {key:"revenue",label:"Revenue",emoji:"\uD83D\uDCB0"},
   {key:"golives",label:"Go-Lives",emoji:"\uD83C\uDFE5"},
+  {key:"intel",label:"Market Intel",emoji:"\uD83D\uDCF0"},
   {key:"outreach",label:"Outreach",emoji:"\uD83D\uDCE7"},
   {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
   {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"},
@@ -1109,16 +1110,39 @@ async function runSmartMatch(jobId){
 }
 async function populateJobDropdown(){
   try{
-    var r=await apiFetch("jobs",{status:"Accepting Candidates"});
     var sel=document.getElementById("sm-job-select");
     if(!sel)return;
+    var allJobs=[];
+    var seen={};
+    var statuses=["Accepting Candidates","Open"];
+    for(var si=0;si<statuses.length;si++){
+      try{
+        var jr=await apiFetch("jobs",{status:statuses[si]});
+        (jr.data||[]).forEach(function(j){
+          if(!seen[j.id]){seen[j.id]=true;allJobs.push(j);}
+        });
+      }catch(e){}
+    }
+    if(allJobs.length===0){
+      try{
+        var jr2=await apiFetch("jobs",{status:"All"});
+        (jr2.data||[]).forEach(function(j){
+          if(!seen[j.id]){seen[j.id]=true;allJobs.push(j);}
+        });
+      }catch(e){}
+    }
     var PRIO={"Urgent":"\uD83D\uDCA5","Hot":"\uD83D\uDD25","Warm":"\u2600\uFE0F","Cold":"\u2744\uFE0F"};
-    (r.data||[]).forEach(function(j){
+    allJobs.forEach(function(j){
       var opt=document.createElement("option");
       opt.value=j.id;
-      opt.textContent=(PRIO[j.priority]||"")+' '+j.title+(j.client?" \u2014 "+j.client:"");
+      opt.textContent=(PRIO[j.priority]||"")+' '+j.title+(j.client?" \u2014 "+j.client:"")+(j.status?" ["+j.status+"]":"");
       sel.appendChild(opt);
     });
+    if(allJobs.length===0){
+      var opt=document.createElement("option");
+      opt.value="";opt.textContent="No jobs found — check Bullhorn sync";opt.disabled=true;
+      sel.appendChild(opt);
+    }
     // Auto-select if coming from dashboard
     if(window._smJobId){sel.value=window._smJobId;runSmartMatch(window._smJobId);window._smJobId=null;}
   }catch(e){}
@@ -1904,16 +1928,43 @@ function renderAIMatch(){
 }
 async function populateAIJobDropdown(){
   try{
-    var jr=await apiFetch("jobs",{status:"Accepting Candidates"});
     var sel=document.getElementById("ai-job-select");
     if(!sel)return;
-    (jr.data||[]).forEach(function(j){
+    // Try Accepting Candidates first, then also grab Open jobs
+    var allJobs=[];
+    var seen={};
+    var statuses=["Accepting Candidates","Open"];
+    for(var si=0;si<statuses.length;si++){
+      try{
+        var jr=await apiFetch("jobs",{status:statuses[si]});
+        (jr.data||[]).forEach(function(j){
+          if(!seen[j.id]){seen[j.id]=true;allJobs.push(j);}
+        });
+      }catch(e){}
+    }
+    // If still empty, try fetching ALL jobs (no status filter)
+    if(allJobs.length===0){
+      try{
+        var jr2=await apiFetch("jobs",{status:"All"});
+        (jr2.data||[]).forEach(function(j){
+          if(!seen[j.id]){seen[j.id]=true;allJobs.push(j);}
+        });
+      }catch(e){}
+    }
+    var PRIO={"Urgent":"\uD83D\uDCA5","Hot":"\uD83D\uDD25","Warm":"\u2600\uFE0F","Cold":"\u2744\uFE0F"};
+    allJobs.forEach(function(j){
       var opt=document.createElement("option");
-      opt.value=j.id; opt.textContent=j.title+(j.client?" — "+j.client:"");
+      opt.value=j.id;
+      opt.textContent=(PRIO[j.priority]||"")+" "+j.title+(j.client?" \u2014 "+j.client:"")+(j.status?" ["+j.status+"]":"");
       sel.appendChild(opt);
     });
+    if(allJobs.length===0){
+      var opt=document.createElement("option");
+      opt.value="";opt.textContent="No jobs found — check Bullhorn sync";opt.disabled=true;
+      sel.appendChild(opt);
+    }
     if(_aiMatchJobId) sel.value=_aiMatchJobId;
-  }catch(e){}
+  }catch(e){console.error("AI dropdown error:",e);}
 }
 async function runAIMatch(){
   var sel=document.getElementById("ai-job-select");
@@ -2196,6 +2247,7 @@ function renderGoLives(data){
   });
   h+='</select>';
   h+='<button onclick="showGoLiveForm()" style="background:#176087;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">+ Add Hospital</button>';
+  h+='<button onclick="seedGoLives()" style="background:#059669;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">\uD83C\uDF31 Load 2026 Data</button>';
   h+='</div>';
 
   // Table
@@ -2336,12 +2388,193 @@ async function editGoLive(id){
     if(rec)showGoLiveForm(rec);
   }catch(e){alert("Error loading record");}
 }
+async function seedGoLives(){
+  try{
+    var btn=event.target;btn.disabled=true;btn.textContent="Loading...";
+    var resp=await fetch(apiBase+"/golives/seed",{method:"POST"});
+    var result=await resp.json();
+    btn.textContent="\u2705 "+result.inserted+" added";
+    setTimeout(function(){btn.textContent="\uD83C\uDF31 Load 2026 Data";btn.disabled=false;loadPage();},2000);
+  }catch(e){alert("Error: "+e.message);}
+}
 async function deleteGoLive(id){
   if(!confirm("Delete this hospital record?"))return;
   try{
     await fetch(apiBase+"/golives/"+id,{method:"DELETE"});
     loadPage();
   }catch(e){alert("Error deleting: "+e.message);}
+}
+
+/* ═══ MARKET INTELLIGENCE PAGE ═══ */
+var _intelSource="All";
+var _intelSearch="";
+var _intelStarred=false;
+var _intelActionable=false;
+
+function renderIntel(data){
+  if(!data) return '<p style="color:#dc2626">Intel data not available.</p>';
+  var h='';
+
+  // Summary cards
+  var sum=data.summary||{};
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">';
+  h+='<div class="stat-card"><div class="stat-val">'+data.total+'</div><div class="stat-label">Articles</div></div>';
+  h+='<div class="stat-card"><div class="stat-val" style="color:#d97706">'+(sum.actionable||0)+'</div><div class="stat-label">Actionable</div></div>';
+  h+='<div class="stat-card"><div class="stat-val" style="color:#7c3aed">'+(sum.starred||0)+'</div><div class="stat-label">Starred</div></div>';
+  var srcCount=Object.keys(sum.sources||{}).length;
+  h+='<div class="stat-card"><div class="stat-val">'+srcCount+'</div><div class="stat-label">Sources</div></div>';
+  h+='</div>';
+
+  // Controls
+  h+='<div style="display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap">';
+  h+='<input id="intel-search" type="text" placeholder="Search articles..." value="'+esc(_intelSearch)+'" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:200px" onkeyup="if(event.key===\'Enter\'){_intelSearch=this.value;loadPage();}">';
+  h+='<select onchange="_intelSource=this.value;loadPage();" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+  h+='<option value="All"'+(""===_intelSource||"All"===_intelSource?" selected":"")+'> All Sources</option>';
+  var srcs=Object.keys(sum.sources||{}).sort();
+  srcs.forEach(function(s){h+='<option value="'+esc(s)+'"'+(s===_intelSource?" selected":"")+'>'+esc(s)+' ('+sum.sources[s]+')</option>';});
+  h+='</select>';
+  h+='<label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" '+ (_intelStarred?"checked":"") +' onchange="_intelStarred=this.checked;loadPage();">Starred only</label>';
+  h+='<label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" '+ (_intelActionable?"checked":"") +' onchange="_intelActionable=this.checked;loadPage();">Actionable only</label>';
+  h+='<button onclick="scanFeeds()" style="background:#176087;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">\uD83D\uDD04 Scan Now</button>';
+  h+='<button onclick="showClipForm()" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">\uD83D\uDCCE Clip Post</button>';
+  h+='</div>';
+
+  // Article feed
+  if(data.data&&data.data.length>0){
+    data.data.forEach(function(a){
+      var relColor=a.relevance_score>=40?"#059669":a.relevance_score>=20?"#d97706":"#64748b";
+      var timeAgo=a.published_at?timeSince(new Date(a.published_at)):"";
+      h+='<div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:12px;background:'+(a.is_starred?"#fffbeb":"#fff")+'">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">';
+      h+='<div style="flex:1">';
+      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">';
+      h+='<span style="font-size:10px;background:#f1f5f9;padding:2px 8px;border-radius:10px;color:#64748b;font-weight:600">'+esc(a.source||"")+'</span>';
+      if(a.source_type==="clip") h+='<span style="font-size:10px;background:#ede9fe;padding:2px 8px;border-radius:10px;color:#7c3aed;font-weight:600">CLIP</span>';
+      if(a.relevance_score>=30) h+='<span style="font-size:10px;background:'+relColor+'15;padding:2px 8px;border-radius:10px;color:'+relColor+';font-weight:600">Score: '+a.relevance_score+'</span>';
+      if(a.is_actionable) h+='<span style="font-size:10px;background:#fef3c7;padding:2px 8px;border-radius:10px;color:#92400e;font-weight:600">\u26A1 Actionable</span>';
+      if(timeAgo) h+='<span style="font-size:10px;color:#94a3b8">'+timeAgo+'</span>';
+      h+='</div>';
+      h+='<a href="'+esc(a.url||"#")+'" target="_blank" style="font-size:14px;font-weight:600;color:#1e293b;text-decoration:none;line-height:1.3">'+esc(a.title||"Untitled")+'</a>';
+      if(a.summary) h+='<p style="font-size:12px;color:#64748b;margin:6px 0 0;line-height:1.4">'+esc(a.summary.substring(0,200))+(a.summary.length>200?"...":"")+'</p>';
+      if(a.hospital_name||a.health_system||a.epic_modules){
+        h+='<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">';
+        if(a.hospital_name) h+='<span style="font-size:10px;background:#dbeafe;padding:2px 6px;border-radius:6px;color:#1e40af">\uD83C\uDFE5 '+esc(a.hospital_name)+'</span>';
+        if(a.health_system) h+='<span style="font-size:10px;background:#dcfce7;padding:2px 6px;border-radius:6px;color:#166534">'+esc(a.health_system)+'</span>';
+        if(a.epic_modules) h+='<span style="font-size:10px;background:#fce7f3;padding:2px 6px;border-radius:6px;color:#9d174d">'+esc(a.epic_modules)+'</span>';
+        if(a.state) h+='<span style="font-size:10px;background:#f1f5f9;padding:2px 6px;border-radius:6px;color:#475569">'+esc(a.state)+'</span>';
+        h+='</div>';
+      }
+      h+='</div>';
+      // Action buttons
+      h+='<div style="display:flex;flex-direction:column;gap:6px;min-width:80px">';
+      h+='<button onclick="toggleIntelStar('+a.id+','+(!a.is_starred)+')" style="background:none;border:1px solid #e5e7eb;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:14px" title="Star">'+(a.is_starred?"\u2B50":"\u2606")+'</button>';
+      h+='<button onclick="promoteToGoLive('+a.id+')" style="background:none;border:1px solid #e5e7eb;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:11px;font-weight:600" title="Add to Go-Live Tracker">\uD83C\uDFE5 Track</button>';
+      h+='</div>';
+      h+='</div></div>';
+    });
+  } else {
+    h+='<div style="text-align:center;padding:40px;color:#64748b">';
+    h+='<div style="font-size:40px;margin-bottom:12px">\uD83D\uDCF0</div>';
+    h+='<div style="font-size:15px;font-weight:600;margin-bottom:4px">No articles yet</div>';
+    h+='<div style="font-size:13px">Click "Scan Now" to pull the latest from Becker\'s, HIStalk, and news sources. Or use "Clip Post" to save a LinkedIn post.</div>';
+    h+='</div>';
+  }
+
+  // Clip modal
+  h+='<div id="clip-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center">';
+  h+='<div style="background:#fff;border-radius:12px;padding:28px;max-width:550px;width:90%;max-height:80vh;overflow-y:auto">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h3 style="margin:0">\uD83D\uDCCE Save Post / Article</h3><button onclick="closeClipModal()" style="background:none;border:none;font-size:20px;cursor:pointer">\u2715</button></div>';
+  h+='<p style="font-size:12px;color:#64748b;margin-bottom:16px">Paste a LinkedIn post, industry article, or any intel. Our AI will automatically extract hospital names, Epic modules, and go-live details.</p>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Source</label>';
+  h+='<select id="clip-source" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+  h+='<option value="LinkedIn">LinkedIn</option><option value="Twitter/X">Twitter/X</option><option value="Email">Email</option><option value="Conference">Conference</option><option value="Word of Mouth">Word of Mouth</option><option value="Other">Other</option>';
+  h+='</select></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Title / Headline</label>';
+  h+='<input id="clip-title" type="text" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px" placeholder="Brief title or who posted it"></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Content / Post Text *</label>';
+  h+='<textarea id="clip-content" rows="6" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;resize:vertical" placeholder="Paste the full post or article text here..."></textarea></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">URL (optional)</label>';
+  h+='<input id="clip-url" type="text" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px" placeholder="https://..."></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Your Notes (optional)</label>';
+  h+='<textarea id="clip-notes" rows="2" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;resize:vertical" placeholder="Any context, thoughts, or action items..."></textarea></div>';
+  h+='<button onclick="saveClip()" style="background:#7c3aed;color:#fff;border:none;padding:10px 24px;border-radius:6px;cursor:pointer;font-weight:600">Save & Analyze</button>';
+  h+='<div id="clip-status" style="margin-top:12px"></div>';
+  h+='</div></div>';
+
+  return h;
+}
+
+function timeSince(date){
+  var s=Math.floor((new Date()-date)/1000);
+  if(s<60)return "just now";
+  var m=Math.floor(s/60);if(m<60)return m+"m ago";
+  var hr=Math.floor(m/60);if(hr<24)return hr+"h ago";
+  var d=Math.floor(hr/24);if(d<30)return d+"d ago";
+  return date.toLocaleDateString();
+}
+
+async function scanFeeds(){
+  try{
+    var btn=event.target;btn.disabled=true;btn.textContent="Scanning...";
+    var resp=await fetch(apiBase+"/intel/scan",{method:"POST"});
+    var result=await resp.json();
+    btn.textContent="\u2705 "+result.newArticles+" new";
+    setTimeout(function(){btn.textContent="\uD83D\uDD04 Scan Now";btn.disabled=false;loadPage();},2000);
+  }catch(e){alert("Scan error: "+e.message);}
+}
+
+async function toggleIntelStar(id,starred){
+  try{
+    await fetch(apiBase+"/intel/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_starred:starred})});
+    loadPage();
+  }catch(e){}
+}
+
+async function promoteToGoLive(id){
+  if(!confirm("Add this to the Epic Go-Live Tracker?"))return;
+  try{
+    var resp=await fetch(apiBase+"/intel/"+id+"/promote",{method:"POST",headers:{"Content-Type":"application/json"}});
+    var result=await resp.json();
+    if(result.data){alert("Added to Go-Live Tracker: "+(result.data.hospital_name||"New entry"));}
+    loadPage();
+  }catch(e){alert("Error: "+e.message);}
+}
+
+function showClipForm(){
+  var m=document.getElementById("clip-modal");if(m)m.style.display="flex";
+}
+function closeClipModal(){
+  var m=document.getElementById("clip-modal");if(m)m.style.display="none";
+}
+async function saveClip(){
+  var content=document.getElementById("clip-content").value;
+  if(!content){alert("Paste the post content.");return;}
+  var statusDiv=document.getElementById("clip-status");
+  statusDiv.innerHTML='<div style="color:#64748b">Saving and analyzing...</div>';
+  try{
+    var resp=await fetch(apiBase+"/intel/clip",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        source:document.getElementById("clip-source").value,
+        title:document.getElementById("clip-title").value,
+        content:content,
+        url:document.getElementById("clip-url").value,
+        notes:document.getElementById("clip-notes").value
+      })
+    });
+    var result=await resp.json();
+    if(result.data){
+      var ai=result.data.ai_extracted;
+      var msg='\u2705 Saved!';
+      if(ai&&ai.hospitalName) msg+=' AI detected: <strong>'+esc(ai.hospitalName)+'</strong>';
+      if(ai&&ai.isEpicRelated) msg+=' (Epic-related)';
+      statusDiv.innerHTML='<div style="color:#059669">'+msg+'</div>';
+      setTimeout(function(){closeClipModal();loadPage();},2000);
+    } else {
+      statusDiv.innerHTML='<div style="color:#dc2626">Error saving clip.</div>';
+    }
+  }catch(e){statusDiv.innerHTML='<div style="color:#dc2626">Error: '+e.message+'</div>';}
 }
 
 /* ═══ OUTREACH PAGE ═══ */
@@ -2670,6 +2903,9 @@ async function loadPage(){
       case "golives":
         var glData=await apiFetch("golives",{phase:_glPhase||"All",oppStatus:_glOppStatus||"All",q:_glSearch||""});
         h=renderGoLives(glData);break;
+      case "intel":
+        var intelData=await apiFetch("intel",{source:_intelSource||"All",q:_intelSearch||"",starred:_intelStarred?"true":"",actionable:_intelActionable?"true":"",limit:150});
+        h=renderIntel(intelData);break;
       case "outreach":
         h=await renderOutreach();break;
     }

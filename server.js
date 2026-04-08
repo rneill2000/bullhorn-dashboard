@@ -2095,6 +2095,386 @@ app.get("/api/export/revenue-report", async (req, res) => {
   }
 });
 
+// ── Market Intelligence — RSS feeds, LinkedIn clips, AI extraction ──────
+
+var INTEL_FEEDS = [
+  { name: "Becker's Health IT", url: "https://www.beckershospitalreview.com/healthcare-information-technology.feed?type=rss", type: "rss" },
+  { name: "Becker's EHR", url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs.feed?type=rss", type: "rss" },
+  { name: "Becker's Hospital News", url: "https://www.beckershospitalreview.com/hospital-management-administration.feed?type=rss", type: "rss" },
+  { name: "HIStalk", url: "https://www.histalk.com/feed/", type: "rss" },
+  { name: "Google News - Epic EHR", url: "https://news.google.com/rss/search?q=Epic+EHR+implementation+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "Google News - Epic Go-Live", url: "https://news.google.com/rss/search?q=%22Epic%22+%22go-live%22+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "Google News - Health System EHR", url: "https://news.google.com/rss/search?q=health+system+EHR+migration+Epic&hl=en-US&gl=US&ceid=US:en", type: "rss" }
+];
+
+var EPIC_KEYWORDS = [
+  "epic", "ehr", "electronic health record", "go-live", "golive", "implementation",
+  "epic systems", "community connect", "epiccare", "revenue cycle", "beaker",
+  "cadence", "cogito", "caboodle", "healthy planet", "mychart", "hyperspace",
+  "epic migration", "epic transition", "emr", "clinical system", "verona"
+];
+
+// Simple XML tag parser (no dependency needed)
+function parseRSSItems(xml) {
+  var items = [];
+  var itemRegex = /<item>([\s\S]*?)<\/item>/gi;
+  var match;
+  while ((match = itemRegex.exec(xml)) !== null) {
+    var block = match[1];
+    var getTag = function (tag) {
+      var r = new RegExp("<" + tag + "[^>]*>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?</" + tag + ">", "is");
+      var m = block.match(r);
+      return m ? m[1].trim() : "";
+    };
+    items.push({
+      title: getTag("title"),
+      link: getTag("link") || getTag("guid"),
+      description: getTag("description").replace(/<[^>]+>/g, "").substring(0, 500),
+      pubDate: getTag("pubDate")
+    });
+  }
+  return items;
+}
+
+function scoreRelevance(title, description) {
+  var text = ((title || "") + " " + (description || "")).toLowerCase();
+  var score = 0;
+  EPIC_KEYWORDS.forEach(function (kw) {
+    if (text.indexOf(kw) >= 0) score += 10;
+  });
+  // Boost for specific high-value phrases
+  if (text.indexOf("go-live") >= 0 || text.indexOf("golive") >= 0) score += 20;
+  if (text.indexOf("implementation") >= 0) score += 15;
+  if (text.indexOf("epic") >= 0 && text.indexOf("hospital") >= 0) score += 15;
+  if (text.indexOf("epic") >= 0 && text.indexOf("health system") >= 0) score += 15;
+  if (text.indexOf("migration") >= 0) score += 10;
+  if (text.indexOf("transition") >= 0 && text.indexOf("ehr") >= 0) score += 10;
+  return Math.min(score, 100);
+}
+
+// AI extraction — pull structured data from an article using Claude
+async function aiExtractIntel(title, content) {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  try {
+    var resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 500,
+        messages: [{
+          role: "user",
+          content: "Extract structured data from this healthcare IT news. Return ONLY valid JSON, no other text.\n\nTitle: " + title + "\nContent: " + (content || "").substring(0, 1000) + "\n\nReturn JSON: {\"hospitalName\": \"...\", \"healthSystem\": \"...\", \"state\": \"...\", \"epicModules\": \"...\", \"goLiveDate\": \"...\", \"phase\": \"Planning|Implementation|Go-Live|Live\", \"isEpicRelated\": true/false, \"summary\": \"one sentence summary\"}. If any field is unknown, use null."
+        }]
+      })
+    });
+    if (!resp.ok) return null;
+    var data = await resp.json();
+    var text = data.content && data.content[0] ? data.content[0].text : "";
+    // Extract JSON from response
+    var jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+  } catch (e) {
+    console.log("[Intel] AI extraction error:", e.message);
+  }
+  return null;
+}
+
+// Fetch and process a single RSS feed
+async function processRSSFeed(feed) {
+  try {
+    var resp = await fetch(feed.url, {
+      headers: { "User-Agent": "AnuraConnect-MarketIntel/1.0" },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!resp.ok) {
+      console.log("[Intel] Feed fetch failed:", feed.name, resp.status);
+      return 0;
+    }
+    var xml = await resp.text();
+    var items = parseRSSItems(xml);
+    var saved = 0;
+
+    for (var i = 0; i < items.length && i < 20; i++) {
+      var item = items[i];
+      if (!item.title || !item.link) continue;
+
+      // Check if already saved (dedup by URL)
+      var existing = await db.query("SELECT id FROM market_intel WHERE url = $1", [item.link]);
+      if (existing.rows.length > 0) continue;
+
+      var relevance = scoreRelevance(item.title, item.description);
+      // Only save if somewhat relevant (score > 0) or from HIStalk/Becker's directly
+      if (relevance === 0 && feed.name.indexOf("Google") >= 0) continue;
+
+      var pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
+      if (isNaN(pubDate.getTime())) pubDate = new Date();
+
+      // AI extract for high-relevance articles
+      var aiData = null;
+      if (relevance >= 30 && process.env.ANTHROPIC_API_KEY) {
+        aiData = await aiExtractIntel(item.title, item.description);
+      }
+
+      await db.query(`
+        INSERT INTO market_intel (title, summary, url, source, source_type, content, published_at,
+          tags, relevance_score, hospital_name, health_system, state, epic_modules, go_live_date,
+          is_actionable, ai_extracted)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)`,
+        [
+          item.title,
+          aiData ? aiData.summary : item.description.substring(0, 300),
+          item.link,
+          feed.name,
+          "rss",
+          item.description,
+          pubDate,
+          relevance >= 30 ? "epic,relevant" : "industry",
+          relevance,
+          aiData ? aiData.hospitalName : null,
+          aiData ? aiData.healthSystem : null,
+          aiData ? aiData.state : null,
+          aiData ? aiData.epicModules : null,
+          aiData ? aiData.goLiveDate : null,
+          relevance >= 40,
+          aiData ? JSON.stringify(aiData) : null
+        ]
+      );
+      saved++;
+    }
+    return saved;
+  } catch (e) {
+    console.log("[Intel] Feed error (" + feed.name + "):", e.message);
+    return 0;
+  }
+}
+
+// Scan all feeds
+async function scanAllFeeds() {
+  if (!db.ready) return;
+  console.log("[Intel] Starting feed scan...");
+  var totalSaved = 0;
+  for (var i = 0; i < INTEL_FEEDS.length; i++) {
+    var saved = await processRSSFeed(INTEL_FEEDS[i]);
+    totalSaved += saved;
+  }
+  console.log("[Intel] Feed scan complete. " + totalSaved + " new articles saved.");
+  return totalSaved;
+}
+
+// API: List intel articles
+app.get("/api/intel", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var { q, source, starred, actionable, sourceType, limit } = req.query;
+    var where = [];
+    var params = [];
+    var idx = 1;
+    if (q) { where.push(`(title ILIKE $${idx} OR summary ILIKE $${idx} OR hospital_name ILIKE $${idx})`); params.push("%" + q + "%"); idx++; }
+    if (source && source !== "All") { where.push(`source = $${idx}`); params.push(source); idx++; }
+    if (sourceType && sourceType !== "All") { where.push(`source_type = $${idx}`); params.push(sourceType); idx++; }
+    if (starred === "true") { where.push("is_starred = true"); }
+    if (actionable === "true") { where.push("is_actionable = true"); }
+
+    var lim = parseInt(limit) || 100;
+    var sql = "SELECT * FROM market_intel" + (where.length > 0 ? " WHERE " + where.join(" AND ") : "") + " ORDER BY published_at DESC LIMIT " + lim;
+    var rows = (await db.query(sql, params)).rows;
+
+    // Summary stats
+    var sources = {};
+    var totalStarred = 0;
+    var totalActionable = 0;
+    rows.forEach(function (r) {
+      sources[r.source] = (sources[r.source] || 0) + 1;
+      if (r.is_starred) totalStarred++;
+      if (r.is_actionable) totalActionable++;
+    });
+
+    res.json({
+      data: rows,
+      total: rows.length,
+      summary: { sources: sources, starred: totalStarred, actionable: totalActionable }
+    });
+  } catch (e) {
+    console.error("[Intel]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// API: Trigger manual feed scan
+app.post("/api/intel/scan", async (req, res) => {
+  try {
+    var saved = await scanAllFeeds();
+    res.json({ success: true, newArticles: saved });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// API: Update intel item (star, read, notes, link to go-live)
+app.put("/api/intel/:id", express.json(), async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var b = req.body;
+    var sets = [];
+    var params = [];
+    var idx = 1;
+    if (b.is_starred !== undefined) { sets.push("is_starred=$" + idx); params.push(b.is_starred); idx++; }
+    if (b.is_read !== undefined) { sets.push("is_read=$" + idx); params.push(b.is_read); idx++; }
+    if (b.is_actionable !== undefined) { sets.push("is_actionable=$" + idx); params.push(b.is_actionable); idx++; }
+    if (b.notes !== undefined) { sets.push("notes=$" + idx); params.push(b.notes); idx++; }
+    if (b.linked_golive_id !== undefined) { sets.push("linked_golive_id=$" + idx); params.push(b.linked_golive_id); idx++; }
+    if (sets.length === 0) return res.json({ data: null });
+    params.push(req.params.id);
+    var result = await db.query("UPDATE market_intel SET " + sets.join(",") + " WHERE id=$" + idx + " RETURNING *", params);
+    res.json({ data: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// API: LinkedIn / manual clip — save a post or article manually
+app.post("/api/intel/clip", express.json(), async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var b = req.body;
+    if (!b.title && !b.content) return res.status(400).json({ error: "Title or content required" });
+
+    var title = b.title || (b.content || "").substring(0, 100);
+    var relevance = scoreRelevance(title, b.content || "");
+
+    // AI extract if we have an API key
+    var aiData = null;
+    if (process.env.ANTHROPIC_API_KEY && (b.content || "").length > 20) {
+      aiData = await aiExtractIntel(title, b.content);
+    }
+
+    var result = await db.query(`
+      INSERT INTO market_intel (title, summary, url, source, source_type, content, published_at,
+        tags, relevance_score, hospital_name, health_system, state, epic_modules, go_live_date,
+        is_actionable, notes, ai_extracted)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb) RETURNING *`,
+      [
+        title,
+        aiData ? aiData.summary : (b.content || "").substring(0, 300),
+        b.url || null,
+        b.source || "LinkedIn",
+        b.sourceType || "clip",
+        b.content || "",
+        b.publishedAt ? new Date(b.publishedAt) : new Date(),
+        "clip" + (relevance >= 30 ? ",epic,relevant" : ""),
+        relevance,
+        aiData ? aiData.hospitalName : b.hospitalName || null,
+        aiData ? aiData.healthSystem : b.healthSystem || null,
+        aiData ? aiData.state : null,
+        aiData ? aiData.epicModules : null,
+        aiData ? aiData.goLiveDate : null,
+        relevance >= 40,
+        b.notes || null,
+        aiData ? JSON.stringify(aiData) : null
+      ]
+    );
+    res.json({ data: result.rows[0] });
+  } catch (e) {
+    console.error("[Intel] Clip error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// API: Promote intel to go-live tracker
+app.post("/api/intel/:id/promote", express.json(), async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var intel = (await db.query("SELECT * FROM market_intel WHERE id=$1", [req.params.id])).rows[0];
+    if (!intel) return res.status(404).json({ error: "Not found" });
+
+    var ai = intel.ai_extracted || {};
+    var result = await db.query(`
+      INSERT INTO epic_golives (hospital_name, health_system, city, state, phase, go_live_date,
+        modules, source, source_url, notes, opportunity_status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [
+        ai.hospitalName || intel.hospital_name || intel.title,
+        ai.healthSystem || intel.health_system || null,
+        null,
+        ai.state || intel.state || null,
+        ai.phase || "Planning",
+        ai.goLiveDate || intel.go_live_date || null,
+        ai.epicModules || intel.epic_modules || null,
+        intel.source,
+        intel.url,
+        "Promoted from market intel: " + intel.title,
+        "Researching"
+      ]
+    );
+
+    // Link back
+    await db.query("UPDATE market_intel SET linked_golive_id=$1 WHERE id=$2", [result.rows[0].id, req.params.id]);
+    res.json({ data: result.rows[0] });
+  } catch (e) {
+    console.error("[Intel] Promote error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// API: Seed go-live tracker with known 2026 Epic implementations
+app.post("/api/golives/seed", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var seeds = [
+      { hospital_name: "Sarasota Memorial Health Care System", health_system: "Sarasota Memorial", city: "Sarasota", state: "FL", phase: "Implementation", go_live_date: "October 2026", modules: "Full Epic EHR (Big Bang)", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/rip-the-band-aid-off-health-systems-opt-for-big-bang-epic-go-lives/", notes: "$160M Epic EHR upgrade. Big-bang go-live approach.", estimated_value: 500000 },
+      { hospital_name: "Penn State Health", health_system: "Penn State Health", city: "Hershey", state: "PA", phase: "Implementation", go_live_date: "Late 2026", modules: "Full Epic EHR", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/hospital-executive-moves/penn-state-health-names-new-cio/", notes: "Implementation kicked off June 2025. New CIO leading effort.", estimated_value: 300000 },
+      { hospital_name: "South Central Regional Medical Center", health_system: null, city: "Laurel", state: "MS", phase: "Go-Live", go_live_date: "January 2026", modules: "Epic EHR", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/hospitals-health-systems-moving-to-epic/", notes: "One of five Mississippi hospitals going live together.", estimated_value: 100000 },
+      { hospital_name: "Magee General Hospital", health_system: null, city: "Magee", state: "MS", phase: "Go-Live", go_live_date: "January 2026", modules: "Epic EHR", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/hospitals-health-systems-moving-to-epic/", notes: "Mississippi cohort go-live Jan 31.", estimated_value: 75000 },
+      { hospital_name: "Covington County Hospital", health_system: null, city: "Collins", state: "MS", phase: "Go-Live", go_live_date: "January 2026", modules: "Epic EHR", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/hospitals-health-systems-moving-to-epic/", notes: "Mississippi cohort go-live Jan 31.", estimated_value: 50000 },
+      { hospital_name: "Simpson General Hospital", health_system: null, city: "Mendenhall", state: "MS", phase: "Go-Live", go_live_date: "January 2026", modules: "Epic EHR", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/hospitals-health-systems-moving-to-epic/", notes: "Mississippi cohort go-live Jan 31.", estimated_value: 50000 },
+      { hospital_name: "Smith County Emergency Hospital", health_system: null, city: "Raleigh", state: "MS", phase: "Go-Live", go_live_date: "January 2026", modules: "Epic EHR", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/hospitals-health-systems-moving-to-epic/", notes: "Mississippi cohort go-live Jan 31.", estimated_value: 50000 },
+      { hospital_name: "Riverview Health", health_system: "Parkview Health (Community Connect)", city: "Noblesville", state: "IN", phase: "Go-Live", go_live_date: "February 2026", modules: "Epic Community Connect", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/hospitals-health-systems-moving-to-epic/", notes: "Moving to Parkview's Epic instance via Community Connect.", estimated_value: 100000 },
+      { hospital_name: "MSU Health Care", health_system: "Henry Ford Health (partnership)", city: "East Lansing", state: "MI", phase: "Go-Live", go_live_date: "January 2026", modules: "Epic EHR, Epic Billing", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/hospitals-health-systems-moving-to-epic/", notes: "Transitioning through new partnership with Henry Ford Health.", estimated_value: 150000 },
+      { hospital_name: "Inspira Health", health_system: "Inspira Health Network", city: "Vineland", state: "NJ", phase: "Implementation", go_live_date: "Summer 2026", modules: "Full Epic EHR", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/hospitals-health-systems-moving-to-epic/", notes: "Multi-hospital system go-live planned for summer 2026.", estimated_value: 400000 },
+      { hospital_name: "Med Center Health", health_system: "Med Center Health", city: "Bowling Green", state: "KY", phase: "Implementation", go_live_date: "End of 2026", modules: "Full Epic EHR", source: "Becker's Hospital Review", source_url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs/hospitals-health-systems-moving-to-epic/", notes: "Rollout across all hospitals and clinics by end of 2026.", estimated_value: 250000 }
+    ];
+
+    var inserted = 0;
+    for (var i = 0; i < seeds.length; i++) {
+      var s = seeds[i];
+      // Check if already exists
+      var existing = await db.query("SELECT id FROM epic_golives WHERE hospital_name = $1", [s.hospital_name]);
+      if (existing.rows.length > 0) continue;
+      await db.query(`
+        INSERT INTO epic_golives (hospital_name, health_system, city, state, phase, go_live_date,
+          modules, source, source_url, notes, opportunity_status, estimated_value)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [s.hospital_name, s.health_system, s.city, s.state, s.phase, s.go_live_date,
+         s.modules, s.source, s.source_url, s.notes, "Not Started", s.estimated_value]
+      );
+      inserted++;
+    }
+    res.json({ success: true, inserted: inserted, total: seeds.length });
+  } catch (e) {
+    console.error("[GoLives] Seed error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Start periodic feed scanning (every 30 minutes)
+var _intelScanInterval = null;
+function startIntelScan(intervalMs) {
+  if (_intelScanInterval) clearInterval(_intelScanInterval);
+  // Initial scan after 30 seconds (let sync get going first)
+  setTimeout(function () {
+    scanAllFeeds();
+  }, 30000);
+  _intelScanInterval = setInterval(function () {
+    scanAllFeeds();
+  }, intervalMs || 30 * 60 * 1000);
+  console.log("[Intel] Feed scanner started (every " + Math.round((intervalMs || 1800000) / 60000) + " min)");
+}
+
 // ── Dashboard Summary (for landing page) ──────
 app.get("/api/dashboard", async (req, res) => {
   try {
@@ -3339,6 +3719,8 @@ app.listen(PORT, async () => {
           console.error("[DB] Sync loop failed to start:", err.message);
         });
       }, 5000);
+      // Start market intelligence feed scanner
+      startIntelScan(30 * 60 * 1000);
     } catch (err) {
       console.error("[DB] Failed to initialize:", err.message);
       console.log("[DB] Dashboard will continue without cache layer");

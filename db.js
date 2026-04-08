@@ -589,6 +589,34 @@ async function createTables() {
     )
   `);
 
+  // Market Intelligence — aggregated news, LinkedIn clips, RSS articles
+  await query(`
+    CREATE TABLE IF NOT EXISTS market_intel (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      summary TEXT,
+      url TEXT,
+      source TEXT NOT NULL,
+      source_type TEXT DEFAULT 'rss',
+      content TEXT,
+      published_at TIMESTAMPTZ,
+      scraped_at TIMESTAMPTZ DEFAULT NOW(),
+      tags TEXT,
+      relevance_score NUMERIC DEFAULT 0,
+      hospital_name TEXT,
+      health_system TEXT,
+      state TEXT,
+      epic_modules TEXT,
+      go_live_date TEXT,
+      is_read BOOLEAN DEFAULT false,
+      is_starred BOOLEAN DEFAULT false,
+      is_actionable BOOLEAN DEFAULT false,
+      linked_golive_id INTEGER,
+      notes TEXT,
+      ai_extracted JSONB
+    )
+  `);
+
   // Sync tracking tables
   await query(`
     CREATE TABLE IF NOT EXISTS sync_log (
@@ -654,6 +682,14 @@ async function createTables() {
   await query(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_leads_owner ON leads(owner_id)`);
+
+  // Market intel indexes
+  await query(`CREATE INDEX IF NOT EXISTS idx_intel_source ON market_intel(source)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_intel_source_type ON market_intel(source_type)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_intel_published ON market_intel(published_at DESC)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_intel_starred ON market_intel(is_starred)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_intel_actionable ON market_intel(is_actionable)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_intel_url ON market_intel(url)`);
 
   // Epic go-live indexes
   await query(`CREATE INDEX IF NOT EXISTS idx_golives_state ON epic_golives(state)`);
