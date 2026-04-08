@@ -617,49 +617,35 @@ app.get("/api/clients", async (req, res) => {
       where += ` AND status='${status}'`;
     }
 
-    // Fetch clients and active placements in parallel
-    const [data, placData] = await Promise.all([
-      bhFetchAll("query/ClientCorporation", {
-        where,
-        fields: "id,name,address,status,dateLastModified,owner",
-        orderBy: "-dateLastModified",
-      }),
-      bhFetchAll("query/Placement", {
-        where: "status='Approved' OR status='Actively On Contract'",
-        fields: "id,jobOrder,candidate",
-      }),
-    ]);
-
-    // Count active placements per client
-    const placCountByClient = {};
-    (placData.data || []).forEach((p) => {
-      const clientId = p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.id : null;
-      if (clientId) {
-        placCountByClient[clientId] = (placCountByClient[clientId] || 0) + 1;
-      }
+    // Fetch clients first (reliable query)
+    const data = await bhFetchAll("query/ClientCorporation", {
+      where,
+      fields: "id,name,address,status,dateLastModified,owner",
+      orderBy: "-dateLastModified",
     });
 
-    // If jobOrder doesn't have nested clientCorporation, we need a different approach
-    // Let's also try to get clientCorporation from the placement's jobOrder
-    // Fetch placements with jobOrder.clientCorporation
+    // Try to fetch placement counts per client (non-blocking)
     let placByClient = {};
     try {
-      const placFull = await bhFetchAll("query/Placement", {
+      const placData = await bhFetchAll("query/Placement", {
         where: "status='Approved' OR status='Actively On Contract'",
-        fields: "id,jobOrder(clientCorporation(id,name)),candidate(firstName,lastName)",
+        fields: "id,candidate,jobOrder",
       });
-      (placFull.data || []).forEach((p) => {
-        const clientId = p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.id : null;
-        if (clientId) {
-          if (!placByClient[clientId]) placByClient[clientId] = [];
-          placByClient[clientId].push({
-            candidateName: p.candidate ? (p.candidate.firstName + " " + p.candidate.lastName) : "Unknown",
-          });
+      // Group by client — jobOrder has a nested clientCorporation ref
+      (placData.data || []).forEach(function (p) {
+        var cid = null;
+        if (p.jobOrder && p.jobOrder.clientCorporation) {
+          cid = p.jobOrder.clientCorporation.id || null;
+        }
+        if (cid) {
+          if (!placByClient[cid]) placByClient[cid] = [];
+          var cName = "Unknown";
+          if (p.candidate) cName = ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim();
+          placByClient[cid].push({ candidateName: cName });
         }
       });
-    } catch (e2) {
-      // Fallback: just use basic count
-      console.log("[Clients] Could not fetch nested placement data:", e2.message);
+    } catch (placErr) {
+      console.log("[Clients] Placement query failed (non-blocking):", placErr.message);
     }
 
     const clients = (data.data || []).map((c) => ({
@@ -670,7 +656,7 @@ app.get("/api/clients", async (req, res) => {
         ? [c.address.city, c.address.state].filter(Boolean).join(", ")
         : "",
       status: c.status || "Unknown",
-      activePlacements: placByClient[c.id] ? placByClient[c.id].length : (placCountByClient[c.id] || 0),
+      activePlacements: placByClient[c.id] ? placByClient[c.id].length : 0,
       placedConsultants: placByClient[c.id] || [],
     }));
 
@@ -1620,24 +1606,11 @@ app.get("/api/portal/clients", async (req, res) => {
     await authenticate();
     const data = await bhFetchAll("query/ClientCorporation", {
       where: "id IS NOT NULL",
-      fields: "id,name,status,owner",
+      fields: "id,name,status",
       orderBy: "name",
     });
     const clients = (data.data || []).map(function (c) {
-      var ownerObj = null;
-      if (c.owner) {
-        ownerObj = {
-          id: c.owner.id || null,
-          name: ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim(),
-          email: c.owner.email || "",
-        };
-      }
-      return {
-        id: c.id,
-        name: c.name || "",
-        status: c.status || "",
-        owner: ownerObj,
-      };
+      return { id: c.id, name: c.name || "", status: c.status || "" };
     });
     res.json({ data: clients, total: clients.length });
   } catch (e) {
