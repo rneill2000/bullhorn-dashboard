@@ -619,6 +619,9 @@ var NAV_BASE=[
   {key:"aimatch",label:"AI Match",emoji:"\uD83E\uDDE0"},
   {key:"relationships",label:"Relationships",emoji:"\u2764\uFE0F"},
   {key:"trends",label:"Trends",emoji:"\uD83D\uDCC8"},
+  {key:"revenue",label:"Revenue",emoji:"\uD83D\uDCB0"},
+  {key:"golives",label:"Go-Lives",emoji:"\uD83C\uDFE5"},
+  {key:"outreach",label:"Outreach",emoji:"\uD83D\uDCE7"},
   {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
   {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"},
   {key:"portal",label:"Portal",emoji:"\uD83D\uDCE8"}
@@ -2023,6 +2026,480 @@ function renderRelationships(data){
   return h;
 }
 
+/* ═══ REVENUE COMMAND CENTER ═══ */
+function fmtDollar(n){return "$"+(Math.round(n)||0).toLocaleString();}
+function fmtDollarCents(n){return "$"+(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
+
+function renderRevenue(data){
+  if(!data||!data.summary) return '<p style="color:#dc2626">Revenue data not available. Database may still be syncing.</p>';
+  var s=data.summary;
+  var h='';
+  // KPI cards
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px">';
+  h+='<div class="stat-card"><div class="stat-val" style="color:#059669">'+fmtDollar(s.totalMonthlyRevenue)+'</div><div class="stat-label">Monthly Gross Margin</div></div>';
+  h+='<div class="stat-card"><div class="stat-val" style="color:#176087">'+fmtDollar(s.totalAnnualRevenue)+'</div><div class="stat-label">Projected Annual</div></div>';
+  h+='<div class="stat-card"><div class="stat-val">'+s.avgMarginPct+'%</div><div class="stat-label">Avg Margin %</div></div>';
+  h+='<div class="stat-card"><div class="stat-val">'+s.contractCount+'<span style="font-size:14px;color:#64748b"> contract</span> '+s.directCount+'<span style="font-size:14px;color:#64748b"> direct</span></div><div class="stat-label">Active Placements</div></div>';
+  h+='</div>';
+
+  // Expiring revenue alert
+  if(data.expiringRevenue&&data.expiringRevenue.details.length>0){
+    h+='<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:16px;margin-bottom:20px">';
+    h+='<div style="font-weight:700;color:#92400e;margin-bottom:8px">\u26A0\uFE0F Revenue at Risk</div>';
+    h+='<div style="display:flex;gap:24px;margin-bottom:10px">';
+    h+='<span><strong>Next 30 days:</strong> '+fmtDollar(data.expiringRevenue.next30)+'/mo</span>';
+    h+='<span><strong>Next 60 days:</strong> '+fmtDollar(data.expiringRevenue.next60)+'/mo</span>';
+    h+='<span><strong>Next 90 days:</strong> '+fmtDollar(data.expiringRevenue.next90)+'/mo</span>';
+    h+='</div>';
+    if(data.expiringRevenue.details.length>0){
+      h+='<div class="table-wrap"><table style="font-size:12px"><thead><tr><th>Consultant</th><th>Client</th><th>Ends</th><th>Monthly Revenue</th></tr></thead><tbody>';
+      data.expiringRevenue.details.forEach(function(d){
+        var endDate=d.dateEnd?new Date(Number(d.dateEnd)).toLocaleDateString():"—";
+        h+='<tr><td>'+esc(d.candidateName||"")+'</td><td>'+esc(d.clientName||"")+'</td><td>'+endDate+'</td><td style="font-weight:600">'+fmtDollar(d.monthlyRevenue)+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    }
+    h+='</div>';
+  }
+
+  // Two-column layout: Client profitability + Revenue by cert
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">';
+
+  // Client profitability
+  h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
+  h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83C\uDFE2 Client Profitability</div>';
+  if(data.clientProfitability&&data.clientProfitability.length>0){
+    h+='<div class="table-wrap"><table style="font-size:12px"><thead><tr><th>Client</th><th>Monthly</th><th>Annual</th><th>Margin</th><th>Placements</th></tr></thead><tbody>';
+    data.clientProfitability.forEach(function(c){
+      h+='<tr><td style="font-weight:600">'+esc(c.client)+'</td>';
+      h+='<td style="color:#059669;font-weight:600">'+fmtDollar(c.monthlyRevenue)+'</td>';
+      h+='<td>'+fmtDollar(c.annualRevenue)+'</td>';
+      h+='<td>'+c.avgMargin+'%</td>';
+      h+='<td>'+c.placements+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  } else { h+='<p style="color:#64748b;font-size:13px">No active contract placements found.</p>'; }
+  h+='</div>';
+
+  // Revenue by cert
+  h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
+  h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83C\uDFAF Revenue by Certification</div>';
+  if(data.certRevenue&&data.certRevenue.length>0){
+    var maxCertRev=data.certRevenue[0]?data.certRevenue[0].monthlyRevenue:1;
+    data.certRevenue.forEach(function(c){
+      var pct=Math.round((c.monthlyRevenue/maxCertRev)*100);
+      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+      h+='<span style="font-size:12px;min-width:130px;font-weight:500">'+esc(c.cert)+'</span>';
+      h+='<div style="flex:1;height:20px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#059669,#34d399);border-radius:4px"></div></div>';
+      h+='<span style="font-size:11px;min-width:80px;text-align:right;font-weight:600">'+fmtDollar(c.monthlyRevenue)+'/mo</span>';
+      h+='</div>';
+    });
+  } else { h+='<p style="color:#64748b;font-size:13px">No certification revenue data.</p>'; }
+  h+='</div>';
+  h+='</div>';
+
+  // Monthly trend
+  if(data.monthlyTrend&&data.monthlyTrend.length>0){
+    h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px;margin-bottom:24px">';
+    h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDCC8 Revenue Trend (Last 12 Months)</div>';
+    var maxRev=Math.max.apply(null,data.monthlyTrend.map(function(m){return m.revenue;}));
+    data.monthlyTrend.slice(-12).forEach(function(m){
+      var pct=maxRev>0?Math.round((m.revenue/maxRev)*100):0;
+      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">';
+      h+='<span style="font-size:12px;min-width:60px;font-weight:500">'+esc(m.month)+'</span>';
+      h+='<div style="flex:1;height:18px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#176087,#53A2BE);border-radius:4px"></div></div>';
+      h+='<span style="font-size:11px;min-width:80px;text-align:right;font-weight:600">'+fmtDollar(m.revenue)+'</span>';
+      h+='<span style="font-size:10px;min-width:60px;color:#64748b">'+m.placements+' plmts</span>';
+      h+='</div>';
+    });
+    h+='</div>';
+  }
+
+  // Placement detail table
+  h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px;margin-bottom:20px">';
+  h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDCCB Active Placement Revenue Detail</div>';
+  if(data.placements&&data.placements.length>0){
+    h+='<div class="table-wrap"><table style="font-size:12px"><thead><tr><th>Consultant</th><th>Client</th><th>Bill Rate</th><th>Pay Rate</th><th>Margin/hr</th><th>Margin %</th><th>Monthly</th><th>Ends</th></tr></thead><tbody>';
+    data.placements.forEach(function(p){
+      if(p.revenueType!=="contract") return;
+      var endDate=p.dateEnd?new Date(Number(p.dateEnd)).toLocaleDateString():"Ongoing";
+      var marginColor=p.marginPct>=30?"#059669":p.marginPct>=20?"#d97706":"#dc2626";
+      h+='<tr><td style="font-weight:500">'+esc(p.candidateName||"")+'</td>';
+      h+='<td>'+esc(p.clientName||"")+'</td>';
+      h+='<td>'+fmtDollarCents(p.billRate)+'/hr</td>';
+      h+='<td>'+fmtDollarCents(p.payRate)+'/hr</td>';
+      h+='<td style="font-weight:600;color:#059669">'+fmtDollarCents(p.hourlyMargin)+'</td>';
+      h+='<td style="color:'+marginColor+';font-weight:600">'+p.marginPct+'%</td>';
+      h+='<td style="font-weight:700">'+fmtDollar(p.monthlyRevenue)+'</td>';
+      h+='<td>'+endDate+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  h+='</div>';
+
+  // Bench candidates (potential cost/opportunity)
+  if(data.benchCandidates&&data.benchCandidates.length>0){
+    h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px;margin-bottom:20px">';
+    h+='<div style="font-size:15px;font-weight:700;margin-bottom:4px">\uD83E\uDE91 Bench — Available Talent (Not Placed)</div>';
+    h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px">Candidates with rate expectations who are not on active placements. Placing them = new revenue.</div>';
+    h+='<div class="table-wrap"><table style="font-size:12px"><thead><tr><th>Name</th><th>Certification</th><th>Grade</th><th>Hourly Rate</th><th>Status</th></tr></thead><tbody>';
+    data.benchCandidates.slice(0,20).forEach(function(c){
+      h+='<tr><td style="font-weight:500">'+esc(c.name||"")+'</td>';
+      h+='<td>'+esc(c.cert)+'</td>';
+      h+='<td>'+esc(c.grade)+'</td>';
+      h+='<td>'+fmtDollarCents(c.hourlyRate)+'/hr</td>';
+      h+='<td>Available</td></tr>';
+    });
+    h+='</tbody></table></div>';
+    h+='</div>';
+  }
+
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">';
+  h+='<div style="font-size:11px;color:#94a3b8">Generated '+esc(data.generatedAt?new Date(data.generatedAt).toLocaleString():"—")+' from your placement data</div>';
+  h+='<a href="'+apiBase+'/export/revenue-report" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#059669;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600">\uD83D\uDCE5 Export Revenue CSV</a>';
+  h+='</div>';
+  return h;
+}
+
+/* ═══ EPIC GO-LIVE TRACKER ═══ */
+var _glPhase="All";
+var _glOppStatus="All";
+var _glSearch="";
+
+function renderGoLives(data){
+  if(!data) return '<p style="color:#dc2626">Go-Live data not available.</p>';
+  var h='';
+
+  // Summary cards
+  var sum=data.summary||{};
+  var phases=sum.phases||{};
+  var oppSt=sum.oppStatuses||{};
+  h+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px">';
+  h+='<div class="stat-card"><div class="stat-val">'+data.total+'</div><div class="stat-label">Total Tracked</div></div>';
+  h+='<div class="stat-card"><div class="stat-val" style="color:#d97706">'+(phases["Planning"]||0)+'</div><div class="stat-label">Planning</div></div>';
+  h+='<div class="stat-card"><div class="stat-val" style="color:#2563eb">'+(phases["Implementation"]||0)+'</div><div class="stat-label">Implementing</div></div>';
+  h+='<div class="stat-card"><div class="stat-val" style="color:#059669">'+(phases["Go-Live"]||0)+'</div><div class="stat-label">Going Live</div></div>';
+  h+='<div class="stat-card"><div class="stat-val" style="color:#7c3aed">'+(oppSt["Contacted"]||0)+'</div><div class="stat-label">Contacted</div></div>';
+  h+='</div>';
+
+  // Controls
+  h+='<div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap">';
+  h+='<input id="gl-search" type="text" placeholder="Search hospitals..." value="'+esc(_glSearch)+'" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:200px" onkeyup="if(event.key===\'Enter\'){_glSearch=this.value;loadPage();}">';
+  h+='<select id="gl-phase" onchange="_glPhase=this.value;loadPage();" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+  ["All","Planning","RFP","Vendor Selection","Implementation","Go-Live","Live","Completed"].forEach(function(p){
+    h+='<option value="'+p+'"'+(p===_glPhase?" selected":"")+'>'+p+'</option>';
+  });
+  h+='</select>';
+  h+='<select id="gl-opp" onchange="_glOppStatus=this.value;loadPage();" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+  ["All","Not Started","Researching","Contacted","Proposal Sent","Won","Lost"].forEach(function(s){
+    h+='<option value="'+s+'"'+(s===_glOppStatus?" selected":"")+'>'+s+'</option>';
+  });
+  h+='</select>';
+  h+='<button onclick="showGoLiveForm()" style="background:#176087;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">+ Add Hospital</button>';
+  h+='</div>';
+
+  // Table
+  h+='<div class="table-wrap"><table style="font-size:12px"><thead><tr>';
+  h+='<th>Hospital</th><th>Health System</th><th>Location</th><th>Phase</th><th>Go-Live Date</th><th>Modules</th><th>Our Status</th><th>Contact</th><th>Est. Value</th><th>Actions</th>';
+  h+='</tr></thead><tbody>';
+  if(data.data&&data.data.length>0){
+    data.data.forEach(function(g){
+      var phaseColor=g.phase==="Planning"?"#d97706":g.phase==="Implementation"?"#2563eb":g.phase==="Go-Live"?"#059669":g.phase==="Live"?"#7c3aed":"#64748b";
+      var oppColor=g.opportunity_status==="Won"?"#059669":g.opportunity_status==="Contacted"?"#2563eb":g.opportunity_status==="Proposal Sent"?"#7c3aed":g.opportunity_status==="Lost"?"#dc2626":"#64748b";
+      h+='<tr>';
+      h+='<td style="font-weight:600">'+esc(g.hospital_name||"")+'</td>';
+      h+='<td>'+esc(g.health_system||"")+'</td>';
+      h+='<td>'+esc((g.city||"")+(g.city&&g.state?", ":"")+( g.state||""))+'</td>';
+      h+='<td><span style="background:'+phaseColor+'15;color:'+phaseColor+';padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">'+esc(g.phase||"")+'</span></td>';
+      h+='<td>'+esc(g.go_live_date||"TBD")+'</td>';
+      h+='<td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(g.modules||"")+'">'+esc(g.modules||"—")+'</td>';
+      h+='<td><span style="background:'+oppColor+'15;color:'+oppColor+';padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">'+esc(g.opportunity_status||"Not Started")+'</span></td>';
+      h+='<td>'+esc(g.contact_name||"—")+(g.contact_title?" <span style=\"color:#64748b;font-size:10px\">("+esc(g.contact_title)+")</span>":"")+'</td>';
+      h+='<td>'+((g.estimated_value&&Number(g.estimated_value)>0)?"$"+Number(g.estimated_value).toLocaleString():"—")+'</td>';
+      h+='<td><button onclick="editGoLive('+g.id+')" style="background:none;border:none;cursor:pointer;font-size:14px" title="Edit">\u270F\uFE0F</button> <button onclick="deleteGoLive('+g.id+')" style="background:none;border:none;cursor:pointer;font-size:14px" title="Delete">\uD83D\uDDD1\uFE0F</button></td>';
+      h+='</tr>';
+    });
+  } else {
+    h+='<tr><td colspan="10" style="text-align:center;padding:24px;color:#64748b">No hospitals tracked yet. Click "+ Add Hospital" to start tracking Epic go-lives.</td></tr>';
+  }
+  h+='</tbody></table></div>';
+
+  // Add/edit form modal (hidden by default)
+  h+='<div id="gl-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center">';
+  h+='<div style="background:#fff;border-radius:12px;padding:28px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h3 id="gl-form-title" style="margin:0">Add Hospital</h3><button onclick="closeGLModal()" style="background:none;border:none;font-size:20px;cursor:pointer">\u2715</button></div>';
+  h+='<input type="hidden" id="gl-id">';
+  var fields=[
+    {id:"gl-hospital",label:"Hospital Name *",type:"text"},
+    {id:"gl-system",label:"Health System",type:"text"},
+    {id:"gl-city",label:"City",type:"text"},
+    {id:"gl-state",label:"State",type:"text"},
+    {id:"gl-phase",label:"Phase",type:"select",opts:["Planning","RFP","Vendor Selection","Implementation","Go-Live","Live","Completed"]},
+    {id:"gl-date",label:"Go-Live Date",type:"text",placeholder:"e.g. Q3 2026, June 2026"},
+    {id:"gl-modules",label:"Epic Modules",type:"text",placeholder:"e.g. EpicCare, Revenue Cycle, Beaker"},
+    {id:"gl-source",label:"Source",type:"text",placeholder:"e.g. LinkedIn, News, UserWeb"},
+    {id:"gl-source-url",label:"Source URL",type:"text"},
+    {id:"gl-contact-name",label:"Contact Name",type:"text"},
+    {id:"gl-contact-title",label:"Contact Title",type:"text"},
+    {id:"gl-contact-email",label:"Contact Email",type:"text"},
+    {id:"gl-contact-phone",label:"Contact Phone",type:"text"},
+    {id:"gl-opp-status",label:"Our Status",type:"select",opts:["Not Started","Researching","Contacted","Proposal Sent","Won","Lost"]},
+    {id:"gl-owner",label:"Assigned To",type:"text"},
+    {id:"gl-value",label:"Estimated Value ($)",type:"number"},
+    {id:"gl-notes",label:"Notes",type:"textarea"}
+  ];
+  fields.forEach(function(f){
+    h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">'+f.label+'</label>';
+    if(f.type==="select"){
+      h+='<select id="'+f.id+'" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+      f.opts.forEach(function(o){h+='<option value="'+o+'">'+o+'</option>';});
+      h+='</select>';
+    } else if(f.type==="textarea"){
+      h+='<textarea id="'+f.id+'" rows="3" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;resize:vertical"></textarea>';
+    } else {
+      h+='<input id="'+f.id+'" type="'+(f.type||"text")+'" placeholder="'+(f.placeholder||"")+'" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+    }
+    h+='</div>';
+  });
+  h+='<div style="display:flex;gap:12px;margin-top:16px"><button onclick="saveGoLive()" style="background:#176087;color:#fff;border:none;padding:10px 24px;border-radius:6px;cursor:pointer;font-weight:600">Save</button>';
+  h+='<button onclick="closeGLModal()" style="background:#e5e7eb;color:#374151;border:none;padding:10px 24px;border-radius:6px;cursor:pointer">Cancel</button></div>';
+  h+='</div></div>';
+
+  return h;
+}
+
+var _goLiveCache=[];
+function showGoLiveForm(prefill){
+  var m=document.getElementById("gl-modal");
+  if(!m)return;
+  m.style.display="flex";
+  document.getElementById("gl-form-title").textContent=prefill?"Edit Hospital":"Add Hospital";
+  document.getElementById("gl-id").value=prefill?prefill.id:"";
+  document.getElementById("gl-hospital").value=prefill?prefill.hospital_name||"":"";
+  document.getElementById("gl-system").value=prefill?prefill.health_system||"":"";
+  document.getElementById("gl-city").value=prefill?prefill.city||"":"";
+  document.getElementById("gl-state").value=prefill?prefill.state||"":"";
+  var phSel=document.getElementById("gl-phase");
+  if(phSel&&prefill)phSel.value=prefill.phase||"Planning";
+  document.getElementById("gl-date").value=prefill?prefill.go_live_date||"":"";
+  document.getElementById("gl-modules").value=prefill?prefill.modules||"":"";
+  document.getElementById("gl-source").value=prefill?prefill.source||"":"";
+  document.getElementById("gl-source-url").value=prefill?prefill.source_url||"":"";
+  document.getElementById("gl-contact-name").value=prefill?prefill.contact_name||"":"";
+  document.getElementById("gl-contact-title").value=prefill?prefill.contact_title||"":"";
+  document.getElementById("gl-contact-email").value=prefill?prefill.contact_email||"":"";
+  document.getElementById("gl-contact-phone").value=prefill?prefill.contact_phone||"":"";
+  var oppSel=document.getElementById("gl-opp-status");
+  if(oppSel&&prefill)oppSel.value=prefill.opportunity_status||"Not Started";
+  document.getElementById("gl-owner").value=prefill?prefill.owner_name||"":"";
+  document.getElementById("gl-value").value=prefill&&prefill.estimated_value?prefill.estimated_value:"";
+  document.getElementById("gl-notes").value=prefill?prefill.notes||"":"";
+}
+function closeGLModal(){
+  var m=document.getElementById("gl-modal");
+  if(m)m.style.display="none";
+}
+async function saveGoLive(){
+  var id=document.getElementById("gl-id").value;
+  var body={
+    hospitalName:document.getElementById("gl-hospital").value,
+    healthSystem:document.getElementById("gl-system").value,
+    city:document.getElementById("gl-city").value,
+    state:document.getElementById("gl-state").value,
+    phase:document.getElementById("gl-phase").value,
+    goLiveDate:document.getElementById("gl-date").value,
+    modules:document.getElementById("gl-modules").value,
+    source:document.getElementById("gl-source").value,
+    sourceUrl:document.getElementById("gl-source-url").value,
+    contactName:document.getElementById("gl-contact-name").value,
+    contactTitle:document.getElementById("gl-contact-title").value,
+    contactEmail:document.getElementById("gl-contact-email").value,
+    contactPhone:document.getElementById("gl-contact-phone").value,
+    opportunityStatus:document.getElementById("gl-opp-status").value,
+    ownerName:document.getElementById("gl-owner").value,
+    estimatedValue:document.getElementById("gl-value").value||null,
+    notes:document.getElementById("gl-notes").value
+  };
+  if(!body.hospitalName){alert("Hospital name is required");return;}
+  try{
+    var url=apiBase+(id?"/golives/"+id:"/golives");
+    var resp=await fetch(url,{method:id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(!resp.ok)throw new Error("Save failed");
+    closeGLModal();
+    loadPage();
+  }catch(e){alert("Error saving: "+e.message);}
+}
+async function editGoLive(id){
+  try{
+    var data=await apiFetch("golives");
+    var rec=(data.data||[]).find(function(g){return g.id===id;});
+    if(rec)showGoLiveForm(rec);
+  }catch(e){alert("Error loading record");}
+}
+async function deleteGoLive(id){
+  if(!confirm("Delete this hospital record?"))return;
+  try{
+    await fetch(apiBase+"/golives/"+id,{method:"DELETE"});
+    loadPage();
+  }catch(e){alert("Error deleting: "+e.message);}
+}
+
+/* ═══ OUTREACH PAGE ═══ */
+var _outreachTemplates=[];
+var _outreachSelectedTemplate="";
+var _outreachRecipients=[];
+
+async function renderOutreach(){
+  // Fetch templates
+  try{
+    var tmplData=await apiFetch("outreach/templates");
+    _outreachTemplates=tmplData.templates||[];
+  }catch(e){_outreachTemplates=[];}
+
+  var h='';
+  h+='<p style="color:#64748b;font-size:14px;margin-bottom:20px">Compose and send emails using templates. Emails are logged as touches in Bullhorn automatically.</p>';
+
+  // Export buttons
+  h+='<div style="display:flex;gap:12px;margin-bottom:20px">';
+  h+='<a href="'+apiBase+'/export/market-report" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#176087;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">\uD83D\uDCC4 Export Market Report (CSV)</a>';
+  h+='<a href="'+apiBase+'/export/revenue-report" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#059669;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">\uD83D\uDCB0 Export Revenue Report (CSV)</a>';
+  h+='</div>';
+
+  h+='<div style="display:grid;grid-template-columns:300px 1fr;gap:20px">';
+
+  // Left: recipient lookup + template picker
+  h+='<div>';
+  h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:16px;margin-bottom:16px">';
+  h+='<div style="font-size:14px;font-weight:700;margin-bottom:12px">\uD83D\uDC64 Recipient</div>';
+  h+='<input id="outreach-search" type="text" placeholder="Search candidates or contacts..." style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;margin-bottom:8px" onkeyup="if(event.key===\'Enter\')searchOutreachRecipients()">';
+  h+='<button onclick="searchOutreachRecipients()" style="width:100%;background:#176087;color:#fff;border:none;padding:8px;border-radius:6px;cursor:pointer;font-size:12px;margin-bottom:8px">Search</button>';
+  h+='<div id="outreach-results" style="max-height:200px;overflow-y:auto"></div>';
+  h+='<div id="outreach-selected" style="margin-top:8px"></div>';
+  h+='</div>';
+
+  h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:16px">';
+  h+='<div style="font-size:14px;font-weight:700;margin-bottom:12px">\uD83D\uDCDD Template</div>';
+  _outreachTemplates.forEach(function(t){
+    h+='<label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;font-size:13px">';
+    h+='<input type="radio" name="outreach-tmpl" value="'+t.id+'" onchange="selectOutreachTemplate(\''+t.id+'\')"'+(t.id===_outreachSelectedTemplate?" checked":"")+'>';
+    h+=esc(t.name)+'</label>';
+  });
+  h+='<label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;font-size:13px">';
+  h+='<input type="radio" name="outreach-tmpl" value="custom" onchange="selectOutreachTemplate(\'custom\')"'+("custom"===_outreachSelectedTemplate?" checked":"")+'>';
+  h+='Custom Message</label>';
+  h+='</div>';
+  h+='</div>';
+
+  // Right: compose area
+  h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
+  h+='<div style="font-size:14px;font-weight:700;margin-bottom:12px">\u2709\uFE0F Compose</div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">To</label>';
+  h+='<input id="outreach-to" type="email" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px" placeholder="recipient@email.com"></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Subject</label>';
+  h+='<input id="outreach-subject" type="text" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px"></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Message</label>';
+  h+='<textarea id="outreach-body" rows="12" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;resize:vertical"></textarea></div>';
+  h+='<div style="display:flex;gap:12px">';
+  h+='<button onclick="sendOutreach()" style="background:#176087;color:#fff;border:none;padding:10px 24px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px">\uD83D\uDE80 Send Email</button>';
+  h+='<button onclick="previewOutreach()" style="background:#e5e7eb;color:#374151;border:none;padding:10px 24px;border-radius:6px;cursor:pointer;font-size:13px">Preview</button>';
+  h+='</div>';
+  h+='<div id="outreach-status" style="margin-top:12px"></div>';
+  h+='</div>';
+
+  h+='</div>';
+  return h;
+}
+
+var _outreachRecipient={};
+async function searchOutreachRecipients(){
+  var q=document.getElementById("outreach-search").value;
+  if(!q)return;
+  var resultsDiv=document.getElementById("outreach-results");
+  resultsDiv.innerHTML='<div style="color:#64748b;font-size:12px">Searching...</div>';
+  try{
+    var cands=await apiFetch("candidates",{q:q,status:"All"});
+    var html="";
+    (cands.data||[]).slice(0,10).forEach(function(c){
+      html+='<div style="padding:6px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-size:12px" onclick="selectOutreachRecipient(\'candidate\','+c.id+',\''+esc(c.firstName||"")+'\',\''+esc(c.lastName||"")+'\',\''+esc(c.email||"")+'\')">';
+      html+='<span style="font-weight:600">'+esc((c.firstName||"")+" "+(c.lastName||""))+'</span>';
+      html+=' <span style="color:#64748b">'+esc(c.email||"no email")+'</span>';
+      html+=' <span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:8px;font-size:10px">Candidate</span>';
+      html+='</div>';
+    });
+    if(!html) html='<div style="color:#64748b;font-size:12px">No results found.</div>';
+    resultsDiv.innerHTML=html;
+  }catch(e){resultsDiv.innerHTML='<div style="color:#dc2626;font-size:12px">Search error</div>';}
+}
+
+function selectOutreachRecipient(type,id,firstName,lastName,email){
+  _outreachRecipient={type:type,id:id,firstName:firstName,lastName:lastName,email:email};
+  document.getElementById("outreach-to").value=email;
+  document.getElementById("outreach-selected").innerHTML='<div style="background:#dbeafe;padding:8px;border-radius:6px;font-size:12px"><strong>'+esc(firstName+" "+lastName)+'</strong> ('+esc(email)+')</div>';
+  document.getElementById("outreach-results").innerHTML="";
+  // Re-apply template with new recipient
+  if(_outreachSelectedTemplate)selectOutreachTemplate(_outreachSelectedTemplate);
+}
+
+function selectOutreachTemplate(tmplId){
+  _outreachSelectedTemplate=tmplId;
+  if(tmplId==="custom"){
+    document.getElementById("outreach-subject").value="";
+    document.getElementById("outreach-body").value="";
+    return;
+  }
+  var tmpl=_outreachTemplates.find(function(t){return t.id===tmplId;});
+  if(!tmpl)return;
+  var vars={
+    firstName:_outreachRecipient.firstName||"",
+    lastName:_outreachRecipient.lastName||"",
+    senderName:currentUser?currentUser.firstName+" "+currentUser.lastName:"Rachel Neill",
+    certifications:"your Epic certifications",
+    hospitalName:"your hospital",
+    modules:"multiple Epic modules"
+  };
+  var subject=tmpl.subject;
+  var body=tmpl.body;
+  Object.keys(vars).forEach(function(k){
+    var re=new RegExp("\\{\\{"+k+"\\}\\}","g");
+    subject=subject.replace(re,vars[k]);
+    body=body.replace(re,vars[k]);
+  });
+  document.getElementById("outreach-subject").value=subject;
+  document.getElementById("outreach-body").value=body;
+}
+
+async function sendOutreach(){
+  var to=document.getElementById("outreach-to").value;
+  var subject=document.getElementById("outreach-subject").value;
+  var body=document.getElementById("outreach-body").value;
+  var statusDiv=document.getElementById("outreach-status");
+  if(!to||!subject||!body){statusDiv.innerHTML='<div style="color:#dc2626">Please fill in all fields.</div>';return;}
+  statusDiv.innerHTML='<div style="color:#64748b">Sending...</div>';
+  try{
+    var resp=await fetch(apiBase+"/outreach/send",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        to:to,subject:subject,body:body,
+        recipientName:(_outreachRecipient.firstName||"")+" "+(_outreachRecipient.lastName||""),
+        recipientType:_outreachRecipient.type||"",
+        recipientId:_outreachRecipient.id||""
+      })
+    });
+    var result=await resp.json();
+    if(result.success){
+      if(result.method==="mailto"){
+        window.open(result.mailtoUrl,"_blank");
+        statusDiv.innerHTML='<div style="color:#059669">\u2705 Email client opened. SendGrid not configured — using mailto fallback.</div>';
+      } else {
+        statusDiv.innerHTML='<div style="color:#059669">\u2705 Email sent successfully via SendGrid!</div>';
+      }
+    } else {
+      statusDiv.innerHTML='<div style="color:#dc2626">Error: '+(result.error||"Unknown error")+'</div>';
+    }
+  }catch(e){statusDiv.innerHTML='<div style="color:#dc2626">Error: '+e.message+'</div>';}
+}
+
 /* ═══ TRENDS PAGE ═══ */
 function renderTrends(data){
   var h='';
@@ -2113,7 +2590,10 @@ function renderTrends(data){
     });
     h+='</tbody></table></div></div>';
   }
-  h+='<div style="font-size:11px;color:#94a3b8;margin-top:12px">Generated '+esc(data.generatedAt?new Date(data.generatedAt).toLocaleString():"—")+' from your Bullhorn data</div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">';
+  h+='<div style="font-size:11px;color:#94a3b8">Generated '+esc(data.generatedAt?new Date(data.generatedAt).toLocaleString():"—")+' from your Bullhorn data</div>';
+  h+='<a href="'+apiBase+'/export/market-report" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#176087;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600">\uD83D\uDCE5 Export Market Report CSV</a>';
+  h+='</div>';
   return h;
 }
 
@@ -2184,6 +2664,14 @@ async function loadPage(){
       case "trends":
         var trendData=await apiFetch("trends");
         h=renderTrends(trendData);break;
+      case "revenue":
+        var revData=await apiFetch("revenue");
+        h=renderRevenue(revData);break;
+      case "golives":
+        var glData=await apiFetch("golives",{phase:_glPhase||"All",oppStatus:_glOppStatus||"All",q:_glSearch||""});
+        h=renderGoLives(glData);break;
+      case "outreach":
+        h=await renderOutreach();break;
     }
   }catch(e){
     console.error(e);

@@ -288,7 +288,7 @@ app.get("/api/status", async (req, res) => {
   try {
     await authenticate();
     const user = getUser(req);
-    res.json({ connected: true, restUrl: session.restUrl, version: "3.1.0", user: user || null, db: db.getSyncStatus() });
+    res.json({ connected: true, restUrl: session.restUrl, version: "4.0.0", user: user || null, db: db.getSyncStatus() });
   } catch (e) {
     res.json({ connected: false, error: e.message, user: null, db: db.getSyncStatus() });
   }
@@ -1494,6 +1494,603 @@ app.get("/api/trends", async (req, res) => {
     });
   } catch (e) {
     console.error("[Trends]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Revenue Command Center ──────
+app.get("/api/revenue", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var now = new Date();
+    var nowMs = now.getTime();
+    var thirtyDaysAgo = nowMs - 30 * 86400000;
+    var sixtyDaysAgo = nowMs - 60 * 86400000;
+    var ninetyDaysAgo = nowMs - 90 * 86400000;
+
+    // 1. Active placements with revenue metrics
+    var activePlacements = (await db.query(`
+      SELECT id, candidate_name, client_name, job_title, status, employment_type,
+             pay_rate, client_bill_rate, salary, fee, date_begin, date_end,
+             hours_per_day, days_per_week, custom_text1
+      FROM placements
+      WHERE status = 'Approved' OR status = 'Actively On Contract' OR status ILIKE '%active%'
+    `)).rows;
+
+    // 2. All placements for historical analysis
+    var allPlacements = (await db.query(`
+      SELECT id, candidate_name, client_name, job_title, status, employment_type,
+             pay_rate, client_bill_rate, salary, fee, date_begin, date_end,
+             hours_per_day, days_per_week, date_added
+      FROM placements WHERE date_begin IS NOT NULL
+    `)).rows;
+
+    // Calculate per-placement financials
+    function calcPlacementRevenue(p) {
+      var billRate = Number(p.client_bill_rate) || 0;
+      var payRate = Number(p.pay_rate) || 0;
+      var hpd = Number(p.hours_per_day) || 8;
+      var dpw = Number(p.days_per_week) || 5;
+      var isDirect = (p.employment_type || "").toLowerCase().indexOf("direct") >= 0 ||
+                     (p.employment_type || "").toLowerCase().indexOf("permanent") >= 0;
+
+      if (isDirect) {
+        return {
+          type: "direct",
+          fee: Number(p.fee) || Number(p.salary) * 0.2 || 0,
+          hourlyMargin: 0,
+          weeklyRevenue: 0,
+          monthlyRevenue: 0,
+          annualRevenue: Number(p.fee) || Number(p.salary) * 0.2 || 0,
+          marginPct: 0
+        };
+      }
+      var hourlyMargin = billRate - payRate;
+      var weeklyHours = hpd * dpw;
+      var weeklyRevenue = hourlyMargin * weeklyHours;
+      var monthlyRevenue = weeklyRevenue * 4.33;
+      var annualRevenue = weeklyRevenue * 52;
+      var marginPct = billRate > 0 ? Math.round((hourlyMargin / billRate) * 1000) / 10 : 0;
+      return {
+        type: "contract",
+        fee: 0,
+        hourlyMargin: Math.round(hourlyMargin * 100) / 100,
+        weeklyRevenue: Math.round(weeklyRevenue * 100) / 100,
+        monthlyRevenue: Math.round(monthlyRevenue * 100) / 100,
+        annualRevenue: Math.round(annualRevenue * 100) / 100,
+        marginPct: marginPct
+      };
+    }
+
+    // Active placement financials
+    var activeFinancials = activePlacements.map(function (p) {
+      var rev = calcPlacementRevenue(p);
+      return {
+        id: p.id,
+        candidateName: p.candidate_name,
+        clientName: p.client_name,
+        jobTitle: p.job_title,
+        status: p.status,
+        employmentType: p.employment_type,
+        billRate: Number(p.client_bill_rate) || 0,
+        payRate: Number(p.pay_rate) || 0,
+        dateBegin: p.date_begin,
+        dateEnd: p.date_end,
+        cert: p.custom_text1 || "",
+        hourlyMargin: rev.hourlyMargin,
+        weeklyRevenue: rev.weeklyRevenue,
+        monthlyRevenue: rev.monthlyRevenue,
+        annualRevenue: rev.annualRevenue,
+        marginPct: rev.marginPct,
+        revenueType: rev.type,
+        fee: rev.fee
+      };
+    }).sort(function (a, b) { return b.monthlyRevenue - a.monthlyRevenue; });
+
+    // 3. Summary KPIs
+    var totalMonthlyRevenue = 0;
+    var totalAnnualRevenue = 0;
+    var totalDirectFees = 0;
+    var contractCount = 0;
+    var directCount = 0;
+    var margins = [];
+    activeFinancials.forEach(function (p) {
+      if (p.revenueType === "contract") {
+        totalMonthlyRevenue += p.monthlyRevenue;
+        totalAnnualRevenue += p.annualRevenue;
+        contractCount++;
+        if (p.marginPct > 0) margins.push(p.marginPct);
+      } else {
+        totalDirectFees += p.fee;
+        directCount++;
+      }
+    });
+    var avgMargin = margins.length > 0 ? Math.round(margins.reduce(function (s, v) { return s + v; }, 0) / margins.length * 10) / 10 : 0;
+
+    // 4. Client profitability — revenue per client
+    var clientMap = {};
+    activeFinancials.forEach(function (p) {
+      var cname = p.clientName || "Unknown";
+      if (!clientMap[cname]) clientMap[cname] = { client: cname, monthlyRevenue: 0, annualRevenue: 0, placements: 0, avgMargin: [], directFees: 0 };
+      clientMap[cname].placements++;
+      if (p.revenueType === "contract") {
+        clientMap[cname].monthlyRevenue += p.monthlyRevenue;
+        clientMap[cname].annualRevenue += p.annualRevenue;
+        if (p.marginPct > 0) clientMap[cname].avgMargin.push(p.marginPct);
+      } else {
+        clientMap[cname].directFees += p.fee;
+      }
+    });
+    var clientProfitability = Object.values(clientMap).map(function (c) {
+      c.avgMargin = c.avgMargin.length > 0 ? Math.round(c.avgMargin.reduce(function (s, v) { return s + v; }, 0) / c.avgMargin.length * 10) / 10 : 0;
+      c.monthlyRevenue = Math.round(c.monthlyRevenue * 100) / 100;
+      c.annualRevenue = Math.round(c.annualRevenue * 100) / 100;
+      return c;
+    }).sort(function (a, b) { return b.monthlyRevenue - a.monthlyRevenue; });
+
+    // 5. Bench cost — candidates on bench (available, not placed)
+    var benchCandidates = [];
+    try {
+      var benchRows = (await db.query(`
+        SELECT c.id, c.name, c.status, c.custom_text1 as cert, c.custom_text5 as epic_role,
+               c.custom_text6 as grade, c.hourly_rate, c.day_rate, c.date_available
+        FROM candidates c
+        WHERE c.status IN ('Available', 'Active')
+        AND c.id NOT IN (
+          SELECT DISTINCT candidate_id FROM placements
+          WHERE (status = 'Approved' OR status = 'Actively On Contract' OR status ILIKE '%active%')
+          AND candidate_id IS NOT NULL
+        )
+        AND (c.hourly_rate > 0 OR c.day_rate > 0)
+        ORDER BY c.hourly_rate DESC NULLS LAST
+        LIMIT 50
+      `)).rows;
+      benchCandidates = benchRows.map(function (c) {
+        return {
+          id: c.id,
+          name: c.name,
+          cert: c.cert || "",
+          epicRole: c.epic_role || "",
+          grade: c.grade || "",
+          hourlyRate: Number(c.hourly_rate) || 0,
+          dayRate: Number(c.day_rate) || 0,
+          dateAvailable: c.date_available
+        };
+      });
+    } catch (e) { console.log("[Revenue] Bench query error:", e.message); }
+
+    // 6. Expiring revenue — placements ending in next 30/60/90 days
+    var expiringRevenue = { next30: 0, next60: 0, next90: 0, details: [] };
+    activeFinancials.forEach(function (p) {
+      if (p.dateEnd && p.revenueType === "contract") {
+        var endMs = Number(p.dateEnd);
+        if (endMs < nowMs + 30 * 86400000 && endMs > nowMs) {
+          expiringRevenue.next30 += p.monthlyRevenue;
+          expiringRevenue.details.push({ candidateName: p.candidateName, clientName: p.clientName, dateEnd: p.dateEnd, monthlyRevenue: p.monthlyRevenue, window: "30" });
+        } else if (endMs < nowMs + 60 * 86400000 && endMs > nowMs) {
+          expiringRevenue.next60 += p.monthlyRevenue;
+          expiringRevenue.details.push({ candidateName: p.candidateName, clientName: p.clientName, dateEnd: p.dateEnd, monthlyRevenue: p.monthlyRevenue, window: "60" });
+        } else if (endMs < nowMs + 90 * 86400000 && endMs > nowMs) {
+          expiringRevenue.next90 += p.monthlyRevenue;
+          expiringRevenue.details.push({ candidateName: p.candidateName, clientName: p.clientName, dateEnd: p.dateEnd, monthlyRevenue: p.monthlyRevenue, window: "90" });
+        }
+      }
+    });
+    expiringRevenue.next60 += expiringRevenue.next30;
+    expiringRevenue.next90 += expiringRevenue.next60;
+    expiringRevenue.details.sort(function (a, b) { return Number(a.dateEnd || 0) - Number(b.dateEnd || 0); });
+
+    // 7. Monthly revenue trend (historical)
+    var monthlyTrend = [];
+    try {
+      var buckets = {};
+      allPlacements.forEach(function (p) {
+        var rev = calcPlacementRevenue(p);
+        if (rev.type !== "contract" || rev.monthlyRevenue <= 0) return;
+        var beginDate = p.date_begin ? new Date(Number(p.date_begin)) : null;
+        var endDate = p.date_end ? new Date(Number(p.date_end)) : null;
+        if (!beginDate) return;
+        // For each month this placement was active, attribute revenue
+        var cursor = new Date(Math.max(beginDate.getTime(), now.getTime() - 365 * 86400000));
+        var endLimit = endDate && endDate < now ? endDate : now;
+        while (cursor <= endLimit) {
+          var key = cursor.getFullYear() + "-" + String(cursor.getMonth() + 1).padStart(2, "0");
+          if (!buckets[key]) buckets[key] = { month: key, revenue: 0, margin: 0, placements: 0 };
+          buckets[key].revenue += rev.monthlyRevenue;
+          buckets[key].margin += rev.hourlyMargin;
+          buckets[key].placements++;
+          cursor.setMonth(cursor.getMonth() + 1);
+        }
+      });
+      monthlyTrend = Object.values(buckets).map(function (b) {
+        return { month: b.month, revenue: Math.round(b.revenue), avgMargin: b.placements > 0 ? Math.round(b.margin / b.placements * 100) / 100 : 0, placements: b.placements };
+      }).sort(function (a, b) { return a.month.localeCompare(b.month); });
+    } catch (e) { console.log("[Revenue] Trend error:", e.message); }
+
+    // 8. Revenue by cert
+    var certRevenue = {};
+    activeFinancials.forEach(function (p) {
+      if (p.revenueType !== "contract") return;
+      var certs = (p.cert || "Unknown").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      if (certs.length === 0) certs = ["Unknown"];
+      certs.forEach(function (c) {
+        if (!certRevenue[c]) certRevenue[c] = { cert: c, monthlyRevenue: 0, placements: 0, avgMargin: [] };
+        certRevenue[c].monthlyRevenue += p.monthlyRevenue;
+        certRevenue[c].placements++;
+        if (p.marginPct > 0) certRevenue[c].avgMargin.push(p.marginPct);
+      });
+    });
+    var certRevenueList = Object.values(certRevenue).map(function (c) {
+      c.avgMargin = c.avgMargin.length > 0 ? Math.round(c.avgMargin.reduce(function (s, v) { return s + v; }, 0) / c.avgMargin.length * 10) / 10 : 0;
+      c.monthlyRevenue = Math.round(c.monthlyRevenue * 100) / 100;
+      return c;
+    }).sort(function (a, b) { return b.monthlyRevenue - a.monthlyRevenue; });
+
+    res.json({
+      summary: {
+        totalMonthlyRevenue: Math.round(totalMonthlyRevenue * 100) / 100,
+        totalAnnualRevenue: Math.round(totalAnnualRevenue * 100) / 100,
+        totalDirectFees: Math.round(totalDirectFees * 100) / 100,
+        contractCount: contractCount,
+        directCount: directCount,
+        avgMarginPct: avgMargin,
+        activePlacements: activePlacements.length
+      },
+      placements: activeFinancials,
+      clientProfitability: clientProfitability,
+      benchCandidates: benchCandidates,
+      expiringRevenue: expiringRevenue,
+      monthlyTrend: monthlyTrend,
+      certRevenue: certRevenueList,
+      generatedAt: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error("[Revenue]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Epic Go-Live Tracker ──────
+app.get("/api/golives", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var { q, state, phase, oppStatus } = req.query;
+    var where = [];
+    var params = [];
+    var idx = 1;
+    if (q) {
+      where.push(`(hospital_name ILIKE $${idx} OR health_system ILIKE $${idx} OR city ILIKE $${idx} OR notes ILIKE $${idx})`);
+      params.push("%" + q + "%");
+      idx++;
+    }
+    if (state) { where.push(`state = $${idx}`); params.push(state); idx++; }
+    if (phase && phase !== "All") { where.push(`phase = $${idx}`); params.push(phase); idx++; }
+    if (oppStatus && oppStatus !== "All") { where.push(`opportunity_status = $${idx}`); params.push(oppStatus); idx++; }
+    var sql = "SELECT * FROM epic_golives" + (where.length > 0 ? " WHERE " + where.join(" AND ") : "") + " ORDER BY created_at DESC";
+    var rows = (await db.query(sql, params)).rows;
+
+    // Summary stats
+    var phases = {};
+    var states = {};
+    var oppStatuses = {};
+    rows.forEach(function (r) {
+      phases[r.phase || "Unknown"] = (phases[r.phase || "Unknown"] || 0) + 1;
+      if (r.state) states[r.state] = (states[r.state] || 0) + 1;
+      oppStatuses[r.opportunity_status || "Not Started"] = (oppStatuses[r.opportunity_status || "Not Started"] || 0) + 1;
+    });
+
+    res.json({
+      data: rows,
+      total: rows.length,
+      summary: { phases: phases, states: states, oppStatuses: oppStatuses }
+    });
+  } catch (e) {
+    console.error("[GoLives]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/golives", express.json(), async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var b = req.body;
+    var result = await db.query(`
+      INSERT INTO epic_golives (hospital_name, health_system, city, state, phase, go_live_date, modules,
+        source, source_url, notes, contact_name, contact_title, contact_email, contact_phone,
+        opportunity_status, owner_name, estimated_value)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+      [b.hospitalName, b.healthSystem, b.city, b.state, b.phase || "Planning",
+       b.goLiveDate, b.modules, b.source, b.sourceUrl, b.notes,
+       b.contactName, b.contactTitle, b.contactEmail, b.contactPhone,
+       b.opportunityStatus || "Not Started", b.ownerName, b.estimatedValue || null]
+    );
+    res.json({ data: result.rows[0] });
+  } catch (e) {
+    console.error("[GoLives] Create error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/golives/:id", express.json(), async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var b = req.body;
+    var result = await db.query(`
+      UPDATE epic_golives SET hospital_name=$1, health_system=$2, city=$3, state=$4, phase=$5,
+        go_live_date=$6, modules=$7, source=$8, source_url=$9, notes=$10,
+        contact_name=$11, contact_title=$12, contact_email=$13, contact_phone=$14,
+        opportunity_status=$15, owner_name=$16, estimated_value=$17, updated_at=NOW()
+      WHERE id=$18 RETURNING *`,
+      [b.hospitalName, b.healthSystem, b.city, b.state, b.phase,
+       b.goLiveDate, b.modules, b.source, b.sourceUrl, b.notes,
+       b.contactName, b.contactTitle, b.contactEmail, b.contactPhone,
+       b.opportunityStatus, b.ownerName, b.estimatedValue || null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
+    res.json({ data: result.rows[0] });
+  } catch (e) {
+    console.error("[GoLives] Update error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete("/api/golives/:id", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    await db.query("DELETE FROM epic_golives WHERE id=$1", [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error("[GoLives] Delete error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── One-Click Outreach — email templates + send ──────
+var OUTREACH_TEMPLATES = [
+  {
+    id: "intro",
+    name: "Introduction",
+    subject: "Anura Connect — Epic Consulting Staffing",
+    body: "Hi {{firstName}},\n\nI'm reaching out from Anura Connect. We specialize in providing top-tier Epic consultants for implementations, optimizations, and go-lives.\n\nI'd love to learn about your upcoming Epic projects and how we might support your team.\n\nWould you have 15 minutes this week for a quick call?\n\nBest regards,\n{{senderName}}\nAnura Connect"
+  },
+  {
+    id: "candidate-checkin",
+    name: "Candidate Check-In",
+    subject: "Quick Check-In — How's Everything Going?",
+    body: "Hi {{firstName}},\n\nJust wanted to check in and see how things are going. I hope your current engagement is going well!\n\nI wanted to touch base about your availability and upcoming plans. Do you have any changes to your timeline or certifications?\n\nLet me know if there's anything I can help with.\n\nBest,\n{{senderName}}\nAnura Connect"
+  },
+  {
+    id: "redeployment",
+    name: "Redeployment Outreach",
+    subject: "Your Next Epic Opportunity",
+    body: "Hi {{firstName}},\n\nI know your current engagement is wrapping up soon, and I wanted to make sure we're ahead of the curve on finding your next opportunity.\n\nWe have several exciting projects coming up that could be a great fit for your {{certifications}} experience.\n\nCan we schedule a call this week to discuss what's available?\n\nBest,\n{{senderName}}\nAnura Connect"
+  },
+  {
+    id: "golive-prospect",
+    name: "Go-Live Prospecting",
+    subject: "Epic Implementation Staffing — Anura Connect",
+    body: "Hi {{firstName}},\n\nI noticed that {{hospitalName}} is planning an Epic implementation, and I wanted to introduce Anura Connect.\n\nWe provide experienced, certified Epic consultants across all modules — from revenue cycle to clinical applications. Our consultants have an average of 5+ years of Epic experience.\n\nI'd love to discuss how we can support your go-live timeline. Would you be open to a brief call?\n\nBest regards,\n{{senderName}}\nAnura Connect"
+  },
+  {
+    id: "follow-up",
+    name: "Follow Up",
+    subject: "Following Up — Anura Connect",
+    body: "Hi {{firstName}},\n\nI wanted to follow up on my previous message. I understand you're busy, but I'd love the opportunity to discuss how Anura Connect can support your Epic staffing needs.\n\nWe have consultants available immediately across {{modules}} and other Epic modules.\n\nWould a brief call work this week?\n\nBest,\n{{senderName}}\nAnura Connect"
+  }
+];
+
+app.get("/api/outreach/templates", (req, res) => {
+  res.json({ templates: OUTREACH_TEMPLATES });
+});
+
+app.post("/api/outreach/preview", express.json(), (req, res) => {
+  try {
+    var { templateId, variables } = req.body;
+    var template = OUTREACH_TEMPLATES.find(function (t) { return t.id === templateId; });
+    if (!template) return res.status(404).json({ error: "Template not found" });
+    var subject = template.subject;
+    var body = template.body;
+    // Replace variables
+    Object.keys(variables || {}).forEach(function (key) {
+      var regex = new RegExp("\\{\\{" + key + "\\}\\}", "g");
+      subject = subject.replace(regex, variables[key] || "");
+      body = body.replace(regex, variables[key] || "");
+    });
+    res.json({ subject: subject, body: body, templateName: template.name });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/outreach/send", express.json(), async (req, res) => {
+  try {
+    var { to, subject, body, recipientName, recipientType, recipientId } = req.body;
+    if (!to || !subject || !body) return res.status(400).json({ error: "Missing required fields: to, subject, body" });
+
+    // If SendGrid is configured, send via API
+    if (process.env.SENDGRID_API_KEY) {
+      var sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + process.env.SENDGRID_API_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          personalizations: [{ to: [{ email: to, name: recipientName || "" }] }],
+          from: { email: process.env.SENDGRID_FROM_EMAIL || "team@anuraconnect.com", name: "Anura Connect" },
+          subject: subject,
+          content: [{ type: "text/plain", value: body }]
+        })
+      });
+      if (!sgResp.ok) {
+        var errText = await sgResp.text();
+        throw new Error("SendGrid error: " + errText);
+      }
+      // Log as a note in Bullhorn if we have a candidate/contact ID
+      if (recipientId && recipientType) {
+        try {
+          await authenticate();
+          var noteEntity = recipientType === "candidate" ? "Candidate" : "ClientContact";
+          // Create a Bullhorn note for the outreach
+          await bhFetch("entity/Note", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "Email",
+              comments: "Outreach: " + subject + "\n\n" + body,
+              personReference: { id: parseInt(recipientId) }
+            })
+          });
+        } catch (noteErr) {
+          console.log("[Outreach] Note creation failed:", noteErr.message);
+        }
+      }
+      res.json({ success: true, method: "sendgrid" });
+    } else {
+      // No SendGrid — return mailto link as fallback
+      var mailto = "mailto:" + encodeURIComponent(to) + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+      res.json({ success: true, method: "mailto", mailtoUrl: mailto });
+    }
+  } catch (e) {
+    console.error("[Outreach] Send error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Exportable Market Reports ──────
+app.get("/api/export/market-report", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+
+    // Gather all the data for a comprehensive report
+    var trends = {};
+
+    // Cert supply/demand
+    var jobCerts = (await db.query("SELECT custom_text1 FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND custom_text1 IS NOT NULL AND custom_text1 != ''")).rows;
+    var certDemand = {};
+    jobCerts.forEach(function (j) {
+      (j.custom_text1 || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean).forEach(function (c) {
+        certDemand[c] = (certDemand[c] || 0) + 1;
+      });
+    });
+
+    var candCerts = (await db.query("SELECT custom_text1 FROM candidates WHERE status = 'Active' AND custom_text1 IS NOT NULL AND custom_text1 != ''")).rows;
+    var certSupply = {};
+    candCerts.forEach(function (c) {
+      (c.custom_text1 || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean).forEach(function (cert) {
+        certSupply[cert] = (certSupply[cert] || 0) + 1;
+      });
+    });
+
+    // Rate data
+    var rateRows = (await db.query("SELECT pay_rate, client_bill_rate, employment_type, custom_text1, date_begin FROM placements WHERE pay_rate > 0 AND client_bill_rate > 0")).rows;
+    var overallRates = { bills: [], pays: [] };
+    var certRates = {};
+    rateRows.forEach(function (r) {
+      if ((r.employment_type || "").toLowerCase().indexOf("direct") >= 0) return;
+      var bill = Number(r.client_bill_rate);
+      var pay = Number(r.pay_rate);
+      overallRates.bills.push(bill);
+      overallRates.pays.push(pay);
+      var certs = (r.custom_text1 || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      certs.forEach(function (c) {
+        if (!certRates[c]) certRates[c] = { bills: [], pays: [] };
+        certRates[c].bills.push(bill);
+        certRates[c].pays.push(pay);
+      });
+    });
+
+    function avg(arr) { return arr.length > 0 ? Math.round(arr.reduce(function (s, v) { return s + v; }, 0) / arr.length * 100) / 100 : 0; }
+
+    // Geo data
+    var geoRows = (await db.query("SELECT address_state, COUNT(*) as cnt FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND address_state IS NOT NULL AND address_state != '' GROUP BY address_state ORDER BY cnt DESC LIMIT 15")).rows;
+
+    // Active placement count
+    var activePlacementCount = (await db.query("SELECT COUNT(*) as cnt FROM placements WHERE status = 'Approved' OR status = 'Actively On Contract' OR status ILIKE '%active%'")).rows[0].cnt;
+
+    // Build CSV
+    var csv = "ANURA CONNECT - EPIC STAFFING MARKET REPORT\r\n";
+    csv += "Generated: " + new Date().toLocaleDateString() + "\r\n\r\n";
+    csv += "=== MARKET OVERVIEW ===\r\n";
+    csv += "Active Open Jobs," + jobCerts.length + "\r\n";
+    csv += "Active Candidates," + candCerts.length + "\r\n";
+    csv += "Active Placements," + activePlacementCount + "\r\n";
+    csv += "Avg Bill Rate,$" + avg(overallRates.bills) + "/hr\r\n";
+    csv += "Avg Pay Rate,$" + avg(overallRates.pays) + "/hr\r\n";
+    csv += "Avg Margin,$" + (avg(overallRates.bills) - avg(overallRates.pays)).toFixed(2) + "/hr\r\n\r\n";
+
+    csv += "=== CERTIFICATION SUPPLY & DEMAND ===\r\n";
+    csv += "Certification,Open Jobs (Demand),Active Candidates (Supply),Ratio,Status\r\n";
+    var allCerts = new Set([...Object.keys(certDemand), ...Object.keys(certSupply)]);
+    Array.from(allCerts).sort().forEach(function (c) {
+      var d = certDemand[c] || 0;
+      var s = certSupply[c] || 0;
+      var ratio = d > 0 ? (s / d).toFixed(1) : "N/A";
+      var status = d === 0 ? "No Demand" : (s / d) < 1 ? "Shortage" : (s / d) < 3 ? "Tight" : "Available";
+      csv += '"' + c + '",' + d + ',' + s + ',' + ratio + ',' + status + '\r\n';
+    });
+
+    csv += "\r\n=== RATE BENCHMARKS BY CERTIFICATION ===\r\n";
+    csv += "Certification,Avg Bill Rate,Avg Pay Rate,Avg Margin,Data Points\r\n";
+    Object.keys(certRates).sort().forEach(function (c) {
+      var cr = certRates[c];
+      csv += '"' + c + '",$' + avg(cr.bills) + ',$' + avg(cr.pays) + ',$' + (avg(cr.bills) - avg(cr.pays)).toFixed(2) + ',' + cr.bills.length + '\r\n';
+    });
+
+    csv += "\r\n=== GEOGRAPHIC DEMAND ===\r\n";
+    csv += "State,Open Jobs\r\n";
+    geoRows.forEach(function (g) {
+      csv += g.address_state + ',' + g.cnt + '\r\n';
+    });
+
+    csv += "\r\n---\r\nPrepared by Anura Connect | anuraconnect.com\r\n";
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=Anura-Connect-Market-Report-" + new Date().toISOString().slice(0, 10) + ".csv");
+    res.send(csv);
+  } catch (e) {
+    console.error("[Export] Market report error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/export/revenue-report", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var placements = (await db.query(`
+      SELECT candidate_name, client_name, job_title, status, employment_type,
+             pay_rate, client_bill_rate, fee, date_begin, date_end, hours_per_day, days_per_week
+      FROM placements
+      WHERE status = 'Approved' OR status = 'Actively On Contract' OR status ILIKE '%active%'
+      ORDER BY client_name, candidate_name
+    `)).rows;
+
+    var csv = "ANURA CONNECT - REVENUE REPORT\r\n";
+    csv += "Generated: " + new Date().toLocaleDateString() + "\r\n\r\n";
+    csv += "Consultant,Client,Job Title,Type,Bill Rate,Pay Rate,Margin/hr,Margin %,Monthly Revenue,End Date\r\n";
+
+    var totalMonthly = 0;
+    placements.forEach(function (p) {
+      var bill = Number(p.client_bill_rate) || 0;
+      var pay = Number(p.pay_rate) || 0;
+      var hpd = Number(p.hours_per_day) || 8;
+      var dpw = Number(p.days_per_week) || 5;
+      var isDirect = (p.employment_type || "").toLowerCase().indexOf("direct") >= 0;
+      var margin = bill - pay;
+      var marginPct = bill > 0 ? ((margin / bill) * 100).toFixed(1) : "0";
+      var monthly = isDirect ? 0 : margin * hpd * dpw * 4.33;
+      totalMonthly += monthly;
+      var endDate = p.date_end ? new Date(Number(p.date_end)).toLocaleDateString() : "Ongoing";
+      csv += '"' + (p.candidate_name || "") + '","' + (p.client_name || "") + '","' + (p.job_title || "") + '",' + (p.employment_type || "") + ',$' + bill.toFixed(2) + ',$' + pay.toFixed(2) + ',$' + margin.toFixed(2) + ',' + marginPct + '%,$' + Math.round(monthly).toLocaleString() + ',' + endDate + '\r\n';
+    });
+    csv += "\r\nTotal Monthly Gross Margin,$" + Math.round(totalMonthly).toLocaleString() + "\r\n";
+    csv += "Projected Annual,$" + Math.round(totalMonthly * 12).toLocaleString() + "\r\n";
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=Anura-Connect-Revenue-Report-" + new Date().toISOString().slice(0, 10) + ".csv");
+    res.send(csv);
+  } catch (e) {
+    console.error("[Export] Revenue report error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });

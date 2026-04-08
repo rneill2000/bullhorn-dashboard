@@ -563,6 +563,32 @@ async function createTables() {
     )
   `);
 
+  // Epic Go-Live Tracker — manually tracked + enriched hospital implementations
+  await query(`
+    CREATE TABLE IF NOT EXISTS epic_golives (
+      id SERIAL PRIMARY KEY,
+      hospital_name TEXT NOT NULL,
+      health_system TEXT,
+      city TEXT,
+      state TEXT,
+      phase TEXT DEFAULT 'Planning',
+      go_live_date TEXT,
+      modules TEXT,
+      source TEXT,
+      source_url TEXT,
+      notes TEXT,
+      contact_name TEXT,
+      contact_title TEXT,
+      contact_email TEXT,
+      contact_phone TEXT,
+      opportunity_status TEXT DEFAULT 'Not Started',
+      owner_name TEXT,
+      estimated_value NUMERIC,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   // Sync tracking tables
   await query(`
     CREATE TABLE IF NOT EXISTS sync_log (
@@ -628,6 +654,11 @@ async function createTables() {
   await query(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_leads_owner ON leads(owner_id)`);
+
+  // Epic go-live indexes
+  await query(`CREATE INDEX IF NOT EXISTS idx_golives_state ON epic_golives(state)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_golives_phase ON epic_golives(phase)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_golives_opp_status ON epic_golives(opportunity_status)`);
 
   // GIN index on raw_json for flexible JSONB queries against any field
   await query(`CREATE INDEX IF NOT EXISTS idx_candidates_raw ON candidates USING GIN (raw_json)`);
