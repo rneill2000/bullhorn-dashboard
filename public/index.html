@@ -595,7 +595,8 @@ var NAV_BASE=[
   {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
   {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
   {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
-  {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"}
+  {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"},
+  {key:"portal",label:"Portal",emoji:"\uD83D\uDCE8"}
 ];
 function getNav(){
   var nav = NAV_BASE.slice();
@@ -1461,6 +1462,208 @@ function exportTouches() {
   a.click();
 }
 
+/* ═══ SUBMISSION PORTAL ADMIN ═══ */
+var _portalTemplates=null;
+var _portalClients=null;
+var _portalGeneratedLink=null;
+
+async function renderPortal(){
+  var html='<div style="max-width:720px">';
+  html+='<div style="margin-bottom:24px"><h2 style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:4px">Submission Portal</h2>';
+  html+='<p style="font-size:14px;color:#64748b">Generate branded submission links for consultants. Select a client and template, then share the link.</p></div>';
+
+  // Load templates and clients if not cached
+  if(!_portalTemplates){
+    try{ var tr=await apiFetch("portal/templates"); _portalTemplates=tr; }catch(e){ _portalTemplates=[]; }
+  }
+  if(!_portalClients){
+    try{ var cr=await apiFetch("clients"); _portalClients=(cr.data||[]).sort(function(a,b){return (a.name||"").localeCompare(b.name||"");}); }catch(e){ _portalClients=[]; }
+  }
+
+  // Client selector
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">1. Select Client</div>';
+  html+='<select id="portal-client" style="width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;font-family:inherit;color:#334155" onchange="_portalGeneratedLink=null;renderPortalLink()">';
+  html+='<option value="">— Choose a client —</option>';
+  for(var i=0;i<_portalClients.length;i++){
+    var c=_portalClients[i];
+    html+='<option value="'+c.id+'">'+esc(c.name)+'</option>';
+  }
+  html+='</select></div>';
+
+  // Template selector
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">2. Select Template</div>';
+  html+='<div id="portal-templates">';
+  for(var j=0;j<_portalTemplates.length;j++){
+    var t=_portalTemplates[j];
+    html+='<label style="display:flex;align-items:start;gap:12px;padding:14px 16px;border:2px solid #e2e8f0;border-radius:10px;margin-bottom:10px;cursor:pointer;transition:all .15s" ';
+    html+='onclick="selectTemplate(this,\''+t.id+'\')" id="tmpl-'+t.id+'">';
+    html+='<input type="radio" name="portal-template" value="'+t.id+'" style="margin-top:3px;accent-color:#176087" onchange="_portalGeneratedLink=null;renderPortalLink()">';
+    html+='<div><div style="font-size:14px;font-weight:600;color:#0f172a">'+esc(t.name)+'</div>';
+    html+='<div style="font-size:13px;color:#64748b;margin-top:2px">'+esc(t.description)+'</div>';
+    html+='<div style="font-size:11px;color:#94a3b8;margin-top:4px">'+t.sectionCount+' sections</div></div>';
+    html+='</label>';
+  }
+  html+='</div></div>';
+
+  // Pre-fill section
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">3. Pre-fill Fields (Optional)</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Fill in any values you want pre-populated on the form. Fields marked with &#128274; will be <strong>locked</strong> (read-only) for the consultant.</p>';
+  html+='<div id="portal-prefill-fields"><p style="font-size:13px;color:#94a3b8;font-style:italic">Select a template above to see available pre-fill fields.</p></div>';
+  html+='</div>';
+
+  // Notification recipients
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">4. Notification Recipients</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-bottom:12px">The <strong>Account Owner</strong> (from the Bullhorn client record) and <strong>Suzie</strong> are always notified. Add anyone else who should receive the submission email — useful for coverage or delegates.</p>';
+  html+='<div id="portal-extra-emails">';
+  html+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px" class="extra-email-row">';
+  html+='<input type="email" placeholder="email@anuraconnect.com" style="flex:1;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit" class="portal-extra-email">';
+  html+='<button onclick="addExtraEmailRow()" style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;font-size:13px;cursor:pointer;font-family:inherit;white-space:nowrap">+ Add</button>';
+  html+='</div></div></div>';
+
+  // Generate button
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">5. Generate & Share Link</div>';
+  html+='<button class="btn-primary" style="padding:12px 28px;font-size:14px;border-radius:10px" onclick="generatePortalLink()">&#128279; Generate Portal Link</button>';
+  html+='<div id="portal-link-output" style="margin-top:16px"></div>';
+  html+='</div>';
+
+  html+='</div>';
+  return html;
+}
+
+var _portalPrefillFields=[];
+
+function selectTemplate(label,id){
+  // Visual highlight
+  var all=document.querySelectorAll('#portal-templates label');
+  for(var i=0;i<all.length;i++) all[i].style.borderColor='#e2e8f0';
+  label.style.borderColor='#176087';
+  label.querySelector('input').checked=true;
+  _portalGeneratedLink=null;
+  renderPortalLink();
+  loadPrefillFields(id);
+}
+
+async function loadPrefillFields(templateId){
+  var container=document.getElementById("portal-prefill-fields");
+  if(!container) return;
+  try{
+    _portalPrefillFields=await apiFetch("portal/prefill-fields",{templateId:templateId});
+    if(!_portalPrefillFields.length){
+      container.innerHTML='<p style="font-size:13px;color:#94a3b8;font-style:italic">No pre-fillable fields for this template.</p>';
+      return;
+    }
+    var html='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+    var currentSection="";
+    for(var i=0;i<_portalPrefillFields.length;i++){
+      var f=_portalPrefillFields[i];
+      if(f.section!==currentSection){
+        if(currentSection) html+='</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+        html+='<div style="grid-column:1/-1;font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-top:'+(currentSection?'8':'0')+'px;padding-bottom:4px;border-bottom:1px solid #f1f5f9">'+esc(f.section)+'</div>';
+        currentSection=f.section;
+      }
+      html+='<div style="display:flex;flex-direction:column;gap:3px">';
+      html+='<label style="font-size:12px;font-weight:500;color:#475569">'+esc(f.label);
+      if(f.locked) html+=' <span style="font-size:10px;color:#f59e0b;font-weight:600">&#128274; LOCKED</span>';
+      html+='</label>';
+      html+='<input type="text" name="prefill_'+f.name+'" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit;color:#334155"';
+      if(f.locked) html+=' style="padding:8px 12px;border:1px solid #f59e0b;border-radius:8px;font-size:13px;font-family:inherit;color:#334155;background:#fffbeb"';
+      html+='>';
+      if(f.locked) html+='<span style="font-size:10px;color:#94a3b8">Consultant cannot edit this field</span>';
+      html+='</div>';
+    }
+    html+='</div>';
+    container.innerHTML=html;
+  }catch(e){
+    container.innerHTML='<p style="font-size:13px;color:#ef4444">Could not load fields: '+esc(e.message)+'</p>';
+  }
+}
+
+function addExtraEmailRow(){
+  var container=document.getElementById("portal-extra-emails");
+  if(!container) return;
+  var row=document.createElement("div");
+  row.style.cssText="display:flex;gap:8px;align-items:center;margin-bottom:8px";
+  row.className="extra-email-row";
+  row.innerHTML='<input type="email" placeholder="email@anuraconnect.com" style="flex:1;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit" class="portal-extra-email">'
+    +'<button onclick="this.parentElement.remove()" style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;font-size:13px;cursor:pointer;font-family:inherit;color:#ef4444">&#10005;</button>';
+  container.appendChild(row);
+}
+
+async function generatePortalLink(){
+  var clientId=document.getElementById("portal-client").value;
+  var templateEl=document.querySelector('input[name="portal-template"]:checked');
+  var templateId=templateEl?templateEl.value:"";
+
+  if(!clientId||!templateId){
+    document.getElementById("portal-link-output").innerHTML='<div style="color:#ef4444;font-size:13px">Please select both a client and a template.</div>';
+    return;
+  }
+
+  // Gather pre-fill values
+  var prefill={};
+  for(var i=0;i<_portalPrefillFields.length;i++){
+    var f=_portalPrefillFields[i];
+    var input=document.querySelector('input[name="prefill_'+f.name+'"]');
+    if(input&&input.value.trim()) prefill[f.name]=input.value.trim();
+  }
+
+  // Gather extra notification emails
+  var extraEmails=[];
+  var emailInputs=document.querySelectorAll(".portal-extra-email");
+  for(var i=0;i<emailInputs.length;i++){
+    var val=emailInputs[i].value.trim();
+    if(val) extraEmails.push(val);
+  }
+
+  try{
+    var resp=await fetch("/api/portal/generate-link",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({clientId:clientId,templateId:templateId,prefill:prefill,extraEmails:extraEmails})
+    });
+    if(!resp.ok) throw new Error("Failed to generate link");
+    var res=await resp.json();
+    _portalGeneratedLink=res.link;
+    renderPortalLink();
+  }catch(e){
+    document.getElementById("portal-link-output").innerHTML='<div style="color:#ef4444;font-size:13px">Error: '+esc(e.message)+'</div>';
+  }
+}
+
+function renderPortalLink(){
+  var el=document.getElementById("portal-link-output");
+  if(!el) return;
+  if(!_portalGeneratedLink){ el.innerHTML=''; return; }
+
+  var html='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px">';
+  html+='<div style="font-size:12px;font-weight:600;color:#176087;margin-bottom:8px">&#9989; Link Generated — Ready to Share</div>';
+  html+='<div style="display:flex;gap:8px;align-items:center">';
+  html+='<input type="text" value="'+esc(_portalGeneratedLink)+'" readonly style="flex:1;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit;background:#fff;color:#334155" id="portal-link-input">';
+  html+='<button class="btn-primary" style="padding:10px 20px;font-size:13px;white-space:nowrap;border-radius:8px" onclick="copyPortalLink()">&#128203; Copy</button>';
+  html+='</div>';
+  html+='<div style="margin-top:10px;display:flex;gap:8px">';
+  html+='<a href="'+esc(_portalGeneratedLink)+'" target="_blank" style="font-size:12px;color:#176087;text-decoration:none;font-weight:500">&#128065; Preview Form</a>';
+  html+='</div>';
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+function copyPortalLink(){
+  var input=document.getElementById("portal-link-input");
+  if(input){
+    input.select();
+    document.execCommand("copy");
+    // Flash feedback
+    var btn=input.parentElement.querySelector(".btn-primary");
+    if(btn){ var orig=btn.innerHTML; btn.innerHTML="&#10003; Copied!"; setTimeout(function(){btn.innerHTML=orig;},2000); }
+  }
+}
+
 /* ═══ RENDER ═══ */
 var _debounceTimer=null;
 function render(){
@@ -1518,6 +1721,8 @@ async function loadPage(){
       case "smartlists":
         var slr=await apiFetch("smart-lists");
         h=renderSmartLists(slr);break;
+      case "portal":
+        h=await renderPortal();break;
     }
   }catch(e){
     console.error(e);

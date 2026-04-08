@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anura Connect — Consultant Submission Portal</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f5f9;color:#334155;min-height:100vh}
+
+/* Header */
+.portal-header{background:#0E2E47;padding:20px 0;box-shadow:0 2px 12px rgba(0,0,0,.15)}
+.header-inner{max-width:720px;margin:0 auto;padding:0 24px;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:12px}
+.brand img{height:40px;border-radius:8px}
+.brand-text h1{font-size:17px;font-weight:700;color:#fff}
+.brand-text p{font-size:12px;color:#53A2BE;margin-top:1px}
+.client-badge{background:#176087;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;display:flex;align-items:center;gap:6px}
+
+/* Progress bar */
+.progress-bar{max-width:720px;margin:0 auto;padding:24px 24px 0}
+.progress-track{display:flex;align-items:center;gap:0}
+.progress-step{display:flex;align-items:center;gap:8px;flex:1}
+.progress-step:last-child{flex:0}
+.step-dot{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;transition:all .3s}
+.step-dot.pending{background:#e2e8f0;color:#94a3b8}
+.step-dot.active{background:#176087;color:#fff;box-shadow:0 0 0 4px rgba(23,96,135,.2)}
+.step-dot.done{background:#10b981;color:#fff}
+.step-line{flex:1;height:3px;background:#e2e8f0;border-radius:2px;transition:background .3s}
+.step-line.done{background:#10b981}
+.step-label{font-size:11px;color:#94a3b8;margin-top:4px;text-align:center;white-space:nowrap}
+.step-col{display:flex;flex-direction:column;align-items:center}
+
+/* Card container */
+.portal-card{max-width:720px;margin:20px auto 40px;padding:0 24px}
+.card{background:#fff;border-radius:16px;box-shadow:0 1px 4px rgba(0,0,0,.06);border:1px solid #e8ecf1;overflow:hidden}
+.card-header{padding:28px 32px 0}
+.card-header h2{font-size:20px;font-weight:700;color:#0f172a;margin-bottom:4px}
+.card-header p{font-size:14px;color:#64748b;line-height:1.5}
+.card-body{padding:24px 32px 32px}
+
+/* Form elements */
+.form-section{margin-bottom:28px}
+.section-title{font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.06em;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #eff6ff}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.field-row.single{grid-template-columns:1fr}
+.field-row.triple{grid-template-columns:1fr 1fr 1fr}
+.field-group{display:flex;flex-direction:column;gap:4px}
+.field-group label{font-size:13px;font-weight:500;color:#475569}
+.field-group label .req{color:#ef4444;margin-left:2px}
+.field-group input,.field-group select,.field-group textarea{padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;font-family:inherit;color:#334155;background:#fff;transition:border-color .15s}
+.field-group input:focus,.field-group select:focus,.field-group textarea:focus{border-color:#176087;outline:none;box-shadow:0 0 0 3px rgba(23,96,135,.08)}
+.field-group textarea{resize:vertical;min-height:80px}
+.field-group input::placeholder,.field-group textarea::placeholder{color:#cbd5e1}
+.field-group input[type="file"]{padding:8px 10px;font-size:13px;cursor:pointer}
+.field-group .hint{font-size:11px;color:#94a3b8;margin-top:2px}
+.field-group input.error,.field-group select.error,.field-group textarea.error{border-color:#ef4444;background:#fef2f2}
+.field-group .error-msg{font-size:11px;color:#ef4444;margin-top:2px;display:none}
+.field-group .error-msg.show{display:block}
+
+/* Reference cards */
+.ref-card{background:#f8fafc;border:1px solid #e8ecf1;border-radius:12px;padding:20px;margin-bottom:16px}
+.ref-card-header{font-size:14px;font-weight:600;color:#0f172a;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.ref-number{background:#176087;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+
+/* Upload area */
+.upload-area{border:2px dashed #e2e8f0;border-radius:12px;padding:24px;text-align:center;cursor:pointer;transition:all .15s;background:#fafbfc}
+.upload-area:hover{border-color:#176087;background:#eff6ff}
+.upload-area .upload-icon{font-size:28px;margin-bottom:8px;opacity:.5}
+.upload-area .upload-text{font-size:14px;color:#475569;font-weight:500}
+.upload-area .upload-hint{font-size:12px;color:#94a3b8;margin-top:4px}
+.upload-area input[type="file"]{display:none}
+.file-list{margin-top:8px}
+.file-item{display:flex;align-items:center;gap:8px;padding:6px 10px;background:#eff6ff;border-radius:8px;font-size:13px;color:#176087;margin-top:6px}
+.file-item .remove-file{cursor:pointer;color:#ef4444;font-weight:700;margin-left:auto}
+
+/* Buttons */
+.btn-row{display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:1px solid #f1f5f9}
+.btn{padding:12px 28px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;border:none;transition:all .15s}
+.btn-back{background:#f1f5f9;color:#475569}.btn-back:hover{background:#e2e8f0}
+.btn-next{background:#176087;color:#fff}.btn-next:hover{background:#0E2E47}
+.btn-submit{background:#10b981;color:#fff;padding:14px 36px;font-size:15px}.btn-submit:hover{background:#059669}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* Success state */
+.success-state{text-align:center;padding:48px 32px}
+.success-icon{font-size:64px;margin-bottom:16px}
+.success-title{font-size:24px;font-weight:700;color:#0f172a;margin-bottom:8px}
+.success-msg{font-size:15px;color:#64748b;line-height:1.6;max-width:420px;margin:0 auto}
+
+/* Error state */
+.error-state{text-align:center;padding:48px 32px}
+.error-icon{font-size:48px;margin-bottom:12px}
+.error-title{font-size:20px;font-weight:700;color:#ef4444;margin-bottom:8px}
+.error-msg{font-size:14px;color:#64748b}
+
+/* Loading */
+.loading{text-align:center;padding:80px 32px}
+.spinner{width:40px;height:40px;border:4px solid #e2e8f0;border-top-color:#176087;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:15px;color:#64748b}
+
+/* Sensitive field masking */
+input.sensitive{letter-spacing:4px;font-family:monospace}
+
+/* Locked/pre-filled fields */
+.field-group input.locked,.field-group select.locked,.field-group textarea.locked{background:#f1f5f9;color:#64748b;border-color:#e2e8f0;cursor:not-allowed}
+.field-group .locked-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;color:#94a3b8;background:#f1f5f9;padding:2px 8px;border-radius:4px;margin-left:6px;text-transform:uppercase;letter-spacing:.04em}
+.field-group .prefilled-hint{font-size:11px;color:#10b981;margin-top:2px}
+
+/* Footer */
+.portal-footer{text-align:center;padding:20px;font-size:12px;color:#94a3b8}
+.portal-footer a{color:#176087;text-decoration:none}
+
+/* Responsive */
+@media(max-width:640px){
+  .header-inner{flex-direction:column;gap:12px;text-align:center}
+  .field-row,.field-row.triple{grid-template-columns:1fr}
+  .portal-card{padding:0 12px}
+  .card-header,.card-body{padding-left:20px;padding-right:20px}
+  .btn-row{flex-direction:column;gap:10px}
+  .btn{width:100%}
+  .progress-bar{padding:16px 12px 0}
+  .step-label{font-size:10px}
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="portal-header">
+  <div class="header-inner">
+    <div class="brand">
+      <img src="https://images.squarespace-cdn.com/content/v1/671fb0d9fec6997ddc5025cd/79107203-ad2e-4d39-96a6-5faa3f2f70bf/fulllogo_transparent_nobuffer.png" alt="Anura Connect">
+      <div class="brand-text">
+        <h1>Anura Connect</h1>
+        <p>Consultant Submission Portal</p>
+      </div>
+    </div>
+    <div class="client-badge" id="client-badge" style="display:none">
+      <span>&#127970;</span> <span id="client-name-badge"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Progress -->
+<div class="progress-bar" id="progress-bar" style="display:none">
+  <div class="progress-track" id="progress-track"></div>
+</div>
+
+<!-- Main content -->
+<div class="portal-card">
+  <div class="card" id="portal-card">
+    <div id="portal-content">
+      <div class="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading submission form...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="portal-footer">
+  Powered by <a href="https://www.anuraconnect.com" target="_blank">Anura Connect</a> &bull; Confidential
+</div>
+
+<script>
+/* ═══ Portal Frontend Logic ═══ */
+var portalConfig = null;
+var currentStep = 0;
+var formValues = {};
+var fileStore = {};
+
+// Parse URL params
+function getParams() {
+  var p = new URLSearchParams(window.location.search);
+  return { c: p.get("c"), t: p.get("t"), s: p.get("s"), d: p.get("d") || "" };
+}
+
+// Initialize portal
+async function initPortal() {
+  var params = getParams();
+  if (!params.c || !params.t || !params.s) {
+    showError("Invalid Link", "This submission link appears to be invalid or incomplete. Please contact your Anura Connect representative for a new link.");
+    return;
+  }
+
+  try {
+    var configUrl = "/api/portal/config?c=" + params.c + "&t=" + params.t + "&s=" + params.s;
+    if (params.d) configUrl += "&d=" + encodeURIComponent(params.d);
+    var res = await fetch(configUrl);
+    if (!res.ok) {
+      var err = await res.json().catch(function() { return { error: "Unknown error" }; });
+      throw new Error(err.error || "Failed to load form");
+    }
+    portalConfig = await res.json();
+
+    // Seed form values with any prefilled data
+    if (portalConfig.prefill) {
+      for (var key in portalConfig.prefill) {
+        if (portalConfig.prefill[key] !== "") formValues[key] = portalConfig.prefill[key];
+      }
+    }
+
+    // Set client badge
+    document.getElementById("client-badge").style.display = "flex";
+    document.getElementById("client-name-badge").textContent = portalConfig.clientName;
+    document.title = "Submission Portal — " + portalConfig.clientName + " | Anura Connect";
+
+    // Build progress bar
+    renderProgress();
+    document.getElementById("progress-bar").style.display = "block";
+
+    // Render first step
+    renderStep();
+  } catch (e) {
+    showError("Could Not Load Form", e.message || "Something went wrong. Please try again or contact your Anura Connect representative.");
+  }
+}
+
+function showError(title, msg) {
+  document.getElementById("portal-content").innerHTML =
+    '<div class="error-state">' +
+    '<div class="error-icon">&#9888;&#65039;</div>' +
+    '<div class="error-title">' + escHtml(title) + '</div>' +
+    '<div class="error-msg">' + escHtml(msg) + '</div>' +
+    '</div>';
+}
+
+function escHtml(s) {
+  var d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+/* ── Progress Bar ── */
+function renderProgress() {
+  var sections = portalConfig.sections;
+  var html = "";
+  for (var i = 0; i < sections.length; i++) {
+    var state = i < currentStep ? "done" : i === currentStep ? "active" : "pending";
+    html += '<div class="step-col"><div class="step-dot ' + state + '">';
+    html += state === "done" ? "&#10003;" : (i + 1);
+    html += '</div><div class="step-label">' + escHtml(sections[i].label.replace("Professional ", "").replace("Epic ", "").replace("Document ", "").replace("Rate & ", "")) + '</div></div>';
+    if (i < sections.length - 1) {
+      html += '<div class="step-line' + (i < currentStep ? " done" : "") + '"></div>';
+    }
+  }
+  document.getElementById("progress-track").innerHTML = html;
+}
+
+/* ── Step Rendering ── */
+function renderStep() {
+  var section = portalConfig.sections[currentStep];
+  if (!section) return;
+
+  renderProgress();
+
+  var html = '<div class="card-header">';
+  html += '<h2>' + escHtml(section.label) + '</h2>';
+  if (section.description) html += '<p>' + escHtml(section.description) + '</p>';
+  html += '</div><div class="card-body">';
+
+  if (section.repeatable) {
+    html += renderRepeatableSection(section);
+  } else {
+    html += renderFields(section.fields, "");
+  }
+
+  // Navigation buttons
+  html += '<div class="btn-row">';
+  if (currentStep > 0) {
+    html += '<button class="btn btn-back" onclick="prevStep()">&#8592; Back</button>';
+  } else {
+    html += '<div></div>';
+  }
+  if (currentStep < portalConfig.sections.length - 1) {
+    html += '<button class="btn btn-next" onclick="nextStep()">Continue &#8594;</button>';
+  } else {
+    html += '<button class="btn btn-submit" onclick="submitForm()">Submit &#10003;</button>';
+  }
+  html += '</div>';
+
+  html += '</div>';
+  document.getElementById("portal-content").innerHTML = html;
+
+  // Restore saved values
+  restoreValues();
+}
+
+function renderFields(fields, prefix) {
+  var html = '';
+  var row = [];
+
+  for (var i = 0; i < fields.length; i++) {
+    var f = fields[i];
+    var fullName = prefix ? f.name + "_" + prefix : f.name;
+    var isWide = f.type === "textarea" || f.type === "file";
+    var isLocked = f.locked && f.prefillValue !== undefined;
+    var hasPrefill = f.prefillValue !== undefined && f.prefillValue !== "";
+    var lockedClass = isLocked ? " locked" : "";
+
+    if (isWide && row.length > 0) {
+      html += '<div class="field-row">' + row.join("") + '</div>';
+      row = [];
+    }
+
+    var fieldHtml = '<div class="field-group">';
+    fieldHtml += '<label>' + escHtml(f.label);
+    if (f.required) fieldHtml += '<span class="req">*</span>';
+    if (isLocked) fieldHtml += '<span class="locked-badge">&#128274; Set by Anura</span>';
+    fieldHtml += '</label>';
+
+    if (f.type === "file") {
+      fieldHtml += renderFileUpload(fullName, f);
+    } else if (f.type === "select") {
+      fieldHtml += '<select name="' + fullName + '"' + (isLocked ? ' disabled class="locked"' : '') + ' onchange="saveField(this)">';
+      var opts = f.options || [];
+      for (var j = 0; j < opts.length; j++) {
+        var sel = (hasPrefill && opts[j] === String(f.prefillValue)) ? " selected" : "";
+        fieldHtml += '<option value="' + escHtml(opts[j]) + '"' + sel + '>' + (opts[j] || "— Select —") + '</option>';
+      }
+      fieldHtml += '</select>';
+      if (isLocked) fieldHtml += '<input type="hidden" name="' + fullName + '" value="' + escHtml(String(f.prefillValue)) + '">';
+    } else if (f.type === "textarea") {
+      fieldHtml += '<textarea name="' + fullName + '" rows="3"' + (isLocked ? ' readonly class="locked"' : '');
+      if (f.placeholder && !hasPrefill) fieldHtml += ' placeholder="' + escHtml(f.placeholder) + '"';
+      fieldHtml += ' oninput="saveField(this)">' + (hasPrefill ? escHtml(String(f.prefillValue)) : '') + '</textarea>';
+    } else {
+      var cls = [];
+      if (f.sensitive) cls.push("sensitive");
+      if (isLocked) cls.push("locked");
+      fieldHtml += '<input type="' + f.type + '" name="' + fullName + '"';
+      if (hasPrefill) fieldHtml += ' value="' + escHtml(String(f.prefillValue)) + '"';
+      if (f.placeholder && !hasPrefill) fieldHtml += ' placeholder="' + escHtml(f.placeholder) + '"';
+      if (f.maxLength) fieldHtml += ' maxlength="' + f.maxLength + '"';
+      if (isLocked) fieldHtml += ' readonly';
+      if (cls.length) fieldHtml += ' class="' + cls.join(" ") + '"';
+      fieldHtml += ' oninput="saveField(this)">';
+    }
+
+    if (isLocked) {
+      fieldHtml += '<div class="prefilled-hint">&#128274; This field has been set and cannot be edited</div>';
+    } else if (hasPrefill && !isLocked) {
+      fieldHtml += '<div class="prefilled-hint">&#9989; Pre-filled — you can update if needed</div>';
+    }
+
+    if (f.hint) fieldHtml += '<div class="hint">' + escHtml(f.hint) + '</div>';
+    fieldHtml += '<div class="error-msg" id="err-' + fullName + '"></div>';
+    fieldHtml += '</div>';
+
+    if (isWide) {
+      html += '<div class="field-row single">' + fieldHtml + '</div>';
+    } else {
+      row.push(fieldHtml);
+      if (row.length === 2 || i === fields.length - 1) {
+        html += '<div class="field-row">' + row.join("") + '</div>';
+        row = [];
+      }
+    }
+  }
+  if (row.length > 0) {
+    html += '<div class="field-row">' + row.join("") + '</div>';
+  }
+  return html;
+}
+
+function renderRepeatableSection(section) {
+  var count = section.defaultCount || 3;
+  var html = '';
+  for (var i = 0; i < count; i++) {
+    html += '<div class="ref-card">';
+    html += '<div class="ref-card-header"><span class="ref-number">' + (i + 1) + '</span> ' + escHtml(section.label.replace(/s$/, "")) + ' ' + (i + 1) + '</div>';
+    html += renderFields(section.fields, String(i));
+    html += '</div>';
+  }
+  return html;
+}
+
+function renderFileUpload(name, field) {
+  var html = '<div class="upload-area" onclick="document.getElementById(\'file-' + name + '\').click()">';
+  html += '<div class="upload-icon">&#128206;</div>';
+  html += '<div class="upload-text">Click to upload ' + escHtml(field.label.toLowerCase()) + '</div>';
+  html += '<div class="upload-hint">' + (field.accept || ".pdf,.doc,.docx").replace(/\./g, "").toUpperCase().replace(/,/g, ", ") + '</div>';
+  html += '<input type="file" id="file-' + name + '"';
+  if (field.accept) html += ' accept="' + field.accept + '"';
+  if (field.multiple) html += ' multiple';
+  html += ' onchange="handleFileSelect(\'' + name + '\', this)">';
+  html += '</div>';
+  html += '<div class="file-list" id="files-' + name + '"></div>';
+  return html;
+}
+
+/* ── Field Value Management ── */
+function saveField(el) {
+  formValues[el.name] = el.value;
+  // Clear error state
+  el.classList.remove("error");
+  var errEl = document.getElementById("err-" + el.name);
+  if (errEl) { errEl.textContent = ""; errEl.classList.remove("show"); }
+}
+
+function restoreValues() {
+  var inputs = document.querySelectorAll("input[name], select[name], textarea[name]");
+  for (var i = 0; i < inputs.length; i++) {
+    var n = inputs[i].name;
+    if (formValues[n] !== undefined && inputs[i].type !== "file") {
+      inputs[i].value = formValues[n];
+    }
+  }
+  // Restore file lists
+  for (var key in fileStore) {
+    renderFileList(key);
+  }
+}
+
+function handleFileSelect(name, input) {
+  if (!input.files || !input.files.length) return;
+  if (!fileStore[name]) fileStore[name] = [];
+  for (var i = 0; i < input.files.length; i++) {
+    fileStore[name].push(input.files[i]);
+  }
+  renderFileList(name);
+}
+
+function renderFileList(name) {
+  var el = document.getElementById("files-" + name);
+  if (!el || !fileStore[name]) return;
+  var html = "";
+  for (var i = 0; i < fileStore[name].length; i++) {
+    html += '<div class="file-item">';
+    html += '&#128196; ' + escHtml(fileStore[name][i].name);
+    html += ' <span class="remove-file" onclick="removeFile(\'' + name + '\',' + i + ')">&#10005;</span>';
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function removeFile(name, idx) {
+  if (fileStore[name]) {
+    fileStore[name].splice(idx, 1);
+    renderFileList(name);
+  }
+}
+
+/* ── Navigation ── */
+function nextStep() {
+  // Validate current step
+  if (!validateStep()) return;
+  currentStep++;
+  renderStep();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function prevStep() {
+  if (currentStep > 0) {
+    currentStep--;
+    renderStep();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
+
+function validateStep() {
+  var section = portalConfig.sections[currentStep];
+  var valid = true;
+
+  if (section.repeatable) {
+    var count = section.defaultCount || 3;
+    for (var i = 0; i < count; i++) {
+      for (var j = 0; j < section.fields.length; j++) {
+        var f = section.fields[j];
+        if (f.required && f.type !== "file") {
+          var name = f.name + "_" + i;
+          var val = (formValues[name] || "").trim();
+          if (!val) {
+            markError(name, f.label + " is required");
+            valid = false;
+          }
+        }
+      }
+    }
+  } else {
+    for (var k = 0; k < section.fields.length; k++) {
+      var field = section.fields[k];
+      if (field.required && field.type !== "file") {
+        var v = (formValues[field.name] || "").trim();
+        if (!v) {
+          markError(field.name, field.label + " is required");
+          valid = false;
+        }
+        // Email validation
+        if (field.type === "email" && v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+          markError(field.name, "Please enter a valid email address");
+          valid = false;
+        }
+      }
+      // Check required file uploads
+      if (field.required && field.type === "file") {
+        if (!fileStore[field.name] || fileStore[field.name].length === 0) {
+          markError(field.name, field.label + " is required");
+          valid = false;
+        }
+      }
+    }
+  }
+
+  if (!valid) {
+    // Scroll to first error
+    var firstErr = document.querySelector(".error");
+    if (firstErr) firstErr.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  return valid;
+}
+
+function markError(name, msg) {
+  var input = document.querySelector('[name="' + name + '"]');
+  if (input) input.classList.add("error");
+  var errEl = document.getElementById("err-" + name);
+  if (errEl) { errEl.textContent = msg; errEl.classList.add("show"); }
+}
+
+/* ── Form Submission ── */
+async function submitForm() {
+  if (!validateStep()) return;
+
+  var params = getParams();
+  var submitBtn = document.querySelector(".btn-submit");
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Submitting..."; }
+
+  try {
+    var res = await fetch("/api/portal/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: params.c,
+        templateId: params.t,
+        sig: params.s,
+        dataB64: params.d,
+        formData: formValues,
+      }),
+    });
+
+    var result = await res.json();
+
+    if (res.ok && result.success) {
+      showSuccess();
+    } else {
+      throw new Error(result.error || "Submission failed");
+    }
+  } catch (e) {
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Submit \u2713"; }
+    alert("Something went wrong: " + e.message + "\n\nPlease try again. If the problem persists, contact your Anura Connect representative.");
+  }
+}
+
+function showSuccess() {
+  document.getElementById("progress-bar").style.display = "none";
+  var name = (formValues.firstName || "") + " " + (formValues.lastName || "");
+  document.getElementById("portal-content").innerHTML =
+    '<div class="success-state">' +
+    '<div class="success-icon">&#9989;</div>' +
+    '<div class="success-title">Submission Received!</div>' +
+    '<div class="success-msg">Thank you' + (name.trim() ? ', ' + escHtml(name.trim()) : '') + '. Your information has been submitted successfully to <strong>' + escHtml(portalConfig.clientName) + '</strong> via Anura Connect.<br><br>Our team will review your submission and be in touch shortly. You can close this page.</div>' +
+    '</div>';
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// Go
+initPortal();
+</script>
+</body>
+</html>

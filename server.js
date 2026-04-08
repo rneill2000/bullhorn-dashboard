@@ -18,6 +18,7 @@ require("dotenv").config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 /* ═══ CONFIG ═══ */
 const BH = {
@@ -1477,6 +1478,507 @@ app.get("/api/ask", async (req, res) => {
     console.error("[Ask]", e.message);
     res.status(500).json({ error: e.message, answer: "Sorry, something went wrong: " + e.message, data: [] });
   }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   SUBMISSION PORTAL — Template System, API, and Public Routes
+   ═══════════════════════════════════════════════════════════════ */
+
+// Portal link signing secret — uses client secret as HMAC key
+const PORTAL_SECRET = process.env.PORTAL_SECRET || BH.clientSecret || "anura-portal-secret";
+
+function generatePortalSig(clientId, templateId, prefill) {
+  var payload = clientId + "|" + templateId + "|" + (prefill || "");
+  return crypto.createHmac("sha256", PORTAL_SECRET)
+    .update(payload)
+    .digest("hex")
+    .substring(0, 16);
+}
+
+function verifyPortalSig(clientId, templateId, prefill, sig) {
+  return generatePortalSig(clientId, templateId, prefill) === sig;
+}
+
+/* ── Field Sections Library ── */
+const PORTAL_SECTIONS = {
+  personal: {
+    key: "personal",
+    label: "Personal Information",
+    description: "Basic contact and identification details",
+    fields: [
+      { name: "roleTitle", label: "Role / Position Title", type: "text", required: false, prefillable: true, placeholder: "e.g., Epic Analyst — Professional Billing" },
+      { name: "firstName", label: "First Name", type: "text", required: true, prefillable: true },
+      { name: "lastName", label: "Last Name", type: "text", required: true, prefillable: true },
+      { name: "email", label: "Email Address", type: "email", required: true, prefillable: true },
+      { name: "phone", label: "Phone Number", type: "tel", required: true, prefillable: true },
+      { name: "address", label: "Street Address", type: "text", required: false },
+      { name: "city", label: "City", type: "text", required: false },
+      { name: "state", label: "State", type: "select", required: false, options: ["","AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"] },
+      { name: "zip", label: "Zip Code", type: "text", required: false },
+      { name: "dateOfBirth", label: "Date of Birth", type: "date", required: false },
+      { name: "last4SSN", label: "Last 4 of SSN", type: "text", required: false, maxLength: 4, placeholder: "XXXX", sensitive: true },
+    ],
+  },
+  epicCertifications: {
+    key: "epicCertifications",
+    label: "Epic Certifications",
+    description: "Epic module certifications and proof of certification",
+    fields: [
+      { name: "epicCertifications", label: "Epic Certifications Held", type: "textarea", required: true, placeholder: "List all Epic certifications (e.g., Professional Billing, Resolute, ClinDoc)" },
+      { name: "epicVersions", label: "Epic Version Experience", type: "text", required: false, placeholder: "e.g., Epic 2024, Epic 2022" },
+      { name: "yearsEpicExperience", label: "Years of Epic Experience", type: "number", required: false },
+      { name: "goLiveCount", label: "Number of Go-Lives Supported", type: "number", required: false },
+      { name: "certProof", label: "Upload Proof of Certifications", type: "file", required: false, accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", multiple: true },
+    ],
+  },
+  references: {
+    key: "references",
+    label: "Professional References",
+    description: "Professional references with contact details",
+    repeatable: true,
+    defaultCount: 3,
+    fields: [
+      { name: "refName", label: "Full Name", type: "text", required: true },
+      { name: "refPhone", label: "Phone Number", type: "tel", required: true },
+      { name: "refEmail", label: "Email Address", type: "email", required: true },
+      { name: "refOrganization", label: "Organization", type: "text", required: true },
+      { name: "refRelationship", label: "Relationship", type: "select", required: true, options: ["", "Direct Supervisor", "Colleague", "Client/Customer", "Mentor", "Other"] },
+      { name: "refTitle", label: "Title/Position", type: "text", required: false },
+    ],
+  },
+  ratesAvailability: {
+    key: "ratesAvailability",
+    label: "Rate & Availability",
+    description: "Compensation expectations and start date availability",
+    fields: [
+      { name: "availabilityDate", label: "Earliest Available Start Date", type: "date", required: true, prefillable: true },
+      { name: "billRate", label: "Bill Rate ($/hr)", type: "number", required: false, placeholder: "Hourly bill rate", prefillable: true, locked: true },
+      { name: "payRate", label: "Pay Rate ($/hr)", type: "number", required: false, placeholder: "Hourly pay rate", prefillable: true, locked: true },
+      { name: "vmsFee", label: "VMS Fee (%)", type: "number", required: false, placeholder: "VMS fee percentage", prefillable: true, locked: true },
+      { name: "willingToTravel", label: "Willing to Travel?", type: "select", required: false, options: ["", "Yes — anywhere", "Yes — limited", "No — remote only"] },
+      { name: "preferredLocations", label: "Preferred Work Locations", type: "text", required: false, placeholder: "e.g., Chicago, IL; Remote" },
+    ],
+  },
+  documents: {
+    key: "documents",
+    label: "Document Uploads",
+    description: "Resume, CV, and any additional required documents",
+    fields: [
+      { name: "resume", label: "Resume / CV", type: "file", required: true, accept: ".pdf,.doc,.docx" },
+      { name: "additionalDocs", label: "Additional Documents (optional)", type: "file", required: false, accept: ".pdf,.doc,.docx,.jpg,.jpeg,.png,.xlsx", multiple: true },
+    ],
+  },
+  vmsInfo: {
+    key: "vmsInfo",
+    label: "VMS Information",
+    description: "Vendor Management System details for managed clients",
+    fields: [
+      { name: "vmsProvider", label: "VMS Provider", type: "text", required: false, placeholder: "e.g., Fieldglass, Beeline, IQNavigator", prefillable: true, locked: true },
+      { name: "vmsExperience", label: "VMS Platforms You've Used", type: "textarea", required: false, placeholder: "List any VMS platforms you have experience with" },
+      { name: "vmsId", label: "VMS Candidate ID (if applicable)", type: "text", required: false },
+    ],
+  },
+};
+
+/* ── Pre-built Templates ── */
+const PORTAL_TEMPLATES = {
+  "full-vms": {
+    id: "full-vms",
+    name: "Full VMS Submission",
+    description: "Complete submission package for VMS-managed clients — includes personal info, certs, references, rates, and document uploads",
+    sections: ["personal", "epicCertifications", "references", "ratesAvailability", "documents", "vmsInfo"],
+    config: { referenceCount: 3 },
+  },
+  "epic-standard": {
+    id: "epic-standard",
+    name: "Epic Standard Submission",
+    description: "Standard Epic consultant submission — personal info, certifications, references, and availability",
+    sections: ["personal", "epicCertifications", "references", "ratesAvailability", "documents"],
+    config: { referenceCount: 2 },
+  },
+  "quick-intake": {
+    id: "quick-intake",
+    name: "Quick Intake",
+    description: "Lightweight intake for pre-screened consultants — just the essentials",
+    sections: ["personal", "ratesAvailability", "documents"],
+    config: {},
+  },
+  "certs-only": {
+    id: "certs-only",
+    name: "Certification Verification",
+    description: "Focused on validating Epic certifications — upload proof and list modules",
+    sections: ["personal", "epicCertifications"],
+    config: {},
+  },
+};
+
+/* ── Portal API Routes ── */
+
+// List available templates (for dashboard admin page)
+app.get("/api/portal/templates", (req, res) => {
+  const list = Object.values(PORTAL_TEMPLATES).map(function (t) {
+    return { id: t.id, name: t.name, description: t.description, sectionCount: t.sections.length };
+  });
+  res.json(list);
+});
+
+// List all prefillable fields for a given template (for the dashboard pre-fill form)
+app.get("/api/portal/prefill-fields", (req, res) => {
+  const templateId = req.query.templateId;
+  if (!templateId || !PORTAL_TEMPLATES[templateId]) return res.status(400).json({ error: "Unknown template" });
+
+  const template = PORTAL_TEMPLATES[templateId];
+  const fields = [];
+  template.sections.forEach(function (sKey) {
+    const section = PORTAL_SECTIONS[sKey];
+    if (!section) return;
+    section.fields.forEach(function (f) {
+      if (f.prefillable) {
+        fields.push({ name: f.name, label: f.label, type: f.type, locked: !!f.locked, section: section.label });
+      }
+    });
+  });
+  res.json(fields);
+});
+
+// Generate a portal link for a client + template + optional prefill data + extra recipients
+app.post("/api/portal/generate-link", (req, res) => {
+  const { clientId, templateId, prefill, extraEmails } = req.body;
+  if (!clientId || !templateId) return res.status(400).json({ error: "clientId and templateId required" });
+  if (!PORTAL_TEMPLATES[templateId]) return res.status(400).json({ error: "Unknown template: " + templateId });
+
+  // Build link data: prefill + extra notification emails
+  const linkData = {};
+  if (prefill && Object.keys(prefill).length > 0) linkData.pf = prefill;
+  if (extraEmails && extraEmails.length > 0) linkData.ne = extraEmails; // ne = notify emails
+
+  const dataStr = Object.keys(linkData).length > 0
+    ? Buffer.from(JSON.stringify(linkData)).toString("base64url")
+    : "";
+
+  const sig = generatePortalSig(String(clientId), templateId, dataStr);
+  const baseUrl = process.env.PORTAL_BASE_URL || (req.protocol + "://" + req.get("host"));
+  let link = baseUrl + "/portal?c=" + clientId + "&t=" + templateId + "&s=" + sig;
+  if (dataStr) link += "&d=" + dataStr;
+
+  res.json({ link, clientId, templateId, sig });
+});
+
+// Get form config for a portal link (called by the public portal page)
+app.get("/api/portal/config", async (req, res) => {
+  try {
+    const clientId = req.query.c;
+    const templateId = req.query.t;
+    const sig = req.query.s;
+    const dataB64 = req.query.d || "";
+
+    if (!clientId || !templateId || !sig) {
+      return res.status(400).json({ error: "Invalid portal link — missing parameters" });
+    }
+    if (!verifyPortalSig(String(clientId), templateId, dataB64, sig)) {
+      return res.status(403).json({ error: "Invalid or expired portal link" });
+    }
+
+    const template = PORTAL_TEMPLATES[templateId];
+    if (!template) return res.status(404).json({ error: "Template not found" });
+
+    // Decode link data (prefill values + extra notification emails)
+    let linkData = {};
+    if (dataB64) {
+      try {
+        linkData = JSON.parse(Buffer.from(dataB64, "base64url").toString());
+      } catch (e) {
+        console.error("[Portal] Bad link data:", e.message);
+      }
+    }
+    const prefill = linkData.pf || {};
+
+    // Fetch client name from Bullhorn
+    let clientName = "Our Client";
+    let clientLogoUrl = "";
+    try {
+      await authenticate();
+      const clientData = await bhFetch("entity/ClientCorporation/" + clientId, {
+        fields: "id,name",
+      });
+      if (clientData && clientData.data) {
+        clientName = clientData.data.name || clientName;
+      }
+    } catch (e) {
+      console.error("[Portal] Could not fetch client name:", e.message);
+    }
+
+    // Build form sections with field definitions + prefill values
+    const sections = template.sections.map(function (sKey) {
+      const section = JSON.parse(JSON.stringify(PORTAL_SECTIONS[sKey])); // deep clone
+      if (sKey === "references" && template.config.referenceCount) {
+        section.defaultCount = template.config.referenceCount;
+      }
+      // Inject prefill values into fields
+      section.fields.forEach(function (f) {
+        if (prefill[f.name] !== undefined && prefill[f.name] !== "") {
+          f.prefillValue = prefill[f.name];
+        }
+      });
+      return section;
+    });
+
+    res.json({
+      templateId: template.id,
+      templateName: template.name,
+      clientId,
+      clientName,
+      clientLogoUrl,
+      sections,
+      prefill,
+    });
+  } catch (e) {
+    console.error("[Portal Config]", e.message);
+    res.status(500).json({ error: "Failed to load form configuration" });
+  }
+});
+
+// Handle portal form submission
+app.post("/api/portal/submit", async (req, res) => {
+  try {
+    const { clientId, templateId, sig, dataB64, formData } = req.body;
+
+    // Verify signature
+    if (!verifyPortalSig(String(clientId), templateId, dataB64 || "", sig)) {
+      return res.status(403).json({ error: "Invalid submission link" });
+    }
+
+    console.log("[Portal Submit] Received submission for client", clientId, "template", templateId);
+    console.log("[Portal Submit] Form data keys:", Object.keys(formData || {}));
+
+    // 1) Write to Bullhorn — create a Note on the candidate (or search for existing candidate)
+    let bhResult = { success: false, message: "Bullhorn write-back not yet configured" };
+    try {
+      await authenticate();
+
+      // Search for existing candidate by email
+      const email = (formData.email || "").trim();
+      const firstName = (formData.firstName || "").trim();
+      const lastName = (formData.lastName || "").trim();
+      let candidateId = null;
+
+      if (email) {
+        const searchResult = await bhFetch("search/Candidate", {
+          query: 'email:"' + email + '"',
+          fields: "id,firstName,lastName,email",
+          count: 1,
+        });
+        if (searchResult.data && searchResult.data.length > 0) {
+          candidateId = searchResult.data[0].id;
+          console.log("[Portal] Found existing candidate:", candidateId);
+        }
+      }
+
+      // Build a rich note with the submission data
+      const noteLines = ["=== PORTAL SUBMISSION ==="];
+      noteLines.push("Template: " + (PORTAL_TEMPLATES[templateId] || {}).name);
+      noteLines.push("Submitted: " + new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+      noteLines.push("");
+
+      // Format all form fields into the note
+      const template = PORTAL_TEMPLATES[templateId];
+      if (template) {
+        template.sections.forEach(function (sKey) {
+          const section = PORTAL_SECTIONS[sKey];
+          if (!section) return;
+          noteLines.push("--- " + section.label + " ---");
+          if (section.repeatable) {
+            // Handle repeatable sections (references)
+            const count = (template.config && template.config.referenceCount) || section.defaultCount || 3;
+            for (var i = 0; i < count; i++) {
+              noteLines.push("  " + section.label.replace(/s$/, "") + " " + (i + 1) + ":");
+              section.fields.forEach(function (f) {
+                if (f.type === "file") return;
+                var val = formData[f.name + "_" + i] || "";
+                if (val) noteLines.push("    " + f.label + ": " + val);
+              });
+            }
+          } else {
+            section.fields.forEach(function (f) {
+              if (f.type === "file") return;
+              var val = formData[f.name] || "";
+              if (val) noteLines.push("  " + f.label + ": " + val);
+            });
+          }
+          noteLines.push("");
+        });
+      }
+
+      const noteText = noteLines.join("\n");
+
+      if (candidateId) {
+        // Add a Note to the existing candidate
+        const s = await authenticate();
+        const noteUrl = s.restUrl + "entity/Note?BhRestToken=" + s.bhRestToken;
+        const notePayload = {
+          personReference: { id: candidateId },
+          action: "Portal Submission",
+          comments: noteText,
+        };
+        const noteRes = await fetch(noteUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(notePayload),
+        });
+        if (noteRes.ok) {
+          bhResult = { success: true, message: "Note added to candidate #" + candidateId, candidateId };
+        } else {
+          bhResult = { success: false, message: "Note creation failed: " + await noteRes.text() };
+        }
+      } else {
+        bhResult = { success: false, message: "No matching candidate found for " + email + ". Submission saved via email only." };
+      }
+
+    } catch (bhErr) {
+      console.error("[Portal] Bullhorn write-back error:", bhErr.message);
+      bhResult = { success: false, message: bhErr.message };
+    }
+
+    // 2) Send email notification
+    let emailResult = { success: false, message: "Email not configured" };
+    const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+    if (SENDGRID_API_KEY) {
+      try {
+        // Fetch client info + Account Owner in one call
+        let clientName = "Client #" + clientId;
+        let ownerName = "";
+        let ownerEmail = "";
+        try {
+          await authenticate();
+          const clientData = await bhFetch("entity/ClientCorporation/" + clientId, {
+            fields: "id,name,owner(id,firstName,lastName,email)",
+          });
+          if (clientData && clientData.data) {
+            clientName = clientData.data.name || clientName;
+            if (clientData.data.owner) {
+              ownerEmail = clientData.data.owner.email || "";
+              ownerName = ((clientData.data.owner.firstName || "") + " " + (clientData.data.owner.lastName || "")).trim();
+            }
+          }
+        } catch (e) {
+          console.error("[Portal] Could not fetch client/owner:", e.message);
+        }
+
+        // Build recipient list: Account Owner + Suzie + any extra emails from link
+        const toEmails = [{ email: "suzie@anuraconnect.com", name: "Suzie - Candidate Relations" }];
+        if (ownerEmail) {
+          toEmails.push({ email: ownerEmail, name: ownerName || "Account Owner" });
+          console.log("[Portal] Account Owner notification →", ownerEmail, "(" + ownerName + ")");
+        } else {
+          console.warn("[Portal] No Account Owner email found on client", clientId, "— only Suzie will be notified");
+        }
+
+        // Add extra notification emails (delegates, coverage, etc.)
+        let extraEmails = [];
+        if (dataB64) {
+          try {
+            const ld = JSON.parse(Buffer.from(dataB64, "base64url").toString());
+            extraEmails = ld.ne || [];
+          } catch (e) { /* ignore */ }
+        }
+        const seen = new Set(toEmails.map(function (e) { return e.email.toLowerCase(); }));
+        extraEmails.forEach(function (addr) {
+          const clean = (addr || "").trim().toLowerCase();
+          if (clean && !seen.has(clean)) {
+            toEmails.push({ email: clean, name: "Additional Recipient" });
+            seen.add(clean);
+            console.log("[Portal] Extra notification →", clean);
+          }
+        });
+
+        // Build HTML email body
+        const candidateName = (formData.firstName || "") + " " + (formData.lastName || "");
+        let emailHtml = '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">';
+        emailHtml += '<div style="background:#0E2E47;padding:24px 32px;border-radius:12px 12px 0 0">';
+        emailHtml += '<h1 style="color:#fff;margin:0;font-size:20px">New Portal Submission</h1>';
+        emailHtml += '<p style="color:#53A2BE;margin:4px 0 0;font-size:14px">' + clientName + ' — ' + (PORTAL_TEMPLATES[templateId] || {}).name + '</p>';
+        emailHtml += '</div>';
+        emailHtml += '<div style="background:#fff;padding:24px 32px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px">';
+        emailHtml += '<h2 style="color:#0f172a;font-size:18px;margin:0 0 16px">' + candidateName + '</h2>';
+
+        // Add form data to email
+        const tmpl = PORTAL_TEMPLATES[templateId];
+        if (tmpl) {
+          tmpl.sections.forEach(function (sKey) {
+            const section = PORTAL_SECTIONS[sKey];
+            if (!section) return;
+            emailHtml += '<h3 style="color:#176087;font-size:14px;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid #e2e8f0">' + section.label + '</h3>';
+            if (section.repeatable) {
+              const count = (tmpl.config && tmpl.config.referenceCount) || section.defaultCount || 3;
+              for (var i = 0; i < count; i++) {
+                emailHtml += '<p style="font-weight:600;color:#334155;margin:8px 0 4px">' + section.label.replace(/s$/, '') + ' ' + (i + 1) + '</p>';
+                section.fields.forEach(function (f) {
+                  if (f.type === "file") return;
+                  var val = formData[f.name + "_" + i] || "";
+                  if (val) emailHtml += '<p style="margin:2px 0;font-size:14px"><span style="color:#64748b">' + f.label + ':</span> <strong>' + val + '</strong></p>';
+                });
+              }
+            } else {
+              section.fields.forEach(function (f) {
+                if (f.type === "file") return;
+                var val = formData[f.name] || "";
+                if (val) emailHtml += '<p style="margin:2px 0;font-size:14px"><span style="color:#64748b">' + f.label + ':</span> <strong>' + val + '</strong></p>';
+              });
+            }
+          });
+        }
+
+        emailHtml += '<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0">';
+        emailHtml += '<p style="color:#94a3b8;font-size:12px">Submitted via Anura Connect Portal • ' + new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }) + '</p>';
+        emailHtml += '</div></div>';
+
+        // Send via SendGrid
+        const sgRes = await fetch("https://api.sendgrid.com/v3/mail/send", {
+          method: "POST",
+          headers: {
+            "Authorization": "Bearer " + SENDGRID_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            personalizations: [{ to: toEmails }],
+            from: { email: process.env.SENDGRID_FROM_EMAIL || "portal@anuraconnect.com", name: "Anura Connect Portal" },
+            subject: "New Submission: " + candidateName + " — " + clientName,
+            content: [{ type: "text/html", value: emailHtml }],
+          }),
+        });
+
+        if (sgRes.ok || sgRes.status === 202) {
+          emailResult = { success: true, message: "Notification sent to " + toEmails.map(function (e) { return e.email; }).join(", ") };
+        } else {
+          const sgErr = await sgRes.text();
+          emailResult = { success: false, message: "SendGrid error: " + sgErr };
+        }
+      } catch (emailErr) {
+        console.error("[Portal] Email error:", emailErr.message);
+        emailResult = { success: false, message: emailErr.message };
+      }
+    } else {
+      emailResult = { success: false, message: "SENDGRID_API_KEY not configured — email skipped" };
+    }
+
+    console.log("[Portal Submit] Bullhorn:", bhResult.message, "| Email:", emailResult.message);
+
+    res.json({
+      success: true,
+      message: "Submission received! Thank you.",
+      bullhorn: bhResult,
+      email: emailResult,
+    });
+
+  } catch (e) {
+    console.error("[Portal Submit] Error:", e.message);
+    res.status(500).json({ error: "Submission failed: " + e.message });
+  }
+});
+
+// Serve the portal page (public, no auth required)
+app.get("/portal", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "portal.html"));
 });
 
 // Serve the dashboard
