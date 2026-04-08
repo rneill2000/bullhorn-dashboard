@@ -960,7 +960,7 @@ app.get("/api/dashboard", async (req, res) => {
       // Urgent/Hot open jobs
       bhFetch("search/JobOrder", {
         query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open") AND (type:1 OR type:2)',
-        fields: "id,title,type,status,clientCorporation,numOpenings",
+        fields: "id,title,type,status,clientCorporation,numOpenings,dateAdded",
         count: 10,
         sort: "type",
       }),
@@ -992,16 +992,39 @@ app.get("/api/dashboard", async (req, res) => {
 
     const PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
 
+    // Get submission counts for urgent jobs
+    var subCountByJob = {};
+    try {
+      var urgentIds = (urgentJobs.data || []).map(function (j) { return j.id; });
+      if (urgentIds.length > 0) {
+        var subData = await bhFetchAll("query/JobSubmission", {
+          where: "jobOrder.id IN (" + urgentIds.join(",") + ") AND isDeleted=false",
+          fields: "id,jobOrder",
+        });
+        (subData.data || []).forEach(function (s) {
+          var jid = s.jobOrder ? s.jobOrder.id : null;
+          if (jid) subCountByJob[jid] = (subCountByJob[jid] || 0) + 1;
+        });
+      }
+    } catch (subErr) {
+      console.log("[Dashboard] Submission count query failed (non-blocking):", subErr.message);
+    }
+
     res.json({
       stats,
-      urgentJobs: (urgentJobs.data || []).map(j => ({
-        id: j.id,
-        title: j.title || "",
-        priority: PRIORITY_LABELS[j.type] || "",
-        status: j.status || "",
-        client: j.clientCorporation ? j.clientCorporation.name : "",
-        openings: j.numOpenings || 0,
-      })),
+      urgentJobs: (urgentJobs.data || []).map(j => {
+        var daysOpen = j.dateAdded ? Math.floor((now - j.dateAdded) / 86400000) : null;
+        return {
+          id: j.id,
+          title: j.title || "",
+          priority: PRIORITY_LABELS[j.type] || "",
+          status: j.status || "",
+          client: j.clientCorporation ? j.clientCorporation.name : "",
+          openings: j.numOpenings || 0,
+          daysOpen: daysOpen,
+          submissions: subCountByJob[j.id] || 0,
+        };
+      }),
       urgentJobsTotal: urgentJobs.total || 0,
       newCandidates: (newCandidates.data || []).map(c => ({
         id: c.id,

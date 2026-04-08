@@ -941,11 +941,15 @@ function renderHome(d){
     var prioColors={"Urgent":"#dc2626","Hot":"#f59e0b"};
     d.urgentJobs.forEach(function(j){
       var c=prioColors[j.priority]||"#94a3b8";
-      html+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="setPage(\'smartmatch\');setTimeout(function(){document.getElementById(\'sm-job-id\')&&(document.getElementById(\'sm-job-id\').value='+j.id+')},100)">';
+      var daysLabel=j.daysOpen!==null?(j.daysOpen===0?"Today":j.daysOpen===1?"1 day":j.daysOpen+" days"):"";
+      html+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="setPage(\'jobs\')">';
       html+='<span class="badge" style="background:'+c+'18;color:'+c+';border:1px solid '+c+'40;font-weight:700;flex-shrink:0">'+esc(j.priority)+'</span>';
       html+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(j.title)+'</div>';
       html+='<div style="font-size:12px;color:#64748b">'+esc(j.client)+' \u2022 '+j.openings+' opening'+(j.openings!==1?'s':'')+'</div></div>';
-      html+='<button class="btn-primary" style="font-size:11px;padding:4px 10px;flex-shrink:0" onclick="event.stopPropagation();setPage(\'smartmatch\');window._smJobId='+j.id+';">\uD83C\uDFAF Match</button>';
+      html+='<div style="text-align:right;flex-shrink:0">';
+      html+='<div style="font-size:13px;font-weight:600;color:#176087">'+j.submissions+' submitted</div>';
+      if(daysLabel) html+='<div style="font-size:11px;color:#94a3b8">Open '+daysLabel+'</div>';
+      html+='</div>';
       html+='</div>';
     });
   }
