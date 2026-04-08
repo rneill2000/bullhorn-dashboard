@@ -1138,6 +1138,543 @@ async function getSyncDetails() {
   };
 }
 
+/* ═══ QUERY FUNCTIONS ═══ */
+/* These return data in the same shape the frontend expects,
+   so endpoints can swap seamlessly between Postgres and Bullhorn. */
+
+var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
+var PRIORITY_MAP = { "Urgent": 1, "Hot": 2, "Warm": 3, "Cold": 4 };
+
+function fmtDate(ms) {
+  if (!ms) return "";
+  return new Date(ms).toLocaleDateString("en-US");
+}
+function fmtMoney(v) {
+  if (!v && v !== 0) return "—";
+  return "$" + Number(v).toLocaleString();
+}
+
+/**
+ * Search candidates with filters — returns { data, total } matching /api/candidates shape
+ */
+async function dbSearchCandidates(filters) {
+  if (!dbReady) return null;
+  var conditions = ["1=1"];
+  var params = [];
+  var n = 0;
+
+  if (filters.status && filters.status !== "All") {
+    n++; conditions.push("status = $" + n); params.push(filters.status);
+  } else {
+    // Default: exclude Placed (mirrors existing BH endpoint behavior)
+    conditions.push("status != 'Placed'");
+  }
+  if (filters.q) {
+    n++; var q = "%" + filters.q + "%";
+    conditions.push("(first_name ILIKE $" + n + " OR last_name ILIKE $" + n + " OR occupation ILIKE $" + n + " OR custom_text1 ILIKE $" + n + " OR custom_text2 ILIKE $" + n + ")");
+    params.push(q);
+  }
+  if (filters.cert) {
+    n++; conditions.push("(custom_text1 ILIKE $" + n + " OR custom_text2 ILIKE $" + n + ")");
+    params.push("%" + filters.cert + "%");
+  }
+  if (filters.grade) {
+    n++; conditions.push("custom_text6 = $" + n); params.push(filters.grade);
+  }
+  if (filters.epicRole) {
+    n++; conditions.push("custom_text5 ILIKE $" + n); params.push("%" + filters.epicRole + "%");
+  }
+  if (filters.location) {
+    n++; conditions.push("(address_city ILIKE $" + n + " OR address_state ILIKE $" + n + ")");
+    params.push("%" + filters.location + "%");
+  }
+  if (filters.avail === "soon" || filters.avail === "now") {
+    var past = Date.now() - 14 * 86400000;
+    if (filters.avail === "soon") {
+      var future = Date.now() + 14 * 86400000;
+      n++; conditions.push("date_available >= $" + n); params.push(past);
+      n++; conditions.push("date_available <= $" + n); params.push(future);
+    } else {
+      n++; conditions.push("date_available <= $" + n); params.push(Date.now());
+      n++; conditions.push("date_available >= $" + n); params.push(past);
+    }
+  } else if (filters.avail === "30days") {
+    var past30 = Date.now() - 14 * 86400000;
+    var future30 = Date.now() + 30 * 86400000;
+    n++; conditions.push("date_available >= $" + n); params.push(past30);
+    n++; conditions.push("date_available <= $" + n); params.push(future30);
+  }
+
+  var sql = "SELECT * FROM candidates WHERE " + conditions.join(" AND ") + " ORDER BY date_last_modified DESC NULLS LAST";
+  var countSql = "SELECT COUNT(*) as count FROM candidates WHERE " + conditions.join(" AND ");
+
+  var rows = (await query(sql, params)).rows;
+  var totalRes = await getOne(countSql, params);
+  var total = totalRes ? parseInt(totalRes.count) : rows.length;
+
+  var data = rows.map(function (c) {
+    return {
+      id: c.id,
+      firstName: c.first_name || "",
+      lastName: c.last_name || "",
+      title: c.occupation || "",
+      primaryCert: c.custom_text1 || "",
+      secondaryCert: c.custom_text2 || "",
+      preferredRole: c.custom_text3 || "",
+      epicRole: c.custom_text5 || "",
+      grade: c.custom_text6 || "",
+      urgency: c.custom_text7 || "",
+      notes: c.custom_text_block1 || "",
+      status: c.status || "Unknown",
+      location: [c.address_city, c.address_state].filter(Boolean).join(", "),
+      salary: c.salary ? fmtMoney(c.salary) : "—",
+      available: c.date_available ? fmtDate(c.date_available) : "—",
+      availableRaw: c.date_available || null,
+      email: c.email || "",
+      phone: c.phone || "",
+      lastModified: c.date_last_modified ? fmtDate(c.date_last_modified) : "",
+      source: c.source || "",
+      owner: c.owner_name || "",
+    };
+  });
+
+  return { data: data, total: total, source: "db" };
+}
+
+/**
+ * Search jobs with filters — returns { data, total } matching /api/jobs shape
+ */
+async function dbSearchJobs(filters) {
+  if (!dbReady) return null;
+  var conditions = ["1=1"];
+  var params = [];
+  var n = 0;
+
+  if (filters.status && filters.status !== "All") {
+    n++; conditions.push("status = $" + n); params.push(filters.status);
+  }
+  if (filters.q) {
+    n++; var q = "%" + filters.q + "%";
+    conditions.push("(title ILIKE $" + n + " OR client_name ILIKE $" + n + ")");
+    params.push(q);
+  }
+  if (filters.priority && PRIORITY_MAP[filters.priority] !== undefined) {
+    n++; conditions.push("type = $" + n); params.push(PRIORITY_MAP[filters.priority]);
+  }
+
+  var sql = "SELECT * FROM jobs WHERE " + conditions.join(" AND ") + " ORDER BY date_last_modified DESC NULLS LAST";
+  var countSql = "SELECT COUNT(*) as count FROM jobs WHERE " + conditions.join(" AND ");
+
+  var rows = (await query(sql, params)).rows;
+  var totalRes = await getOne(countSql, params);
+  var total = totalRes ? parseInt(totalRes.count) : rows.length;
+
+  // Get submission counts for these jobs
+  var jobIds = rows.map(function (j) { return j.id; });
+  var subCounts = {};
+  if (jobIds.length > 0) {
+    try {
+      var subRows = await getAll("SELECT job_id, COUNT(*) as cnt FROM submissions WHERE job_id = ANY($1) AND (is_deleted IS NULL OR is_deleted = false) GROUP BY job_id", [jobIds]);
+      subRows.forEach(function (r) { subCounts[r.job_id] = parseInt(r.cnt); });
+    } catch (e) { /* non-blocking */ }
+  }
+
+  var data = rows.map(function (j) {
+    var dateAdded = j.date_added ? fmtDate(j.date_added) : "";
+    var daysOpen = j.date_added && (j.status === "Accepting Candidates" || j.status === "Open")
+      ? Math.floor((Date.now() - j.date_added) / 86400000) : null;
+    return {
+      id: j.id,
+      title: j.title || "",
+      client: j.client_name || "",
+      location: [j.address_city, j.address_state].filter(Boolean).join(", "),
+      type: j.employment_type || "",
+      salary: j.salary ? fmtMoney(j.salary) : "—",
+      status: j.status || "Unknown",
+      priority: PRIORITY_LABELS[j.type] || "",
+      openings: j.num_openings || 0,
+      submissions: subCounts[j.id] || 0,
+      dateAdded: dateAdded,
+      daysOpen: daysOpen,
+    };
+  });
+
+  return { data: data, total: total, source: "db" };
+}
+
+/**
+ * Search placements with filters — returns { data, total } matching /api/placements shape
+ */
+async function dbSearchPlacements(filters) {
+  if (!dbReady) return null;
+  var conditions = ["1=1"];
+  var params = [];
+  var n = 0;
+
+  if (filters.q) {
+    n++; var q = "%" + filters.q + "%";
+    conditions.push("(candidate_name ILIKE $" + n + " OR job_title ILIKE $" + n + " OR client_name ILIKE $" + n + ")");
+    params.push(q);
+  }
+  if (filters.status && filters.status !== "All") {
+    n++; conditions.push("status = $" + n); params.push(filters.status);
+  }
+  if (filters.type === "Direct Hire") {
+    conditions.push("employment_type = 'Direct Hire'");
+  } else if (filters.type === "Consultant") {
+    conditions.push("(employment_type = 'Contract' OR employment_type = 'Temp' OR employment_type = 'Temp to Hire')");
+  }
+
+  var sql = "SELECT * FROM placements WHERE " + conditions.join(" AND ") + " ORDER BY date_begin DESC NULLS LAST";
+  var countSql = "SELECT COUNT(*) as count FROM placements WHERE " + conditions.join(" AND ");
+
+  var rows = (await query(sql, params)).rows;
+  var totalRes = await getOne(countSql, params);
+  var total = totalRes ? parseInt(totalRes.count) : rows.length;
+
+  var data = rows.map(function (p) {
+    var isDH = p.employment_type === "Direct Hire" || p.employment_type === "Permanent";
+    var payRate = p.pay_rate || 0;
+    var billRate = p.client_bill_rate || 0;
+    var margin = billRate > 0 ? Math.round(((billRate - payRate) / billRate) * 100) + "%" : null;
+
+    return {
+      id: p.id,
+      candidate: p.candidate_name || "",
+      job: p.job_title || "",
+      client: p.client_name || "",
+      startDate: p.date_begin ? fmtDate(p.date_begin) : "",
+      endDate: p.date_end ? fmtDate(p.date_end) : null,
+      salary: isDH ? (p.salary ? fmtMoney(p.salary) : "—") : (payRate ? "$" + payRate + "/hr" : "—"),
+      pt: isDH ? "Direct Hire" : "Consultant",
+      status: p.status || "Unknown",
+      fee: isDH && p.fee ? fmtMoney(p.fee) : null,
+      margin: isDH ? null : margin,
+      billRate: isDH ? null : (billRate ? "$" + billRate + "/hr" : null),
+      payRate: isDH ? null : (payRate ? "$" + payRate + "/hr" : null),
+    };
+  });
+
+  return { data: data, total: total, source: "db" };
+}
+
+/**
+ * Search clients with filters — returns { data, total } matching /api/clients shape
+ */
+async function dbSearchClients(filters) {
+  if (!dbReady) return null;
+  var conditions = ["1=1"];
+  var params = [];
+  var n = 0;
+
+  if (filters.q) {
+    n++; conditions.push("name ILIKE $" + n); params.push("%" + filters.q + "%");
+  }
+  if (filters.status && filters.status !== "All") {
+    n++; conditions.push("status = $" + n); params.push(filters.status);
+  }
+
+  var sql = "SELECT * FROM clients WHERE " + conditions.join(" AND ") + " ORDER BY date_last_modified DESC NULLS LAST";
+  var countSql = "SELECT COUNT(*) as count FROM clients WHERE " + conditions.join(" AND ");
+
+  var rows = (await query(sql, params)).rows;
+  var totalRes = await getOne(countSql, params);
+  var total = totalRes ? parseInt(totalRes.count) : rows.length;
+
+  // Get active placement counts per client from local DB
+  var placByClient = {};
+  try {
+    var placRows = await getAll("SELECT client_id, candidate_name FROM placements WHERE status = 'Approved' OR status = 'Actively On Contract'");
+    placRows.forEach(function (p) {
+      if (p.client_id) {
+        if (!placByClient[p.client_id]) placByClient[p.client_id] = [];
+        placByClient[p.client_id].push({ candidateName: p.candidate_name || "Unknown" });
+      }
+    });
+  } catch (e) { /* non-blocking */ }
+
+  var data = rows.map(function (c) {
+    return {
+      id: c.id,
+      name: c.name || "",
+      owner: c.owner_name || "",
+      location: [c.address_city, c.address_state].filter(Boolean).join(", "),
+      status: c.status || "Unknown",
+      activePlacements: placByClient[c.id] ? placByClient[c.id].length : 0,
+      placedConsultants: placByClient[c.id] || [],
+    };
+  });
+
+  return { data: data, total: total, source: "db" };
+}
+
+/**
+ * Dashboard summary — returns object matching /api/dashboard shape
+ */
+async function dbGetDashboard() {
+  if (!dbReady) return null;
+  var now = Date.now();
+  var in30Days = now + 30 * 86400000;
+  var past7 = now - 7 * 86400000;
+  var past7Days = now - 7 * 86400000;
+  var future14 = now + 14 * 86400000;
+
+  // Stats
+  var activeCands = await getOne("SELECT COUNT(*) as count FROM candidates WHERE status = 'Active'");
+  var openJobs = await getOne("SELECT COUNT(*) as count FROM jobs WHERE status = 'Accepting Candidates'");
+
+  // Urgent/Hot jobs (type 1 or 2)
+  var urgentRows = (await query(
+    "SELECT * FROM jobs WHERE (status = 'Accepting Candidates' OR status = 'Open') AND (type = 1 OR type = 2) ORDER BY type ASC LIMIT 10"
+  )).rows;
+
+  // Submission counts for urgent jobs
+  var urgentIds = urgentRows.map(function (j) { return j.id; });
+  var subCounts = {};
+  if (urgentIds.length > 0) {
+    try {
+      var subRows = await getAll("SELECT job_id, COUNT(*) as cnt FROM submissions WHERE job_id = ANY($1) AND (is_deleted IS NULL OR is_deleted = false) GROUP BY job_id", [urgentIds]);
+      subRows.forEach(function (r) { subCounts[r.job_id] = parseInt(r.cnt); });
+    } catch (e) { /* non-blocking */ }
+  }
+
+  // New candidates (last 7 days)
+  var newCandRows = (await query(
+    "SELECT * FROM candidates WHERE date_added >= $1 ORDER BY date_added DESC LIMIT 10", [past7]
+  )).rows;
+  var newCandTotal = await getOne("SELECT COUNT(*) as count FROM candidates WHERE date_added >= $1", [past7]);
+
+  // Expiring placements (next 30 days)
+  var expRows = (await query(
+    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end >= $1 AND date_end <= $2 ORDER BY date_end ASC", [now, in30Days]
+  )).rows;
+
+  // Candidates available soon (past 7 days to next 14 days)
+  var availRows = (await query(
+    "SELECT * FROM candidates WHERE status = 'Active' AND date_available >= $1 AND date_available <= $2 ORDER BY date_available ASC LIMIT 10", [past7Days, future14]
+  )).rows;
+  var availTotal = await getOne("SELECT COUNT(*) as count FROM candidates WHERE status = 'Active' AND date_available >= $1 AND date_available <= $2", [past7Days, future14]);
+
+  // Count urgent jobs total
+  var urgentTotal = await getOne("SELECT COUNT(*) as count FROM jobs WHERE (status = 'Accepting Candidates' OR status = 'Open') AND (type = 1 OR type = 2)");
+
+  return {
+    stats: {
+      activeCandidates: activeCands ? parseInt(activeCands.count) : 0,
+      openJobs: openJobs ? parseInt(openJobs.count) : 0,
+    },
+    urgentJobs: urgentRows.map(function (j) {
+      var daysOpen = j.date_added ? Math.floor((now - j.date_added) / 86400000) : null;
+      return {
+        id: j.id, title: j.title || "", priority: PRIORITY_LABELS[j.type] || "",
+        status: j.status || "", client: j.client_name || "",
+        openings: j.num_openings || 0, daysOpen: daysOpen,
+        submissions: subCounts[j.id] || 0,
+      };
+    }),
+    urgentJobsTotal: urgentTotal ? parseInt(urgentTotal.count) : 0,
+    newCandidates: newCandRows.map(function (c) {
+      return {
+        id: c.id, name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+        title: c.occupation || "", primaryCert: c.custom_text1 || "",
+        grade: c.custom_text6 || "", dateAdded: c.date_added ? fmtDate(c.date_added) : "",
+      };
+    }),
+    newCandidatesTotal: newCandTotal ? parseInt(newCandTotal.count) : 0,
+    expiringPlacements: expRows.map(function (p) {
+      var daysLeft = p.date_end ? Math.ceil((p.date_end - now) / 86400000) : null;
+      return {
+        id: p.id, candidate: p.candidate_name || "",
+        job: p.job_title || "",
+        endDate: p.date_end ? fmtDate(p.date_end) : "",
+        daysLeft: daysLeft,
+        marginAtRisk: ((p.client_bill_rate || 0) - (p.pay_rate || 0)) * 40 * 4,
+      };
+    }),
+    availableSoon: availRows.map(function (c) {
+      return {
+        id: c.id, name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+        title: c.occupation || "", primaryCert: c.custom_text1 || "",
+        grade: c.custom_text6 || "", available: c.date_available ? fmtDate(c.date_available) : "",
+      };
+    }),
+    availableSoonTotal: availTotal ? parseInt(availTotal.count) : 0,
+    source: "db",
+  };
+}
+
+/**
+ * Smart lists — group candidates by primary cert
+ */
+async function dbGetSmartLists() {
+  if (!dbReady) return null;
+  var rows = (await query("SELECT * FROM candidates WHERE custom_text1 IS NOT NULL AND custom_text1 != '' ORDER BY date_last_modified DESC NULLS LAST")).rows;
+  var totalRes = await getOne("SELECT COUNT(*) as count FROM candidates WHERE custom_text1 IS NOT NULL AND custom_text1 != ''");
+
+  var lists = {};
+  rows.forEach(function (c) {
+    var cert = (c.custom_text1 || "").trim();
+    if (!cert) return;
+    var certKeys = cert.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    var candidateObj = {
+      id: c.id,
+      name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+      title: c.occupation || "", status: c.status || "",
+      primaryCert: cert, secondaryCert: c.custom_text2 || "",
+      epicRole: c.custom_text5 || "", grade: c.custom_text6 || "",
+      salary: c.salary ? fmtMoney(c.salary) : "—",
+      available: c.date_available ? fmtDate(c.date_available) : "",
+      location: [c.address_city, c.address_state].filter(Boolean).join(", "),
+      email: c.email || "",
+    };
+    certKeys.forEach(function (key) {
+      if (!lists[key]) lists[key] = { name: key, candidates: [] };
+      lists[key].candidates.push(candidateObj);
+    });
+  });
+
+  var sorted = Object.values(lists).sort(function (a, b) { return b.candidates.length - a.candidates.length; });
+  return { lists: sorted, total: totalRes ? parseInt(totalRes.count) : rows.length, source: "db" };
+}
+
+/**
+ * Stale candidates — not modified in X days
+ */
+async function dbGetStaleCandidates(days) {
+  if (!dbReady) return null;
+  var cutoff = Date.now() - days * 86400000;
+  var rows = (await query(
+    "SELECT * FROM candidates WHERE status = 'Active' AND date_last_modified <= $1 ORDER BY date_last_modified ASC", [cutoff]
+  )).rows;
+  var totalRes = await getOne("SELECT COUNT(*) as count FROM candidates WHERE status = 'Active' AND date_last_modified <= $1", [cutoff]);
+
+  var data = rows.map(function (c) {
+    return {
+      id: c.id, name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+      title: c.occupation || "", primaryCert: c.custom_text1 || "",
+      grade: c.custom_text6 || "",
+      lastModified: c.date_last_modified ? fmtDate(c.date_last_modified) : "",
+      daysSinceTouch: c.date_last_modified ? Math.floor((Date.now() - c.date_last_modified) / 86400000) : 999,
+      available: c.date_available ? fmtDate(c.date_available) : "—",
+    };
+  });
+
+  return { data: data, total: totalRes ? parseInt(totalRes.count) : data.length, source: "db" };
+}
+
+/**
+ * Touch report — stale candidates, consultants, and clients
+ */
+async function dbGetTouchReport(days) {
+  if (!dbReady) return null;
+  var cutoff = Date.now() - days * 86400000;
+  var nowMs = Date.now();
+
+  // Stale candidates
+  var candRows = (await query(
+    "SELECT * FROM candidates WHERE status = 'Active' AND date_last_modified <= $1 ORDER BY date_last_modified ASC", [cutoff]
+  )).rows;
+  var candTotal = await getOne("SELECT COUNT(*) as count FROM candidates WHERE status = 'Active' AND date_last_modified <= $1", [cutoff]);
+  var candidates = candRows.map(function (c) {
+    return {
+      id: c.id, type: "Candidate",
+      name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+      title: c.occupation || "", primaryCert: c.custom_text1 || "",
+      grade: c.custom_text6 || "", email: c.email || "", phone: c.phone || "",
+      owner: c.owner_name || "",
+      lastTouched: c.date_last_modified ? fmtDate(c.date_last_modified) : "Never",
+      daysSince: c.date_last_modified ? Math.floor((nowMs - c.date_last_modified) / 86400000) : 999,
+    };
+  });
+
+  // Active placements — find stale consultants
+  var placRows = (await query(
+    "SELECT * FROM placements WHERE status = 'Approved' AND date_end >= $1 ORDER BY date_last_modified ASC", [nowMs]
+  )).rows;
+  var consultants = placRows.map(function (p) {
+    return {
+      id: p.id, type: "Consultant",
+      name: p.candidate_name || "Unknown",
+      candidateId: p.candidate_id || null,
+      job: p.job_title || "",
+      endsOn: p.date_end ? fmtDate(p.date_end) : "",
+      lastTouched: p.date_last_modified ? fmtDate(p.date_last_modified) : "Never",
+      daysSince: p.date_last_modified ? Math.floor((nowMs - p.date_last_modified) / 86400000) : 999,
+      payRate: p.pay_rate ? "$" + p.pay_rate + "/hr" : "—",
+      billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : "—",
+    };
+  }).filter(function (c) { return c.daysSince >= days; });
+
+  // Stale clients
+  var clientRows = (await query(
+    "SELECT * FROM clients WHERE date_last_modified <= $1 ORDER BY date_last_modified ASC", [cutoff]
+  )).rows;
+  var clientTotal = await getOne("SELECT COUNT(*) as count FROM clients WHERE date_last_modified <= $1", [cutoff]);
+  var clients = clientRows.map(function (c) {
+    return {
+      id: c.id, type: "Client", name: c.name || "", status: c.status || "",
+      phone: c.phone || "",
+      location: [c.address_city, c.address_state].filter(Boolean).join(", "),
+      lastTouched: c.date_last_modified ? fmtDate(c.date_last_modified) : "Never",
+      daysSince: c.date_last_modified ? Math.floor((nowMs - c.date_last_modified) / 86400000) : 999,
+    };
+  });
+
+  return {
+    days: days,
+    candidates: { data: candidates, total: candTotal ? parseInt(candTotal.count) : candidates.length },
+    consultants: { data: consultants, total: consultants.length },
+    clients: { data: clients, total: clientTotal ? parseInt(clientTotal.count) : clients.length },
+    source: "db",
+  };
+}
+
+/**
+ * Expiring placements — ending within N days
+ */
+async function dbGetExpiringPlacements(days) {
+  if (!dbReady) return null;
+  var now = Date.now();
+  var future = now + (days || 30) * 86400000;
+  var rows = (await query(
+    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end >= $1 AND date_end <= $2 ORDER BY date_end ASC", [now, future]
+  )).rows;
+
+  var data = rows.map(function (p) {
+    var daysLeft = p.date_end ? Math.ceil((p.date_end - now) / 86400000) : null;
+    return {
+      id: p.id, candidate: p.candidate_name || "", job: p.job_title || "",
+      client: p.client_name || "",
+      endDate: p.date_end ? fmtDate(p.date_end) : "",
+      daysLeft: daysLeft,
+      marginAtRisk: ((p.client_bill_rate || 0) - (p.pay_rate || 0)) * 40 * 4,
+    };
+  });
+
+  return { data: data, total: data.length, source: "db" };
+}
+
+/**
+ * Candidate submissions — for candidate detail view
+ */
+async function dbGetCandidateSubmissions(candidateId) {
+  if (!dbReady) return null;
+  var rows = (await query(
+    "SELECT * FROM submissions WHERE candidate_id = $1 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_added DESC", [candidateId]
+  )).rows;
+
+  var data = rows.map(function (s) {
+    return {
+      id: s.id, job: s.job_title || "", jobId: s.job_id || null,
+      status: s.status || "",
+      date: s.date_added ? fmtDate(s.date_added) : "",
+      submittedBy: s.sending_user || "", source: s.source || "",
+    };
+  });
+
+  return { data: data, total: data.length, source: "db" };
+}
+
 /* ═══ EXPORTS ═══ */
 module.exports = {
   init: init,
@@ -1154,5 +1691,16 @@ module.exports = {
   stopSyncLoop: stopSyncLoop,
   getSyncStatus: getSyncStatus,
   getSyncDetails: getSyncDetails,
+  // Query functions — return data in frontend-ready shapes
+  searchCandidates: dbSearchCandidates,
+  searchJobs: dbSearchJobs,
+  searchPlacements: dbSearchPlacements,
+  searchClients: dbSearchClients,
+  getDashboard: dbGetDashboard,
+  getSmartLists: dbGetSmartLists,
+  getStaleCandidates: dbGetStaleCandidates,
+  getTouchReport: dbGetTouchReport,
+  getExpiringPlacements: dbGetExpiringPlacements,
+  getCandidateSubmissions: dbGetCandidateSubmissions,
   get ready() { return dbReady; },
 };

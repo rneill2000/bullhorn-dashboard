@@ -332,6 +332,14 @@ app.get("/api/candidates", async (req, res) => {
     const grade = req.query.grade || "";
     const epicRole = req.query.epicRole || "";
 
+    // Try Postgres first
+    if (db.ready) {
+      try {
+        var dbResult = await db.searchCandidates({ q, status, location, cert, avail, grade, epicRole });
+        if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
+      } catch (dbErr) { console.log("[Candidates] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
+
     // Build Lucene query
     let query = "isDeleted:0";
     if (q) {
@@ -492,6 +500,14 @@ app.get("/api/jobs", async (req, res) => {
     const status = req.query.status || "";
     const priority = req.query.priority || ""; // "Urgent","Hot","Warm","Cold"
 
+    // Try Postgres first
+    if (db.ready) {
+      try {
+        var dbResult = await db.searchJobs({ q, status, priority });
+        if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
+      } catch (dbErr) { console.log("[Jobs] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
+
     // Priority label → integer mapping (Bullhorn stores as 'type' field)
     const PRIORITY_MAP = { "Urgent": 1, "Hot": 2, "Warm": 3, "Cold": 4 };
     const PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
@@ -551,6 +567,14 @@ app.get("/api/placements", async (req, res) => {
     const q = req.query.q || "";
     const status = req.query.status || "";
     const type = req.query.type || "";
+
+    // Try Postgres first
+    if (db.ready) {
+      try {
+        var dbResult = await db.searchPlacements({ q, status, type });
+        if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
+      } catch (dbErr) { console.log("[Placements] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
 
     // Use query endpoint for Placements (more reliable than search)
     let where = "id IS NOT NULL";
@@ -635,6 +659,14 @@ app.get("/api/clients", async (req, res) => {
   try {
     const q = req.query.q || "";
     const status = req.query.status || "";
+
+    // Try Postgres first
+    if (db.ready) {
+      try {
+        var dbResult = await db.searchClients({ q, status });
+        if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
+      } catch (dbErr) { console.log("[Clients] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
 
     // Use query endpoint for Clients
     let where = "id IS NOT NULL";
@@ -826,6 +858,33 @@ app.get("/api/expiring-placements", async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 90;
     const now = Date.now();
+
+    // Try Postgres first (with this endpoint's specific shape)
+    if (db.ready) {
+      try {
+        var future = now + days * 86400000;
+        var expRows = await db.getAll("SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end >= $1 AND date_end <= $2 ORDER BY date_end ASC", [now, future]);
+        var expResult = expRows.map(function (p) {
+          var daysLeft = p.date_end ? Math.ceil((p.date_end - now) / 86400000) : null;
+          var billRate = p.client_bill_rate || 0;
+          var payRate = p.pay_rate || 0;
+          var monthlyMargin = (billRate - payRate) * 40 * 4;
+          return {
+            id: p.id, candidate: p.candidate_name || "",
+            candidateId: p.candidate_id || null,
+            job: p.job_title || "", status: p.status || "",
+            startDate: p.date_begin ? new Date(p.date_begin).toLocaleDateString() : "",
+            endDate: p.date_end ? new Date(p.date_end).toLocaleDateString() : "",
+            daysLeft: daysLeft,
+            billRate: billRate ? "$" + billRate + "/hr" : "—",
+            payRate: payRate ? "$" + payRate + "/hr" : "—",
+            monthlyMarginAtRisk: monthlyMargin > 0 ? "$" + Math.round(monthlyMargin).toLocaleString() : "—",
+            urgency: daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
+          };
+        });
+        return res.json({ data: expResult, total: expResult.length });
+      } catch (dbErr) { console.log("[Expiring Placements] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
     const futureMs = now + days * 86400000;
 
     // Bullhorn query/ endpoint uses millisecond timestamps for date comparisons
@@ -971,6 +1030,14 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
 // ── Dashboard Summary (for landing page) ──────
 app.get("/api/dashboard", async (req, res) => {
   try {
+    // Try Postgres first
+    if (db.ready) {
+      try {
+        var dbResult = await db.getDashboard();
+        if (dbResult) return res.json(dbResult);
+      } catch (dbErr) { console.log("[Dashboard] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
+
     const now = Date.now();
     const nowMs = now;
     const in30DaysMs = now + 30 * 86400000;
@@ -1094,6 +1161,14 @@ app.get("/api/dashboard", async (req, res) => {
 app.get("/api/candidates/:id/submissions", async (req, res) => {
   try {
     const id = req.params.id;
+
+    // Try Postgres first
+    if (db.ready) {
+      try {
+        var dbResult = await db.getCandidateSubmissions(parseInt(id));
+        if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
+      } catch (dbErr) { console.log("[Submissions] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
     const data = await bhFetchAll("query/JobSubmission", {
       where: `candidate.id=${id} AND isDeleted=false`,
       fields: "id,jobOrder,status,dateAdded,sendingUser,source",
@@ -1119,6 +1194,14 @@ app.get("/api/candidates/:id/submissions", async (req, res) => {
 app.get("/api/stale-candidates", async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 30;
+
+    // Try Postgres first
+    if (db.ready) {
+      try {
+        var dbResult = await db.getStaleCandidates(days);
+        if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
+      } catch (dbErr) { console.log("[Stale Candidates] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
     const cutoff = new Date(Date.now() - days * 86400000).toISOString().split("T")[0].replace(/-/g, "");
     // Candidates who are active but haven't been modified in X days
     const data = await bhFetchAll("search/Candidate", {
@@ -1147,6 +1230,14 @@ app.get("/api/stale-candidates", async (req, res) => {
 app.get("/api/touch-report", async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 14;
+
+    // Try Postgres first
+    if (db.ready) {
+      try {
+        var dbResult = await db.getTouchReport(days);
+        if (dbResult) return res.json(dbResult);
+      } catch (dbErr) { console.log("[Touch Report] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
     const cutoff = new Date(Date.now() - days * 86400000)
       .toISOString()
       .split("T")[0]
@@ -1246,6 +1337,14 @@ app.get("/api/touch-report", async (req, res) => {
 // ── Smart Lists (by primary cert) ─────────────────
 app.get("/api/smart-lists", async (req, res) => {
   try {
+    // Try Postgres first
+    if (db.ready) {
+      try {
+        var dbResult = await db.getSmartLists();
+        if (dbResult) return res.json({ lists: dbResult.lists, total: dbResult.total });
+      } catch (dbErr) { console.log("[Smart Lists] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
+
     // Fetch all non-deleted candidates with primary certs
     const data = await bhFetchAll("search/Candidate", {
       query: "isDeleted:0 AND customText1:[* TO *]",
