@@ -2692,32 +2692,64 @@ app.get("/api/touch-report", async (req, res) => {
       .replace(/-/g, "");
     const nowMs = Date.now();
 
-    // Fetch stale candidates (active, not touched in X days)
+    // Fetch stale candidates (active, with owner assigned — excludes unassigned leads)
     const candData = await bhFetchAll("search/Candidate", {
-      query: `isDeleted:0 AND status:"Active" AND dateLastModified:[19700101 TO ${cutoff}]`,
+      query: `isDeleted:0 AND status:"Active" AND owner.id:[1 TO *]`,
       fields:
         "id,firstName,lastName,occupation,status,dateLastModified,customText1,customText6,email,phone,owner",
       sort: "dateLastModified",
     });
-    const candidates = (candData.data || []).map((c) => ({
-      id: c.id,
-      type: "Candidate",
-      name: (c.firstName || "") + " " + (c.lastName || ""),
-      title: c.occupation || "",
-      primaryCert: c.customText1 || "",
-      grade: c.customText6 || "",
-      email: c.email || "",
-      phone: c.phone || "",
-      owner: c.owner
-        ? (c.owner.firstName || "") + " " + (c.owner.lastName || "")
-        : "",
-      lastTouched: c.dateLastModified
-        ? new Date(c.dateLastModified).toLocaleDateString()
-        : "Never",
-      daysSince: c.dateLastModified
-        ? Math.floor((nowMs - c.dateLastModified) / 86400000)
-        : 999,
-    }));
+
+    // Fetch notes for touch detection on candidates
+    var candIds = (candData.data || []).map(function(c) { return c.id; });
+    var candTouchMap = {};
+    if (candIds.length > 0) {
+      var TOUCH_ACTIONS_BH2 = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
+      for (var bi = 0; bi < candIds.length; bi += 50) {
+        var cbatch = candIds.slice(bi, bi + 50);
+        var cpersonQuery = cbatch.map(function(pid) { return "personReference.id:" + pid; }).join(" OR ");
+        try {
+          var cnoteData = await bhFetchAll("search/Note", {
+            query: "isDeleted:0 AND (" + cpersonQuery + ")",
+            fields: "id,personReference,action,comments,dateAdded",
+            sort: "-dateAdded",
+            count: 500,
+          });
+          (cnoteData.data || []).forEach(function(n) {
+            var pid = n.personReference ? n.personReference.id : null;
+            if (!pid) return;
+            var actionMatch = n.action && TOUCH_ACTIONS_BH2.some(function(a) { return a.toLowerCase() === (n.action || "").toLowerCase(); });
+            var contentMatch = false;
+            if (!actionMatch && n.comments) {
+              var lower = (n.comments || "").toLowerCase();
+              contentMatch = ["call","email","spoke","touch base","follow up","follow-up","reached out","meeting","check in","check-in","connected","left message","voicemail","scheduled"].some(function(kw) { return lower.indexOf(kw) >= 0; });
+            }
+            if ((actionMatch || contentMatch) && !candTouchMap[pid]) {
+              candTouchMap[pid] = { date: n.dateAdded, type: n.action || "Note (outreach detected)" };
+            }
+          });
+        } catch (noteErr) { console.log("[Touch Report] Note fetch error for candidates:", noteErr.message); }
+      }
+    }
+
+    const candidates = (candData.data || []).map(function(c) {
+      var touch = candTouchMap[c.id];
+      var lastTouchDate = touch ? touch.date : c.dateLastModified;
+      return {
+        id: c.id,
+        type: "Candidate",
+        name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+        title: c.occupation || "",
+        primaryCert: c.customText1 || "",
+        grade: c.customText6 || "",
+        email: c.email || "",
+        phone: c.phone || "",
+        owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
+        lastTouched: lastTouchDate ? new Date(lastTouchDate).toLocaleDateString() : "Never",
+        lastTouchType: touch ? touch.type : "No outreach logged",
+        daysSince: lastTouchDate ? Math.floor((nowMs - lastTouchDate) / 86400000) : 999,
+      };
+    });
 
     // Fetch active placements (consultants currently placed)
     const placData = await bhFetchAll("query/Placement", {
@@ -2726,48 +2758,117 @@ app.get("/api/touch-report", async (req, res) => {
         "id,candidate,jobOrder,dateEnd,dateLastModified,payRate,clientBillRate",
       orderBy: "dateLastModified",
     });
-    const consultants = (placData.data || []).map((p) => ({
-      id: p.id,
-      type: "Consultant",
-      name: p.candidate
-        ? (p.candidate.firstName || "") + " " + (p.candidate.lastName || "")
-        : "Unknown",
-      candidateId: p.candidate ? p.candidate.id : null,
-      job: p.jobOrder ? p.jobOrder.title || "Job #" + p.jobOrder.id : "",
-      endsOn: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : "",
-      lastTouched: p.dateLastModified
-        ? new Date(p.dateLastModified).toLocaleDateString()
-        : "Never",
-      daysSince: p.dateLastModified
-        ? Math.floor((nowMs - p.dateLastModified) / 86400000)
-        : 999,
-      payRate: p.payRate ? "$" + p.payRate + "/hr" : "—",
-      billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
-    }));
-    const staleConsultants = consultants.filter((c) => c.daysSince >= days);
+    // Fetch notes for touch detection on consultants
+    var consultCandIds = (placData.data || []).filter(function(p) { return p.candidate && p.candidate.id; }).map(function(p) { return p.candidate.id; });
+    var consultTouchMap = {};
+    if (consultCandIds.length > 0) {
+      var TOUCH_ACTIONS_BH3 = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
+      for (var pi = 0; pi < consultCandIds.length; pi += 50) {
+        var pbatch = consultCandIds.slice(pi, pi + 50);
+        var ppersonQuery = pbatch.map(function(pid) { return "personReference.id:" + pid; }).join(" OR ");
+        try {
+          var pnoteData = await bhFetchAll("search/Note", {
+            query: "isDeleted:0 AND (" + ppersonQuery + ")",
+            fields: "id,personReference,action,comments,dateAdded",
+            sort: "-dateAdded",
+            count: 500,
+          });
+          (pnoteData.data || []).forEach(function(n) {
+            var pid = n.personReference ? n.personReference.id : null;
+            if (!pid) return;
+            var actionMatch = n.action && TOUCH_ACTIONS_BH3.some(function(a) { return a.toLowerCase() === (n.action || "").toLowerCase(); });
+            var contentMatch = false;
+            if (!actionMatch && n.comments) {
+              var lower = (n.comments || "").toLowerCase();
+              contentMatch = ["call","email","spoke","touch base","follow up","follow-up","reached out","meeting","check in","check-in","connected","left message","voicemail","scheduled"].some(function(kw) { return lower.indexOf(kw) >= 0; });
+            }
+            if ((actionMatch || contentMatch) && !consultTouchMap[pid]) {
+              consultTouchMap[pid] = { date: n.dateAdded, type: n.action || "Note (outreach detected)" };
+            }
+          });
+        } catch (noteErr) { console.log("[Touch Report] Note fetch error for consultants:", noteErr.message); }
+      }
+    }
 
-    // Fetch stale clients
-    const clientData = await bhFetchAll("search/ClientCorporation", {
-      query: `isDeleted:0 AND dateLastModified:[19700101 TO ${cutoff}]`,
-      fields: "id,name,status,dateLastModified,address,phone",
+    const consultants = (placData.data || []).map(function(p) {
+      var candId = p.candidate ? p.candidate.id : null;
+      var touch = candId ? consultTouchMap[candId] : null;
+      var lastTouchDate = touch ? touch.date : p.dateLastModified;
+      return {
+        id: p.id,
+        type: "Consultant",
+        name: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "Unknown",
+        candidateId: candId,
+        job: p.jobOrder ? p.jobOrder.title || "Job #" + p.jobOrder.id : "",
+        endsOn: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : "",
+        lastTouched: lastTouchDate ? new Date(lastTouchDate).toLocaleDateString() : "Never",
+        lastTouchType: touch ? touch.type : "No outreach logged",
+        daysSince: lastTouchDate ? Math.floor((nowMs - lastTouchDate) / 86400000) : 999,
+        payRate: p.payRate ? "$" + p.payRate + "/hr" : "—",
+        billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
+      };
+    });
+    const staleConsultants = consultants.filter(function(c) { return c.daysSince >= days; });
+
+    // Fetch stale client contacts (active, assigned to health system, with owner)
+    const clientData = await bhFetchAll("search/ClientContact", {
+      query: `isDeleted:0 AND status:"Active" AND clientCorporation.id:[1 TO *] AND owner.id:[1 TO *]`,
+      fields: "id,firstName,lastName,title,status,dateLastModified,email,phone,owner,clientCorporation",
       sort: "dateLastModified",
     });
-    const clients = (clientData.data || []).map((c) => ({
-      id: c.id,
-      type: "Client",
-      name: c.name || "",
-      status: c.status || "",
-      phone: c.phone || "",
-      location: c.address
-        ? [c.address.city, c.address.state].filter(Boolean).join(", ")
-        : "",
-      lastTouched: c.dateLastModified
-        ? new Date(c.dateLastModified).toLocaleDateString()
-        : "Never",
-      daysSince: c.dateLastModified
-        ? Math.floor((nowMs - c.dateLastModified) / 86400000)
-        : 999,
-    }));
+
+    // For each client contact, check notes for real touches
+    var clientContactIds = (clientData.data || []).map(function(c) { return c.id; });
+    var clientTouchMap = {};
+    if (clientContactIds.length > 0) {
+      // Batch fetch notes for these contacts
+      var TOUCH_ACTIONS_BH = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
+      var touchActionQuery = TOUCH_ACTIONS_BH.map(function(a) { return '"' + a + '"'; }).join(" OR ");
+      for (var ci = 0; ci < clientContactIds.length; ci += 50) {
+        var batch = clientContactIds.slice(ci, ci + 50);
+        var personQuery = batch.map(function(pid) { return "personReference.id:" + pid; }).join(" OR ");
+        try {
+          var noteData = await bhFetchAll("search/Note", {
+            query: "isDeleted:0 AND (" + personQuery + ")",
+            fields: "id,personReference,action,comments,dateAdded",
+            sort: "-dateAdded",
+            count: 500,
+          });
+          (noteData.data || []).forEach(function(n) {
+            var pid = n.personReference ? n.personReference.id : null;
+            if (!pid) return;
+            var actionMatch = n.action && TOUCH_ACTIONS_BH.some(function(a) { return a.toLowerCase() === (n.action || "").toLowerCase(); });
+            var contentMatch = false;
+            if (!actionMatch && n.comments) {
+              var lower = (n.comments || "").toLowerCase();
+              contentMatch = ["call","email","spoke","touch base","follow up","follow-up","reached out","meeting","check in","check-in","connected","left message","voicemail","scheduled"].some(function(kw) { return lower.indexOf(kw) >= 0; });
+            }
+            if ((actionMatch || contentMatch) && !clientTouchMap[pid]) {
+              clientTouchMap[pid] = { date: n.dateAdded, type: n.action || "Note (outreach detected)" };
+            }
+          });
+        } catch (noteErr) { console.log("[Touch Report] Note fetch error for client contacts:", noteErr.message); }
+      }
+    }
+
+    const clients = (clientData.data || []).map(function(c) {
+      var touch = clientTouchMap[c.id];
+      var lastTouchDate = touch ? touch.date : c.dateLastModified;
+      return {
+        id: c.id,
+        type: "ClientContact",
+        name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+        title: c.title || "",
+        status: c.status || "",
+        email: c.email || "",
+        phone: c.phone || "",
+        healthSystem: c.clientCorporation ? (c.clientCorporation.name || "") : "",
+        owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
+        lastTouched: lastTouchDate ? new Date(lastTouchDate).toLocaleDateString() : "Never",
+        lastTouchType: touch ? touch.type : "No outreach logged",
+        daysSince: lastTouchDate ? Math.floor((nowMs - lastTouchDate) / 86400000) : 999,
+      };
+    });
 
     res.json({
       days,

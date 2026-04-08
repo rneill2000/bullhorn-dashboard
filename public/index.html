@@ -51,7 +51,7 @@ header.top-bar h1{font-size:22px;font-weight:700;color:#0f172a}
 .sep{width:1px;height:24px;background:#e2e8f0}
 .count-line{font-size:13px;color:#94a3b8;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
 .table-wrap{background:#fff;border-radius:12px;border:1px solid #f1f5f9;overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:14px;table-layout:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;padding:10px 14px;color:#64748b;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;border-bottom:2px solid #f1f5f9;position:relative;min-width:60px}
 th .col-resize{position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;background:transparent;z-index:2}
 th .col-resize:hover,th .col-resize.active{background:#176087;opacity:.3;border-radius:2px}
@@ -340,12 +340,36 @@ function applySorting(rows,cols){
   });
   return sorted;
 }
+var _hiddenCols={};
+function isColVisible(key){
+  var hidden=_hiddenCols[currentPage]||{};
+  return !hidden[key];
+}
+function toggleColVisibility(key){
+  if(!_hiddenCols[currentPage])_hiddenCols[currentPage]={};
+  _hiddenCols[currentPage][key]=!_hiddenCols[currentPage][key];
+  loadPage();
+}
+function makeColToggle(cols){
+  var h='<div style="position:relative;display:inline-block">';
+  h+='<button onclick="var d=this.nextElementSibling;d.style.display=d.style.display===\'block\'?\'none\':\'block\'" style="background:none;border:1px solid #e2e8f0;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;color:#64748b" title="Show/hide columns">\u2699\uFE0F Columns</button>';
+  h+='<div style="display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);padding:8px 0;z-index:100;min-width:180px;max-height:300px;overflow-y:auto">';
+  cols.forEach(function(c){
+    var vis=isColVisible(c.key);
+    h+='<label style="display:flex;align-items:center;gap:8px;padding:6px 14px;cursor:pointer;font-size:12px;white-space:nowrap;hover:background:#f8fafc">';
+    h+='<input type="checkbox" '+(vis?"checked":"")+' onchange="toggleColVisibility(\''+c.key+'\')">';
+    h+=esc(c.label)+'</label>';
+  });
+  h+='</div></div>';
+  return h;
+}
 function makeTable(cols,rows,onRowClick){
   if(!rows.length)return '<div class="empty-state"><div class="big">\u26A0</div><div class="title">No results found</div><div class="sub">Try adjusting your search or filters</div></div>';
-  var sorted=applySorting(rows,cols);
+  var visCols=cols.filter(function(c){return isColVisible(c.key);});
+  var sorted=applySorting(rows,visCols);
   var tid='tbl-'+Date.now();
   var h='<table id="'+tid+'"><thead><tr>';
-  cols.forEach(function(c){
+  visCols.forEach(function(c){
     var arrow=_sortCol===c.key?(_sortDir==="asc"?" \u25B2":" \u25BC"):"";
     h+='<th style="cursor:pointer;user-select:none" onclick="sortTable(\''+c.key+'\')">'+c.label+arrow+'<div class="col-resize"></div></th>';
   });
@@ -354,22 +378,27 @@ function makeTable(cols,rows,onRowClick){
     var origIdx=rows.indexOf(r);
     var click=onRowClick?' onclick="'+onRowClick+'('+(origIdx>=0?origIdx:idx)+')"':'';
     h+='<tr'+click+'>';
-    cols.forEach(function(c){h+='<td>'+(c.render?c.render(r):esc(r[c.key]))+'</td>';});
+    visCols.forEach(function(c){h+='<td>'+(c.render?c.render(r):esc(r[c.key]))+'</td>';});
     h+='</tr>';
   });
   h+='</tbody></table>';
   setTimeout(function(){initColResize(tid);},50);
   return h;
 }
+var _savedColWidths={};
 function initColResize(tableId){
   var tbl=document.getElementById(tableId);
   if(!tbl)return;
   tbl.style.tableLayout='fixed';
-  // Set initial widths from auto sizing
   var ths=tbl.querySelectorAll('thead th');
-  ths.forEach(function(th){th.style.width=th.offsetWidth+'px';});
-  tbl.style.width=tbl.offsetWidth+'px';
-  ths.forEach(function(th){
+  // Restore saved widths or use auto sizing
+  var saved=_savedColWidths[tableId];
+  ths.forEach(function(th,i){
+    if(saved&&saved[i]){th.style.width=saved[i]+'px';}
+    else{th.style.width=th.offsetWidth+'px';}
+  });
+  tbl.style.width='100%';
+  ths.forEach(function(th,colIdx){
     var handle=th.querySelector('.col-resize');
     if(!handle)return;
     var startX,startW;
@@ -377,7 +406,13 @@ function initColResize(tableId){
       e.preventDefault();e.stopPropagation();
       startX=e.pageX;startW=th.offsetWidth;
       handle.classList.add('active');
-      function onMove(ev){th.style.width=Math.max(40,startW+(ev.pageX-startX))+'px';}
+      function onMove(ev){
+        var newW=Math.max(40,startW+(ev.pageX-startX));
+        th.style.width=newW+'px';
+        // Save width so it persists across re-renders
+        if(!_savedColWidths[tableId])_savedColWidths[tableId]={};
+        _savedColWidths[tableId][colIdx]=newW;
+      }
       function onUp(){handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);}
       document.addEventListener('mousemove',onMove);
       document.addEventListener('mouseup',onUp);
@@ -693,7 +728,7 @@ function renderCandidates(data,bhTotal){
   html+='</div></div>';
 
   html+='<div class="count-line"><span>'+displayTotal+' candidate'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
-  html+='<button class="btn-export" onclick="exportCSV(\'candidates.csv\',candCols,_lastData.candidates)">\uD83D\uDCE5 Export CSV</button></div>';
+  html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'candidates.csv\',candCols,_lastData.candidates)">\uD83D\uDCE5 Export CSV</button></div>';
   html+='<div class="table-wrap">'+makeTable(cols,f,"candClick")+'</div>';
 
   // Store cols for export
@@ -732,7 +767,7 @@ function renderConsultants(data,bhTotal){
   }
 
   html+='<div class="count-line"><span>'+displayTotal+' consultant'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
-  html+='<button class="btn-export" onclick="exportCSV(\'consultants.csv\',consultCols,_lastData.consultants)">\uD83D\uDCE5 Export CSV</button></div>';
+  html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'consultants.csv\',consultCols,_lastData.consultants)">\uD83D\uDCE5 Export CSV</button></div>';
   html+='<div class="table-wrap">'+makeTable(cols,f,"candClick")+'</div>';
   window.consultCols=cols;
   return html;
@@ -742,7 +777,7 @@ function renderJobs(data,bhTotal){
   var sf=filters.status||"All";
   var pf=filters.priority||"All";
   var jtf=filters.jobType||"All";
-  var ss=["All","Accepting Candidates","Open","Placed","Covered","Filled","Lost"];
+  var ss=["All","Accepting Candidates","Open","Placed","Covered","Filled","Closed","Paused","Lost"];
   var ps=["All","Urgent","Hot","Warm","Cold"];
   var jts=["All","Contract","Direct Hire","Temp to Hire","Permanent"];
   var f=data||[];
@@ -760,7 +795,7 @@ function renderJobs(data,bhTotal){
     {key:"openings",label:"Openings",render:function(r){return '<span class="fw600" style="color:'+(r.openings>0?"#10b981":"#94a3b8")+'">'+r.openings+'</span>';},exportVal:function(r){return String(r.openings||0);}},
     {key:"submissions",label:"Subs",exportVal:function(r){return String(r.submissions||0);}},
     {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}},
-    {key:"dateAdded",label:"Date Added",render:function(r){return r.dateAdded?'\uD83D\uDCC5 '+esc(r.dateAdded):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.dateAdded||"";}},
+    {key:"dateAdded",label:"Date Created",render:function(r){return r.dateAdded?'\uD83D\uDCC5 '+esc(r.dateAdded):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.dateAdded||"";}},
     {key:"daysOpen",label:"Days Open",render:function(r){if(r.daysOpen===null||r.daysOpen===undefined)return '<span class="muted">\u2014</span>';var c=r.daysOpen>60?"#dc2626":r.daysOpen>30?"#f59e0b":"#10b981";return '<span class="fw600" style="color:'+c+'">'+r.daysOpen+'d</span>';},exportVal:function(r){return r.daysOpen!==null&&r.daysOpen!==undefined?String(r.daysOpen):"";}}
   ];
   var html='<div class="toolbar">';
@@ -773,7 +808,7 @@ function renderJobs(data,bhTotal){
   ss.forEach(function(s){html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+'</button>';});
   html+='</div></div>';
   html+='<div class="count-line"><span>'+displayTotal+' job'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
-  html+='<button class="btn-export" onclick="exportCSV(\'jobs.csv\',jobCols,_lastData.jobs)">\uD83D\uDCE5 Export CSV</button></div>';
+  html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'jobs.csv\',jobCols,_lastData.jobs)">\uD83D\uDCE5 Export CSV</button></div>';
   html+='<div class="table-wrap">'+makeTable(cols,f)+'</div>';
   window.jobCols=cols;
   return html;
@@ -814,7 +849,7 @@ function renderPlacements(data,bhTotal){
   ss.forEach(function(s){html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+'</button>';});
   html+='</div></div>';
   html+='<div class="count-line"><span>'+displayTotal+' placement'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
-  html+='<button class="btn-export" onclick="exportCSV(\'placements.csv\',placCols,_lastData.placements)">\uD83D\uDCE5 Export CSV</button></div>';
+  html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'placements.csv\',placCols,_lastData.placements)">\uD83D\uDCE5 Export CSV</button></div>';
   html+='<div class="table-wrap">'+makeTable(cols,f)+'</div>';
   window.placCols=cols;
   return html;
@@ -856,7 +891,7 @@ function renderClients(data,bhTotal){
   ss.forEach(function(s){html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+'</button>';});
   html+='</div></div>';
   html+='<div class="count-line"><span>'+displayTotal+' client'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
-  html+='<button class="btn-export" onclick="exportCSV(\'clients.csv\',clientCols,_lastData.clients)">\uD83D\uDCE5 Export CSV</button></div>';
+  html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'clients.csv\',clientCols,_lastData.clients)">\uD83D\uDCE5 Export CSV</button></div>';
   html+='<div class="table-wrap">'+makeTable(cols,f)+'</div>';
   window.clientCols=cols;
   return html;
@@ -1439,23 +1474,24 @@ function renderTouches(report) {
   html += '<div class="stats-row">';
   html += '<div class="stat-card"><div class="stat-icon" style="background:#fef2f2">\uD83D\uDC65</div><div><div class="stat-label">Stale Candidates</div><div class="stat-value">' + (report.candidates.total || 0) + '</div></div></div>';
   html += '<div class="stat-card"><div class="stat-icon" style="background:#fff7ed">\uD83D\uDCBC</div><div><div class="stat-label">Stale Consultants</div><div class="stat-value">' + (report.consultants.total || 0) + '</div></div></div>';
-  html += '<div class="stat-card"><div class="stat-icon" style="background:#eff6ff">\uD83C\uDFE2</div><div><div class="stat-label">Stale Clients</div><div class="stat-value">' + (report.clients.total || 0) + '</div></div></div>';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#eff6ff">\uD83C\uDFE2</div><div><div class="stat-label">Stale Client Contacts</div><div class="stat-value">' + (report.clients.total || 0) + '</div></div></div>';
   html += '</div>';
 
   // Tabs
   html += '<div class="touch-tabs">';
   html += '<button class="touch-tab' + (_touchTab === "candidates" ? " on" : "") + '" onclick="_touchTab=\'candidates\';loadPage()">Candidates (' + report.candidates.total + ')</button>';
   html += '<button class="touch-tab' + (_touchTab === "consultants" ? " on" : "") + '" onclick="_touchTab=\'consultants\';loadPage()">Consultants (' + report.consultants.total + ')</button>';
-  html += '<button class="touch-tab' + (_touchTab === "clients" ? " on" : "") + '" onclick="_touchTab=\'clients\';loadPage()">Clients (' + report.clients.total + ')</button>';
+  html += '<button class="touch-tab' + (_touchTab === "clients" ? " on" : "") + '" onclick="_touchTab=\'clients\';loadPage()">Client Contacts (' + report.clients.total + ')</button>';
   html += '</div>';
 
   // Table
   html += '<div class="table-wrap"><table><thead><tr>';
   if (_touchTab === "candidates") {
-    html += '<th>Name</th><th>Title</th><th>Cert</th><th>Grade</th><th>Owner</th><th>Last Touched</th><th>Days</th><th>Urgency</th>';
+    html += '<th>Name</th><th>Title</th><th>Cert</th><th>Grade</th><th>Owner</th><th>Last Touch</th><th>Touch Type</th><th>Days</th><th>Urgency</th>';
     html += '</tr></thead><tbody>';
     (report.candidates.data || []).forEach(function(c) {
       var urg = c.daysSince >= 60 ? "high" : c.daysSince >= 30 ? "med" : "low";
+      var touchColor = c.lastTouchType === "No outreach logged" ? "#dc2626" : "#64748b";
       html += '<tr style="cursor:pointer" onclick="openDetail(' + c.id + ')">';
       html += '<td class="fw600">' + esc(c.name) + '</td>';
       html += '<td>' + esc(c.title) + '</td>';
@@ -1463,37 +1499,42 @@ function renderTouches(report) {
       html += '<td>' + esc(c.grade) + '</td>';
       html += '<td>' + esc(c.owner) + '</td>';
       html += '<td>' + esc(c.lastTouched) + '</td>';
+      html += '<td style="color:'+touchColor+';font-size:11px">' + esc(c.lastTouchType||"") + '</td>';
       html += '<td class="fw600">' + c.daysSince + 'd</td>';
       html += '<td><span class="urgency-dot urgency-' + urg + '"></span>' + (urg === "high" ? "Overdue" : urg === "med" ? "Due" : "OK") + '</td>';
       html += '</tr>';
     });
   } else if (_touchTab === "consultants") {
-    html += '<th>Consultant</th><th>Current Job</th><th>Pay Rate</th><th>Bill Rate</th><th>Ends On</th><th>Last Touched</th><th>Days</th><th>Urgency</th>';
+    html += '<th>Consultant</th><th>Client</th><th>Current Job</th><th>Bill Rate</th><th>Ends On</th><th>Last Touch</th><th>Touch Type</th><th>Days</th><th>Urgency</th>';
     html += '</tr></thead><tbody>';
     (report.consultants.data || []).forEach(function(c) {
       var urg = c.daysSince >= 60 ? "high" : c.daysSince >= 30 ? "med" : "low";
       html += '<tr>';
       html += '<td class="fw600">' + esc(c.name) + '</td>';
+      html += '<td>' + esc(c.client||"") + '</td>';
       html += '<td>' + esc(c.job) + '</td>';
-      html += '<td>' + esc(c.payRate) + '</td>';
       html += '<td>' + esc(c.billRate) + '</td>';
       html += '<td>' + esc(c.endsOn) + '</td>';
       html += '<td>' + esc(c.lastTouched) + '</td>';
+      html += '<td style="font-size:11px;color:#64748b">' + esc(c.lastTouchType||"") + '</td>';
       html += '<td class="fw600">' + c.daysSince + 'd</td>';
       html += '<td><span class="urgency-dot urgency-' + urg + '"></span>' + (urg === "high" ? "Overdue" : urg === "med" ? "Due" : "OK") + '</td>';
       html += '</tr>';
     });
   } else {
-    html += '<th>Client</th><th>Status</th><th>Location</th><th>Phone</th><th>Last Touched</th><th>Days</th><th>Urgency</th>';
+    html += '<th>Contact Name</th><th>Title</th><th>Health System</th><th>Owner</th><th>Email</th><th>Last Touch</th><th>Touch Type</th><th>Days</th><th>Urgency</th>';
     html += '</tr></thead><tbody>';
     (report.clients.data || []).forEach(function(c) {
       var urg = c.daysSince >= 60 ? "high" : c.daysSince >= 30 ? "med" : "low";
+      var touchColor = c.lastTouchType === "No outreach logged" ? "#dc2626" : "#64748b";
       html += '<tr>';
       html += '<td class="fw600">' + esc(c.name) + '</td>';
-      html += '<td>' + badge(c.status) + '</td>';
-      html += '<td>' + esc(c.location) + '</td>';
-      html += '<td>' + esc(c.phone) + '</td>';
+      html += '<td>' + esc(c.title||"") + '</td>';
+      html += '<td>' + esc(c.company||"") + '</td>';
+      html += '<td>' + esc(c.owner||"") + '</td>';
+      html += '<td>' + esc(c.email||"") + '</td>';
       html += '<td>' + esc(c.lastTouched) + '</td>';
+      html += '<td style="color:'+touchColor+';font-size:11px">' + esc(c.lastTouchType||"") + '</td>';
       html += '<td class="fw600">' + c.daysSince + 'd</td>';
       html += '<td><span class="urgency-dot urgency-' + urg + '"></span>' + (urg === "high" ? "Overdue" : urg === "med" ? "Due" : "OK") + '</td>';
       html += '</tr>';

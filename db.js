@@ -2198,62 +2198,129 @@ async function dbGetStaleCandidates(days) {
 }
 
 /**
- * Touch report — stale candidates, consultants, and clients
+ * Touch report — stale candidates, consultants, and client contacts
+ * A "touch" = the most recent Note (or email action) logged against the person
  */
 async function dbGetTouchReport(days) {
   if (!dbReady) return null;
   var cutoff = Date.now() - days * 86400000;
   var nowMs = Date.now();
 
-  // Stale candidates
+  // Touch actions that count as real outreach (call, email, meeting, etc.)
+  var TOUCH_ACTIONS = "'Email','Phone Call','Left Message','Call','Meeting','Appointment','Interview','Visit','Outreach','Follow Up','Follow-Up','Spoke With','Sent Email','Text','SMS'";
+
+  // Build a lookup of last REAL touch (Note with outreach action or touch-related content) per person_id
+  var noteRows = [];
+  try {
+    noteRows = (await query(
+      "SELECT person_id, MAX(date_added) as last_touch, " +
+      "(SELECT action FROM notes n2 WHERE n2.person_id = notes.person_id AND n2.date_added = MAX(notes.date_added) LIMIT 1) as last_action " +
+      "FROM notes WHERE person_id IS NOT NULL AND (" +
+      "action IN (" + TOUCH_ACTIONS + ") OR " +
+      "LOWER(comments_text) LIKE '%call%' OR LOWER(comments_text) LIKE '%email%' OR " +
+      "LOWER(comments_text) LIKE '%spoke%' OR LOWER(comments_text) LIKE '%touch base%' OR " +
+      "LOWER(comments_text) LIKE '%follow up%' OR LOWER(comments_text) LIKE '%follow-up%' OR " +
+      "LOWER(comments_text) LIKE '%reached out%' OR LOWER(comments_text) LIKE '%meeting%' OR " +
+      "LOWER(comments_text) LIKE '%check in%' OR LOWER(comments_text) LIKE '%check-in%' OR " +
+      "LOWER(comments_text) LIKE '%connected%' OR LOWER(comments_text) LIKE '%left message%' OR " +
+      "LOWER(comments_text) LIKE '%voicemail%' OR LOWER(comments_text) LIKE '%scheduled%'" +
+      ") GROUP BY person_id"
+    )).rows;
+  } catch (e) { /* notes table might be empty */ }
+  var lastTouch = {};
+  var lastTouchAction = {};
+  noteRows.forEach(function (n) {
+    if (n.person_id) {
+      lastTouch[n.person_id] = Number(n.last_touch);
+      lastTouchAction[n.person_id] = n.last_action || "Note";
+    }
+  });
+
+  // Build a lookup of last real touch per client_id
+  var clientNoteRows = [];
+  try {
+    clientNoteRows = (await query(
+      "SELECT client_id, MAX(date_added) as last_touch FROM notes WHERE client_id IS NOT NULL AND (" +
+      "action IN (" + TOUCH_ACTIONS + ") OR " +
+      "LOWER(comments_text) LIKE '%call%' OR LOWER(comments_text) LIKE '%email%' OR " +
+      "LOWER(comments_text) LIKE '%touch base%' OR LOWER(comments_text) LIKE '%meeting%'" +
+      ") GROUP BY client_id"
+    )).rows;
+  } catch (e) {}
+  var lastClientTouch = {};
+  clientNoteRows.forEach(function (n) { if (n.client_id) lastClientTouch[n.client_id] = Number(n.last_touch); });
+
+  // Stale candidates — Active, with an owner (skip unassigned leads)
   var candRows = (await query(
-    "SELECT * FROM candidates WHERE status = 'Active' AND date_last_modified <= $1 ORDER BY date_last_modified ASC", [cutoff]
+    "SELECT * FROM candidates WHERE status = 'Active' AND owner_id IS NOT NULL ORDER BY date_last_modified ASC"
   )).rows;
-  var candTotal = await getOne("SELECT COUNT(*) as count FROM candidates WHERE status = 'Active' AND date_last_modified <= $1", [cutoff]);
   var candidates = candRows.map(function (c) {
+    var touch = lastTouch[c.id] || null;
+    var touchDate = touch || c.date_last_modified;
+    var daysSince = touchDate ? Math.floor((nowMs - touchDate) / 86400000) : 999;
     return {
       id: c.id, type: "Candidate",
       name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
       title: c.occupation || "", primaryCert: c.custom_text1 || "",
       grade: c.custom_text6 || "", email: c.email || "", phone: c.phone || "",
       owner: c.owner_name || "",
-      lastTouched: c.date_last_modified ? fmtDate(c.date_last_modified) : "Never",
-      daysSince: c.date_last_modified ? Math.floor((nowMs - c.date_last_modified) / 86400000) : 999,
+      lastTouched: touchDate ? fmtDate(touchDate) : "Never",
+      lastTouchType: touch ? (lastTouchAction[c.id] || "Note") : "No outreach logged",
+      daysSince: daysSince,
     };
-  });
+  }).filter(function (c) { return c.daysSince >= days; });
+  candidates.sort(function (a, b) { return b.daysSince - a.daysSince; });
 
   // Active placements — find stale consultants
   var placRows = (await query(
-    "SELECT * FROM placements WHERE status = 'Approved' AND date_end >= $1 ORDER BY date_last_modified ASC", [nowMs]
+    "SELECT * FROM placements WHERE (status = 'Approved' OR status = 'Actively On Contract' OR status ILIKE '%active%') AND date_end >= $1 ORDER BY date_last_modified ASC", [nowMs]
   )).rows;
   var consultants = placRows.map(function (p) {
+    var touch = p.candidate_id ? lastTouch[p.candidate_id] : null;
+    var touchDate = touch || p.date_last_modified;
+    var daysSince = touchDate ? Math.floor((nowMs - touchDate) / 86400000) : 999;
     return {
       id: p.id, type: "Consultant",
       name: p.candidate_name || "Unknown",
       candidateId: p.candidate_id || null,
-      job: p.job_title || "",
+      job: p.job_title || "", client: p.client_name || "",
       endsOn: p.date_end ? fmtDate(p.date_end) : "",
-      lastTouched: p.date_last_modified ? fmtDate(p.date_last_modified) : "Never",
-      daysSince: p.date_last_modified ? Math.floor((nowMs - p.date_last_modified) / 86400000) : 999,
+      lastTouched: touchDate ? fmtDate(touchDate) : "Never",
+      lastTouchType: touch ? "Note" : "Modified",
+      daysSince: daysSince,
       payRate: p.pay_rate ? "$" + p.pay_rate + "/hr" : "—",
       billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : "—",
     };
   }).filter(function (c) { return c.daysSince >= days; });
+  consultants.sort(function (a, b) { return b.daysSince - a.daysSince; });
 
-  // Stale clients
-  var clientRows = (await query(
-    "SELECT * FROM clients WHERE date_last_modified <= $1 ORDER BY date_last_modified ASC", [cutoff]
+  // Stale client contacts — Active people assigned to a health system with an owner
+  // A touch = last Note logged against their client_id or their person_id
+  var ccRows = (await query(
+    "SELECT * FROM client_contacts WHERE status = 'Active' AND client_id IS NOT NULL AND owner_id IS NOT NULL ORDER BY date_last_modified ASC"
   )).rows;
-  var clientTotal = await getOne("SELECT COUNT(*) as count FROM clients WHERE date_last_modified <= $1", [cutoff]);
-  var clients = clientRows.map(function (c) {
+  var clients = ccRows.map(function (c) {
+    // Check for note against this contact's person ID or their client
+    var personTouch = lastTouch[c.id] || null;
+    var clientTouch = c.client_id ? lastClientTouch[c.client_id] : null;
+    var touch = Math.max(personTouch || 0, clientTouch || 0) || null;
+    var touchDate = touch || c.date_last_modified;
+    var daysSince = touchDate ? Math.floor((nowMs - touchDate) / 86400000) : 999;
     return {
-      id: c.id, type: "Client", name: c.name || "", status: c.status || "",
-      phone: c.phone || "",
+      id: c.id, type: "Client Contact",
+      name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+      company: c.client_name || "",
+      title: c.occupation || "",
+      status: c.status || "",
+      email: c.email || "", phone: c.phone || "",
+      owner: c.owner_name || "",
       location: [c.address_city, c.address_state].filter(Boolean).join(", "),
-      lastTouched: c.date_last_modified ? fmtDate(c.date_last_modified) : "Never",
-      daysSince: c.date_last_modified ? Math.floor((nowMs - c.date_last_modified) / 86400000) : 999,
+      lastTouched: touchDate ? fmtDate(touchDate) : "Never",
+      lastTouchType: touch ? "Note" : "Modified",
+      daysSince: daysSince,
     };
-  });
+  }).filter(function (c) { return c.daysSince >= days; });
+  clients.sort(function (a, b) { return b.daysSince - a.daysSince; });
 
   return {
     days: days,
