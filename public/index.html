@@ -1466,97 +1466,287 @@ function exportTouches() {
 var _portalTemplates=null;
 var _portalClients=null;
 var _portalGeneratedLink=null;
+var _portalTab="configure"; // "configure" or "generate"
+var _portalSelectedClient=null;
+var _portalSections=null;
+var _portalClientConfig=null;
+var _portalPrefillFields=[];
 
 async function renderPortal(){
-  var html='<div style="max-width:720px">';
-  html+='<div style="margin-bottom:24px"><h2 style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:4px">Submission Portal</h2>';
-  html+='<p style="font-size:14px;color:#64748b">Generate branded submission links for consultants. Select a client and template, then share the link.</p></div>';
-
-  // Load templates and clients if not cached
+  // Load templates, clients, and sections if not cached
   if(!_portalTemplates){
-    try{ var tr=await apiFetch("portal/templates"); _portalTemplates=tr; }catch(e){ _portalTemplates=[]; }
+    try{ _portalTemplates=await apiFetch("portal/templates"); }catch(e){ _portalTemplates=[]; }
   }
   if(!_portalClients){
-    try{ var cr=await apiFetch("clients"); _portalClients=(cr.data||[]).sort(function(a,b){return (a.name||"").localeCompare(b.name||"");}); }catch(e){ _portalClients=[]; }
+    try{ var cr=await apiFetch("portal/clients"); _portalClients=(cr.data||[]).sort(function(a,b){return (a.name||"").localeCompare(b.name||"");}); }catch(e){ _portalClients=[]; }
+  }
+  if(!_portalSections){
+    try{ _portalSections=await apiFetch("portal/sections"); }catch(e){ _portalSections=[]; }
   }
 
-  // Client selector
-  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">1. Select Client</div>';
-  html+='<select id="portal-client" style="width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;font-family:inherit;color:#334155" onchange="_portalGeneratedLink=null;renderPortalLink()">';
+  var html='<div style="max-width:800px">';
+
+  // Header + client selector (always visible)
+  html+='<div style="margin-bottom:20px"><h2 style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:4px">Submission Portal</h2>';
+  html+='<p style="font-size:14px;color:#64748b">Configure client requirements and generate submission links for consultants.</p></div>';
+
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:20px 24px;margin-bottom:20px">';
+  html+='<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">';
+  html+='<label style="font-size:13px;font-weight:600;color:#475569;white-space:nowrap">Select Client:</label>';
+  html+='<select id="portal-client" style="flex:1;min-width:240px;padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;font-family:inherit;color:#334155" onchange="onPortalClientChange()">';
   html+='<option value="">— Choose a client —</option>';
   for(var i=0;i<_portalClients.length;i++){
     var c=_portalClients[i];
-    html+='<option value="'+c.id+'">'+esc(c.name)+'</option>';
+    var sel=(_portalSelectedClient&&_portalSelectedClient==c.id)?" selected":"";
+    html+='<option value="'+c.id+'"'+sel+'>'+esc(c.name)+'</option>';
   }
-  html+='</select></div>';
-
-  // Template selector
-  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">2. Select Template</div>';
-  html+='<div id="portal-templates">';
-  for(var j=0;j<_portalTemplates.length;j++){
-    var t=_portalTemplates[j];
-    html+='<label style="display:flex;align-items:start;gap:12px;padding:14px 16px;border:2px solid #e2e8f0;border-radius:10px;margin-bottom:10px;cursor:pointer;transition:all .15s" ';
-    html+='onclick="selectTemplate(this,\''+t.id+'\')" id="tmpl-'+t.id+'">';
-    html+='<input type="radio" name="portal-template" value="'+t.id+'" style="margin-top:3px;accent-color:#176087" onchange="_portalGeneratedLink=null;renderPortalLink()">';
-    html+='<div><div style="font-size:14px;font-weight:600;color:#0f172a">'+esc(t.name)+'</div>';
-    html+='<div style="font-size:13px;color:#64748b;margin-top:2px">'+esc(t.description)+'</div>';
-    html+='<div style="font-size:11px;color:#94a3b8;margin-top:4px">'+t.sectionCount+' sections</div></div>';
-    html+='</label>';
+  html+='</select>';
+  if(_portalSelectedClient){
+    var cl=_portalClients.find(function(c){return c.id==_portalSelectedClient;});
+    if(cl&&cl.owner) html+='<span style="font-size:12px;color:#64748b">Account Owner: <strong>'+esc(cl.owner.name)+'</strong></span>';
   }
   html+='</div></div>';
 
-  // Pre-fill section
+  // Tabs (only show if client selected)
+  if(_portalSelectedClient){
+    html+='<div style="display:flex;gap:4px;margin-bottom:20px">';
+    html+='<button class="chip'+(_portalTab==="configure"?" on":"")+'" onclick="_portalTab=\'configure\';loadPage()" style="padding:10px 20px;font-size:14px">&#9881;&#65039; Configure Requirements</button>';
+    html+='<button class="chip'+(_portalTab==="generate"?" on":"")+'" onclick="_portalTab=\'generate\';loadPage()" style="padding:10px 20px;font-size:14px">&#128279; Generate Link</button>';
+    html+='</div>';
+
+    if(_portalTab==="configure"){
+      html+=renderPortalConfig();
+    } else {
+      html+=renderPortalGenerate();
+    }
+  } else {
+    html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:48px;text-align:center">';
+    html+='<div style="font-size:32px;opacity:.4;margin-bottom:8px">&#127970;</div>';
+    html+='<div style="font-size:15px;color:#64748b">Select a client above to configure their portal requirements or generate a submission link.</div>';
+    html+='</div>';
+  }
+
+  html+='</div>';
+  return html;
+}
+
+/* ── Configure Tab ── */
+function renderPortalConfig(){
+  var html='';
+
+  // Template selector
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">3. Pre-fill Fields (Optional)</div>';
-  html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Fill in any values you want pre-populated on the form. Fields marked with &#128274; will be <strong>locked</strong> (read-only) for the consultant.</p>';
-  html+='<div id="portal-prefill-fields"><p style="font-size:13px;color:#94a3b8;font-style:italic">Select a template above to see available pre-fill fields.</p></div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Default Template</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Choose which template to use by default when generating links for this client.</p>';
+  var savedTmpl=(_portalClientConfig&&_portalClientConfig.templateId)||"";
+  for(var j=0;j<_portalTemplates.length;j++){
+    var t=_portalTemplates[j];
+    var checked=savedTmpl===t.id?" checked":"";
+    html+='<label style="display:flex;align-items:start;gap:12px;padding:12px 16px;border:2px solid '+(savedTmpl===t.id?'#176087':'#e2e8f0')+';border-radius:10px;margin-bottom:8px;cursor:pointer" onclick="highlightConfigTmpl(this)">';
+    html+='<input type="radio" name="config-template" value="'+t.id+'"'+checked+' style="margin-top:3px;accent-color:#176087">';
+    html+='<div><div style="font-size:14px;font-weight:600;color:#0f172a">'+esc(t.name)+'</div>';
+    html+='<div style="font-size:13px;color:#64748b;margin-top:2px">'+esc(t.description)+'</div></div>';
+    html+='</label>';
+  }
   html+='</div>';
 
-  // Notification recipients
+  // Sections to include
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">4. Notification Recipients</div>';
-  html+='<p style="font-size:13px;color:#64748b;margin-bottom:12px">The <strong>Account Owner</strong> (from the Bullhorn client record) and <strong>Suzie</strong> are always notified. Add anyone else who should receive the submission email — useful for coverage or delegates.</p>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Required Sections</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Toggle which sections this client requires. This overrides the template defaults.</p>';
+  var enabledSections=(_portalClientConfig&&_portalClientConfig.sections)||[];
+  for(var k=0;k<_portalSections.length;k++){
+    var s=_portalSections[k];
+    var isOn=enabledSections.indexOf(s.key)>=0;
+    html+='<label style="display:flex;align-items:center;gap:12px;padding:10px 16px;border:1px solid #e8ecf1;border-radius:8px;margin-bottom:6px;cursor:pointer">';
+    html+='<input type="checkbox" name="config-section" value="'+s.key+'"'+(isOn?" checked":"")+' style="accent-color:#176087;width:18px;height:18px">';
+    html+='<div style="flex:1"><div style="font-size:14px;font-weight:500;color:#0f172a">'+esc(s.label)+'</div>';
+    html+='<div style="font-size:12px;color:#94a3b8">'+s.fieldCount+' fields — '+esc(s.description)+'</div></div>';
+    html+='</label>';
+  }
+  html+='</div>';
+
+  // Reference count
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Reference Requirements</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-bottom:12px">How many professional references does this client require?</p>';
+  var refCount=(_portalClientConfig&&_portalClientConfig.referenceCount)||3;
+  html+='<select id="config-ref-count" style="padding:8px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;font-family:inherit">';
+  for(var r=0;r<=5;r++){
+    html+='<option value="'+r+'"'+(refCount===r?" selected":"")+'>'+r+(r===0?" (not required)":"")+'</option>';
+  }
+  html+='</select></div>';
+
+  // Default pre-fill values (locked fields)
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Default Locked Values</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Set default values for fields that are always the same for this client (e.g., VMS provider). These will auto-fill when generating links.</p>';
+  var defaults=(_portalClientConfig&&_portalClientConfig.defaults)||{};
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+  html+='<div style="display:flex;flex-direction:column;gap:3px"><label style="font-size:12px;font-weight:500;color:#475569">VMS Provider <span style="font-size:10px;color:#f59e0b">&#128274; LOCKED</span></label>';
+  html+='<input type="text" id="config-vmsProvider" value="'+esc(defaults.vmsProvider||"")+'" placeholder="e.g., Fieldglass" style="padding:8px 12px;border:1px solid #f59e0b;border-radius:8px;font-size:13px;font-family:inherit;background:#fffbeb"></div>';
+  html+='<div style="display:flex;flex-direction:column;gap:3px"><label style="font-size:12px;font-weight:500;color:#475569">Default Bill Rate <span style="font-size:10px;color:#f59e0b">&#128274; LOCKED</span></label>';
+  html+='<input type="text" id="config-billRate" value="'+esc(defaults.billRate||"")+'" placeholder="e.g., 185" style="padding:8px 12px;border:1px solid #f59e0b;border-radius:8px;font-size:13px;font-family:inherit;background:#fffbeb"></div>';
+  html+='<div style="display:flex;flex-direction:column;gap:3px"><label style="font-size:12px;font-weight:500;color:#475569">Default Pay Rate <span style="font-size:10px;color:#f59e0b">&#128274; LOCKED</span></label>';
+  html+='<input type="text" id="config-payRate" value="'+esc(defaults.payRate||"")+'" placeholder="e.g., 125" style="padding:8px 12px;border:1px solid #f59e0b;border-radius:8px;font-size:13px;font-family:inherit;background:#fffbeb"></div>';
+  html+='<div style="display:flex;flex-direction:column;gap:3px"><label style="font-size:12px;font-weight:500;color:#475569">VMS Fee (%) <span style="font-size:10px;color:#f59e0b">&#128274; LOCKED</span></label>';
+  html+='<input type="text" id="config-vmsFee" value="'+esc(defaults.vmsFee||"")+'" placeholder="e.g., 3.5" style="padding:8px 12px;border:1px solid #f59e0b;border-radius:8px;font-size:13px;font-family:inherit;background:#fffbeb"></div>';
+  html+='</div></div>';
+
+  // Notes
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Internal Notes</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-bottom:12px">Any notes about this client\'s submission process (only visible to the team, not consultants).</p>';
+  html+='<textarea id="config-notes" rows="3" style="width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:inherit;resize:vertical" placeholder="e.g., Client requires 48hr turnaround, contact Jane for VMS access...">'+esc((_portalClientConfig&&_portalClientConfig.notes)||"")+'</textarea>';
+  html+='</div>';
+
+  // Save button
+  html+='<div style="display:flex;gap:12px;align-items:center">';
+  html+='<button class="btn-primary" style="padding:12px 28px;font-size:14px;border-radius:10px" onclick="savePortalConfig()">&#128190; Save Client Configuration</button>';
+  html+='<span id="config-save-status" style="font-size:13px;color:#10b981"></span>';
+  html+='</div>';
+
+  return html;
+}
+
+function highlightConfigTmpl(label){
+  var all=label.parentElement.querySelectorAll("label");
+  for(var i=0;i<all.length;i++) all[i].style.borderColor="#e2e8f0";
+  label.style.borderColor="#176087";
+  label.querySelector("input").checked=true;
+}
+
+async function savePortalConfig(){
+  var statusEl=document.getElementById("config-save-status");
+  if(statusEl) statusEl.textContent="Saving...";
+
+  var templateEl=document.querySelector('input[name="config-template"]:checked');
+  var sectionEls=document.querySelectorAll('input[name="config-section"]:checked');
+  var sections=[];
+  for(var i=0;i<sectionEls.length;i++) sections.push(sectionEls[i].value);
+
+  var config={
+    templateId:templateEl?templateEl.value:"",
+    sections:sections,
+    referenceCount:parseInt(document.getElementById("config-ref-count").value)||3,
+    defaults:{
+      vmsProvider:(document.getElementById("config-vmsProvider").value||"").trim(),
+      billRate:(document.getElementById("config-billRate").value||"").trim(),
+      payRate:(document.getElementById("config-payRate").value||"").trim(),
+      vmsFee:(document.getElementById("config-vmsFee").value||"").trim(),
+    },
+    notes:(document.getElementById("config-notes").value||"").trim(),
+  };
+
+  try{
+    var resp=await fetch("/api/portal/client-config/"+_portalSelectedClient,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(config)
+    });
+    if(!resp.ok) throw new Error("Save failed");
+    var res=await resp.json();
+    _portalClientConfig=config;
+    _portalClientConfig.configured=true;
+    if(statusEl) statusEl.textContent="Saved!";
+    setTimeout(function(){ if(statusEl) statusEl.textContent=""; },3000);
+  }catch(e){
+    if(statusEl){ statusEl.textContent="Error: "+e.message; statusEl.style.color="#ef4444"; }
+  }
+}
+
+/* ── Generate Tab ── */
+function renderPortalGenerate(){
+  var html='';
+
+  // If client has a saved config, show summary
+  if(_portalClientConfig&&_portalClientConfig.configured){
+    html+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:start;gap:12px">';
+    html+='<span style="font-size:18px">&#9989;</span>';
+    html+='<div><div style="font-size:14px;font-weight:600;color:#176087">Client Configured</div>';
+    var tmplName=(_portalTemplates.find(function(t){return t.id===_portalClientConfig.templateId;})||{}).name||"Custom";
+    html+='<div style="font-size:13px;color:#475569;margin-top:2px">Template: <strong>'+esc(tmplName)+'</strong> &bull; '+(_portalClientConfig.sections||[]).length+' sections &bull; '+(_portalClientConfig.referenceCount||0)+' references required</div>';
+    if(_portalClientConfig.notes) html+='<div style="font-size:12px;color:#94a3b8;margin-top:4px;font-style:italic">'+esc(_portalClientConfig.notes)+'</div>';
+    html+='</div></div>';
+  } else {
+    html+='<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:12px">';
+    html+='<span style="font-size:18px">&#9888;&#65039;</span>';
+    html+='<div style="font-size:13px;color:#92400e">This client hasn\'t been configured yet. You can still generate a link using a standard template, or <a href="#" onclick="_portalTab=\'configure\';loadPage();return false" style="color:#176087;font-weight:600">configure requirements first</a>.</div>';
+    html+='</div>';
+  }
+
+  // Template (auto-selected from config, or manual choice)
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">1. Template</div>';
+  var defaultTmpl=(_portalClientConfig&&_portalClientConfig.templateId)||"";
+  for(var j=0;j<_portalTemplates.length;j++){
+    var t=_portalTemplates[j];
+    var checked=defaultTmpl===t.id?" checked":"";
+    html+='<label style="display:flex;align-items:start;gap:12px;padding:12px 16px;border:2px solid '+(defaultTmpl===t.id?'#176087':'#e2e8f0')+';border-radius:10px;margin-bottom:8px;cursor:pointer" onclick="highlightConfigTmpl(this)">';
+    html+='<input type="radio" name="gen-template" value="'+t.id+'"'+checked+' style="margin-top:3px;accent-color:#176087" onchange="onGenTemplateChange(this.value)">';
+    html+='<div><div style="font-size:14px;font-weight:600;color:#0f172a">'+esc(t.name)+(defaultTmpl===t.id?' <span style="font-size:11px;color:#10b981;font-weight:500">(client default)</span>':'')+'</div>';
+    html+='<div style="font-size:13px;color:#64748b;margin-top:2px">'+esc(t.description)+'</div></div>';
+    html+='</label>';
+  }
+  html+='</div>';
+
+  // Pre-fill section
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">2. Pre-fill Fields</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Fields marked &#128274; are locked (read-only for consultant). Client defaults are pre-loaded.</p>';
+  html+='<div id="portal-prefill-fields"><p style="font-size:13px;color:#94a3b8;font-style:italic">Loading...</p></div>';
+  html+='</div>';
+
+  // Extra notification emails
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">3. Additional Notification Recipients</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-bottom:12px">Account Owner + Suzie are always notified. Add others below.</p>';
   html+='<div id="portal-extra-emails">';
   html+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px" class="extra-email-row">';
   html+='<input type="email" placeholder="email@anuraconnect.com" style="flex:1;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit" class="portal-extra-email">';
   html+='<button onclick="addExtraEmailRow()" style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;font-size:13px;cursor:pointer;font-family:inherit;white-space:nowrap">+ Add</button>';
   html+='</div></div></div>';
 
-  // Generate button
+  // Generate
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">5. Generate & Share Link</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">4. Generate & Share Link</div>';
   html+='<button class="btn-primary" style="padding:12px 28px;font-size:14px;border-radius:10px" onclick="generatePortalLink()">&#128279; Generate Portal Link</button>';
   html+='<div id="portal-link-output" style="margin-top:16px"></div>';
   html+='</div>';
 
-  html+='</div>';
   return html;
 }
 
-var _portalPrefillFields=[];
-
-function selectTemplate(label,id){
-  // Visual highlight
-  var all=document.querySelectorAll('#portal-templates label');
-  for(var i=0;i<all.length;i++) all[i].style.borderColor='#e2e8f0';
-  label.style.borderColor='#176087';
-  label.querySelector('input').checked=true;
+async function onPortalClientChange(){
+  var sel=document.getElementById("portal-client");
+  _portalSelectedClient=sel?sel.value:"";
+  _portalClientConfig=null;
   _portalGeneratedLink=null;
-  renderPortalLink();
-  loadPrefillFields(id);
+  if(_portalSelectedClient){
+    // Load saved config for this client
+    try{
+      _portalClientConfig=await apiFetch("portal/client-config/"+_portalSelectedClient);
+    }catch(e){ _portalClientConfig={configured:false}; }
+  }
+  loadPage();
+}
+
+function onGenTemplateChange(templateId){
+  loadPrefillFields(templateId);
 }
 
 async function loadPrefillFields(templateId){
   var container=document.getElementById("portal-prefill-fields");
   if(!container) return;
+  if(!templateId){ container.innerHTML='<p style="font-size:13px;color:#94a3b8">Select a template first.</p>'; return; }
   try{
     _portalPrefillFields=await apiFetch("portal/prefill-fields",{templateId:templateId});
     if(!_portalPrefillFields.length){
       container.innerHTML='<p style="font-size:13px;color:#94a3b8;font-style:italic">No pre-fillable fields for this template.</p>';
       return;
     }
+    // Load client defaults
+    var defaults=(_portalClientConfig&&_portalClientConfig.defaults)||{};
     var html='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
     var currentSection="";
     for(var i=0;i<_portalPrefillFields.length;i++){
@@ -1566,13 +1756,14 @@ async function loadPrefillFields(templateId){
         html+='<div style="grid-column:1/-1;font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-top:'+(currentSection?'8':'0')+'px;padding-bottom:4px;border-bottom:1px solid #f1f5f9">'+esc(f.section)+'</div>';
         currentSection=f.section;
       }
+      var defVal=defaults[f.name]||"";
+      var borderColor=f.locked?"#f59e0b":"#e2e8f0";
+      var bgColor=f.locked?"#fffbeb":"#fff";
       html+='<div style="display:flex;flex-direction:column;gap:3px">';
       html+='<label style="font-size:12px;font-weight:500;color:#475569">'+esc(f.label);
       if(f.locked) html+=' <span style="font-size:10px;color:#f59e0b;font-weight:600">&#128274; LOCKED</span>';
       html+='</label>';
-      html+='<input type="text" name="prefill_'+f.name+'" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit;color:#334155"';
-      if(f.locked) html+=' style="padding:8px 12px;border:1px solid #f59e0b;border-radius:8px;font-size:13px;font-family:inherit;color:#334155;background:#fffbeb"';
-      html+='>';
+      html+='<input type="text" name="prefill_'+f.name+'" value="'+esc(defVal)+'" style="padding:8px 12px;border:1px solid '+borderColor+';border-radius:8px;font-size:13px;font-family:inherit;color:#334155;background:'+bgColor+'">';
       if(f.locked) html+='<span style="font-size:10px;color:#94a3b8">Consultant cannot edit this field</span>';
       html+='</div>';
     }
@@ -1595,11 +1786,10 @@ function addExtraEmailRow(){
 }
 
 async function generatePortalLink(){
-  var clientId=document.getElementById("portal-client").value;
-  var templateEl=document.querySelector('input[name="portal-template"]:checked');
+  var templateEl=document.querySelector('input[name="gen-template"]:checked');
   var templateId=templateEl?templateEl.value:"";
 
-  if(!clientId||!templateId){
+  if(!_portalSelectedClient||!templateId){
     document.getElementById("portal-link-output").innerHTML='<div style="color:#ef4444;font-size:13px">Please select both a client and a template.</div>';
     return;
   }
@@ -1624,7 +1814,7 @@ async function generatePortalLink(){
     var resp=await fetch("/api/portal/generate-link",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({clientId:clientId,templateId:templateId,prefill:prefill,extraEmails:extraEmails})
+      body:JSON.stringify({clientId:_portalSelectedClient,templateId:templateId,prefill:prefill,extraEmails:extraEmails})
     });
     if(!resp.ok) throw new Error("Failed to generate link");
     var res=await resp.json();
@@ -1646,9 +1836,7 @@ function renderPortalLink(){
   html+='<input type="text" value="'+esc(_portalGeneratedLink)+'" readonly style="flex:1;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit;background:#fff;color:#334155" id="portal-link-input">';
   html+='<button class="btn-primary" style="padding:10px 20px;font-size:13px;white-space:nowrap;border-radius:8px" onclick="copyPortalLink()">&#128203; Copy</button>';
   html+='</div>';
-  html+='<div style="margin-top:10px;display:flex;gap:8px">';
-  html+='<a href="'+esc(_portalGeneratedLink)+'" target="_blank" style="font-size:12px;color:#176087;text-decoration:none;font-weight:500">&#128065; Preview Form</a>';
-  html+='</div>';
+  html+='<div style="margin-top:10px"><a href="'+esc(_portalGeneratedLink)+'" target="_blank" style="font-size:12px;color:#176087;text-decoration:none;font-weight:500">&#128065; Preview Form</a></div>';
   html+='</div>';
   el.innerHTML=html;
 }
@@ -1658,7 +1846,6 @@ function copyPortalLink(){
   if(input){
     input.select();
     document.execCommand("copy");
-    // Flash feedback
     var btn=input.parentElement.querySelector(".btn-primary");
     if(btn){ var orig=btn.innerHTML; btn.innerHTML="&#10003; Copied!"; setTimeout(function(){btn.innerHTML=orig;},2000); }
   }
@@ -1731,6 +1918,10 @@ async function loadPage(){
   document.getElementById("content").innerHTML=h;
   // Post-render hooks
   if(currentPage==="smartmatch") populateJobDropdown();
+  if(currentPage==="portal"&&_portalTab==="generate"&&_portalSelectedClient){
+    var genTmpl=document.querySelector('input[name="gen-template"]:checked');
+    if(genTmpl) loadPrefillFields(genTmpl.value);
+  }
   // Show/hide save search button
   var saveBtn=document.getElementById("save-search-btn");
   if(saveBtn){

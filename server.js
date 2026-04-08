@@ -1614,6 +1614,140 @@ const PORTAL_TEMPLATES = {
 
 /* ── Portal API Routes ── */
 
+// Lightweight client list for portal (avoids heavy placement joins)
+app.get("/api/portal/clients", async (req, res) => {
+  try {
+    await authenticate();
+    const data = await bhFetchAll("query/ClientCorporation", {
+      where: "isDeleted=false",
+      fields: "id,name,status,owner(id,firstName,lastName,email)",
+      orderBy: "name",
+    });
+    const clients = (data.data || []).map(function (c) {
+      return {
+        id: c.id,
+        name: c.name || "",
+        status: c.status || "",
+        owner: c.owner ? {
+          id: c.owner.id,
+          name: ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim(),
+          email: c.owner.email || "",
+        } : null,
+      };
+    });
+    res.json({ data: clients, total: clients.length });
+  } catch (e) {
+    console.error("[Portal Clients]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Client Portal Config (stored as Bullhorn Notes) ──
+
+// Get saved portal config for a client
+app.get("/api/portal/client-config/:clientId", async (req, res) => {
+  try {
+    await authenticate();
+    const clientId = req.params.clientId;
+
+    // Search for a Note with action "PortalConfig" on this client
+    const notes = await bhFetch("search/Note", {
+      query: 'action:"PortalConfig" AND clientCorporation.id:' + clientId,
+      fields: "id,comments,dateAdded,dateLastModified",
+      sort: "-dateLastModified",
+      count: 1,
+    });
+
+    if (notes.data && notes.data.length > 0) {
+      try {
+        const config = JSON.parse(notes.data[0].comments);
+        config._noteId = notes.data[0].id;
+        config._lastModified = notes.data[0].dateLastModified;
+        res.json(config);
+      } catch (parseErr) {
+        res.json({ configured: false, error: "Invalid config data" });
+      }
+    } else {
+      res.json({ configured: false });
+    }
+  } catch (e) {
+    console.error("[Portal Config Get]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Save portal config for a client
+app.post("/api/portal/client-config/:clientId", async (req, res) => {
+  try {
+    const s = await authenticate();
+    const clientId = req.params.clientId;
+    const config = req.body;
+
+    // Add metadata
+    config.configured = true;
+    config.lastUpdated = new Date().toISOString();
+
+    const configJson = JSON.stringify(config);
+
+    // Check if a PortalConfig note already exists
+    const existing = await bhFetch("search/Note", {
+      query: 'action:"PortalConfig" AND clientCorporation.id:' + clientId,
+      fields: "id",
+      count: 1,
+    });
+
+    let noteId;
+    if (existing.data && existing.data.length > 0) {
+      // Update existing note
+      noteId = existing.data[0].id;
+      const updateUrl = s.restUrl + "entity/Note/" + noteId + "?BhRestToken=" + s.bhRestToken;
+      const updateRes = await fetch(updateUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comments: configJson }),
+      });
+      if (!updateRes.ok) throw new Error("Failed to update config note: " + await updateRes.text());
+    } else {
+      // Create new note
+      const createUrl = s.restUrl + "entity/Note?BhRestToken=" + s.bhRestToken;
+      const notePayload = {
+        clientCorporation: { id: parseInt(clientId) },
+        action: "PortalConfig",
+        comments: configJson,
+      };
+      const createRes = await fetch(createUrl, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(notePayload),
+      });
+      if (!createRes.ok) throw new Error("Failed to create config note: " + await createRes.text());
+      const createData = await createRes.json();
+      noteId = createData.changedEntityId;
+    }
+
+    res.json({ success: true, noteId, message: "Client portal config saved" });
+  } catch (e) {
+    console.error("[Portal Config Save]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// List all section definitions (for the config UI)
+app.get("/api/portal/sections", (req, res) => {
+  const sections = Object.values(PORTAL_SECTIONS).map(function (s) {
+    return {
+      key: s.key,
+      label: s.label,
+      description: s.description,
+      fieldCount: s.fields.length,
+      fields: s.fields.map(function (f) {
+        return { name: f.name, label: f.label, type: f.type, locked: !!f.locked, prefillable: !!f.prefillable };
+      }),
+    };
+  });
+  res.json(sections);
+});
+
 // List available templates (for dashboard admin page)
 app.get("/api/portal/templates", (req, res) => {
   const list = Object.values(PORTAL_TEMPLATES).map(function (t) {
