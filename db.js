@@ -748,12 +748,9 @@ var CANDIDATE_FIELDS = [
   "customDate1","customDate2","customDate3",
   "description","dateAvailable","dateAdded","dateLastModified","dateLastComment","dateOfBirth",
   "address","owner",
-  "skillList","experience","category","numCategories",
-  "federalAdditionalWithholdingsAmount","federalExemptions","federalFilingStatus",
-  "stateAdditionalWithholdingsAmount","stateExemptions","stateFilingStatus",
-  "localAdditionalWithholdingsAmount","localExemptions","localFilingStatus",
+  "experience",
   "comments","externalID","isDeleted","massMailOptOut","smsOptIn",
-  "linkedPerson","leads","referredBy","referredByPerson"
+  "linkedPerson","referredByPerson"
 ].join(",");
 
 var JOB_FIELDS = [
@@ -770,20 +767,19 @@ var JOB_FIELDS = [
   "customInt1","customInt2","customInt3","customInt4","customInt5",
   "customFloat1","customFloat2","customFloat3",
   "customDate1","customDate2","customDate3",
-  "skillList","durationWeeks","isOpen","isDeleted",
+  "durationWeeks","isOpen","isDeleted",
   "submissions","sendouts","placements","webResponses",
   "source","externalID","reasonClosed","markUpPercentage",
   "taxRate","travelRequirements","bonusPackage","benefits",
   "degreeList","certificationList","educationDegree",
-  "category","businessSectors","publishedZip","hoursPerWeek",
-  "correlatedCustomTextBlock1","correlatedCustomTextBlock2"
+  "publishedZip","hoursPerWeek"
 ].join(",");
 
 var PLACEMENT_FIELDS = [
   "id","candidate","jobOrder","status","employmentType",
   "dateBegin","dateEnd","dateAdded","dateLastModified",
   "payRate","clientBillRate","salary","salaryUnit",
-  "fee","overtimeRate","clientOvertimeRate","doubleTimeRate",
+  "fee","overtimeRate","clientOvertimeRate",
   "hoursPerDay","daysPerWeek","daysGuaranteed",
   "housingManager","referringUser",
   "customText1","customText2","customText3","customText4","customText5",
@@ -801,7 +797,7 @@ var PLACEMENT_FIELDS = [
 ].join(",");
 
 var CLIENT_FIELDS = [
-  "id","name","status","companyURL","phone","faxPhone",
+  "id","name","status","companyURL","phone",
   "industryList","numEmployees","revenue","notes",
   "address","billingAddress","billingPhone","billingContact",
   "owner",
@@ -821,7 +817,7 @@ var SUBMISSION_FIELDS = [
   "id","candidate","jobOrder","status","source",
   "dateAdded","dateLastModified","dateWebResponse",
   "sendingUser","owners",
-  "payRate","clientBillRate","salary",
+  "payRate","salary",
   "comments","isDeleted",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
@@ -829,7 +825,7 @@ var SUBMISSION_FIELDS = [
   "customInt1","customInt2","customInt3",
   "customFloat1","customFloat2","customFloat3",
   "customDate1","customDate2",
-  "externalID","milesRadius","latestAppointment"
+  "externalID","milesRadius"
 ].join(",");
 
 var NOTE_FIELDS = [
@@ -842,7 +838,7 @@ var NOTE_FIELDS = [
 var OPPORTUNITY_FIELDS = [
   "id","title","type","status","clientCorporation","owner",
   "estimatedStartDate","estimatedEndDate","estimatedHoursPerWeek",
-  "estimatedBillRate","estimatedPayRate","salary",
+  "salary",
   "numOpenings","winProbabilityPercent","weightedDealValue","dealValue","commission",
   "dateAdded","dateLastModified","description","lead","source","reasonClosed",
   "customText1","customText2","customText3","customText4","customText5",
@@ -872,28 +868,28 @@ var CLIENT_CONTACT_FIELDS = [
 var CORPORATE_USER_FIELDS = [
   "id","firstName","lastName","name","email","email2",
   "phone","mobile","username","occupation","status",
-  "isLocked","isDeleted","dateLastModified",
+  "isDeleted","dateLastModified",
   "primaryDepartment","externalID"
 ].join(",");
 
 var SENDOUT_FIELDS = [
   "id","candidate","jobOrder","clientCorporation","clientContact",
-  "status","dateAdded","dateLastModified",
-  "sendingUser","isRead","externalID"
+  "dateAdded","dateLastModified",
+  "sendingUser","isRead"
 ].join(",");
 
 var APPOINTMENT_FIELDS = [
   "id","subject","type","description",
   "candidateReference","clientContactReference","jobOrder","placement",
   "owner","dateBegin","dateEnd","dateAdded","dateLastModified",
-  "isDeleted","externalID","communicationMethod","location"
+  "isDeleted","communicationMethod","location"
 ].join(",");
 
 var TASK_FIELDS = [
-  "id","subject","type","description","status",
+  "id","subject","type","description",
   "candidateReference","clientContactReference","jobOrder","placement",
   "owner","dateBegin","dateEnd","dateAdded","dateLastModified",
-  "dateCompleted","isDeleted","isCompleted","externalID"
+  "dateCompleted","isDeleted","isCompleted"
 ].join(",");
 
 var LEAD_FIELDS = [
@@ -902,7 +898,7 @@ var LEAD_FIELDS = [
   "description","dateAdded","dateLastModified","isDeleted",
   "customText1","customText2","customText3",
   "customInt1","customFloat1","customDate1",
-  "externalID","address"
+  "address"
 ].join(",");
 
 
@@ -1270,9 +1266,9 @@ var SYNC_ENTITIES = {
   },
 
   notes: {
-    endpoint: "query/Note",
-    queryField: "where",
-    baseQuery: "id IS NOT NULL",
+    endpoint: "search/Note",
+    queryField: "query",
+    baseQuery: "isDeleted:0",
     fields: NOTE_FIELDS,
     sortField: "-dateLastModified",
     transform: function (r) {
