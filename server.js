@@ -321,6 +321,18 @@ app.post("/api/sync", async (req, res) => {
   }
 });
 
+// ── Bullhorn Entity Metadata — discover ALL available fields ──
+app.get("/api/meta/:entity", async (req, res) => {
+  try {
+    const entity = req.params.entity;
+    const data = await bhFetch("meta/" + entity, { fields: "*" });
+    res.json(data);
+  } catch (e) {
+    console.error("[Meta]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Candidates ──────────────────────────────────
 app.get("/api/candidates", async (req, res) => {
   try {

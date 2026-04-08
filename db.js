@@ -338,6 +338,231 @@ async function createTables() {
     )
   `);
 
+  // Opportunities (sales pipeline)
+  await query(`
+    CREATE TABLE IF NOT EXISTS opportunities (
+      id INTEGER PRIMARY KEY,
+      title TEXT,
+      type TEXT,
+      status TEXT,
+      client_id INTEGER,
+      client_name TEXT,
+      owner_id INTEGER,
+      owner_name TEXT,
+      estimated_start BIGINT,
+      estimated_end BIGINT,
+      estimated_hours NUMERIC,
+      estimated_bill_rate NUMERIC,
+      estimated_pay_rate NUMERIC,
+      estimated_revenue NUMERIC,
+      salary NUMERIC,
+      num_openings INTEGER,
+      win_probability NUMERIC,
+      weighted_deal_value NUMERIC,
+      deal_value NUMERIC,
+      commission NUMERIC,
+      date_added BIGINT,
+      date_last_modified BIGINT,
+      description TEXT,
+      lead TEXT,
+      source TEXT,
+      reason_closed TEXT,
+      custom_text1 TEXT,
+      custom_text2 TEXT,
+      custom_text3 TEXT,
+      custom_text4 TEXT,
+      custom_text5 TEXT,
+      custom_text6 TEXT,
+      custom_text7 TEXT,
+      custom_text8 TEXT,
+      custom_text9 TEXT,
+      custom_text10 TEXT,
+      custom_text_block1 TEXT,
+      custom_text_block2 TEXT,
+      custom_int1 INTEGER,
+      custom_int2 INTEGER,
+      custom_int3 INTEGER,
+      custom_float1 NUMERIC,
+      custom_float2 NUMERIC,
+      custom_float3 NUMERIC,
+      custom_date1 BIGINT,
+      custom_date2 BIGINT,
+      custom_date3 BIGINT,
+      is_deleted BOOLEAN,
+      raw_json JSONB,
+      synced_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Client Contacts (people at client companies)
+  await query(`
+    CREATE TABLE IF NOT EXISTS client_contacts (
+      id INTEGER PRIMARY KEY,
+      first_name TEXT,
+      last_name TEXT,
+      name TEXT,
+      email TEXT,
+      email2 TEXT,
+      phone TEXT,
+      phone2 TEXT,
+      mobile TEXT,
+      type TEXT,
+      status TEXT,
+      occupation TEXT,
+      division TEXT,
+      client_id INTEGER,
+      client_name TEXT,
+      owner_id INTEGER,
+      owner_name TEXT,
+      address_city TEXT,
+      address_state TEXT,
+      address_zip TEXT,
+      date_added BIGINT,
+      date_last_modified BIGINT,
+      date_last_comment BIGINT,
+      description TEXT,
+      custom_text1 TEXT,
+      custom_text2 TEXT,
+      custom_text3 TEXT,
+      custom_text4 TEXT,
+      custom_text5 TEXT,
+      custom_int1 INTEGER,
+      custom_int2 INTEGER,
+      custom_float1 NUMERIC,
+      custom_date1 BIGINT,
+      custom_text_block1 TEXT,
+      is_deleted BOOLEAN,
+      raw_json JSONB,
+      synced_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Corporate Users (internal team)
+  await query(`
+    CREATE TABLE IF NOT EXISTS corporate_users (
+      id INTEGER PRIMARY KEY,
+      first_name TEXT,
+      last_name TEXT,
+      name TEXT,
+      email TEXT,
+      email2 TEXT,
+      phone TEXT,
+      mobile TEXT,
+      username TEXT,
+      occupation TEXT,
+      status TEXT,
+      is_locked BOOLEAN,
+      is_deleted BOOLEAN,
+      date_last_modified BIGINT,
+      primary_department_id INTEGER,
+      raw_json JSONB,
+      synced_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Sendouts (interview records)
+  await query(`
+    CREATE TABLE IF NOT EXISTS sendouts (
+      id INTEGER PRIMARY KEY,
+      candidate_id INTEGER,
+      candidate_name TEXT,
+      job_id INTEGER,
+      job_title TEXT,
+      client_id INTEGER,
+      client_name TEXT,
+      client_contact_id INTEGER,
+      client_contact_name TEXT,
+      status TEXT,
+      date_added BIGINT,
+      date_last_modified BIGINT,
+      sending_user_id INTEGER,
+      sending_user_name TEXT,
+      is_read BOOLEAN,
+      raw_json JSONB,
+      synced_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Appointments / Activities
+  await query(`
+    CREATE TABLE IF NOT EXISTS appointments (
+      id INTEGER PRIMARY KEY,
+      subject TEXT,
+      type TEXT,
+      description TEXT,
+      candidate_id INTEGER,
+      client_contact_id INTEGER,
+      job_id INTEGER,
+      placement_id INTEGER,
+      owner_id INTEGER,
+      owner_name TEXT,
+      date_begin BIGINT,
+      date_end BIGINT,
+      date_added BIGINT,
+      date_last_modified BIGINT,
+      is_deleted BOOLEAN,
+      raw_json JSONB,
+      synced_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Tasks
+  await query(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY,
+      subject TEXT,
+      type TEXT,
+      description TEXT,
+      status TEXT,
+      candidate_id INTEGER,
+      client_contact_id INTEGER,
+      job_id INTEGER,
+      placement_id INTEGER,
+      owner_id INTEGER,
+      owner_name TEXT,
+      date_begin BIGINT,
+      date_end BIGINT,
+      date_added BIGINT,
+      date_last_modified BIGINT,
+      date_completed BIGINT,
+      is_deleted BOOLEAN,
+      is_completed BOOLEAN,
+      raw_json JSONB,
+      synced_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Leads
+  await query(`
+    CREATE TABLE IF NOT EXISTS leads (
+      id INTEGER PRIMARY KEY,
+      first_name TEXT,
+      last_name TEXT,
+      name TEXT,
+      email TEXT,
+      phone TEXT,
+      status TEXT,
+      source TEXT,
+      type TEXT,
+      client_id INTEGER,
+      client_name TEXT,
+      owner_id INTEGER,
+      owner_name TEXT,
+      description TEXT,
+      date_added BIGINT,
+      date_last_modified BIGINT,
+      is_deleted BOOLEAN,
+      custom_text1 TEXT,
+      custom_text2 TEXT,
+      custom_text3 TEXT,
+      custom_int1 INTEGER,
+      custom_float1 NUMERIC,
+      custom_date1 BIGINT,
+      raw_json JSONB,
+      synced_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   // Sync tracking tables
   await query(`
     CREATE TABLE IF NOT EXISTS sync_log (
@@ -387,6 +612,23 @@ async function createTables() {
   await query(`CREATE INDEX IF NOT EXISTS idx_notes_action ON notes(action)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_notes_job ON notes(job_order_id)`);
 
+  // New entity indexes
+  await query(`CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(status)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_opportunities_client ON opportunities(client_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_opportunities_owner ON opportunities(owner_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_client_contacts_client ON client_contacts(client_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_client_contacts_owner ON client_contacts(owner_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_client_contacts_name ON client_contacts(last_name, first_name)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_corporate_users_name ON corporate_users(last_name, first_name)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_sendouts_candidate ON sendouts(candidate_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_sendouts_job ON sendouts(job_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_appointments_owner ON appointments(owner_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date_begin)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_owner ON leads(owner_id)`);
+
   // GIN index on raw_json for flexible JSONB queries against any field
   await query(`CREATE INDEX IF NOT EXISTS idx_candidates_raw ON candidates USING GIN (raw_json)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_jobs_raw ON jobs USING GIN (raw_json)`);
@@ -394,6 +636,13 @@ async function createTables() {
   await query(`CREATE INDEX IF NOT EXISTS idx_clients_raw ON clients USING GIN (raw_json)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_submissions_raw ON submissions USING GIN (raw_json)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_notes_raw ON notes USING GIN (raw_json)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_opportunities_raw ON opportunities USING GIN (raw_json)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_client_contacts_raw ON client_contacts USING GIN (raw_json)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_corporate_users_raw ON corporate_users USING GIN (raw_json)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_sendouts_raw ON sendouts USING GIN (raw_json)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_appointments_raw ON appointments USING GIN (raw_json)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_tasks_raw ON tasks USING GIN (raw_json)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_raw ON leads USING GIN (raw_json)`);
 
   dbReady = true;
   console.log("[DB] Tables and indexes ready");
@@ -521,6 +770,72 @@ var NOTE_FIELDS = [
   "action","comments","dateAdded","dateLastModified",
   "commentingPerson","isDeleted",
   "externalID","minutesSpent"
+].join(",");
+
+var OPPORTUNITY_FIELDS = [
+  "id","title","type","status","clientCorporation","owner",
+  "estimatedStartDate","estimatedEndDate","estimatedHoursPerWeek",
+  "estimatedBillRate","estimatedPayRate","salary",
+  "numOpenings","winProbabilityPercent","weightedDealValue","dealValue","commission",
+  "dateAdded","dateLastModified","description","lead","source","reasonClosed",
+  "customText1","customText2","customText3","customText4","customText5",
+  "customText6","customText7","customText8","customText9","customText10",
+  "customTextBlock1","customTextBlock2",
+  "customInt1","customInt2","customInt3",
+  "customFloat1","customFloat2","customFloat3",
+  "customDate1","customDate2","customDate3",
+  "isDeleted","externalID","jobOrders","candidates"
+].join(",");
+
+var CLIENT_CONTACT_FIELDS = [
+  "id","firstName","lastName","name","email","email2","email3",
+  "phone","phone2","phone3","mobile","fax",
+  "type","status","occupation","division",
+  "clientCorporation","owner",
+  "address","dateAdded","dateLastModified","dateLastComment",
+  "description","externalID","isDeleted",
+  "customText1","customText2","customText3","customText4","customText5",
+  "customText6","customText7","customText8","customText9","customText10",
+  "customTextBlock1","customTextBlock2","customTextBlock3",
+  "customInt1","customInt2","customInt3",
+  "customFloat1","customFloat2","customFloat3",
+  "customDate1","customDate2","customDate3"
+].join(",");
+
+var CORPORATE_USER_FIELDS = [
+  "id","firstName","lastName","name","email","email2",
+  "phone","mobile","username","occupation","status",
+  "isLocked","isDeleted","dateLastModified",
+  "primaryDepartment","externalID"
+].join(",");
+
+var SENDOUT_FIELDS = [
+  "id","candidate","jobOrder","clientCorporation","clientContact",
+  "status","dateAdded","dateLastModified",
+  "sendingUser","isRead","externalID"
+].join(",");
+
+var APPOINTMENT_FIELDS = [
+  "id","subject","type","description",
+  "candidateReference","clientContactReference","jobOrder","placement",
+  "owner","dateBegin","dateEnd","dateAdded","dateLastModified",
+  "isDeleted","externalID","communicationMethod","location"
+].join(",");
+
+var TASK_FIELDS = [
+  "id","subject","type","description","status",
+  "candidateReference","clientContactReference","jobOrder","placement",
+  "owner","dateBegin","dateEnd","dateAdded","dateLastModified",
+  "dateCompleted","isDeleted","isCompleted","externalID"
+].join(",");
+
+var LEAD_FIELDS = [
+  "id","firstName","lastName","name","email","phone",
+  "status","source","type","clientCorporation","owner",
+  "description","dateAdded","dateLastModified","isDeleted",
+  "customText1","customText2","customText3",
+  "customInt1","customFloat1","customDate1",
+  "externalID","address"
 ].join(",");
 
 
@@ -923,6 +1238,263 @@ var SYNC_ENTITIES = {
     `,
     paramsFn: function (t) {
       return [t.id,t.person_id,t.client_id,t.job_order_id,t.placement_id,t.action,t.comments_text,t.date_added,t.date_last_modified,t.commenting_person_id,t.commenting_person_name,t.is_deleted,t.raw_json];
+    },
+  },
+
+  opportunities: {
+    endpoint: "query/Opportunity",
+    queryField: "where",
+    baseQuery: "id IS NOT NULL",
+    fields: OPPORTUNITY_FIELDS,
+    sortField: "-dateLastModified",
+    transform: function (r) {
+      var cc = r.clientCorporation || {};
+      return {
+        id: r.id, title: safeStr(r.title), type: safeStr(r.type), status: safeStr(r.status),
+        client_id: cc.id || null, client_name: safeStr(cc.name),
+        owner_id: r.owner ? r.owner.id : null, owner_name: ownerName(r.owner),
+        estimated_start: safeNum(r.estimatedStartDate), estimated_end: safeNum(r.estimatedEndDate),
+        estimated_hours: safeNum(r.estimatedHoursPerWeek),
+        estimated_bill_rate: safeNum(r.estimatedBillRate), estimated_pay_rate: safeNum(r.estimatedPayRate),
+        estimated_revenue: null, salary: safeNum(r.salary),
+        num_openings: safeNum(r.numOpenings), win_probability: safeNum(r.winProbabilityPercent),
+        weighted_deal_value: safeNum(r.weightedDealValue), deal_value: safeNum(r.dealValue),
+        commission: safeNum(r.commission),
+        date_added: safeNum(r.dateAdded), date_last_modified: safeNum(r.dateLastModified),
+        description: safeStr(r.description), lead: safeStr(r.lead), source: safeStr(r.source),
+        reason_closed: safeStr(r.reasonClosed),
+        custom_text1: safeStr(r.customText1), custom_text2: safeStr(r.customText2),
+        custom_text3: safeStr(r.customText3), custom_text4: safeStr(r.customText4),
+        custom_text5: safeStr(r.customText5), custom_text6: safeStr(r.customText6),
+        custom_text7: safeStr(r.customText7), custom_text8: safeStr(r.customText8),
+        custom_text9: safeStr(r.customText9), custom_text10: safeStr(r.customText10),
+        custom_text_block1: safeStr(r.customTextBlock1), custom_text_block2: safeStr(r.customTextBlock2),
+        custom_int1: safeNum(r.customInt1), custom_int2: safeNum(r.customInt2), custom_int3: safeNum(r.customInt3),
+        custom_float1: safeNum(r.customFloat1), custom_float2: safeNum(r.customFloat2), custom_float3: safeNum(r.customFloat3),
+        custom_date1: safeNum(r.customDate1), custom_date2: safeNum(r.customDate2), custom_date3: safeNum(r.customDate3),
+        is_deleted: safeBool(r.isDeleted),
+        raw_json: JSON.stringify(r),
+      };
+    },
+    upsertSql: `
+      INSERT INTO opportunities (id,title,type,status,client_id,client_name,owner_id,owner_name,estimated_start,estimated_end,estimated_hours,estimated_bill_rate,estimated_pay_rate,estimated_revenue,salary,num_openings,win_probability,weighted_deal_value,deal_value,commission,date_added,date_last_modified,description,lead,source,reason_closed,custom_text1,custom_text2,custom_text3,custom_text4,custom_text5,custom_text6,custom_text7,custom_text8,custom_text9,custom_text10,custom_text_block1,custom_text_block2,custom_int1,custom_int2,custom_int3,custom_float1,custom_float2,custom_float3,custom_date1,custom_date2,custom_date3,is_deleted,raw_json,synced_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49::jsonb,NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        title=$2,type=$3,status=$4,client_id=$5,client_name=$6,owner_id=$7,owner_name=$8,estimated_start=$9,estimated_end=$10,estimated_hours=$11,estimated_bill_rate=$12,estimated_pay_rate=$13,estimated_revenue=$14,salary=$15,num_openings=$16,win_probability=$17,weighted_deal_value=$18,deal_value=$19,commission=$20,date_added=$21,date_last_modified=$22,description=$23,lead=$24,source=$25,reason_closed=$26,custom_text1=$27,custom_text2=$28,custom_text3=$29,custom_text4=$30,custom_text5=$31,custom_text6=$32,custom_text7=$33,custom_text8=$34,custom_text9=$35,custom_text10=$36,custom_text_block1=$37,custom_text_block2=$38,custom_int1=$39,custom_int2=$40,custom_int3=$41,custom_float1=$42,custom_float2=$43,custom_float3=$44,custom_date1=$45,custom_date2=$46,custom_date3=$47,is_deleted=$48,raw_json=$49::jsonb,synced_at=NOW()
+    `,
+    paramsFn: function (t) {
+      return [t.id,t.title,t.type,t.status,t.client_id,t.client_name,t.owner_id,t.owner_name,t.estimated_start,t.estimated_end,t.estimated_hours,t.estimated_bill_rate,t.estimated_pay_rate,t.estimated_revenue,t.salary,t.num_openings,t.win_probability,t.weighted_deal_value,t.deal_value,t.commission,t.date_added,t.date_last_modified,t.description,t.lead,t.source,t.reason_closed,t.custom_text1,t.custom_text2,t.custom_text3,t.custom_text4,t.custom_text5,t.custom_text6,t.custom_text7,t.custom_text8,t.custom_text9,t.custom_text10,t.custom_text_block1,t.custom_text_block2,t.custom_int1,t.custom_int2,t.custom_int3,t.custom_float1,t.custom_float2,t.custom_float3,t.custom_date1,t.custom_date2,t.custom_date3,t.is_deleted,t.raw_json];
+    },
+  },
+
+  client_contacts: {
+    endpoint: "query/ClientContact",
+    queryField: "where",
+    baseQuery: "id IS NOT NULL",
+    fields: CLIENT_CONTACT_FIELDS,
+    sortField: "-dateLastModified",
+    transform: function (r) {
+      var cc = r.clientCorporation || {};
+      var addr = r.address || {};
+      return {
+        id: r.id, first_name: safeStr(r.firstName), last_name: safeStr(r.lastName),
+        name: safeStr(r.name || ((r.firstName || "") + " " + (r.lastName || "")).trim()),
+        email: safeStr(r.email), email2: safeStr(r.email2),
+        phone: safeStr(r.phone), phone2: safeStr(r.phone2), mobile: safeStr(r.mobile),
+        type: safeStr(r.type), status: safeStr(r.status),
+        occupation: safeStr(r.occupation), division: safeStr(r.division),
+        client_id: cc.id || null, client_name: safeStr(cc.name),
+        owner_id: r.owner ? r.owner.id : null, owner_name: ownerName(r.owner),
+        address_city: safeStr(addr.city), address_state: safeStr(addr.state), address_zip: safeStr(addr.zip),
+        date_added: safeNum(r.dateAdded), date_last_modified: safeNum(r.dateLastModified),
+        date_last_comment: safeNum(r.dateLastComment), description: safeStr(r.description),
+        custom_text1: safeStr(r.customText1), custom_text2: safeStr(r.customText2),
+        custom_text3: safeStr(r.customText3), custom_text4: safeStr(r.customText4),
+        custom_text5: safeStr(r.customText5),
+        custom_int1: safeNum(r.customInt1), custom_int2: safeNum(r.customInt2),
+        custom_float1: safeNum(r.customFloat1), custom_date1: safeNum(r.customDate1),
+        custom_text_block1: safeStr(r.customTextBlock1),
+        is_deleted: safeBool(r.isDeleted),
+        raw_json: JSON.stringify(r),
+      };
+    },
+    upsertSql: `
+      INSERT INTO client_contacts (id,first_name,last_name,name,email,email2,phone,phone2,mobile,type,status,occupation,division,client_id,client_name,owner_id,owner_name,address_city,address_state,address_zip,date_added,date_last_modified,date_last_comment,description,custom_text1,custom_text2,custom_text3,custom_text4,custom_text5,custom_int1,custom_int2,custom_float1,custom_date1,custom_text_block1,is_deleted,raw_json,synced_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36::jsonb,NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        first_name=$2,last_name=$3,name=$4,email=$5,email2=$6,phone=$7,phone2=$8,mobile=$9,type=$10,status=$11,occupation=$12,division=$13,client_id=$14,client_name=$15,owner_id=$16,owner_name=$17,address_city=$18,address_state=$19,address_zip=$20,date_added=$21,date_last_modified=$22,date_last_comment=$23,description=$24,custom_text1=$25,custom_text2=$26,custom_text3=$27,custom_text4=$28,custom_text5=$29,custom_int1=$30,custom_int2=$31,custom_float1=$32,custom_date1=$33,custom_text_block1=$34,is_deleted=$35,raw_json=$36::jsonb,synced_at=NOW()
+    `,
+    paramsFn: function (t) {
+      return [t.id,t.first_name,t.last_name,t.name,t.email,t.email2,t.phone,t.phone2,t.mobile,t.type,t.status,t.occupation,t.division,t.client_id,t.client_name,t.owner_id,t.owner_name,t.address_city,t.address_state,t.address_zip,t.date_added,t.date_last_modified,t.date_last_comment,t.description,t.custom_text1,t.custom_text2,t.custom_text3,t.custom_text4,t.custom_text5,t.custom_int1,t.custom_int2,t.custom_float1,t.custom_date1,t.custom_text_block1,t.is_deleted,t.raw_json];
+    },
+  },
+
+  corporate_users: {
+    endpoint: "query/CorporateUser",
+    queryField: "where",
+    baseQuery: "id IS NOT NULL",
+    fields: CORPORATE_USER_FIELDS,
+    sortField: "-dateLastModified",
+    transform: function (r) {
+      return {
+        id: r.id, first_name: safeStr(r.firstName), last_name: safeStr(r.lastName),
+        name: safeStr(r.name || ((r.firstName || "") + " " + (r.lastName || "")).trim()),
+        email: safeStr(r.email), email2: safeStr(r.email2),
+        phone: safeStr(r.phone), mobile: safeStr(r.mobile),
+        username: safeStr(r.username), occupation: safeStr(r.occupation),
+        status: safeStr(r.status),
+        is_locked: safeBool(r.isLocked), is_deleted: safeBool(r.isDeleted),
+        date_last_modified: safeNum(r.dateLastModified),
+        primary_department_id: r.primaryDepartment ? r.primaryDepartment.id : null,
+        raw_json: JSON.stringify(r),
+      };
+    },
+    upsertSql: `
+      INSERT INTO corporate_users (id,first_name,last_name,name,email,email2,phone,mobile,username,occupation,status,is_locked,is_deleted,date_last_modified,primary_department_id,raw_json,synced_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        first_name=$2,last_name=$3,name=$4,email=$5,email2=$6,phone=$7,mobile=$8,username=$9,occupation=$10,status=$11,is_locked=$12,is_deleted=$13,date_last_modified=$14,primary_department_id=$15,raw_json=$16::jsonb,synced_at=NOW()
+    `,
+    paramsFn: function (t) {
+      return [t.id,t.first_name,t.last_name,t.name,t.email,t.email2,t.phone,t.mobile,t.username,t.occupation,t.status,t.is_locked,t.is_deleted,t.date_last_modified,t.primary_department_id,t.raw_json];
+    },
+  },
+
+  sendouts: {
+    endpoint: "query/Sendout",
+    queryField: "where",
+    baseQuery: "id IS NOT NULL",
+    fields: SENDOUT_FIELDS,
+    sortField: "-dateLastModified",
+    transform: function (r) {
+      var cand = r.candidate || {};
+      var jo = r.jobOrder || {};
+      var cc = r.clientCorporation || {};
+      var contact = r.clientContact || {};
+      var su = r.sendingUser || {};
+      return {
+        id: r.id,
+        candidate_id: cand.id || null, candidate_name: ((cand.firstName || "") + " " + (cand.lastName || "")).trim(),
+        job_id: jo.id || null, job_title: safeStr(jo.title),
+        client_id: cc.id || null, client_name: safeStr(cc.name),
+        client_contact_id: contact.id || null, client_contact_name: ownerName(contact),
+        status: safeStr(r.status),
+        date_added: safeNum(r.dateAdded), date_last_modified: safeNum(r.dateLastModified),
+        sending_user_id: su.id || null, sending_user_name: ownerName(su),
+        is_read: safeBool(r.isRead),
+        raw_json: JSON.stringify(r),
+      };
+    },
+    upsertSql: `
+      INSERT INTO sendouts (id,candidate_id,candidate_name,job_id,job_title,client_id,client_name,client_contact_id,client_contact_name,status,date_added,date_last_modified,sending_user_id,sending_user_name,is_read,raw_json,synced_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        candidate_id=$2,candidate_name=$3,job_id=$4,job_title=$5,client_id=$6,client_name=$7,client_contact_id=$8,client_contact_name=$9,status=$10,date_added=$11,date_last_modified=$12,sending_user_id=$13,sending_user_name=$14,is_read=$15,raw_json=$16::jsonb,synced_at=NOW()
+    `,
+    paramsFn: function (t) {
+      return [t.id,t.candidate_id,t.candidate_name,t.job_id,t.job_title,t.client_id,t.client_name,t.client_contact_id,t.client_contact_name,t.status,t.date_added,t.date_last_modified,t.sending_user_id,t.sending_user_name,t.is_read,t.raw_json];
+    },
+  },
+
+  appointments: {
+    endpoint: "query/Appointment",
+    queryField: "where",
+    baseQuery: "id IS NOT NULL",
+    fields: APPOINTMENT_FIELDS,
+    sortField: "-dateLastModified",
+    transform: function (r) {
+      var cand = r.candidateReference || {};
+      var contact = r.clientContactReference || {};
+      var jo = r.jobOrder || {};
+      var pl = r.placement || {};
+      return {
+        id: r.id, subject: safeStr(r.subject), type: safeStr(r.type), description: safeStr(r.description),
+        candidate_id: cand.id || null, client_contact_id: contact.id || null,
+        job_id: jo.id || null, placement_id: pl.id || null,
+        owner_id: r.owner ? r.owner.id : null, owner_name: ownerName(r.owner),
+        date_begin: safeNum(r.dateBegin), date_end: safeNum(r.dateEnd),
+        date_added: safeNum(r.dateAdded), date_last_modified: safeNum(r.dateLastModified),
+        is_deleted: safeBool(r.isDeleted),
+        raw_json: JSON.stringify(r),
+      };
+    },
+    upsertSql: `
+      INSERT INTO appointments (id,subject,type,description,candidate_id,client_contact_id,job_id,placement_id,owner_id,owner_name,date_begin,date_end,date_added,date_last_modified,is_deleted,raw_json,synced_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        subject=$2,type=$3,description=$4,candidate_id=$5,client_contact_id=$6,job_id=$7,placement_id=$8,owner_id=$9,owner_name=$10,date_begin=$11,date_end=$12,date_added=$13,date_last_modified=$14,is_deleted=$15,raw_json=$16::jsonb,synced_at=NOW()
+    `,
+    paramsFn: function (t) {
+      return [t.id,t.subject,t.type,t.description,t.candidate_id,t.client_contact_id,t.job_id,t.placement_id,t.owner_id,t.owner_name,t.date_begin,t.date_end,t.date_added,t.date_last_modified,t.is_deleted,t.raw_json];
+    },
+  },
+
+  tasks: {
+    endpoint: "query/Task",
+    queryField: "where",
+    baseQuery: "id IS NOT NULL",
+    fields: TASK_FIELDS,
+    sortField: "-dateLastModified",
+    transform: function (r) {
+      var cand = r.candidateReference || {};
+      var contact = r.clientContactReference || {};
+      var jo = r.jobOrder || {};
+      var pl = r.placement || {};
+      return {
+        id: r.id, subject: safeStr(r.subject), type: safeStr(r.type), description: safeStr(r.description),
+        status: safeStr(r.status),
+        candidate_id: cand.id || null, client_contact_id: contact.id || null,
+        job_id: jo.id || null, placement_id: pl.id || null,
+        owner_id: r.owner ? r.owner.id : null, owner_name: ownerName(r.owner),
+        date_begin: safeNum(r.dateBegin), date_end: safeNum(r.dateEnd),
+        date_added: safeNum(r.dateAdded), date_last_modified: safeNum(r.dateLastModified),
+        date_completed: safeNum(r.dateCompleted),
+        is_deleted: safeBool(r.isDeleted), is_completed: safeBool(r.isCompleted),
+        raw_json: JSON.stringify(r),
+      };
+    },
+    upsertSql: `
+      INSERT INTO tasks (id,subject,type,description,status,candidate_id,client_contact_id,job_id,placement_id,owner_id,owner_name,date_begin,date_end,date_added,date_last_modified,date_completed,is_deleted,is_completed,raw_json,synced_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        subject=$2,type=$3,description=$4,status=$5,candidate_id=$6,client_contact_id=$7,job_id=$8,placement_id=$9,owner_id=$10,owner_name=$11,date_begin=$12,date_end=$13,date_added=$14,date_last_modified=$15,date_completed=$16,is_deleted=$17,is_completed=$18,raw_json=$19::jsonb,synced_at=NOW()
+    `,
+    paramsFn: function (t) {
+      return [t.id,t.subject,t.type,t.description,t.status,t.candidate_id,t.client_contact_id,t.job_id,t.placement_id,t.owner_id,t.owner_name,t.date_begin,t.date_end,t.date_added,t.date_last_modified,t.date_completed,t.is_deleted,t.is_completed,t.raw_json];
+    },
+  },
+
+  leads: {
+    endpoint: "query/Lead",
+    queryField: "where",
+    baseQuery: "id IS NOT NULL",
+    fields: LEAD_FIELDS,
+    sortField: "-dateLastModified",
+    transform: function (r) {
+      var cc = r.clientCorporation || {};
+      return {
+        id: r.id, first_name: safeStr(r.firstName), last_name: safeStr(r.lastName),
+        name: safeStr(r.name || ((r.firstName || "") + " " + (r.lastName || "")).trim()),
+        email: safeStr(r.email), phone: safeStr(r.phone),
+        status: safeStr(r.status), source: safeStr(r.source), type: safeStr(r.type),
+        client_id: cc.id || null, client_name: safeStr(cc.name),
+        owner_id: r.owner ? r.owner.id : null, owner_name: ownerName(r.owner),
+        description: safeStr(r.description),
+        date_added: safeNum(r.dateAdded), date_last_modified: safeNum(r.dateLastModified),
+        is_deleted: safeBool(r.isDeleted),
+        custom_text1: safeStr(r.customText1), custom_text2: safeStr(r.customText2), custom_text3: safeStr(r.customText3),
+        custom_int1: safeNum(r.customInt1), custom_float1: safeNum(r.customFloat1), custom_date1: safeNum(r.customDate1),
+        raw_json: JSON.stringify(r),
+      };
+    },
+    upsertSql: `
+      INSERT INTO leads (id,first_name,last_name,name,email,phone,status,source,type,client_id,client_name,owner_id,owner_name,description,date_added,date_last_modified,is_deleted,custom_text1,custom_text2,custom_text3,custom_int1,custom_float1,custom_date1,raw_json,synced_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::jsonb,NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        first_name=$2,last_name=$3,name=$4,email=$5,phone=$6,status=$7,source=$8,type=$9,client_id=$10,client_name=$11,owner_id=$12,owner_name=$13,description=$14,date_added=$15,date_last_modified=$16,is_deleted=$17,custom_text1=$18,custom_text2=$19,custom_text3=$20,custom_int1=$21,custom_float1=$22,custom_date1=$23,raw_json=$24::jsonb,synced_at=NOW()
+    `,
+    paramsFn: function (t) {
+      return [t.id,t.first_name,t.last_name,t.name,t.email,t.phone,t.status,t.source,t.type,t.client_id,t.client_name,t.owner_id,t.owner_name,t.description,t.date_added,t.date_last_modified,t.is_deleted,t.custom_text1,t.custom_text2,t.custom_text3,t.custom_int1,t.custom_float1,t.custom_date1,t.raw_json];
     },
   },
 };
