@@ -3319,7 +3319,7 @@ app.get("/api/touch-report", async (req, res) => {
     // Fetch stale client contacts (active, assigned to health system, with owner)
     const clientData = await bhFetchAll("search/ClientContact", {
       query: `isDeleted:0 AND status:"Active" AND clientCorporation.id:[1 TO *] AND owner.id:[1 TO *]`,
-      fields: "id,firstName,lastName,title,status,dateLastModified,email,phone,owner,clientCorporation",
+      fields: "id,firstName,lastName,occupation,status,dateLastModified,email,phone,owner,clientCorporation",
       sort: "dateLastModified",
     });
 
@@ -3364,7 +3364,7 @@ app.get("/api/touch-report", async (req, res) => {
         id: c.id,
         type: "ClientContact",
         name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
-        title: c.title || "",
+        title: c.occupation || "",
         status: c.status || "",
         email: c.email || "",
         phone: c.phone || "",
