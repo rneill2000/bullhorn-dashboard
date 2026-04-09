@@ -80,7 +80,7 @@ tbody tr:hover{background:#eff6ff}
 /* Detail panel */
 .detail-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.3);z-index:100;display:none}
 .detail-overlay.open{display:block}
-.detail-panel{position:fixed;top:0;right:0;bottom:0;width:480px;background:#fff;z-index:101;box-shadow:-4px 0 24px rgba(0,0,0,.12);overflow-y:auto;transform:translateX(100%);transition:transform .25s ease}
+.detail-panel{position:fixed;top:0;right:0;bottom:0;width:560px;background:#fff;z-index:101;box-shadow:-4px 0 24px rgba(0,0,0,.12);overflow-y:auto;transform:translateX(100%);transition:transform .25s ease}
 .detail-panel.open{transform:translateX(0)}
 .detail-header{padding:24px;border-bottom:1px solid #f1f5f9;display:flex;align-items:start;justify-content:space-between}
 .detail-close{width:32px;height:32px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;color:#64748b;flex-shrink:0}
@@ -212,8 +212,18 @@ var apiConnected = false;
 var currentUser = null; // { name, firstName, lastName, email, id }
 var _lastData = { candidates:[], jobs:[], placements:[], clients:[] };
 
-async function apiFetch(endpoint, params) {
-  var qs = params ? "?" + new URLSearchParams(params).toString() : "";
+async function apiFetch(endpoint, opts) {
+  // If opts has method/body/headers, treat as fetch options (POST/PUT)
+  if (opts && (opts.method || opts.body)) {
+    var res = await fetch(API_BASE + "/api/" + endpoint, opts);
+    if (!res.ok) {
+      var errText = ""; try { errText = (await res.json()).error || ""; } catch(e) {}
+      throw new Error("API " + res.status + (errText ? ": " + errText : ""));
+    }
+    return res.json();
+  }
+  // Otherwise treat as GET with query params
+  var qs = opts ? "?" + new URLSearchParams(opts).toString() : "";
   var res = await fetch(API_BASE + "/api/" + endpoint + qs);
   if (!res.ok) throw new Error("API " + res.status);
   return res.json();
@@ -556,74 +566,260 @@ function printTearsheet() {
 
 function renderDetailContent(c) {
   window._lastDetailCandidate = c;
-  var h = '<div class="detail-header"><div><div class="detail-name">'+esc(c.firstName+" "+c.lastName)+'</div>';
+  var h = '<div class="detail-header"><div><div class="detail-name">'+esc((c.firstName||"")+" "+(c.lastName||""))+'</div>';
+  if(c.nickName) h += '<div style="font-size:12px;color:#94a3b8">aka "'+esc(c.nickName)+'"</div>';
   h += '<div class="detail-title">'+esc(c.title||"")+'</div>';
-  h += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">'+badge(c.status);
-  h += '<button style="padding:4px 12px;border-radius:6px;border:1px solid #176087;background:#fff;color:#176087;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openTearsheet()">\uD83D\uDCC4 Tearsheet</button>';
-  h += '</div></div>';
-  h += '<button class="detail-close" onclick="closeDetail()">\u2715</button></div>';
+  h += '<div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+badge(c.status);
+  if(c.employeeType) h += '<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:#eff6ff;color:#176087">'+esc(c.employeeType)+'</span>';
+  h += '</div>';
+  // Action buttons row
+  h += '<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">';
+  h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #176087;background:#fff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openTearsheet()">📄 Tearsheet</button>';
+  h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="showAddNoteForm()">📝 Add Note</button>';
+  h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #7c3aed;background:#f5f3ff;color:#7c3aed;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="showSubmitForm()">📋 Submit to Job</button>';
+  if(c.email) h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #ea580c;background:#fff7ed;color:#ea580c;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="detailSendEmail()">✉️ Send Email</button>';
+  h += '</div>';
+  h += '</div>';
+  h += '<button class="detail-close" onclick="closeDetail()">✕</button></div>';
 
-  // Contact info
+  // ── CONTACT INFORMATION ──
   h += '<div class="detail-section"><h4>Contact Information</h4><div class="detail-grid">';
-  h += '<div class="detail-field"><div class="lbl">Email</div><div class="val">'+(c.email?'<a href="mailto:'+esc(c.email)+'" style="color:#176087">'+esc(c.email)+'</a>':'\u2014')+'</div></div>';
-  h += '<div class="detail-field"><div class="lbl">Phone</div><div class="val">'+(c.phone?'<a href="tel:'+esc(c.phone)+'" style="color:#176087">'+esc(c.phone)+'</a>':'\u2014')+'</div></div>';
-  if(c.mobile) h += '<div class="detail-field"><div class="lbl">Mobile</div><div class="val"><a href="tel:'+esc(c.mobile)+'" style="color:#176087">'+esc(c.mobile)+'</a></div></div>';
-  h += '<div class="detail-field"><div class="lbl">Location</div><div class="val">\uD83D\uDCCD '+esc(c.location||"\u2014")+'</div></div>';
+  h += dField("Email", c.email ? '<a href="mailto:'+esc(c.email)+'" style="color:#176087">'+esc(c.email)+'</a>' : "—", true);
+  if(c.email2) h += dField("Email 2", '<a href="mailto:'+esc(c.email2)+'" style="color:#176087">'+esc(c.email2)+'</a>', true);
+  h += dField("Phone", c.phone ? '<a href="tel:'+esc(c.phone)+'" style="color:#176087">'+esc(c.phone)+'</a>' : "—", true);
+  if(c.phone2) h += dField("Phone 2", '<a href="tel:'+esc(c.phone2)+'" style="color:#176087">'+esc(c.phone2)+'</a>', true);
+  if(c.mobile) h += dField("Mobile", '<a href="tel:'+esc(c.mobile)+'" style="color:#176087">'+esc(c.mobile)+'</a>', true);
+  h += dField("Location", "📍 " + esc(c.location || "—"), true);
+  if(c.address1) h += dField("Address", esc(c.address1) + (c.address2 ? ", " + esc(c.address2) : "") + "<br>" + esc(c.city||"") + ", " + esc(c.state||"") + " " + esc(c.zip||""), true);
   h += '</div></div>';
 
-  // Epic Certifications & Role
-  var hasCerts = c.primaryCert || c.secondaryCert || c.epicRole || c.grade || c.preferredRole || c.urgency;
-  if(hasCerts) {
-    h += '<div class="detail-section"><h4>Epic Certifications & Role</h4><div class="detail-grid">';
-    if(c.primaryCert) h += '<div class="detail-field"><div class="lbl">Primary Certifications</div><div class="val" style="color:#176087;font-weight:600">'+esc(c.primaryCert)+'</div></div>';
-    if(c.secondaryCert) h += '<div class="detail-field"><div class="lbl">Secondary Certifications</div><div class="val">'+esc(c.secondaryCert)+'</div></div>';
-    if(c.epicRole) h += '<div class="detail-field"><div class="lbl">Epic Role</div><div class="val">'+esc(c.epicRole)+'</div></div>';
-    if(c.preferredRole) h += '<div class="detail-field"><div class="lbl">Preferred Roles</div><div class="val">'+esc(c.preferredRole)+'</div></div>';
-    if(c.grade) { var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"}; h += '<div class="detail-field"><div class="lbl">Grade</div><div class="val" style="font-weight:700;color:'+(gc[c.grade]||"#64748b")+'">'+esc(c.grade)+'</div></div>'; }
-    if(c.urgency) h += '<div class="detail-field"><div class="lbl">Urgency</div><div class="val">'+esc(c.urgency)+'</div></div>';
+  // ── EPIC CERTIFICATIONS & ROLE ──
+  h += '<div class="detail-section"><h4>Epic Certifications & Role</h4><div class="detail-grid">';
+  h += dField("Primary Certifications", c.primaryCert || "—", false, c.primaryCert ? "color:#176087;font-weight:600" : "");
+  h += dField("Secondary Certifications", c.secondaryCert || "—");
+  h += dField("Epic Role", c.epicRole || "—");
+  if(c.preferredRole) h += dField("Preferred Roles", c.preferredRole);
+  var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};
+  h += dField("Grade", c.grade || "—", false, c.grade ? "font-weight:700;color:"+(gc[c.grade]||"#64748b") : "");
+  if(c.urgency) h += dField("Urgency", c.urgency);
+  h += '</div></div>';
+
+  // ── PROFESSIONAL DETAILS ──
+  h += '<div class="detail-section"><h4>Professional Details</h4><div class="detail-grid">';
+  h += dField("Pay Rate / Salary", c.salary || "—");
+  if(c.hourlyRate) h += dField("Hourly Rate", "$" + c.hourlyRate + "/hr");
+  if(c.dayRate) h += dField("Day Rate", "$" + c.dayRate + "/day");
+  h += dField("Available", c.available || "—");
+  h += dField("Current Company", c.company || "—");
+  h += dField("Education", c.education || "—");
+  h += dField("Source", c.source || "—");
+  h += dField("Owner", c.owner || "—");
+  if(c.willRelocate !== undefined && c.willRelocate !== null) h += dField("Will Relocate", c.willRelocate ? "Yes" : "No");
+  if(c.travelLimit) h += dField("Travel Limit", c.travelLimit + "%");
+  h += '</div></div>';
+
+  // ── DATES & TRACKING ──
+  h += '<div class="detail-section"><h4>Dates & Tracking</h4><div class="detail-grid">';
+  h += dField("Date Added", c.dateAdded || "—");
+  h += dField("Last Modified", c.lastModified || "—");
+  if(c.lastComment) h += dField("Last Comment", c.lastComment);
+  if(c.customDate1) h += dField("Custom Date 1", c.customDate1);
+  if(c.customDate2) h += dField("Custom Date 2", c.customDate2);
+  if(c.customDate3) h += dField("Custom Date 3", c.customDate3);
+  h += '</div></div>';
+
+  // ── CUSTOM FIELDS (show any that have values) ──
+  var customFields = [];
+  if(c.customText4) customFields.push(["Custom Text 4", c.customText4]);
+  if(c.customText8) customFields.push(["Custom Text 8", c.customText8]);
+  if(c.customText9) customFields.push(["Custom Text 9", c.customText9]);
+  if(c.customText10) customFields.push(["Custom Text 10", c.customText10]);
+  if(c.customFloat1) customFields.push(["Custom Float 1", c.customFloat1]);
+  if(c.customFloat2) customFields.push(["Custom Float 2", c.customFloat2]);
+  if(c.customInt1) customFields.push(["Custom Int 1", c.customInt1]);
+  if(c.customInt2) customFields.push(["Custom Int 2", c.customInt2]);
+  if(c.customInt3) customFields.push(["Custom Int 3", c.customInt3]);
+  if(customFields.length) {
+    h += '<div class="detail-section"><h4>Additional Fields</h4><div class="detail-grid">';
+    customFields.forEach(function(f) { h += dField(f[0], f[1]); });
     h += '</div></div>';
   }
 
-  // Professional details
-  h += '<div class="detail-section"><h4>Professional Details</h4><div class="detail-grid">';
-  h += '<div class="detail-field"><div class="lbl">Pay Rate</div><div class="val">'+esc(c.salary||"\u2014")+'</div></div>';
-  h += '<div class="detail-field"><div class="lbl">Available</div><div class="val">'+esc(c.available||"\u2014")+'</div></div>';
-  if(c.company) h += '<div class="detail-field"><div class="lbl">Current Company</div><div class="val">'+esc(c.company)+'</div></div>';
-  if(c.education) h += '<div class="detail-field"><div class="lbl">Education</div><div class="val">'+esc(c.education)+'</div></div>';
-  if(c.source) h += '<div class="detail-field"><div class="lbl">Source</div><div class="val">'+esc(c.source)+'</div></div>';
-  if(c.owner) h += '<div class="detail-field"><div class="lbl">Owner</div><div class="val">'+esc(c.owner)+'</div></div>';
-  if(c.dateAdded) h += '<div class="detail-field"><div class="lbl">Date Added</div><div class="val">'+esc(c.dateAdded)+'</div></div>';
-  if(c.lastModified) h += '<div class="detail-field"><div class="lbl">Last Modified</div><div class="val">'+esc(c.lastModified)+'</div></div>';
+  // ── GENERAL COMMENTS (customTextBlock1) ──
+  h += '<div class="detail-section"><h4>General Comments</h4>';
+  if(c.generalComments) {
+    h += '<div style="font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;border:1px solid #e2e8f0;max-height:200px;overflow-y:auto">'+esc(c.generalComments)+'</div>';
+  } else {
+    h += '<div style="font-size:13px;color:#94a3b8;padding:8px 0">No general comments</div>';
+  }
+  h += '</div>';
+
+  // customTextBlock2 / 3
+  if(c.customTextBlock2) {
+    h += '<div class="detail-section"><h4>Additional Notes (Block 2)</h4>';
+    h += '<div style="font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;border:1px solid #e2e8f0;max-height:200px;overflow-y:auto">'+esc(c.customTextBlock2)+'</div></div>';
+  }
+  if(c.customTextBlock3) {
+    h += '<div class="detail-section"><h4>Additional Notes (Block 3)</h4>';
+    h += '<div style="font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;border:1px solid #e2e8f0;max-height:200px;overflow-y:auto">'+esc(c.customTextBlock3)+'</div></div>';
+  }
+
+  // ── DESCRIPTION ──
+  if(c.description) {
+    h += '<div class="detail-section"><h4>Description / Resume Summary</h4>';
+    h += '<div style="font-size:13px;color:#334155;line-height:1.6;max-height:300px;overflow-y:auto">'+c.description+'</div></div>';
+  }
+
+  // ── ADD NOTE FORM (hidden initially) ──
+  h += '<div class="detail-section" id="detail-add-note" style="display:none">';
+  h += '<h4>Add Note</h4>';
+  h += '<select id="note-action-select" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;margin-bottom:8px;font-family:inherit">';
+  h += '<option value="General Note">General Note</option><option value="Phone Call">Phone Call</option><option value="Email">Email</option>';
+  h += '<option value="Left Message">Left Message</option><option value="Meeting">Meeting</option><option value="Follow Up">Follow Up</option>';
+  h += '<option value="Interview">Interview</option><option value="Outreach">Outreach</option><option value="Text">Text/SMS</option>';
+  h += '</select>';
+  h += '<textarea id="note-comments-input" placeholder="Enter your note..." style="width:100%;height:80px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;resize:vertical;font-family:inherit"></textarea>';
+  h += '<div style="display:flex;gap:8px;margin-top:8px">';
+  h += '<button onclick="submitNote()" style="padding:6px 16px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Save Note</button>';
+  h += '<button onclick="document.getElementById(\'detail-add-note\').style.display=\'none\'" style="padding:6px 16px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-size:12px;cursor:pointer;font-family:inherit">Cancel</button>';
   h += '</div></div>';
 
-  // Candidate Notes (customTextBlock1)
-  if(c.notes && typeof c.notes === "string") {
-    h += '<div class="detail-section"><h4>Candidate Notes</h4>';
-    h += '<div style="font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap">'+esc(c.notes)+'</div></div>';
-  }
+  // ── SUBMIT TO JOB FORM (hidden initially) ──
+  h += '<div class="detail-section" id="detail-submit-job" style="display:none">';
+  h += '<h4>Submit to Job</h4>';
+  h += '<select id="submit-job-select" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;margin-bottom:8px;font-family:inherit">';
+  h += '<option value="">Loading jobs...</option></select>';
+  h += '<textarea id="submit-comments-input" placeholder="Submission notes (optional)..." style="width:100%;height:60px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;resize:vertical;font-family:inherit"></textarea>';
+  h += '<div style="display:flex;gap:8px;margin-top:8px">';
+  h += '<button onclick="submitToJob()" style="padding:6px 16px;border-radius:6px;border:none;background:#7c3aed;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Submit Candidate</button>';
+  h += '<button onclick="document.getElementById(\'detail-submit-job\').style.display=\'none\'" style="padding:6px 16px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-size:12px;cursor:pointer;font-family:inherit">Cancel</button>';
+  h += '</div></div>';
 
-  // Description
-  if(c.description) {
-    h += '<div class="detail-section"><h4>Description</h4>';
-    h += '<div style="font-size:13px;color:#334155;line-height:1.6">'+c.description+'</div></div>';
-  }
+  // ── SUBMISSIONS (loaded async) ──
+  h += '<div class="detail-section" id="detail-submissions"><h4>Submissions</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading submissions…</div></div>';
 
-  // Submissions placeholder (loaded async)
-  h += '<div class="detail-section" id="detail-submissions"><h4>Submissions</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading submissions\u2026</div></div>';
-
-  // Activity notes (from API notes endpoint)
+  // ── ACTIVITY NOTES ──
   if(c.notes && Array.isArray(c.notes) && c.notes.length) {
     h += '<div class="detail-section"><h4>Recent Notes ('+c.notes.length+')</h4>';
     c.notes.forEach(function(n){
       h += '<div class="note-card"><div class="note-meta">';
-      if(n.action) h += '<span class="note-action">'+esc(n.action)+'</span> \u2022 ';
-      h += esc(n.by||"") + ' \u2022 ' + esc(n.date||"");
+      if(n.action) h += '<span class="note-action">'+esc(n.action)+'</span> • ';
+      h += esc(n.by||"") + ' • ' + esc(n.date||"");
       h += '</div><div class="note-text">'+esc(n.comments)+'</div></div>';
     });
     h += '</div>';
+  } else if(!c.notes || (Array.isArray(c.notes) && c.notes.length === 0)) {
+    h += '<div class="detail-section"><h4>Recent Notes</h4><div style="font-size:13px;color:#94a3b8;padding:8px 0">No notes found</div></div>';
   }
 
+  // Link to Bullhorn
+  h += '<div class="detail-section" style="text-align:center;padding:16px 0">';
+  h += '<a href="https://cls91.bullhornstaffing.com/BullhornSTAFFING/OpenWindow.cfm?entity=Candidate&id='+c.id+'" target="_blank" style="color:#176087;font-size:12px;text-decoration:underline">Open in Bullhorn →</a>';
+  h += '</div>';
+
   return h;
+}
+
+// Helper for detail fields
+function dField(label, value, isHtml, style) {
+  var v = isHtml ? (value||"—") : esc(value||"—");
+  return '<div class="detail-field"><div class="lbl">'+esc(label)+'</div><div class="val"'+(style?' style="'+style+'"':'')+'>'+v+'</div></div>';
+}
+
+// ── DETAIL PANEL ACTIONS ──
+function showAddNoteForm() {
+  var el = document.getElementById("detail-add-note");
+  if(el) { el.style.display = "block"; el.scrollIntoView({behavior:"smooth"}); }
+}
+
+function submitNote() {
+  var c = window._lastDetailCandidate;
+  if(!c) return;
+  var action = document.getElementById("note-action-select").value;
+  var comments = document.getElementById("note-comments-input").value;
+  if(!comments.trim()) { alert("Please enter note text"); return; }
+
+  var btn = event.target;
+  btn.textContent = "Saving...";
+  btn.disabled = true;
+
+  apiFetch("candidates/" + c.id + "/notes", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ action: action, comments: comments })
+  }).then(function(r) {
+    btn.textContent = "Saved!";
+    btn.style.background = "#16a34a";
+    document.getElementById("note-comments-input").value = "";
+    // Refresh the detail panel after a beat
+    setTimeout(function() { openDetail(c.id, c); }, 800);
+  }).catch(function(e) {
+    btn.textContent = "Error";
+    btn.style.background = "#dc2626";
+    alert("Failed to save note: " + e.message);
+    setTimeout(function() { btn.textContent = "Save Note"; btn.disabled = false; btn.style.background = "#16a34a"; }, 2000);
+  });
+}
+
+function showSubmitForm() {
+  var el = document.getElementById("detail-submit-job");
+  if(el) { el.style.display = "block"; el.scrollIntoView({behavior:"smooth"}); }
+  // Load open jobs into the dropdown
+  var sel = document.getElementById("submit-job-select");
+  if(sel) {
+    sel.innerHTML = '<option value="">Loading jobs...</option>';
+    apiFetch("jobs?status=Accepting+Candidates").then(function(r) {
+      var jobs = r.data || [];
+      if(jobs.length === 0) {
+        // Try "Open" as fallback
+        return apiFetch("jobs?status=Open").then(function(r2) { return r2.data || []; });
+      }
+      return jobs;
+    }).then(function(jobs) {
+      var opts = '<option value="">Select a job...</option>';
+      jobs.forEach(function(j) {
+        opts += '<option value="'+j.id+'">'+esc(j.title||"Job #"+j.id)+' — '+esc(j.client||"")+(j.status?' ['+esc(j.status)+']':'')+'</option>';
+      });
+      sel.innerHTML = opts;
+    }).catch(function(e) {
+      sel.innerHTML = '<option value="">Failed to load jobs</option>';
+    });
+  }
+}
+
+function submitToJob() {
+  var c = window._lastDetailCandidate;
+  if(!c) return;
+  var jobId = document.getElementById("submit-job-select").value;
+  var comments = document.getElementById("submit-comments-input").value;
+  if(!jobId) { alert("Please select a job"); return; }
+
+  var btn = event.target;
+  btn.textContent = "Submitting...";
+  btn.disabled = true;
+
+  apiFetch("submissions", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ candidateId: c.id, jobId: parseInt(jobId), comments: comments })
+  }).then(function(r) {
+    btn.textContent = "Submitted!";
+    btn.style.background = "#7c3aed";
+    document.getElementById("submit-comments-input").value = "";
+    // Refresh submissions list
+    setTimeout(function() { openDetail(c.id, c); }, 800);
+  }).catch(function(e) {
+    btn.textContent = "Error";
+    btn.style.background = "#dc2626";
+    alert("Failed to submit: " + e.message);
+    setTimeout(function() { btn.textContent = "Submit Candidate"; btn.disabled = false; btn.style.background = "#7c3aed"; }, 2000);
+  });
+}
+
+function detailSendEmail() {
+  var c = window._lastDetailCandidate;
+  if(!c || !c.email) return;
+  window.open("mailto:" + c.email + "?subject=" + encodeURIComponent("Anura Connect — " + (c.firstName||"") + " " + (c.lastName||"")), "_blank");
 }
 
 /* ═══ STATE ═══ */

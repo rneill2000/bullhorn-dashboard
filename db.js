@@ -2250,9 +2250,10 @@ async function dbGetTouchReport(days) {
   var lastClientTouch = {};
   clientNoteRows.forEach(function (n) { if (n.client_id) lastClientTouch[n.client_id] = Number(n.last_touch); });
 
-  // Stale candidates — Active, with an owner (skip unassigned leads)
+  // Stale candidates — Active, with a real owner (skip unassigned leads)
+  // owner_id > 0 excludes unassigned (Bullhorn sets 0 for no owner, not just NULL)
   var candRows = (await query(
-    "SELECT * FROM candidates WHERE status = 'Active' AND owner_id IS NOT NULL ORDER BY date_last_modified ASC"
+    "SELECT * FROM candidates WHERE status = 'Active' AND owner_id IS NOT NULL AND owner_id > 0 AND is_deleted = false ORDER BY date_last_modified ASC"
   )).rows;
   var candidates = candRows.map(function (c) {
     var touch = lastTouch[c.id] || null;
@@ -2294,10 +2295,11 @@ async function dbGetTouchReport(days) {
   }).filter(function (c) { return c.daysSince >= days; });
   consultants.sort(function (a, b) { return b.daysSince - a.daysSince; });
 
-  // Stale client contacts — Active people assigned to a health system with an owner
-  // A touch = last Note logged against their client_id or their person_id
+  // Stale client contacts — Active people assigned to a health system with a real owner
+  // owner_id > 0 excludes unassigned (Bullhorn sets 0 for no owner, not just NULL)
+  // client_id > 0 ensures they're actually assigned to a health system
   var ccRows = (await query(
-    "SELECT * FROM client_contacts WHERE status = 'Active' AND client_id IS NOT NULL AND owner_id IS NOT NULL ORDER BY date_last_modified ASC"
+    "SELECT * FROM client_contacts WHERE status = 'Active' AND client_id IS NOT NULL AND client_id > 0 AND owner_id IS NOT NULL AND owner_id > 0 AND is_deleted = false ORDER BY date_last_modified ASC"
   )).rows;
   var clients = ccRows.map(function (c) {
     // Check for note against this contact's person ID or their client

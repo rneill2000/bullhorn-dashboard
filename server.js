@@ -249,6 +249,27 @@ async function bhFetch(endpoint, params = {}) {
 }
 
 /**
+ * PUT data to Bullhorn (create/update entities).
+ * @param {string} endpoint - e.g. "entity/Note" or "entity/Candidate/123"
+ * @param {object} body - JSON body to send
+ * @param {string} method - "PUT" (create) or "POST" (update) per Bullhorn convention
+ */
+async function bhWrite(endpoint, body, method = "PUT") {
+  const s = await authenticate();
+  const url = `${s.restUrl}${endpoint}?BhRestToken=${s.bhRestToken}`;
+  const res = await fetch(url, {
+    method: method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Bullhorn API ${method} error (${res.status}): ${err}`);
+  }
+  return res.json();
+}
+
+/**
  * Fetch ALL records by auto-paginating through Bullhorn results.
  * Works for both search/ and query/ endpoints.
  * @param {string} endpoint - e.g. "search/Candidate" or "query/Placement"
@@ -451,35 +472,70 @@ app.get("/api/candidates/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const data = await bhFetch(`entity/Candidate/${id}`, {
-      fields: "id,firstName,lastName,occupation,status,address,salary,dateAvailable,email,phone,mobile,dateLastModified,source,owner,dateAdded,description,companyName,educationDegree,customText1,customText2,customText3,customText5,customText6,customText7,customTextBlock1",
+      fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
     });
     const c = data.data || data;
+    const addr = c.address || {};
     const detail = {
       id: c.id,
       firstName: c.firstName || "",
       lastName: c.lastName || "",
+      middleName: c.middleName || "",
+      nickName: c.nickName || "",
       title: c.occupation || "",
       status: c.status || "Unknown",
-      location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
+      location: [addr.city, addr.state].filter(Boolean).join(", "),
+      address1: addr.address1 || "",
+      address2: addr.address2 || "",
+      city: addr.city || "",
+      state: addr.state || "",
+      zip: addr.zip || "",
       salary: c.salary ? "$" + Number(c.salary).toLocaleString() : "—",
+      hourlyRate: c.hourlyRate || c.hourlyRateLow || null,
+      dayRate: c.dayRate || c.dayRateLow || null,
       email: c.email || "",
+      email2: c.email2 || "",
       phone: c.phone || "",
+      phone2: c.phone2 || "",
+      phone3: c.phone3 || "",
       mobile: c.mobile || "",
       available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "—",
       dateAdded: c.dateAdded ? new Date(c.dateAdded).toLocaleDateString() : "",
       lastModified: c.dateLastModified ? new Date(c.dateLastModified).toLocaleDateString() : "",
+      lastComment: c.dateLastComment ? new Date(c.dateLastComment).toLocaleDateString() : "",
       source: c.source || "",
       owner: c.owner ? (c.owner.firstName + " " + c.owner.lastName) : "",
+      ownerId: c.owner ? c.owner.id : null,
       company: c.companyName || "",
       education: c.educationDegree || "",
+      employeeType: c.employeeType || "",
+      willRelocate: c.willRelocate,
+      travelLimit: c.travelLimit || "",
       description: c.description || "",
+      // Epic-specific fields
       primaryCert: Array.isArray(c.customText1) ? c.customText1.join(", ") : (c.customText1 || ""),
       secondaryCert: Array.isArray(c.customText2) ? c.customText2.join(", ") : (c.customText2 || ""),
       preferredRole: Array.isArray(c.customText3) ? c.customText3.join(", ") : (c.customText3 || ""),
+      customText4: c.customText4 || "",
       epicRole: Array.isArray(c.customText5) ? c.customText5.join(", ") : (c.customText5 || ""),
       grade: c.customText6 || "",
       urgency: c.customText7 || "",
-      notes: c.customTextBlock1 || "",
+      customText8: c.customText8 || "",
+      customText9: c.customText9 || "",
+      customText10: c.customText10 || "",
+      // General Comments / notes fields
+      generalComments: c.customTextBlock1 || "",
+      customTextBlock2: c.customTextBlock2 || "",
+      customTextBlock3: c.customTextBlock3 || "",
+      // Custom dates/numbers
+      customDate1: c.customDate1 ? new Date(c.customDate1).toLocaleDateString() : "",
+      customDate2: c.customDate2 ? new Date(c.customDate2).toLocaleDateString() : "",
+      customDate3: c.customDate3 ? new Date(c.customDate3).toLocaleDateString() : "",
+      customFloat1: c.customFloat1,
+      customFloat2: c.customFloat2,
+      customInt1: c.customInt1,
+      customInt2: c.customInt2,
+      customInt3: c.customInt3,
     };
 
     // Also fetch notes
@@ -501,6 +557,108 @@ app.get("/api/candidates/:id", async (req, res) => {
     res.json(detail);
   } catch (e) {
     console.error("[Candidate Detail]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Add Note to Candidate ──────────────────────
+app.post("/api/candidates/:id/notes", async (req, res) => {
+  try {
+    const candidateId = parseInt(req.params.id);
+    const { action, comments } = req.body;
+    if (!comments || !comments.trim()) {
+      return res.status(400).json({ error: "Comments are required" });
+    }
+
+    // Create Note entity in Bullhorn (PUT = create in Bullhorn's convention)
+    const noteBody = {
+      personReference: { id: candidateId },
+      action: action || "General Note",
+      comments: comments.trim(),
+      dateAdded: Date.now(),
+    };
+    const result = await bhWrite("entity/Note", noteBody, "PUT");
+    console.log("[Add Note] Created note for candidate", candidateId, "→", result);
+
+    // Also sync the note to local DB if available
+    if (db.ready) {
+      try {
+        await db.pool.query(
+          `INSERT INTO notes (id, person_id, action, comments_text, date_added, is_deleted, synced_at)
+           VALUES ($1, $2, $3, $4, $5, false, $6) ON CONFLICT (id) DO NOTHING`,
+          [result.changedEntityId || 0, candidateId, action || "General Note", comments.trim(), Date.now(), Date.now()]
+        );
+      } catch (dbErr) { console.log("[Add Note] DB insert failed:", dbErr.message); }
+    }
+
+    res.json({ success: true, noteId: result.changedEntityId, message: "Note added successfully" });
+  } catch (e) {
+    console.error("[Add Note]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Submit Candidate to Job ────────────────────
+app.post("/api/submissions", async (req, res) => {
+  try {
+    const { candidateId, jobId, comments } = req.body;
+    if (!candidateId || !jobId) {
+      return res.status(400).json({ error: "candidateId and jobId are required" });
+    }
+
+    // Create JobSubmission in Bullhorn
+    const subBody = {
+      candidate: { id: parseInt(candidateId) },
+      jobOrder: { id: parseInt(jobId) },
+      status: "Submitted",
+      dateWebResponse: Date.now(),
+      comments: comments || "",
+    };
+    const result = await bhWrite("entity/JobSubmission", subBody, "PUT");
+    console.log("[Submission] Created submission", candidateId, "→ Job", jobId, "→", result);
+
+    // Also log a note about the submission
+    try {
+      const noteBody = {
+        personReference: { id: parseInt(candidateId) },
+        action: "Submission",
+        comments: `Submitted to Job #${jobId}` + (comments ? ": " + comments : ""),
+        dateAdded: Date.now(),
+      };
+      await bhWrite("entity/Note", noteBody, "PUT");
+    } catch (noteErr) { console.log("[Submission] Note logging failed:", noteErr.message); }
+
+    res.json({ success: true, submissionId: result.changedEntityId, message: "Candidate submitted successfully" });
+  } catch (e) {
+    console.error("[Submission]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Update Candidate Field ─────────────────────
+app.post("/api/candidates/:id/update", async (req, res) => {
+  try {
+    const candidateId = parseInt(req.params.id);
+    const updates = req.body;
+    // Only allow updating specific safe fields
+    const ALLOWED_FIELDS = ["status", "customText1", "customText2", "customText3", "customText5", "customText6", "customText7", "email", "phone", "mobile", "dateAvailable", "customTextBlock1", "occupation"];
+    const safeUpdates = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        safeUpdates[key] = updates[key];
+      }
+    }
+    if (Object.keys(safeUpdates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+
+    // POST = update in Bullhorn's convention
+    const result = await bhWrite(`entity/Candidate/${candidateId}`, safeUpdates, "POST");
+    console.log("[Update Candidate]", candidateId, "→", Object.keys(safeUpdates), result);
+
+    res.json({ success: true, message: "Candidate updated" });
+  } catch (e) {
+    console.error("[Update Candidate]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
