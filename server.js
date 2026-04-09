@@ -1413,7 +1413,11 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
       var secondaryCerts = (c.custom_text2 || "").toLowerCase();
       var allCerts = primaryCerts + ", " + secondaryCerts;
 
-      // ── Cert matching (50% weight — dominant signal) ──
+      // ══════════════════════════════════════════════════════════
+      // SCORING: Certs (40pts) + Availability (35pts) + Role (10pts) + Grade (8pts) + Location (5pts) + Status (2pts) = 100
+      // ══════════════════════════════════════════════════════════
+
+      // ── 1. Cert matching (40 points max) ──
       if (extractedCerts.length > 0) {
         var primaryMatched = 0;
         var secondaryMatched = 0;
@@ -1425,27 +1429,41 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
         relatedCerts.forEach(function (rc) {
           if (allCerts.indexOf(rc.toLowerCase()) >= 0) relatedMatched++;
         });
-        // Primary cert match = full points, secondary = partial, related = bonus
         var certScore = 0;
         if (extractedCerts.length > 0) {
-          certScore = ((primaryMatched * 1.0 + secondaryMatched * 0.6) / extractedCerts.length) * 60;
+          certScore = ((primaryMatched * 1.0 + secondaryMatched * 0.6) / extractedCerts.length) * 40;
         }
-        // Related cert bonus (up to 10 extra)
         if (relatedCerts.length > 0) {
-          certScore += Math.min(10, (relatedMatched / relatedCerts.length) * 10);
+          certScore += Math.min(8, (relatedMatched / relatedCerts.length) * 8);
         }
         score += Math.round(certScore);
         if (primaryMatched > 0) factors.push(primaryMatched + "/" + extractedCerts.length + " primary cert match");
         if (secondaryMatched > 0) factors.push(secondaryMatched + " secondary cert match");
         if (relatedMatched > 0) factors.push(relatedMatched + " related cert match");
-        // Hard penalty: no cert overlap at all = huge penalty
         if (primaryMatched === 0 && secondaryMatched === 0 && relatedMatched === 0) {
-          score -= 30; // push non-matching candidates way down
+          score -= 30;
           factors.push("No cert match");
         }
       }
 
-      // ── Role level matching (15% weight) ──
+      // ── 2. Availability (35 points max — co-dominant with certs) ──
+      var rawAvail = c.date_available ? Number(c.date_available) : 0;
+      var availDate = rawAvail > 946684800000 ? rawAvail : null;
+      if (availDate) {
+        var daysUntil = (availDate - now) / 86400000;
+        if (daysUntil <= 0) { score += 35; factors.push("\u2705 Available now"); }
+        else if (daysUntil <= 7) { score += 32; factors.push("\u2705 Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 14) { score += 28; factors.push("\uD83D\uDD52 Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 30) { score += 22; factors.push("\uD83D\uDD52 Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 60) { score += 12; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 90) { score += 5; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else { score -= 5; factors.push("\u26A0\uFE0F Available in " + Math.ceil(daysUntil) + " days"); }
+      } else {
+        score -= 20; // No availability date = big red flag for staffing
+        factors.push("\uD83D\uDED1 No availability date");
+      }
+
+      // ── 3. Role level matching (10 points max) ──
       if (jobRoleTier) {
         var candTitle = (c.occupation || "").toLowerCase();
         var candRole = (c.custom_text5 || "").toLowerCase();
@@ -1460,42 +1478,25 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
         }
         if (candRoleTier !== null) {
           var tierDiff = Math.abs(jobRoleTier - candRoleTier);
-          if (tierDiff === 0) { score += 15; factors.push("Role match"); }
-          else if (tierDiff === 1) { score += 8; factors.push("Similar role level"); }
-          else { score -= 15; factors.push("Role mismatch (" + candTitle.substring(0, 30) + ")"); }
+          if (tierDiff === 0) { score += 10; factors.push("Role match"); }
+          else if (tierDiff === 1) { score += 5; factors.push("Similar role level"); }
+          else { score -= 15; factors.push("Role mismatch"); }
         }
       }
 
-      // Availability (20% weight — candidates available soon are much more valuable)
-      // Guard: date_available must be a real date (after year 2000 = 946684800000)
-      var rawAvail = c.date_available ? Number(c.date_available) : 0;
-      var availDate = rawAvail > 946684800000 ? rawAvail : null;
-      if (availDate) {
-        var daysUntil = (availDate - now) / 86400000;
-        if (daysUntil <= 0) { score += 20; factors.push("Available now"); }
-        else if (daysUntil <= 7) { score += 18; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 14) { score += 15; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 30) { score += 11; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 60) { score += 6; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 90) { score += 3; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-      } else {
-        score -= 5;
-        factors.push("No availability date");
-      }
-
-      // Grade (6% weight)
+      // ── 4. Grade (8 points max) ──
       var grade = (c.custom_text6 || "").toUpperCase();
-      if (grade === "A") { score += 6; factors.push("Grade A"); }
-      else if (grade === "B") { score += 4; factors.push("Grade B"); }
+      if (grade === "A") { score += 8; factors.push("Grade A"); }
+      else if (grade === "B") { score += 5; factors.push("Grade B"); }
       else if (grade === "C") { score += 2; }
 
-      // Location proximity (4% weight)
+      // ── 5. Location (5 points max) ──
       if (jobLocation && c.address_state) {
         var jobState = (jobLocation.split(",").pop() || "").trim().toLowerCase();
-        if (c.address_state.toLowerCase() === jobState) { score += 4; factors.push("Same state"); }
+        if (c.address_state.toLowerCase() === jobState) { score += 5; factors.push("Same state"); }
       }
 
-      // Status (2% weight)
+      // ── 6. Status (2 points max) ──
       if (c.status === "Active" || c.status === "Available") { score += 2; }
 
       return {
