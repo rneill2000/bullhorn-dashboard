@@ -1200,18 +1200,22 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
 
       // Grade bonus
       const grade = c.customText6 || "";
-      if (grade === "A") certScore += 10;
-      else if (grade === "B") certScore += 6;
+      if (grade === "A") certScore += 8;
+      else if (grade === "B") certScore += 5;
       else if (grade === "C") certScore += 2;
 
-      // Availability bonus
+      // Availability bonus (high weight — sooner = better)
       let availScore = 0;
       if (c.dateAvailable) {
         const daysUntilAvail = (c.dateAvailable - now) / 86400000;
-        if (daysUntilAvail <= 0) availScore = 15;
-        else if (daysUntilAvail <= 14) availScore = 12;
-        else if (daysUntilAvail <= 30) availScore = 8;
-        else if (daysUntilAvail <= 60) availScore = 4;
+        if (daysUntilAvail <= 0) availScore = 25;
+        else if (daysUntilAvail <= 7) availScore = 22;
+        else if (daysUntilAvail <= 14) availScore = 18;
+        else if (daysUntilAvail <= 30) availScore = 14;
+        else if (daysUntilAvail <= 60) availScore = 8;
+        else if (daysUntilAvail <= 90) availScore = 4;
+      } else {
+        availScore = -5; // no date set = slight penalty
       }
 
       return {
@@ -1406,31 +1410,35 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
         }
       }
 
-      // Availability (15% weight)
+      // Availability (25% weight — candidates available soon are much more valuable)
       if (c.date_available) {
         var daysUntil = (c.date_available - now) / 86400000;
-        if (daysUntil <= 0) { score += 15; factors.push("Available now"); }
-        else if (daysUntil <= 14) { score += 12; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 30) { score += 8; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        if (daysUntil <= 0) { score += 25; factors.push("Available now"); }
+        else if (daysUntil <= 7) { score += 22; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 14) { score += 18; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 30) { score += 14; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 60) { score += 8; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 90) { score += 4; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        // Beyond 90 days = no availability bonus
+      } else {
+        // No availability date set — slight penalty
+        score -= 5;
       }
 
-      // Grade (10% weight)
+      // Grade (8% weight)
       var grade = (c.custom_text6 || "").toUpperCase();
-      if (grade === "A") { score += 10; factors.push("Grade A"); }
-      else if (grade === "B") { score += 7; factors.push("Grade B"); }
-      else if (grade === "C") { score += 3; }
+      if (grade === "A") { score += 8; factors.push("Grade A"); }
+      else if (grade === "B") { score += 5; factors.push("Grade B"); }
+      else if (grade === "C") { score += 2; }
 
-      // Location proximity (8% weight)
+      // Location proximity (5% weight)
       if (jobLocation && c.address_state) {
         var jobState = (jobLocation.split(",").pop() || "").trim().toLowerCase();
-        if (c.address_state.toLowerCase() === jobState) { score += 8; factors.push("Same state"); }
+        if (c.address_state.toLowerCase() === jobState) { score += 5; factors.push("Same state"); }
       }
 
-      // Status (5% weight)
-      if (c.status === "Active" || c.status === "Available") { score += 5; }
-
-      // Experience (2% weight)
-      if (c.experience && c.experience >= 5) { score += 2; factors.push(c.experience + " yrs exp"); }
+      // Status (2% weight)
+      if (c.status === "Active" || c.status === "Available") { score += 2; }
 
       return {
         id: c.id, firstName: c.first_name || "", lastName: c.last_name || "",
