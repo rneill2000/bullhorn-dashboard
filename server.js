@@ -1112,17 +1112,58 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
     });
     const job = jobData.data || jobData;
 
-    // 2. Extract cert keywords from job title and custom fields
-    const epicCerts = ["PB","HB","Cadence","Willow","Beacon","OpTime","Anesthesia","Radiant","ClinDoc","Prelude","ADT","Bridges","Grand Central","Beaker","Cupid","MyChart","Healthy Planet","Tapestry","Cogito","Resolute","Claims","HIM","Orders"];
-    const jobText = [job.title, job.customText1, job.customText2, job.customText3, job.customText4, job.customText5].filter(Boolean).join(" ");
-    const matchedCerts = epicCerts.filter(c => jobText.toLowerCase().includes(c.toLowerCase()));
+    // 2. Extract cert keywords from job — use same alias/relationship logic as AI match
+    var SM_ALIASES = {
+      "pb": "Professional Billing", "professional billing": "Professional Billing",
+      "hb": "Hospital Billing", "hospital billing": "Hospital Billing",
+      "cadence": "Cadence", "willow": "Willow", "beaker": "Beaker",
+      "cupid": "Cupid", "tapestry": "Tapestry", "cogito": "Cogito",
+      "bridges": "Bridges", "radiant": "Radiant", "prelude": "Prelude",
+      "phoenix": "Phoenix", "resolute": "Resolute", "rover": "Rover",
+      "clarity": "Clarity", "ambulatory": "Ambulatory", "epiccare ambulatory": "Ambulatory",
+      "inpatient": "Inpatient", "epiccare inpatient": "Inpatient",
+      "epiccare": "EpicCare", "optime": "OpTime", "grand central": "Grand Central",
+      "hyperspace": "Hyperspace", "mychart": "MyChart", "my chart": "MyChart",
+      "beacon": "Beacon", "clindoc": "ClinDoc", "clinical documentation": "ClinDoc",
+      "clin doc": "ClinDoc", "adt": "ADT", "him": "HIM", "orders": "Orders",
+      "order entry": "Orders", "healthy planet": "Healthy Planet",
+      "claims": "Claims", "rte": "RTE", "referrals": "Referrals",
+      "patient access": "Patient Access", "anesthesia": "Anesthesia",
+    };
+    var SM_RELATIONSHIPS = {
+      "Professional Billing": ["Resolute", "Resolute Professional Billing", "Claims", "RTE"],
+      "Hospital Billing": ["Resolute", "Resolute Hospital Billing", "Claims"],
+      "Resolute": ["Professional Billing", "Hospital Billing"],
+      "Patient Access": ["Prelude", "ADT", "Grand Central", "Cadence"],
+      "Prelude": ["Patient Access", "ADT", "Grand Central"],
+      "ClinDoc": ["Inpatient", "EpicCare"],
+      "Ambulatory": ["EpicCare"],
+      "Cadence": ["Referrals", "Prelude"],
+    };
+    var jobText = [job.title, job.customText1, job.customText2, job.customText3, job.customText4, job.customText5].filter(Boolean).join(" ").toLowerCase();
+    var matchedCerts = [];
+    Object.keys(SM_ALIASES).forEach(function(alias) {
+      if (jobText.indexOf(alias) >= 0) {
+        var norm = SM_ALIASES[alias];
+        if (matchedCerts.indexOf(norm) < 0) matchedCerts.push(norm);
+      }
+    });
+    var smRelated = [];
+    matchedCerts.forEach(function(c) {
+      if (SM_RELATIONSHIPS[c]) {
+        SM_RELATIONSHIPS[c].forEach(function(r) {
+          if (matchedCerts.indexOf(r) < 0 && smRelated.indexOf(r) < 0) smRelated.push(r);
+        });
+      }
+    });
 
     // 3. Build a Lucene query for candidates matching those certs
     let query = "isDeleted:0 AND (status:Active OR status:Available)";
-    if (matchedCerts.length > 0) {
-      const certClauses = matchedCerts.map(c => {
+    var allSearchCerts = matchedCerts.concat(smRelated);
+    if (allSearchCerts.length > 0) {
+      const certClauses = allSearchCerts.map(c => {
         const escaped = c.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
-        return `(customText1:${escaped}* OR customText2:${escaped}*)`;
+        return `(customText1:"${escaped}" OR customText2:"${escaped}")`;
       });
       query += " AND (" + certClauses.join(" OR ") + ")";
     }
@@ -1133,39 +1174,44 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       sort: "-dateLastModified",
     });
 
-    // 4. Score candidates
+    // 4. Score candidates — cert match is dominant
     const now = Date.now();
     const candidates = (candData.data || []).map((c) => {
       const primaryCerts = (Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1) || "";
       const secondaryCerts = (Array.isArray(c.customText2) ? c.customText2.join(", ") : c.customText2) || "";
-      const allCerts = (primaryCerts + " " + secondaryCerts).toLowerCase();
+      const primaryLower = primaryCerts.toLowerCase();
+      const secondaryLower = secondaryCerts.toLowerCase();
 
-      // Score: certs matched
       let certScore = 0;
       const certsMatched = [];
+      // Primary cert matches (full weight)
       matchedCerts.forEach(mc => {
-        if (allCerts.includes(mc.toLowerCase())) { certScore += 10; certsMatched.push(mc); }
+        if (primaryLower.includes(mc.toLowerCase())) { certScore += 20; certsMatched.push(mc + " (primary)"); }
+        else if (secondaryLower.includes(mc.toLowerCase())) { certScore += 12; certsMatched.push(mc + " (secondary)"); }
       });
-      // Primary cert match bonus
-      matchedCerts.forEach(mc => {
-        if (primaryCerts.toLowerCase().includes(mc.toLowerCase())) certScore += 5;
+      // Related cert matches (partial weight)
+      smRelated.forEach(mc => {
+        if (primaryLower.includes(mc.toLowerCase()) || secondaryLower.includes(mc.toLowerCase())) {
+          certScore += 6; certsMatched.push(mc + " (related)");
+        }
       });
+      // Hard penalty if zero cert overlap
+      if (certsMatched.length === 0 && matchedCerts.length > 0) certScore -= 30;
 
       // Grade bonus
       const grade = c.customText6 || "";
-      if (grade === "A") certScore += 15;
-      else if (grade === "B") certScore += 8;
-      else if (grade === "C") certScore += 3;
+      if (grade === "A") certScore += 10;
+      else if (grade === "B") certScore += 6;
+      else if (grade === "C") certScore += 2;
 
       // Availability bonus
       let availScore = 0;
       if (c.dateAvailable) {
-        const availDate = c.dateAvailable;
-        const daysUntilAvail = (availDate - now) / 86400000;
-        if (daysUntilAvail <= 0) availScore = 20; // available now
-        else if (daysUntilAvail <= 14) availScore = 15;
-        else if (daysUntilAvail <= 30) availScore = 10;
-        else if (daysUntilAvail <= 60) availScore = 5;
+        const daysUntilAvail = (c.dateAvailable - now) / 86400000;
+        if (daysUntilAvail <= 0) availScore = 15;
+        else if (daysUntilAvail <= 14) availScore = 12;
+        else if (daysUntilAvail <= 30) availScore = 8;
+        else if (daysUntilAvail <= 60) availScore = 4;
       }
 
       return {
@@ -1193,8 +1239,8 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
     candidates.sort((a, b) => b.score - a.score);
 
     res.json({
-      job: { id: job.id, title: job.title || "", matchedCerts },
-      candidates: candidates.slice(0, 50), // top 50
+      job: { id: job.id, title: job.title || "", matchedCerts, relatedCerts: smRelated },
+      candidates: candidates.slice(0, 50),
       totalMatched: candidates.length,
     });
   } catch (e) {
@@ -1252,59 +1298,139 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
     // Build job profile for Claude
     var jobTitle = job.title || job.job_title || "";
     var jobDesc = job.description || job.public_description || job.publicDescription || "";
-    var jobCerts = job.custom_text1 || (job.customText1 ? (Array.isArray(job.customText1) ? job.customText1.join(", ") : job.customText1) : "");
+    var jobCertsRaw = job.custom_text1 || (job.customText1 ? (Array.isArray(job.customText1) ? job.customText1.join(", ") : job.customText1) : "");
     var jobLocation = job.address_city ? (job.address_city + ", " + job.address_state) : (job.address ? [job.address.city, job.address.state].filter(Boolean).join(", ") : "");
     var jobClient = job.client_name || (job.clientCorporation ? job.clientCorporation.name : "");
     var jobRate = job.client_bill_rate || job.clientBillRate || job.salary || "";
     var jobType = job.employment_type || job.employmentType || "";
+
+    // ── Cert alias + relationship mapping ──
+    var MATCH_CERT_ALIASES = {
+      "pb": "Professional Billing", "professional billing": "Professional Billing",
+      "hb": "Hospital Billing", "hospital billing": "Hospital Billing",
+      "cadence": "Cadence", "willow": "Willow", "beaker": "Beaker",
+      "cupid": "Cupid", "tapestry": "Tapestry", "cogito": "Cogito",
+      "bridges": "Bridges", "radiant": "Radiant", "prelude": "Prelude",
+      "phoenix": "Phoenix", "resolute": "Resolute", "rover": "Rover",
+      "clarity": "Clarity", "ambulatory": "Ambulatory", "epiccare ambulatory": "Ambulatory",
+      "inpatient": "Inpatient", "epiccare inpatient": "Inpatient",
+      "epiccare": "EpicCare", "optime": "OpTime", "grand central": "Grand Central",
+      "hyperspace": "Hyperspace", "mychart": "MyChart", "my chart": "MyChart",
+      "beacon": "Beacon", "clindoc": "ClinDoc", "clinical documentation": "ClinDoc",
+      "clin doc": "ClinDoc", "adt": "ADT", "him": "HIM", "orders": "Orders",
+      "order entry": "Orders", "healthy planet": "Healthy Planet",
+      "claims": "Claims", "rte": "RTE", "referrals": "Referrals",
+      "patient access": "Patient Access",
+    };
+    // Related certs that should also match (e.g. PB roles often want Resolute PB)
+    var CERT_RELATIONSHIPS = {
+      "Professional Billing": ["Resolute", "Resolute Professional Billing", "Claims", "RTE"],
+      "Hospital Billing": ["Resolute", "Resolute Hospital Billing", "Claims"],
+      "Resolute": ["Professional Billing", "Hospital Billing"],
+      "Patient Access": ["Prelude", "ADT", "Grand Central", "Cadence"],
+      "Prelude": ["Patient Access", "ADT", "Grand Central"],
+      "ADT": ["Patient Access", "Prelude", "Grand Central"],
+      "Grand Central": ["Patient Access", "ADT", "Prelude"],
+      "ClinDoc": ["Inpatient", "EpicCare"],
+      "Ambulatory": ["EpicCare"],
+      "Cadence": ["Referrals", "Prelude"],
+    };
+
+    // Extract required certs from job custom fields AND title/description
+    var extractedCerts = [];
+    // From custom_text1 (explicit cert field)
+    if (jobCertsRaw) {
+      jobCertsRaw.split(",").map(function(s){return s.trim();}).filter(Boolean).forEach(function(c) {
+        var norm = MATCH_CERT_ALIASES[c.toLowerCase()] || c;
+        if (extractedCerts.indexOf(norm) < 0) extractedCerts.push(norm);
+      });
+    }
+    // From job title — scan for known cert keywords
+    var titleAndDesc = (jobTitle + " " + (job.custom_text2 || job.customText2 || "") + " " + (job.custom_text3 || job.customText3 || "")).toLowerCase();
+    Object.keys(MATCH_CERT_ALIASES).forEach(function(alias) {
+      if (titleAndDesc.indexOf(alias) >= 0) {
+        var norm = MATCH_CERT_ALIASES[alias];
+        if (extractedCerts.indexOf(norm) < 0) extractedCerts.push(norm);
+      }
+    });
+    // Expand with related certs (lower priority but still relevant)
+    var relatedCerts = [];
+    extractedCerts.forEach(function(c) {
+      if (CERT_RELATIONSHIPS[c]) {
+        CERT_RELATIONSHIPS[c].forEach(function(r) {
+          if (extractedCerts.indexOf(r) < 0 && relatedCerts.indexOf(r) < 0) relatedCerts.push(r);
+        });
+      }
+    });
+    var jobCerts = extractedCerts.join(", ");
+    console.log("[AI Match] Job:", jobTitle, "| Extracted certs:", extractedCerts.join(", "), "| Related:", relatedCerts.join(", "));
 
     // Pre-score candidates with weighted factors
     var now = Date.now();
     var scored = candidates.map(function (c) {
       var score = 0;
       var factors = [];
-      var certs = ((c.custom_text1 || "") + ", " + (c.custom_text2 || "")).toLowerCase();
-      var jobCertsLower = (jobCerts || "").toLowerCase();
+      var primaryCerts = (c.custom_text1 || "").toLowerCase();
+      var secondaryCerts = (c.custom_text2 || "").toLowerCase();
+      var allCerts = primaryCerts + ", " + secondaryCerts;
 
-      // Cert matching (strongest signal)
-      if (jobCertsLower) {
-        var reqCerts = jobCertsLower.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-        var matched = 0;
-        reqCerts.forEach(function (rc) {
-          if (certs.indexOf(rc) >= 0) matched++;
+      // ── Cert matching (60% weight — dominant signal) ──
+      if (extractedCerts.length > 0) {
+        var primaryMatched = 0;
+        var secondaryMatched = 0;
+        var relatedMatched = 0;
+        extractedCerts.forEach(function (rc) {
+          if (primaryCerts.indexOf(rc.toLowerCase()) >= 0) primaryMatched++;
+          else if (secondaryCerts.indexOf(rc.toLowerCase()) >= 0) secondaryMatched++;
         });
-        if (reqCerts.length > 0) {
-          var certPct = Math.round((matched / reqCerts.length) * 100);
-          score += certPct * 0.4; // 40% weight
-          if (matched > 0) factors.push(matched + "/" + reqCerts.length + " certs match");
+        relatedCerts.forEach(function (rc) {
+          if (allCerts.indexOf(rc.toLowerCase()) >= 0) relatedMatched++;
+        });
+        // Primary cert match = full points, secondary = partial, related = bonus
+        var certScore = 0;
+        if (extractedCerts.length > 0) {
+          certScore = ((primaryMatched * 1.0 + secondaryMatched * 0.6) / extractedCerts.length) * 60;
+        }
+        // Related cert bonus (up to 10 extra)
+        if (relatedCerts.length > 0) {
+          certScore += Math.min(10, (relatedMatched / relatedCerts.length) * 10);
+        }
+        score += Math.round(certScore);
+        if (primaryMatched > 0) factors.push(primaryMatched + "/" + extractedCerts.length + " primary cert match");
+        if (secondaryMatched > 0) factors.push(secondaryMatched + " secondary cert match");
+        if (relatedMatched > 0) factors.push(relatedMatched + " related cert match");
+        // Hard penalty: no cert overlap at all = huge penalty
+        if (primaryMatched === 0 && secondaryMatched === 0 && relatedMatched === 0) {
+          score -= 30; // push non-matching candidates way down
+          factors.push("No cert match");
         }
       }
 
-      // Availability (20% weight)
+      // Availability (15% weight)
       if (c.date_available) {
         var daysUntil = (c.date_available - now) / 86400000;
-        if (daysUntil <= 0) { score += 20; factors.push("Available now"); }
-        else if (daysUntil <= 14) { score += 16; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 30) { score += 10; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        if (daysUntil <= 0) { score += 15; factors.push("Available now"); }
+        else if (daysUntil <= 14) { score += 12; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 30) { score += 8; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
       }
 
-      // Grade (15% weight)
+      // Grade (10% weight)
       var grade = (c.custom_text6 || "").toUpperCase();
-      if (grade === "A") { score += 15; factors.push("Grade A"); }
-      else if (grade === "B") { score += 10; factors.push("Grade B"); }
-      else if (grade === "C") { score += 5; }
+      if (grade === "A") { score += 10; factors.push("Grade A"); }
+      else if (grade === "B") { score += 7; factors.push("Grade B"); }
+      else if (grade === "C") { score += 3; }
 
-      // Location proximity (10% weight)
+      // Location proximity (8% weight)
       if (jobLocation && c.address_state) {
         var jobState = (jobLocation.split(",").pop() || "").trim().toLowerCase();
-        if (c.address_state.toLowerCase() === jobState) { score += 10; factors.push("Same state"); }
+        if (c.address_state.toLowerCase() === jobState) { score += 8; factors.push("Same state"); }
       }
 
-      // Status (10% weight)
-      if (c.status === "Active" || c.status === "Available") { score += 10; }
+      // Status (5% weight)
+      if (c.status === "Active" || c.status === "Available") { score += 5; }
 
-      // Experience (5% weight)
-      if (c.experience && c.experience >= 5) { score += 5; factors.push(c.experience + " yrs exp"); }
+      // Experience (2% weight)
+      if (c.experience && c.experience >= 5) { score += 2; factors.push(c.experience + " yrs exp"); }
 
       return {
         id: c.id, firstName: c.first_name || "", lastName: c.last_name || "",
