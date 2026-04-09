@@ -13,11 +13,15 @@ aside .logo-icon{width:36px;height:36px;border-radius:10px;overflow:hidden;displ
 aside .logo-icon img{width:100%;height:100%;object-fit:cover}
 aside .logo-text{font-size:16px;font-weight:700;color:#fff}
 aside .logo-sub{font-size:11px;color:#64748b;font-weight:500}
-aside nav{flex:1;padding:12px 10px}
+aside nav{flex:1;padding:12px 10px;overflow-y:auto}
 aside nav button{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;border-radius:8px;border:none;margin-bottom:2px;font-size:14px;cursor:pointer;font-family:inherit;transition:background .15s}
 aside nav button.active{background:#176087;color:#fff;font-weight:600}
 aside nav button:not(.active){background:transparent;color:#94a3b8;font-weight:400}
 aside nav button:not(.active):hover{background:#163a56}
+aside nav::-webkit-scrollbar{width:6px}
+aside nav::-webkit-scrollbar-track{background:transparent}
+aside nav::-webkit-scrollbar-thumb{background:#163a56;border-radius:3px}
+aside nav::-webkit-scrollbar-thumb:hover{background:#176087}
 aside .user-box{padding:16px 10px;border-top:1px solid #163a56}
 aside .user-card{display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:8px;background:#163a56}
 aside .avatar{width:32px;height:32px;border-radius:8px;background:#176087;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff}
