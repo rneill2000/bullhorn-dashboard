@@ -1206,8 +1206,9 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
 
       // Availability bonus (high weight — sooner = better)
       let availScore = 0;
-      if (c.dateAvailable) {
-        const daysUntilAvail = (c.dateAvailable - now) / 86400000;
+      const smAvailDate = c.dateAvailable && c.dateAvailable > 946684800000 ? c.dateAvailable : null;
+      if (smAvailDate) {
+        const daysUntilAvail = (smAvailDate - now) / 86400000;
         if (daysUntilAvail <= 0) availScore = 25;
         else if (daysUntilAvail <= 7) availScore = 22;
         else if (daysUntilAvail <= 14) availScore = 18;
@@ -1229,7 +1230,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
         grade,
         status: c.status || "",
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
-        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "—",
+        available: smAvailDate ? new Date(smAvailDate).toLocaleDateString() : "—",
         email: c.email || "",
         phone: c.phone || "",
         score: certScore + availScore,
@@ -1465,8 +1466,10 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
       }
 
       // Availability (20% weight — candidates available soon are much more valuable)
-      if (c.date_available) {
-        var daysUntil = (c.date_available - now) / 86400000;
+      // Guard: date_available must be a real date (after year 2000 = 946684800000)
+      var availDate = c.date_available && c.date_available > 946684800000 ? c.date_available : null;
+      if (availDate) {
+        var daysUntil = (availDate - now) / 86400000;
         if (daysUntil <= 0) { score += 20; factors.push("Available now"); }
         else if (daysUntil <= 7) { score += 18; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
         else if (daysUntil <= 14) { score += 15; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
@@ -1475,6 +1478,7 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
         else if (daysUntil <= 90) { score += 3; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
       } else {
         score -= 5;
+        factors.push("No availability date");
       }
 
       // Grade (6% weight)
@@ -1499,7 +1503,7 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
         epicRole: c.custom_text5 || "", grade: c.custom_text6 || "",
         status: c.status || "",
         location: [c.address_city, c.address_state].filter(Boolean).join(", "),
-        available: c.date_available ? new Date(c.date_available).toLocaleDateString() : "—",
+        available: availDate ? new Date(availDate).toLocaleDateString() : "—",
         email: c.email || "", phone: c.phone || "",
         score: Math.round(score),
         factors: factors,
@@ -2984,6 +2988,154 @@ app.get("/api/candidates/:id/submissions", async (req, res) => {
     res.json({ data: submissions, total: data.total || submissions.length });
   } catch (e) {
     console.error("[Submissions]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ DATA QUALITY REPORT ════════════════════════════════════════
+app.get("/api/data-quality", async (req, res) => {
+  try {
+    var statusFilter = req.query.status || "active"; // active | placed | all
+    var now = Date.now();
+
+    // Critical fields — these are the ones that matter for placements & outreach
+    var CRITICAL_FIELDS = [
+      { key: "email", label: "Email", db: "email" },
+      { key: "phone", label: "Cell / Phone", db: "phone", altDb: "mobile" },
+      { key: "dateAvailable", label: "Availability Date", db: "date_available", type: "date" },
+      { key: "primaryCert", label: "Primary Certification", db: "custom_text1" },
+      { key: "epicRole", label: "Epic Role", db: "custom_text5" },
+      { key: "grade", label: "Grade", db: "custom_text6" },
+    ];
+    // Important but not critical
+    var IMPORTANT_FIELDS = [
+      { key: "address", label: "City / State", db: "address_city", altDb: "address_state" },
+      { key: "occupation", label: "Title / Occupation", db: "occupation" },
+      { key: "owner", label: "Owner / Recruiter", db: "owner_name" },
+    ];
+
+    var candidates = [];
+    if (db.ready) {
+      var statusClause = "";
+      if (statusFilter === "active") statusClause = "AND status IN ('Active', 'Available', 'New Lead', 'Submitted')";
+      else if (statusFilter === "placed") statusClause = "AND status = 'Placed'";
+      // "all" = no filter
+
+      var rows = (await db.query(
+        "SELECT id, first_name, last_name, status, email, phone, mobile, date_available, " +
+        "custom_text1, custom_text5, custom_text6, address_city, address_state, occupation, " +
+        "owner_name, date_last_modified, date_added " +
+        "FROM candidates WHERE is_deleted = false " + statusClause +
+        " ORDER BY last_name ASC, first_name ASC"
+      )).rows;
+
+      var totalCandidates = rows.length;
+      var issuesByField = {};
+      CRITICAL_FIELDS.concat(IMPORTANT_FIELDS).forEach(function(f) { issuesByField[f.key] = 0; });
+
+      candidates = rows.map(function(r) {
+        var issues = [];
+        var missingCritical = 0;
+        var missingImportant = 0;
+
+        // Check critical fields
+        CRITICAL_FIELDS.forEach(function(f) {
+          var val = r[f.db];
+          var altVal = f.altDb ? r[f.altDb] : null;
+          var missing = false;
+
+          if (f.type === "date") {
+            // Date fields: missing if null/0, stale if > 1 year in the past
+            if (!val || val === 0) {
+              missing = true;
+              issues.push({ field: f.label, type: "missing", severity: "critical" });
+            } else {
+              var daysAgo = (now - val) / 86400000;
+              if (daysAgo > 365) {
+                issues.push({ field: f.label, type: "stale", severity: "critical", detail: "Over 1 year old" });
+                missingCritical++;
+                issuesByField[f.key]++;
+              }
+            }
+          } else if (f.key === "phone") {
+            // Phone: OK if either phone or mobile is set
+            if (!val && !altVal) {
+              missing = true;
+              issues.push({ field: f.label, type: "missing", severity: "critical" });
+            }
+          } else {
+            if (!val || (typeof val === "string" && val.trim() === "")) {
+              missing = true;
+              issues.push({ field: f.label, type: "missing", severity: "critical" });
+            }
+          }
+          if (missing) { missingCritical++; issuesByField[f.key]++; }
+        });
+
+        // Check important fields
+        IMPORTANT_FIELDS.forEach(function(f) {
+          var val = r[f.db];
+          var altVal = f.altDb ? r[f.altDb] : null;
+          if (f.key === "address") {
+            if (!val && !altVal) {
+              issues.push({ field: f.label, type: "missing", severity: "important" });
+              missingImportant++;
+              issuesByField[f.key]++;
+            }
+          } else {
+            if (!val || (typeof val === "string" && val.trim() === "")) {
+              issues.push({ field: f.label, type: "missing", severity: "important" });
+              missingImportant++;
+              issuesByField[f.key]++;
+            }
+          }
+        });
+
+        var totalIssues = missingCritical + missingImportant;
+        // Health: 100 = perfect, 0 = everything missing
+        var totalFields = CRITICAL_FIELDS.length + IMPORTANT_FIELDS.length;
+        var health = Math.round(((totalFields - totalIssues) / totalFields) * 100);
+
+        return {
+          id: r.id,
+          firstName: r.first_name || "",
+          lastName: r.last_name || "",
+          status: r.status || "",
+          owner: r.owner_name || "",
+          issues: issues,
+          missingCritical: missingCritical,
+          missingImportant: missingImportant,
+          health: health,
+          lastModified: r.date_last_modified,
+        };
+      });
+
+      // Sort: most issues first, critical issues first
+      candidates.sort(function(a, b) {
+        if (a.missingCritical !== b.missingCritical) return b.missingCritical - a.missingCritical;
+        return b.missingImportant - a.missingImportant;
+      });
+
+      // Summary stats
+      var perfect = candidates.filter(function(c) { return c.issues.length === 0; }).length;
+      var withCritical = candidates.filter(function(c) { return c.missingCritical > 0; }).length;
+      var withImportant = candidates.filter(function(c) { return c.missingImportant > 0 && c.missingCritical === 0; }).length;
+
+      res.json({
+        total: totalCandidates,
+        perfect: perfect,
+        withCritical: withCritical,
+        withImportantOnly: withImportant,
+        overallHealth: totalCandidates > 0 ? Math.round(candidates.reduce(function(s, c) { return s + c.health; }, 0) / totalCandidates) : 100,
+        issuesByField: issuesByField,
+        fields: CRITICAL_FIELDS.concat(IMPORTANT_FIELDS).map(function(f) { return { key: f.key, label: f.label, severity: f.key === "address" || f.key === "occupation" || f.key === "owner" ? "important" : "critical" }; }),
+        candidates: candidates,
+      });
+    } else {
+      res.json({ error: "Database not available — data quality report requires local DB sync", total: 0, candidates: [] });
+    }
+  } catch (e) {
+    console.error("[Data Quality]", e.message);
     res.status(500).json({ error: e.message });
   }
 });

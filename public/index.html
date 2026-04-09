@@ -914,6 +914,7 @@ var NAV_BASE=[
   {key:"intel",label:"Market Intel",emoji:"\uD83D\uDCF0"},
   {key:"outreach",label:"Outreach",emoji:"\uD83D\uDCE7"},
   {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
+  {key:"dataquality",label:"Data Quality",emoji:"\uD83D\uDEE0\uFE0F"},
   {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"},
   {key:"portal",label:"Portal",emoji:"\uD83D\uDCE8"}
 ];
@@ -1487,6 +1488,136 @@ function deleteSavedSearch(idx){
   savedSearches.splice(idx,1);
   localStorage.setItem("bh_saved_searches",JSON.stringify(savedSearches));
   loadPage();
+}
+
+/* ═══ DATA QUALITY PAGE ═══ */
+var _dqStatus="active";
+var _dqFilter="all"; // all | critical | important | perfect
+var _dqFieldFilter="all";
+var _dqData=null;
+function renderDataQuality(data){
+  _dqData=data;
+  var h='';
+  // Status tabs
+  h+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+  ["active","placed","all"].forEach(function(s){
+    var label=s==="active"?"Active Candidates":s==="placed"?"Placed Consultants":"All Candidates";
+    h+='<button class="chip'+(_dqStatus===s?" on":"")+'" onclick="_dqStatus=\''+s+'\';_dqFilter=\'all\';_dqFieldFilter=\'all\';loadPage()">'+label+'</button>';
+  });
+  h+='</div>';
+
+  if(!data||data.error){
+    h+='<div class="empty-state"><div class="big">\u26A0\uFE0F</div><div class="title">Database Required</div><div class="sub">'+(data&&data.error?esc(data.error):"Data quality report requires local DB sync")+'</div></div>';
+    return h;
+  }
+
+  // Summary cards
+  var healthColor=data.overallHealth>=80?"#059669":data.overallHealth>=60?"#d97706":"#dc2626";
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">';
+  h+='<div class="stat-card"><div class="stat-label">Overall Health</div><div class="stat-num" style="color:'+healthColor+'">'+data.overallHealth+'%</div></div>';
+  h+='<div class="stat-card"><div class="stat-label">Total Records</div><div class="stat-num">'+data.total+'</div></div>';
+  h+='<div class="stat-card" style="cursor:pointer;'+ (_dqFilter==="perfect"?"outline:2px solid #059669":"") +'" onclick="_dqFilter=(_dqFilter===\'perfect\'?\'all\':\'perfect\');renderDQTable()"><div class="stat-label">\u2705 Complete</div><div class="stat-num" style="color:#059669">'+data.perfect+'</div></div>';
+  h+='<div class="stat-card" style="cursor:pointer;'+ (_dqFilter==="critical"?"outline:2px solid #dc2626":"") +'" onclick="_dqFilter=(_dqFilter===\'critical\'?\'all\':\'critical\');renderDQTable()"><div class="stat-label">\uD83D\uDED1 Missing Critical</div><div class="stat-num" style="color:#dc2626">'+data.withCritical+'</div></div>';
+  h+='<div class="stat-card" style="cursor:pointer;'+ (_dqFilter==="important"?"outline:2px solid #d97706":"") +'" onclick="_dqFilter=(_dqFilter===\'important\'?\'all\':\'important\');renderDQTable()"><div class="stat-label">\u26A0\uFE0F Important Only</div><div class="stat-num" style="color:#d97706">'+data.withImportantOnly+'</div></div>';
+  h+='</div>';
+
+  // Issue breakdown by field
+  h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;margin-bottom:20px">';
+  h+='<div style="font-size:13px;font-weight:700;color:#0f172a;margin-bottom:10px">Missing Fields Breakdown</div>';
+  h+='<div style="display:flex;gap:10px;flex-wrap:wrap">';
+  (data.fields||[]).forEach(function(f){
+    var cnt=data.issuesByField[f.key]||0;
+    if(cnt===0) return;
+    var pct=data.total>0?Math.round((cnt/data.total)*100):0;
+    var col=f.severity==="critical"?"#dc2626":"#d97706";
+    var isActive=_dqFieldFilter===f.key;
+    h+='<div onclick="_dqFieldFilter=(_dqFieldFilter===\''+f.key+'\'?\'all\':\''+f.key+'\');renderDQTable()" style="cursor:pointer;background:'+(isActive?col+"15":"#fff")+';border:1px solid '+(isActive?col:"#e2e8f0")+';border-radius:8px;padding:8px 14px;text-align:center">';
+    h+='<div style="font-size:18px;font-weight:700;color:'+col+'">'+cnt+'</div>';
+    h+='<div style="font-size:11px;color:#64748b">'+esc(f.label)+' ('+pct+'%)</div>';
+    h+='</div>';
+  });
+  h+='</div></div>';
+
+  // Export button
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+  h+='<div style="font-size:14px;color:#64748b" id="dq-count-label"></div>';
+  h+='<button class="btn-outline" onclick="exportDQReport()" style="font-size:13px;padding:6px 14px">\uD83D\uDCE5 Export CSV</button>';
+  h+='</div>';
+
+  // Table
+  h+='<div id="dq-table-wrap"></div>';
+  return h;
+}
+function renderDQTable(){
+  if(!_dqData) return;
+  var cands=_dqData.candidates||[];
+  // Apply filters
+  var filtered=cands;
+  if(_dqFilter==="critical") filtered=cands.filter(function(c){return c.missingCritical>0;});
+  else if(_dqFilter==="important") filtered=cands.filter(function(c){return c.missingImportant>0&&c.missingCritical===0;});
+  else if(_dqFilter==="perfect") filtered=cands.filter(function(c){return c.issues.length===0;});
+  // Field filter
+  if(_dqFieldFilter!=="all"){
+    filtered=filtered.filter(function(c){
+      return c.issues.some(function(i){
+        var fieldKey=i.field.toLowerCase().replace(/[^a-z]/g,"");
+        var filterKey=_dqFieldFilter.toLowerCase().replace(/[^a-z]/g,"");
+        // Map field labels to keys
+        var labelMap={"email":"email","cellphone":"phone","availabilitydate":"dateavailable","primarycertification":"primarycert","epicrole":"epicrole","grade":"grade","citystate":"address","titleoccupation":"occupation","ownerrecruiter":"owner"};
+        var matchKey=labelMap[fieldKey]||fieldKey;
+        return matchKey===_dqFieldFilter||fieldKey===_dqFieldFilter.replace(/[^a-z]/g,"");
+      });
+    });
+  }
+  var label=document.getElementById("dq-count-label");
+  if(label) label.textContent="Showing "+filtered.length+" of "+_dqData.total+" candidates";
+
+  var h='<div class="table-wrap"><table><thead><tr>';
+  h+='<th>Name</th><th>Status</th><th>Owner</th><th>Health</th><th>Critical Missing</th><th>Other Missing</th><th>Issues</th>';
+  h+='</tr></thead><tbody>';
+  filtered.forEach(function(c){
+    var hColor=c.health>=80?"#059669":c.health>=60?"#d97706":"#dc2626";
+    h+='<tr onclick="openDetail('+c.id+')" style="cursor:pointer">';
+    h+='<td><span class="name-link">'+esc(c.firstName+" "+c.lastName)+'</span></td>';
+    h+='<td>'+esc(c.status)+'</td>';
+    h+='<td>'+esc(c.owner||"—")+'</td>';
+    h+='<td><span style="font-weight:700;color:'+hColor+'">'+c.health+'%</span></td>';
+    h+='<td style="color:#dc2626;font-weight:600">'+(c.missingCritical>0?c.missingCritical:"—")+'</td>';
+    h+='<td style="color:#d97706">'+(c.missingImportant>0?c.missingImportant:"—")+'</td>';
+    h+='<td style="font-size:12px;max-width:300px;white-space:normal">';
+    c.issues.forEach(function(iss){
+      var col=iss.severity==="critical"?"#dc2626":"#d97706";
+      var icon=iss.severity==="critical"?"\uD83D\uDED1":"\u26A0\uFE0F";
+      h+='<span style="color:'+col+';margin-right:6px" title="'+esc(iss.type)+'">'+icon+' '+esc(iss.field)+'</span>';
+    });
+    if(c.issues.length===0) h+='<span style="color:#059669">\u2705 Complete</span>';
+    h+='</td></tr>';
+  });
+  if(filtered.length===0) h+='<tr><td colspan="7" style="text-align:center;padding:40px;color:#94a3b8">No candidates match this filter</td></tr>';
+  h+='</tbody></table></div>';
+  var wrap=document.getElementById("dq-table-wrap");
+  if(wrap) wrap.innerHTML=h;
+}
+function exportDQReport(){
+  if(!_dqData||!_dqData.candidates) return;
+  var cands=_dqData.candidates.filter(function(c){return c.issues.length>0;});
+  var cols=[
+    {key:"lastName",label:"Last Name"},
+    {key:"firstName",label:"First Name"},
+    {key:"status",label:"Status"},
+    {key:"owner",label:"Owner"},
+    {key:"health",label:"Health %"},
+    {key:"missingCritical",label:"Critical Missing"},
+    {key:"missingImportant",label:"Important Missing"},
+    {key:"issueList",label:"Issues"}
+  ];
+  var rows=cands.map(function(c){
+    var copy={};
+    for(var k in c) copy[k]=c[k];
+    copy.issueList=c.issues.map(function(i){return i.field+" ("+i.type+")";}).join("; ");
+    return copy;
+  });
+  exportCSV("data-quality-report.csv",cols,rows);
 }
 
 function renderReports(stats){
@@ -3547,6 +3678,9 @@ async function loadPage(){
         h=renderTouches(touchR);break;
       case "ask":
         h=renderAsk();break;
+      case "dataquality":
+        var dqData=await apiFetch("data-quality",{status:_dqStatus||"active"});
+        h=renderDataQuality(dqData);break;
       case "reports":
         var st=await loadStats();
         var placR=await loadPlacements("","All","All");
@@ -3587,6 +3721,7 @@ async function loadPage(){
   // Post-render hooks
   if(currentPage==="smartmatch") populateJobDropdown();
   if(currentPage==="aimatch") populateAIJobDropdown();
+  if(currentPage==="dataquality") renderDQTable();
   if(currentPage==="portal"&&_portalTab==="generate"&&_portalSelectedClient){
     var genTmpl=document.querySelector('input[name="gen-template"]:checked');
     if(genTmpl) loadPrefillFields(genTmpl.value);
