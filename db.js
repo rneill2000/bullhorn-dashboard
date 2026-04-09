@@ -2351,9 +2351,9 @@ async function dbGetTouchReport(days) {
 
   return {
     days: days,
-    candidates: { data: candidates, total: candTotal ? parseInt(candTotal.count) : candidates.length },
+    candidates: { data: candidates, total: candidates.length },
     consultants: { data: consultants, total: consultants.length },
-    clients: { data: clients, total: clientTotal ? parseInt(clientTotal.count) : clients.length },
+    clients: { data: clients, total: clients.length },
     source: "db",
   };
 }
