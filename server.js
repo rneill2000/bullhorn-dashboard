@@ -1206,7 +1206,8 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
 
       // Availability bonus (high weight — sooner = better)
       let availScore = 0;
-      const smAvailDate = c.dateAvailable && c.dateAvailable > 946684800000 ? c.dateAvailable : null;
+      const smAvailRaw = c.dateAvailable ? Number(c.dateAvailable) : 0;
+      const smAvailDate = smAvailRaw > 946684800000 ? smAvailRaw : null;
       if (smAvailDate) {
         const daysUntilAvail = (smAvailDate - now) / 86400000;
         if (daysUntilAvail <= 0) availScore = 25;
@@ -1467,7 +1468,8 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
 
       // Availability (20% weight — candidates available soon are much more valuable)
       // Guard: date_available must be a real date (after year 2000 = 946684800000)
-      var availDate = c.date_available && c.date_available > 946684800000 ? c.date_available : null;
+      var rawAvail = c.date_available ? Number(c.date_available) : 0;
+      var availDate = rawAvail > 946684800000 ? rawAvail : null;
       if (availDate) {
         var daysUntil = (availDate - now) / 86400000;
         if (daysUntil <= 0) { score += 20; factors.push("Available now"); }
@@ -3045,12 +3047,13 @@ app.get("/api/data-quality", async (req, res) => {
           var missing = false;
 
           if (f.type === "date") {
-            // Date fields: missing if null/0, stale if > 1 year in the past
-            if (!val || val === 0) {
+            // Date fields: missing if null/0/garbage, stale if > 1 year in the past
+            var numVal = val ? Number(val) : 0;
+            if (!numVal || numVal < 946684800000) {
               missing = true;
               issues.push({ field: f.label, type: "missing", severity: "critical" });
             } else {
-              var daysAgo = (now - val) / 86400000;
+              var daysAgo = (now - numVal) / 86400000;
               if (daysAgo > 365) {
                 issues.push({ field: f.label, type: "stale", severity: "critical", detail: "Over 1 year old" });
                 missingCritical++;
