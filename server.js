@@ -1207,8 +1207,8 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
 app.get("/api/ai-match/:jobId", async (req, res) => {
   try {
     var jobId = parseInt(req.params.jobId);
-    var apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return res.status(400).json({ error: "ANTHROPIC_API_KEY not configured" });
+    var apiKey = process.env.ANTHROPIC_API_KEY || "";
+    // If no API key, we'll still do pre-scored matching — just skip the AI analysis
 
     // Get job details from Postgres or Bullhorn
     var job = null;
@@ -1330,9 +1330,9 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
     scored.sort(function (a, b) { return b.score - a.score; });
     var topCandidates = scored.slice(0, 30);
 
-    // Call Claude API for deep analysis
+    // Call Claude API for deep analysis (only if API key is configured)
     var aiInsights = null;
-    try {
+    if (apiKey) { try {
       var candidateSummaries = topCandidates.slice(0, 15).map(function (c, i) {
         return (i + 1) + ". " + c._forAI.name + " — Certs: " + (c._forAI.certs || "none") + " | Secondary: " + (c._forAI.secondaryCerts || "none") + " | Role: " + c._forAI.role + " | Grade: " + (c._forAI.grade || "?") + " | Exp: " + (c._forAI.experience || "?") + " yrs | Score: " + c.score;
       }).join("\n");
@@ -1368,7 +1368,7 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
       }
     } catch (aiErr) {
       console.log("[AI Match] Claude API error (non-blocking):", aiErr.message);
-    }
+    } } // end if (apiKey)
 
     // Clean up _forAI from response
     topCandidates.forEach(function (c) { delete c._forAI; });
