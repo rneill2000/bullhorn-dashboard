@@ -1033,7 +1033,7 @@ app.get("/api/expiring-placements", async (req, res) => {
     if (db.ready) {
       try {
         var future = now + days * 86400000;
-        var expRows = await db.getAll("SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end >= $1 AND date_end <= $2 ORDER BY date_end ASC", [now, future]);
+        var expRows = await db.getAll("SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_end ASC", [now, future]);
         var expResult = expRows.map(function (p) {
           var daysLeft = p.date_end ? Math.ceil((p.date_end - now) / 86400000) : null;
           var billRate = p.client_bill_rate || 0;

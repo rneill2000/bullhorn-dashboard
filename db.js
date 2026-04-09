@@ -2079,10 +2079,16 @@ async function dbGetDashboard() {
   )).rows;
   var newCandTotal = await getOne("SELECT COUNT(*) as count FROM candidates WHERE date_added >= $1", [past7]);
 
-  // Expiring placements (next 30 days)
+  // Expiring placements (next 90 days — frontend shows 30-day label but we fetch wider)
   var expRows = (await query(
-    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end >= $1 AND date_end <= $2 ORDER BY date_end ASC", [now, in30Days]
+    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (status ILIKE '%approved%' OR status ILIKE '%active%' OR status ILIKE '%contract%') ORDER BY date_end ASC", [now, in30Days]
   )).rows;
+  // If no rows with status filter, try without (some BH instances use different status names)
+  if (expRows.length === 0) {
+    expRows = (await query(
+      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_end ASC", [now, in30Days]
+    )).rows;
+  }
 
   // Candidates available soon (past 7 days to next 14 days)
   var availRows = (await query(
@@ -2341,8 +2347,14 @@ async function dbGetExpiringPlacements(days) {
   var now = Date.now();
   var future = now + (days || 30) * 86400000;
   var rows = (await query(
-    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end >= $1 AND date_end <= $2 ORDER BY date_end ASC", [now, future]
+    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (status ILIKE '%approved%' OR status ILIKE '%active%' OR status ILIKE '%contract%') ORDER BY date_end ASC", [now, future]
   )).rows;
+  // Fallback without status filter if no results
+  if (rows.length === 0) {
+    rows = (await query(
+      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_end ASC", [now, future]
+    )).rows;
+  }
 
   var data = rows.map(function (p) {
     var daysLeft = p.date_end ? Math.ceil((p.date_end - now) / 86400000) : null;
