@@ -904,8 +904,52 @@ app.get("/api/my-dashboard", async (req, res) => {
     if (!user) return res.status(401).json({ error: "Not logged in" });
     const uid = user.id;
 
-    // Fetch my clients, my jobs, my active placements in parallel
-    const [myClients, myJobs, myPlacements] = await Promise.all([
+    // Try Postgres first (fast, no nested query issues)
+    if (db.ready) {
+      try {
+        var dbClients = (await db.query("SELECT * FROM clients WHERE owner_id = $1 ORDER BY date_last_modified DESC", [uid])).rows;
+        var dbJobs = (await db.query("SELECT * FROM jobs WHERE owner_id = $1 AND is_deleted = false ORDER BY date_last_modified DESC", [uid])).rows;
+        var dbPlacements = (await db.query(
+          "SELECT p.*, j.owner_id as job_owner_id FROM placements p LEFT JOIN jobs j ON p.job_id = j.id WHERE (p.owner_id = $1 OR j.owner_id = $1) AND (p.status ILIKE '%approved%' OR p.status ILIKE '%active%' OR p.status ILIKE '%contract%')", [uid]
+        )).rows;
+
+        var PRIORITY_LABELS = { "0": "", "1": "Urgent", "2": "Hot", "3": "Warm", "4": "Cold" };
+        var clients = dbClients.map(function(c) {
+          return { id: c.id, name: c.name || "", location: [c.address_city, c.address_state].filter(Boolean).join(", "), status: c.status || "" };
+        });
+        var jobs = dbJobs.map(function(j) {
+          return {
+            id: j.id, title: j.title || "", client: j.client_name || "",
+            status: j.status || "", priority: PRIORITY_LABELS[String(j.type)] || "",
+            openings: j.num_openings || 0, submissions: j.submission_count || 0,
+            dateAdded: j.date_added ? new Date(Number(j.date_added)).toLocaleDateString("en-US") : "",
+          };
+        });
+        var placements = dbPlacements.map(function(p) {
+          return {
+            id: p.id, candidate: p.candidate_name || "", job: p.job_title || "",
+            client: p.client_name || "", status: p.status || "",
+            startDate: p.date_begin ? new Date(Number(p.date_begin)).toLocaleDateString("en-US") : "",
+            endDate: p.date_end ? new Date(Number(p.date_end)).toLocaleDateString("en-US") : null,
+            billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : null,
+            payRate: p.pay_rate ? "$" + p.pay_rate + "/hr" : null,
+          };
+        });
+        var openJobs = jobs.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
+        var activeClients = clients.filter(function(c) { return c.status === "Active Account" || c.status === "Active"; });
+
+        return res.json({
+          user: { name: user.name, firstName: user.firstName },
+          myClients: { data: clients, active: activeClients.length, total: dbClients.length },
+          myJobs: { data: jobs, open: openJobs.length, total: dbJobs.length },
+          myPlacements: { data: placements, total: dbPlacements.length },
+          source: "db",
+        });
+      } catch (dbErr) { console.log("[My Dashboard] DB query failed, falling back to Bullhorn:", dbErr.message); }
+    }
+
+    // Bullhorn fallback — fetch jobs first, then placements for those jobs (avoids deep nesting)
+    const [myClients, myJobs] = await Promise.all([
       bhFetchAll("query/ClientCorporation", {
         where: `owner.id=${uid}`,
         fields: "id,name,address,status,dateLastModified",
@@ -916,12 +960,21 @@ app.get("/api/my-dashboard", async (req, res) => {
         fields: "id,title,clientCorporation,status,numOpenings,submissions,dateAdded,employmentType,type",
         sort: "-dateLastModified",
       }),
-      bhFetchAll("query/Placement", {
-        where: `(status='Approved' OR status='Actively On Contract') AND jobOrder.owner.id=${uid}`,
-        fields: "id,candidate,jobOrder,status,dateBegin,dateEnd,payRate,clientBillRate,employmentType",
-        orderBy: "-dateBegin",
-      }),
     ]);
+
+    // Get placements for my jobs (avoid deep jobOrder.owner.id nesting)
+    var myJobIds = (myJobs.data || []).map(function(j) { return j.id; });
+    var myPlacements = { data: [], total: 0 };
+    if (myJobIds.length > 0) {
+      var jobIdWhere = myJobIds.slice(0, 200).map(function(id) { return "jobOrder.id=" + id; }).join(" OR ");
+      try {
+        myPlacements = await bhFetchAll("query/Placement", {
+          where: `(status='Approved' OR status='Actively On Contract') AND (${jobIdWhere})`,
+          fields: "id,candidate,jobOrder,status,dateBegin,dateEnd,payRate,clientBillRate,employmentType",
+          orderBy: "-dateBegin",
+        });
+      } catch (placErr) { console.log("[My Dashboard] Placement fetch error:", placErr.message); }
+    }
 
     // Transform data
     const clients = (myClients.data || []).map(c => ({
@@ -947,7 +1000,7 @@ app.get("/api/my-dashboard", async (req, res) => {
       id: p.id,
       candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
       job: p.jobOrder ? p.jobOrder.title : "",
-      client: p.jobOrder?.clientCorporation ? p.jobOrder.clientCorporation.name : "",
+      client: p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.name : "",
       status: p.status || "",
       startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString("en-US") : "",
       endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString("en-US") : null,
@@ -3319,7 +3372,7 @@ app.get("/api/touch-report", async (req, res) => {
     // Fetch stale client contacts (active, assigned to health system, with owner)
     const clientData = await bhFetchAll("search/ClientContact", {
       query: `isDeleted:0 AND status:"Active" AND clientCorporation.id:[1 TO *] AND owner.id:[1 TO *]`,
-      fields: "id,firstName,lastName,occupation,status,dateLastModified,email,phone,owner,clientCorporation",
+      fields: "id,firstName,lastName,title,status,dateLastModified,email,phone,owner,clientCorporation",
       sort: "dateLastModified",
     });
 
@@ -3364,7 +3417,7 @@ app.get("/api/touch-report", async (req, res) => {
         id: c.id,
         type: "ClientContact",
         name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
-        title: c.occupation || "",
+        title: c.title || "",
         status: c.status || "",
         email: c.email || "",
         phone: c.phone || "",
