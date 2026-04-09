@@ -1112,9 +1112,16 @@ function renderPlacements(data,bhTotal){
 
 function renderClients(data,bhTotal){
   var sf=filters.status||"All";
-  var ss=["All","Active","Inactive","Active Account","New","Archive"];
   var f=data||[];
   _lastData.clients=f;
+  // Build dynamic status list from actual data + known statuses
+  var statusCounts={};
+  f.forEach(function(r){ var s=r.status||"Unknown"; statusCounts[s]=(statusCounts[s]||0)+1; });
+  var ss=["All"];
+  // Add statuses in a logical order: known important ones first, then alphabetical remainder
+  var preferred=["Active Account","Active","New","Inactive","Archive","Prospect","Dead","Closed"];
+  preferred.forEach(function(s){ if(statusCounts[s]) ss.push(s); });
+  Object.keys(statusCounts).sort().forEach(function(s){ if(ss.indexOf(s)<0) ss.push(s); });
   var displayTotal=bhTotal||f.length;
   var totalPlaced=f.reduce(function(s,r){return s+(r.activePlacements||0);},0);
   var clientsWithPlaced=f.filter(function(r){return r.activePlacements>0;}).length;
@@ -1143,11 +1150,18 @@ function renderClients(data,bhTotal){
   html+='<div class="toolbar">';
   html+='<div class="search-wrap"><span class="ico">\uD83D\uDD0D</span><input type="text" placeholder="Search clients by name, industry, or location\u2026" value="'+esc(filters.q||"")+'" oninput="filters.q=this.value;render()"></div>';
   html+='<div class="chips">';
-  ss.forEach(function(s){html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+'</button>';});
+  ss.forEach(function(s){
+    var cnt=s==="All"?f.length:(statusCounts[s]||0);
+    html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+' <span style="font-size:11px;opacity:.7">('+cnt+')</span></button>';
+  });
   html+='</div></div>';
-  html+='<div class="count-line"><span>'+displayTotal+' client'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
-  html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'clients.csv\',clientCols,_lastData.clients)">\uD83D\uDCE5 Export CSV</button></div>';
-  html+='<div class="table-wrap">'+makeTable(cols,f)+'</div>';
+  // Apply client-side status filter
+  var filtered=sf==="All"?f:f.filter(function(r){ return r.status===sf; });
+  var showCount=filtered.length;
+  html+='<div class="count-line"><span>'+showCount+' client'+(showCount!==1?'s':'')+' shown'+(sf!=="All"?' ('+sf+')':'')+'</span>';
+  html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'clients.csv\',clientCols,_lastData.filteredClients||_lastData.clients)">\uD83D\uDCE5 Export CSV</button></div>';
+  _lastData.filteredClients=filtered;
+  html+='<div class="table-wrap">'+makeTable(cols,filtered)+'</div>';
   window.clientCols=cols;
   return html;
 }
