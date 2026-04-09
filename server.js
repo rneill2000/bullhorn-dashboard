@@ -3583,24 +3583,126 @@ app.get("/api/portal/sections", (req, res) => {
 });
 
 // List available templates (for dashboard admin page)
-app.get("/api/portal/templates", (req, res) => {
-  const list = Object.values(PORTAL_TEMPLATES).map(function (t) {
-    return { id: t.id, name: t.name, description: t.description, sectionCount: t.sections.length };
-  });
-  res.json(list);
+app.get("/api/portal/templates", async (req, res) => {
+  try {
+    // Built-in templates
+    const builtIn = Object.values(PORTAL_TEMPLATES).map(function (t) {
+      return { id: t.id, name: t.name, description: t.description, sectionCount: t.sections.length, builtIn: true };
+    });
+
+    // Custom templates from DB
+    var custom = [];
+    if (db.ready) {
+      try {
+        var clientId = req.query.clientId || null;
+        var dbTemplates = await db.listPortalTemplates(clientId ? parseInt(clientId) : null);
+        if (dbTemplates) {
+          custom = dbTemplates.map(function (t) {
+            return { id: t.id, name: t.name, description: t.description, sectionCount: (t.sections || []).length, builtIn: false, clientId: t.clientId, clientName: t.clientName, baseTemplate: t.baseTemplate };
+          });
+        }
+      } catch (e) { console.log("[Portal] DB template list failed:", e.message); }
+    }
+
+    res.json([...builtIn, ...custom]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// List all prefillable fields for a given template (for the dashboard pre-fill form)
-app.get("/api/portal/prefill-fields", (req, res) => {
-  const templateId = req.query.templateId;
-  if (!templateId || !PORTAL_TEMPLATES[templateId]) return res.status(400).json({ error: "Unknown template" });
+// Get full template detail (built-in or custom) with all fields
+app.get("/api/portal/template/:id", async (req, res) => {
+  try {
+    var id = req.params.id;
 
-  const template = PORTAL_TEMPLATES[templateId];
+    // Check built-in first
+    if (PORTAL_TEMPLATES[id]) {
+      var t = PORTAL_TEMPLATES[id];
+      var sectionDetails = t.sections.map(function (sKey) {
+        var section = JSON.parse(JSON.stringify(PORTAL_SECTIONS[sKey]));
+        return section;
+      });
+      return res.json({ id: t.id, name: t.name, description: t.description, sections: sectionDetails, config: t.config || {}, builtIn: true });
+    }
+
+    // Check custom in DB
+    if (db.ready) {
+      var dbTmpl = await db.getPortalTemplate(id);
+      if (dbTmpl) return res.json({ ...dbTmpl, builtIn: false });
+    }
+
+    res.status(404).json({ error: "Template not found" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Save custom template (create or update)
+app.post("/api/portal/template", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    var tmpl = req.body;
+    if (!tmpl.name) return res.status(400).json({ error: "Template name is required" });
+
+    var id = await db.savePortalTemplate(tmpl);
+    res.json({ success: true, id: id, message: "Template saved" });
+  } catch (e) {
+    console.error("[Portal Template Save]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Delete custom template
+app.delete("/api/portal/template/:id", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    // Don't allow deleting built-in templates
+    if (PORTAL_TEMPLATES[req.params.id]) return res.status(400).json({ error: "Cannot delete built-in templates" });
+    await db.deletePortalTemplate(req.params.id);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get all available section definitions (for the template builder)
+app.get("/api/portal/all-sections", (req, res) => {
+  var sections = Object.values(PORTAL_SECTIONS).map(function (s) {
+    return {
+      key: s.key, label: s.label, description: s.description,
+      repeatable: !!s.repeatable, defaultCount: s.defaultCount || 0,
+      fields: s.fields.map(function (f) {
+        return { name: f.name, label: f.label, type: f.type, required: !!f.required, prefillable: !!f.prefillable, locked: !!f.locked, sensitive: !!f.sensitive };
+      }),
+    };
+  });
+  res.json(sections);
+});
+
+// Helper to resolve a template (built-in or custom from DB)
+async function resolveTemplate(templateId) {
+  if (PORTAL_TEMPLATES[templateId]) return PORTAL_TEMPLATES[templateId];
+  if (db.ready) {
+    var dbTmpl = await db.getPortalTemplate(templateId);
+    if (dbTmpl) {
+      // Custom template: sections are stored as full objects, not keys
+      return { id: dbTmpl.id, name: dbTmpl.name, description: dbTmpl.description, sections: dbTmpl.sections, config: dbTmpl.config, isCustom: true };
+    }
+  }
+  return null;
+}
+
+// List all prefillable fields for a given template (for the dashboard pre-fill form)
+app.get("/api/portal/prefill-fields", async (req, res) => {
+  const templateId = req.query.templateId;
+  var template = await resolveTemplate(templateId);
+  if (!template) return res.status(400).json({ error: "Unknown template" });
+
   const fields = [];
-  template.sections.forEach(function (sKey) {
-    const section = PORTAL_SECTIONS[sKey];
-    if (!section) return;
-    section.fields.forEach(function (f) {
+  var sectionList = template.isCustom ? template.sections : template.sections.map(function (sKey) { return PORTAL_SECTIONS[sKey]; }).filter(Boolean);
+
+  sectionList.forEach(function (section) {
+    (section.fields || []).forEach(function (f) {
       if (f.prefillable) {
         fields.push({ name: f.name, label: f.label, type: f.type, locked: !!f.locked, section: section.label });
       }
@@ -3610,10 +3712,11 @@ app.get("/api/portal/prefill-fields", (req, res) => {
 });
 
 // Generate a portal link for a client + template + optional prefill data + extra recipients
-app.post("/api/portal/generate-link", (req, res) => {
+app.post("/api/portal/generate-link", async (req, res) => {
   const { clientId, templateId, prefill, extraEmails } = req.body;
   if (!clientId || !templateId) return res.status(400).json({ error: "clientId and templateId required" });
-  if (!PORTAL_TEMPLATES[templateId]) return res.status(400).json({ error: "Unknown template: " + templateId });
+  var template = await resolveTemplate(templateId);
+  if (!template) return res.status(400).json({ error: "Unknown template: " + templateId });
 
   // Build link data: prefill + extra notification emails
   const linkData = {};
@@ -3647,7 +3750,7 @@ app.get("/api/portal/config", async (req, res) => {
       return res.status(403).json({ error: "Invalid or expired portal link" });
     }
 
-    const template = PORTAL_TEMPLATES[templateId];
+    const template = await resolveTemplate(templateId);
     if (!template) return res.status(404).json({ error: "Template not found" });
 
     // Decode link data (prefill values + extra notification emails)
@@ -3676,20 +3779,36 @@ app.get("/api/portal/config", async (req, res) => {
       console.error("[Portal] Could not fetch client name:", e.message);
     }
 
-    // Build form sections with field definitions + prefill values
-    const sections = template.sections.map(function (sKey) {
-      const section = JSON.parse(JSON.stringify(PORTAL_SECTIONS[sKey])); // deep clone
-      if (sKey === "references" && template.config.referenceCount) {
-        section.defaultCount = template.config.referenceCount;
-      }
-      // Inject prefill values into fields
-      section.fields.forEach(function (f) {
-        if (prefill[f.name] !== undefined && prefill[f.name] !== "") {
-          f.prefillValue = prefill[f.name];
+    // Build form sections — custom templates store full section objects, built-in use keys
+    let sections;
+    if (template.isCustom) {
+      // Custom templates store sections as full objects with fields
+      sections = JSON.parse(JSON.stringify(template.sections));
+      sections.forEach(function (section) {
+        if (section.key === "references" && template.config && template.config.referenceCount) {
+          section.defaultCount = template.config.referenceCount;
         }
+        (section.fields || []).forEach(function (f) {
+          if (prefill[f.name] !== undefined && prefill[f.name] !== "") {
+            f.prefillValue = prefill[f.name];
+          }
+        });
       });
-      return section;
-    });
+    } else {
+      sections = template.sections.map(function (sKey) {
+        const section = JSON.parse(JSON.stringify(PORTAL_SECTIONS[sKey])); // deep clone
+        if (sKey === "references" && template.config.referenceCount) {
+          section.defaultCount = template.config.referenceCount;
+        }
+        // Inject prefill values into fields
+        section.fields.forEach(function (f) {
+          if (prefill[f.name] !== undefined && prefill[f.name] !== "") {
+            f.prefillValue = prefill[f.name];
+          }
+        });
+        return section;
+      });
+    }
 
     res.json({
       templateId: template.id,

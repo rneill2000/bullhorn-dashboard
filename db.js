@@ -641,6 +641,24 @@ async function createTables() {
     )
   `);
 
+  // Portal custom templates
+  await query(`
+    CREATE TABLE IF NOT EXISTS portal_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      base_template TEXT,
+      sections JSONB NOT NULL DEFAULT '[]',
+      config JSONB NOT NULL DEFAULT '{}',
+      client_id INTEGER,
+      client_name TEXT,
+      is_default BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_portal_templates_client ON portal_templates(client_id)`);
+
   // Indexes for common queries
   await query(`CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_candidates_modified ON candidates(date_last_modified)`);
@@ -2391,6 +2409,52 @@ async function dbGetCandidateSubmissions(candidateId) {
   return { data: data, total: data.length, source: "db" };
 }
 
+/* ═══ PORTAL TEMPLATE CRUD ═══ */
+async function dbListPortalTemplates(clientId) {
+  if (!dbReady) return null;
+  var where = clientId ? "WHERE client_id = $1 OR client_id IS NULL" : "WHERE client_id IS NULL";
+  var params = clientId ? [clientId] : [];
+  var rows = (await query("SELECT * FROM portal_templates " + where + " ORDER BY is_default DESC, created_at ASC", params)).rows;
+  return rows.map(function (r) {
+    return {
+      id: r.id, name: r.name, description: r.description || "",
+      baseTemplate: r.base_template || "", sections: r.sections || [],
+      config: r.config || {}, clientId: r.client_id, clientName: r.client_name || "",
+      isDefault: r.is_default, createdAt: r.created_at, updatedAt: r.updated_at,
+    };
+  });
+}
+
+async function dbGetPortalTemplate(id) {
+  if (!dbReady) return null;
+  var row = (await query("SELECT * FROM portal_templates WHERE id = $1", [id])).rows[0];
+  if (!row) return null;
+  return {
+    id: row.id, name: row.name, description: row.description || "",
+    baseTemplate: row.base_template || "", sections: row.sections || [],
+    config: row.config || {}, clientId: row.client_id, clientName: row.client_name || "",
+    isDefault: row.is_default, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
+async function dbSavePortalTemplate(tmpl) {
+  if (!dbReady) return null;
+  var id = tmpl.id || ("custom-" + Date.now());
+  await query(
+    `INSERT INTO portal_templates (id, name, description, base_template, sections, config, client_id, client_name, is_default, updated_at)
+     VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,NOW())
+     ON CONFLICT (id) DO UPDATE SET name=$2, description=$3, base_template=$4, sections=$5::jsonb, config=$6::jsonb, client_id=$7, client_name=$8, is_default=$9, updated_at=NOW()`,
+    [id, tmpl.name, tmpl.description || "", tmpl.baseTemplate || "", JSON.stringify(tmpl.sections), JSON.stringify(tmpl.config || {}), tmpl.clientId || null, tmpl.clientName || "", tmpl.isDefault || false]
+  );
+  return id;
+}
+
+async function dbDeletePortalTemplate(id) {
+  if (!dbReady) return null;
+  await query("DELETE FROM portal_templates WHERE id = $1", [id]);
+  return true;
+}
+
 /* ═══ EXPORTS ═══ */
 module.exports = {
   init: init,
@@ -2418,5 +2482,9 @@ module.exports = {
   getTouchReport: dbGetTouchReport,
   getExpiringPlacements: dbGetExpiringPlacements,
   getCandidateSubmissions: dbGetCandidateSubmissions,
+  listPortalTemplates: dbListPortalTemplates,
+  getPortalTemplate: dbGetPortalTemplate,
+  savePortalTemplate: dbSavePortalTemplate,
+  deletePortalTemplate: dbDeletePortalTemplate,
   get ready() { return dbReady; },
 };

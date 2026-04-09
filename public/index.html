@@ -1825,9 +1825,12 @@ var _portalClientConfig=null;
 var _portalPrefillFields=[];
 
 async function renderPortal(){
-  // Load templates, clients, and sections if not cached
+  // Load templates (including custom), clients, and sections if not cached
   if(!_portalTemplates){
-    try{ _portalTemplates=await apiFetch("portal/templates"); }catch(e){ _portalTemplates=[]; }
+    try{
+      var tmplParams = _portalSelectedClient ? {clientId:_portalSelectedClient} : {};
+      _portalTemplates=await apiFetch("portal/templates", tmplParams);
+    }catch(e){ _portalTemplates=[]; }
   }
   if(!_portalClients){
     try{ var cr=await apiFetch("portal/clients"); _portalClients=(cr.data||[]).sort(function(a,b){return (a.name||"").localeCompare(b.name||"");}); }catch(e){ _portalClients=[]; }
@@ -1859,23 +1862,39 @@ async function renderPortal(){
   }
   html+='</div></div>';
 
-  // Tabs (only show if client selected)
+  // Templates tab (always visible — doesn't need a client)
+  html+='<div style="display:flex;gap:4px;margin-bottom:20px;flex-wrap:wrap">';
+  html+='<button class="chip'+(_portalTab==="templates"?" on":"")+'" onclick="_portalTab=\'templates\';loadPage()" style="padding:10px 20px;font-size:14px">📋 Templates</button>';
+
+  // Tabs that need a client selected
   if(_portalSelectedClient){
-    html+='<div style="display:flex;gap:4px;margin-bottom:20px">';
     html+='<button class="chip'+(_portalTab==="configure"?" on":"")+'" onclick="_portalTab=\'configure\';loadPage()" style="padding:10px 20px;font-size:14px">&#9881;&#65039; Configure Requirements</button>';
     html+='<button class="chip'+(_portalTab==="generate"?" on":"")+'" onclick="_portalTab=\'generate\';loadPage()" style="padding:10px 20px;font-size:14px">&#128279; Generate Link</button>';
-    html+='</div>';
-
     if(_portalTab==="configure"){
+      html+='</div>';
       html+=renderPortalConfig();
-    } else {
+    } else if(_portalTab==="generate"){
+      html+='</div>';
       html+=renderPortalGenerate();
+    } else if(_portalTab==="templates"){
+      html+='</div>';
+      html+=renderPortalTemplates();
+    } else {
+      html+='</div>';
+      html+=renderPortalConfig();
     }
   } else {
-    html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:48px;text-align:center">';
-    html+='<div style="font-size:32px;opacity:.4;margin-bottom:8px">&#127970;</div>';
-    html+='<div style="font-size:15px;color:#64748b">Select a client above to configure their portal requirements or generate a submission link.</div>';
-    html+='</div>';
+    // No client selected — show templates tab or select prompt
+    if(_portalTab==="templates"){
+      html+='</div>';
+      html+=renderPortalTemplates();
+    } else {
+      html+='</div>';
+      html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:48px;text-align:center">';
+      html+='<div style="font-size:32px;opacity:.4;margin-bottom:8px">&#127970;</div>';
+      html+='<div style="font-size:15px;color:#64748b">Select a client above to configure their portal requirements or generate a submission link.</div>';
+      html+='</div>';
+    }
   }
 
   html+='</div>';
@@ -2074,6 +2093,7 @@ async function onPortalClientChange(){
   _portalSelectedClient=sel?sel.value:"";
   _portalClientConfig=null;
   _portalGeneratedLink=null;
+  _portalTemplates=null; // Refresh templates to include client-specific ones
   if(_portalSelectedClient){
     // Load saved config for this client
     try{
@@ -2200,6 +2220,346 @@ function copyPortalLink(){
     document.execCommand("copy");
     var btn=input.parentElement.querySelector(".btn-primary");
     if(btn){ var orig=btn.innerHTML; btn.innerHTML="&#10003; Copied!"; setTimeout(function(){btn.innerHTML=orig;},2000); }
+  }
+}
+
+/* ═══ PORTAL TEMPLATE BUILDER ═══ */
+var _portalAllSections = null;
+var _portalEditingTemplate = null; // template currently being edited
+
+function renderPortalTemplates(){
+  var html='';
+
+  // Header
+  html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">';
+  html+='<div><div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em">Template Manager</div>';
+  html+='<p style="font-size:13px;color:#64748b;margin-top:4px">Edit built-in templates, create custom ones, or save client-specific versions.</p></div>';
+  html+='<button class="btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px" onclick="startNewTemplate()">+ New Template</button>';
+  html+='</div>';
+
+  // List templates
+  if(_portalTemplates && _portalTemplates.length){
+    _portalTemplates.forEach(function(t){
+      var isBi = t.builtIn !== false;
+      html+='<div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid #e8ecf1;border-radius:10px;margin-bottom:8px">';
+      html+='<div style="flex:1"><div style="font-size:14px;font-weight:600;color:#0f172a">'+esc(t.name);
+      if(isBi) html+=' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#eff6ff;color:#176087;font-weight:600">BUILT-IN</span>';
+      if(t.clientName) html+=' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#f0fdf4;color:#16a34a;font-weight:600">'+esc(t.clientName)+'</span>';
+      html+='</div>';
+      html+='<div style="font-size:12px;color:#64748b;margin-top:2px">'+esc(t.description||"")+'</div></div>';
+      html+='<div style="display:flex;gap:6px">';
+      html+='<button style="padding:6px 12px;border-radius:6px;border:1px solid #176087;background:#fff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editTemplate(\''+esc(t.id)+'\')">Edit</button>';
+      html+='<button style="padding:6px 12px;border-radius:6px;border:1px solid #7c3aed;background:#f5f3ff;color:#7c3aed;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="duplicateTemplate(\''+esc(t.id)+'\')">Duplicate</button>';
+      if(!isBi) html+='<button style="padding:6px 12px;border-radius:6px;border:1px solid #dc2626;background:#fef2f2;color:#dc2626;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="deleteCustomTemplate(\''+esc(t.id)+'\')">Delete</button>';
+      html+='</div></div>';
+    });
+  } else {
+    html+='<div style="text-align:center;padding:20px;color:#94a3b8;font-size:13px">Loading templates...</div>';
+  }
+  html+='</div>';
+
+  // Template editor (shown when editing)
+  if(_portalEditingTemplate){
+    html+=renderTemplateEditor();
+  }
+
+  return html;
+}
+
+function renderTemplateEditor(){
+  var t = _portalEditingTemplate;
+  var html='<div style="background:#fff;border:2px solid #176087;border-radius:12px;padding:24px;margin-bottom:20px" id="template-editor">';
+
+  // Name & description
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">Template Editor'+(t.builtIn?' (Editing copy — original unchanged)':'')+'</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">';
+  html+='<div><label style="font-size:12px;font-weight:600;color:#475569;display:block;margin-bottom:4px">Template Name</label>';
+  html+='<input type="text" id="tmpl-name" value="'+esc(t.name||"")+'" style="width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;font-family:inherit"></div>';
+  html+='<div><label style="font-size:12px;font-weight:600;color:#475569;display:block;margin-bottom:4px">Description</label>';
+  html+='<input type="text" id="tmpl-desc" value="'+esc(t.description||"")+'" style="width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;font-family:inherit"></div>';
+  html+='</div>';
+
+  // Client assignment (optional)
+  html+='<div style="margin-bottom:20px"><label style="font-size:12px;font-weight:600;color:#475569;display:block;margin-bottom:4px">Assign to Client (optional — leave blank for global template)</label>';
+  html+='<select id="tmpl-client" style="padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;font-family:inherit;min-width:300px">';
+  html+='<option value="">— Global (available to all clients) —</option>';
+  if(_portalClients){
+    _portalClients.forEach(function(c){
+      var sel=(t.clientId&&t.clientId==c.id)?" selected":"";
+      html+='<option value="'+c.id+'"'+sel+'>'+esc(c.name)+'</option>';
+    });
+  }
+  html+='</select></div>';
+
+  // Reference count
+  html+='<div style="margin-bottom:20px"><label style="font-size:12px;font-weight:600;color:#475569;display:block;margin-bottom:4px">Number of References Required</label>';
+  var rc=(t.config&&t.config.referenceCount)||3;
+  html+='<select id="tmpl-ref-count" style="padding:8px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;font-family:inherit">';
+  for(var r=0;r<=5;r++) html+='<option value="'+r+'"'+(rc===r?" selected":"")+'>'+r+(r===0?" (not required)":"")+'</option>';
+  html+='</select></div>';
+
+  // Sections with field-level control
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px">Sections & Fields</div>';
+  html+='<p style="font-size:12px;color:#64748b;margin-bottom:16px">Toggle sections on/off, then expand to control individual fields within each section. You can toggle fields on/off and set each as required or optional.</p>';
+
+  // Get all available sections
+  var allSections = _portalAllSections || [];
+  var enabledKeys = (t.sections||[]).map(function(s){ return typeof s === "string" ? s : s.key; });
+
+  allSections.forEach(function(section){
+    var isEnabled = enabledKeys.indexOf(section.key) >= 0;
+    // Find the saved section data (if any) to get per-field overrides
+    var savedSection = null;
+    if(t.sections){
+      for(var si=0;si<t.sections.length;si++){
+        var s=t.sections[si];
+        if((typeof s==="string" && s===section.key) || (s && s.key===section.key)){
+          savedSection = typeof s === "string" ? null : s;
+          break;
+        }
+      }
+    }
+
+    html+='<div style="border:1px solid '+(isEnabled?'#176087':'#e8ecf1')+';border-radius:10px;margin-bottom:10px;overflow:hidden">';
+
+    // Section header with toggle
+    html+='<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:'+(isEnabled?'#eff6ff':'#fafbfc')+';cursor:pointer" onclick="toggleTmplSection(\''+section.key+'\')">';
+    html+='<input type="checkbox" data-section="'+section.key+'" '+(isEnabled?'checked':'')+' style="accent-color:#176087;width:18px;height:18px" onclick="event.stopPropagation();toggleTmplSection(\''+section.key+'\')">';
+    html+='<div style="flex:1"><div style="font-size:14px;font-weight:600;color:'+(isEnabled?'#0f172a':'#94a3b8')+'">'+esc(section.label)+'</div>';
+    html+='<div style="font-size:12px;color:#94a3b8">'+section.fields.length+' fields — '+esc(section.description||"")+'</div></div>';
+    if(isEnabled) html+='<span style="font-size:11px;color:#176087;font-weight:600">Click to expand fields &#9660;</span>';
+    html+='</div>';
+
+    // Field-level controls (only shown if section is enabled)
+    if(isEnabled){
+      html+='<div style="padding:12px 16px;border-top:1px solid #e8ecf1">';
+      section.fields.forEach(function(f){
+        // Check if this field is enabled/disabled and required in saved section
+        var fieldEnabled = true;
+        var fieldRequired = f.required;
+        if(savedSection && savedSection.fields){
+          var sf = savedSection.fields.find(function(x){ return x.name === f.name; });
+          if(sf){
+            fieldEnabled = sf._enabled !== false;
+            fieldRequired = sf.required;
+          }
+        }
+
+        html+='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9">';
+        html+='<input type="checkbox" data-field="'+section.key+'.'+f.name+'" '+(fieldEnabled?'checked':'')+' style="accent-color:#176087;width:16px;height:16px" onchange="markTmplDirty()">';
+        html+='<div style="flex:1;font-size:13px;color:'+(fieldEnabled?'#334155':'#94a3b8')+'">'+esc(f.label);
+        if(f.sensitive) html+=' <span style="font-size:10px;color:#f59e0b">SENSITIVE</span>';
+        if(f.prefillable) html+=' <span style="font-size:10px;color:#10b981">PREFILLABLE</span>';
+        html+='</div>';
+        html+='<div style="font-size:11px;color:#64748b">'+esc(f.type)+'</div>';
+        html+='<select data-req="'+section.key+'.'+f.name+'" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;font-family:inherit" onchange="markTmplDirty()">';
+        html+='<option value="required"'+(fieldRequired?' selected':'')+'>Required</option>';
+        html+='<option value="optional"'+(!fieldRequired?' selected':'')+'>Optional</option>';
+        html+='</select>';
+        html+='</div>';
+      });
+      html+='</div>';
+    }
+
+    html+='</div>';
+  });
+
+  // Save buttons
+  html+='<div style="display:flex;gap:12px;align-items:center;margin-top:20px;padding-top:16px;border-top:1px solid #e8ecf1">';
+  html+='<button class="btn-primary" style="padding:12px 24px;font-size:14px;border-radius:10px" onclick="saveEditedTemplate(false)">💾 Save Template</button>';
+  if(_portalSelectedClient){
+    var clientName=_portalClients?_portalClients.find(function(c){return c.id==_portalSelectedClient;}):null;
+    html+='<button style="padding:12px 24px;font-size:14px;border-radius:10px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-weight:600;cursor:pointer;font-family:inherit" onclick="saveEditedTemplate(true)">💾 Save as '+esc(clientName?clientName.name:"Client")+' Version</button>';
+  }
+  html+='<button style="padding:12px 24px;font-size:14px;border-radius:10px;border:1px solid #e2e8f0;background:#fff;color:#64748b;cursor:pointer;font-family:inherit" onclick="_portalEditingTemplate=null;loadPage()">Cancel</button>';
+  html+='<span id="tmpl-save-status" style="font-size:13px;color:#10b981"></span>';
+  html+='</div>';
+
+  html+='</div>';
+  return html;
+}
+
+function markTmplDirty(){
+  var el=document.getElementById("tmpl-save-status");
+  if(el) el.textContent="Unsaved changes";
+  if(el) el.style.color="#f59e0b";
+}
+
+async function editTemplate(id){
+  // Load all sections if not cached
+  if(!_portalAllSections){
+    try{ _portalAllSections=await apiFetch("portal/all-sections"); }catch(e){ _portalAllSections=[]; }
+  }
+
+  // Load template detail
+  try{
+    var detail = await apiFetch("portal/template/"+id);
+    // If built-in, convert section keys to full section objects for editing
+    if(detail.builtIn){
+      // Mark as copy so we don't overwrite built-in
+      detail.id = "custom-" + Date.now();
+      detail.name = detail.name + " (Custom)";
+      detail.builtIn = false;
+      detail.baseTemplate = id;
+    }
+    _portalEditingTemplate = detail;
+    loadPage();
+    setTimeout(function(){
+      var el=document.getElementById("template-editor");
+      if(el) el.scrollIntoView({behavior:"smooth"});
+    },100);
+  }catch(e){
+    alert("Failed to load template: " + e.message);
+  }
+}
+
+async function duplicateTemplate(id){
+  if(!_portalAllSections){
+    try{ _portalAllSections=await apiFetch("portal/all-sections"); }catch(e){ _portalAllSections=[]; }
+  }
+  try{
+    var detail = await apiFetch("portal/template/"+id);
+    detail.id = "custom-" + Date.now();
+    detail.name = detail.name + " (Copy)";
+    detail.builtIn = false;
+    detail.baseTemplate = id;
+    detail.clientId = null;
+    detail.clientName = "";
+    _portalEditingTemplate = detail;
+    loadPage();
+    setTimeout(function(){
+      var el=document.getElementById("template-editor");
+      if(el) el.scrollIntoView({behavior:"smooth"});
+    },100);
+  }catch(e){
+    alert("Failed to duplicate template: " + e.message);
+  }
+}
+
+function startNewTemplate(){
+  if(!_portalAllSections){
+    apiFetch("portal/all-sections").then(function(s){
+      _portalAllSections = s;
+      _portalEditingTemplate = {
+        id: "custom-" + Date.now(),
+        name: "New Template",
+        description: "",
+        sections: [],
+        config: { referenceCount: 3 },
+        builtIn: false,
+      };
+      loadPage();
+    });
+  } else {
+    _portalEditingTemplate = {
+      id: "custom-" + Date.now(),
+      name: "New Template",
+      description: "",
+      sections: [],
+      config: { referenceCount: 3 },
+      builtIn: false,
+    };
+    loadPage();
+  }
+}
+
+function toggleTmplSection(key){
+  if(!_portalEditingTemplate) return;
+  var sections = _portalEditingTemplate.sections || [];
+  var idx = -1;
+  for(var i=0;i<sections.length;i++){
+    var s=sections[i];
+    if((typeof s === "string" && s === key) || (s && s.key === key)){ idx=i; break; }
+  }
+  if(idx >= 0){
+    sections.splice(idx, 1);
+  } else {
+    // Add — copy from allSections
+    var base = _portalAllSections ? _portalAllSections.find(function(s){ return s.key===key; }) : null;
+    if(base) sections.push(JSON.parse(JSON.stringify(base)));
+    else sections.push(key);
+  }
+  _portalEditingTemplate.sections = sections;
+  markTmplDirty();
+  loadPage();
+}
+
+async function saveEditedTemplate(asClientVersion){
+  if(!_portalEditingTemplate) return;
+  var statusEl = document.getElementById("tmpl-save-status");
+  if(statusEl){ statusEl.textContent="Saving..."; statusEl.style.color="#176087"; }
+
+  // Gather values from form
+  var t = _portalEditingTemplate;
+  t.name = (document.getElementById("tmpl-name").value||"").trim() || "Unnamed Template";
+  t.description = (document.getElementById("tmpl-desc").value||"").trim();
+  t.config = t.config || {};
+  t.config.referenceCount = parseInt(document.getElementById("tmpl-ref-count").value) || 3;
+
+  // Client assignment
+  var clientSel = document.getElementById("tmpl-client");
+  if(asClientVersion && _portalSelectedClient){
+    t.clientId = parseInt(_portalSelectedClient);
+    var cn = _portalClients ? _portalClients.find(function(c){return c.id==_portalSelectedClient;}) : null;
+    t.clientName = cn ? cn.name : "";
+    if(t.name.indexOf(t.clientName) < 0) t.name = t.clientName + " — " + t.name;
+    // Generate unique ID for client version
+    t.id = "client-" + _portalSelectedClient + "-" + Date.now();
+  } else if(clientSel && clientSel.value){
+    t.clientId = parseInt(clientSel.value);
+    var cn2 = _portalClients ? _portalClients.find(function(c){return c.id==clientSel.value;}) : null;
+    t.clientName = cn2 ? cn2.name : "";
+  } else {
+    t.clientId = null;
+    t.clientName = "";
+  }
+
+  // Gather field-level overrides from checkboxes
+  var allSections = _portalAllSections || [];
+  var enabledSections = [];
+  allSections.forEach(function(section){
+    var chk = document.querySelector('input[data-section="'+section.key+'"]');
+    if(!chk || !chk.checked) return;
+
+    var sectionCopy = JSON.parse(JSON.stringify(section));
+    sectionCopy.fields.forEach(function(f){
+      var fchk = document.querySelector('input[data-field="'+section.key+'.'+f.name+'"]');
+      f._enabled = fchk ? fchk.checked : true;
+
+      var rsel = document.querySelector('select[data-req="'+section.key+'.'+f.name+'"]');
+      f.required = rsel ? rsel.value === "required" : f.required;
+    });
+    // Filter out disabled fields
+    sectionCopy.fields = sectionCopy.fields.filter(function(f){ return f._enabled !== false; });
+    enabledSections.push(sectionCopy);
+  });
+  t.sections = enabledSections;
+
+  try{
+    var resp = await apiFetch("portal/template", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(t)
+    });
+    if(statusEl){ statusEl.textContent="Saved!"; statusEl.style.color="#10b981"; }
+    // Refresh templates list
+    _portalTemplates = null;
+    _portalEditingTemplate = null;
+    setTimeout(function(){ loadPage(); }, 500);
+  }catch(e){
+    if(statusEl){ statusEl.textContent="Error: "+e.message; statusEl.style.color="#dc2626"; }
+  }
+}
+
+async function deleteCustomTemplate(id){
+  if(!confirm("Delete this custom template? This cannot be undone.")) return;
+  try{
+    await apiFetch("portal/template/"+id, { method:"DELETE" });
+    _portalTemplates = null;
+    loadPage();
+  }catch(e){
+    alert("Failed to delete: " + e.message);
   }
 }
 
