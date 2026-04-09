@@ -1369,6 +1369,39 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
     var jobCerts = extractedCerts.join(", ");
     console.log("[AI Match] Job:", jobTitle, "| Extracted certs:", extractedCerts.join(", "), "| Related:", relatedCerts.join(", "));
 
+    // ── Extract role level from job title ──
+    var ROLE_LEVELS = {
+      "analyst": ["analyst", "application analyst", "app analyst"],
+      "senior analyst": ["senior analyst", "sr analyst", "sr. analyst", "lead analyst"],
+      "consultant": ["consultant"],
+      "trainer": ["trainer"],
+      "project manager": ["project manager", "pm", "program manager"],
+      "director": ["director"],
+      "manager": ["manager"],
+      "advisor": ["advisor"],
+      "lead": ["lead"],
+    };
+    var jobTitleLower = jobTitle.toLowerCase();
+    var jobRoleLevel = null;
+    // Match most specific first (senior analyst before analyst)
+    var rolePriority = ["senior analyst", "project manager", "lead", "advisor", "director", "manager", "analyst", "consultant", "trainer"];
+    for (var ri = 0; ri < rolePriority.length; ri++) {
+      var aliases = ROLE_LEVELS[rolePriority[ri]];
+      for (var ai = 0; ai < aliases.length; ai++) {
+        if (jobTitleLower.indexOf(aliases[ai]) >= 0) { jobRoleLevel = rolePriority[ri]; break; }
+      }
+      if (jobRoleLevel) break;
+    }
+    // Group roles into tiers for compatibility scoring
+    var ROLE_TIERS = {
+      "analyst": 1, "consultant": 1, "trainer": 1,
+      "senior analyst": 2, "lead": 2, "advisor": 2,
+      "manager": 3, "project manager": 3,
+      "director": 4,
+    };
+    var jobRoleTier = jobRoleLevel ? (ROLE_TIERS[jobRoleLevel] || 1) : null;
+    console.log("[AI Match] Job role level:", jobRoleLevel, "| Tier:", jobRoleTier);
+
     // Pre-score candidates with weighted factors
     var now = Date.now();
     var scored = candidates.map(function (c) {
@@ -1378,7 +1411,7 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
       var secondaryCerts = (c.custom_text2 || "").toLowerCase();
       var allCerts = primaryCerts + ", " + secondaryCerts;
 
-      // ── Cert matching (60% weight — dominant signal) ──
+      // ── Cert matching (50% weight — dominant signal) ──
       if (extractedCerts.length > 0) {
         var primaryMatched = 0;
         var secondaryMatched = 0;
@@ -1410,31 +1443,50 @@ app.get("/api/ai-match/:jobId", async (req, res) => {
         }
       }
 
-      // Availability (25% weight — candidates available soon are much more valuable)
+      // ── Role level matching (15% weight) ──
+      if (jobRoleTier) {
+        var candTitle = (c.occupation || "").toLowerCase();
+        var candRole = (c.custom_text5 || "").toLowerCase();
+        var candText = candTitle + " " + candRole;
+        var candRoleTier = null;
+        for (var ri2 = 0; ri2 < rolePriority.length; ri2++) {
+          var aliases2 = ROLE_LEVELS[rolePriority[ri2]];
+          for (var ai2 = 0; ai2 < aliases2.length; ai2++) {
+            if (candText.indexOf(aliases2[ai2]) >= 0) { candRoleTier = ROLE_TIERS[rolePriority[ri2]] || 1; break; }
+          }
+          if (candRoleTier !== null) break;
+        }
+        if (candRoleTier !== null) {
+          var tierDiff = Math.abs(jobRoleTier - candRoleTier);
+          if (tierDiff === 0) { score += 15; factors.push("Role match"); }
+          else if (tierDiff === 1) { score += 8; factors.push("Similar role level"); }
+          else { score -= 15; factors.push("Role mismatch (" + candTitle.substring(0, 30) + ")"); }
+        }
+      }
+
+      // Availability (20% weight — candidates available soon are much more valuable)
       if (c.date_available) {
         var daysUntil = (c.date_available - now) / 86400000;
-        if (daysUntil <= 0) { score += 25; factors.push("Available now"); }
-        else if (daysUntil <= 7) { score += 22; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 14) { score += 18; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 30) { score += 14; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 60) { score += 8; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 90) { score += 4; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        // Beyond 90 days = no availability bonus
+        if (daysUntil <= 0) { score += 20; factors.push("Available now"); }
+        else if (daysUntil <= 7) { score += 18; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 14) { score += 15; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 30) { score += 11; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 60) { score += 6; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
+        else if (daysUntil <= 90) { score += 3; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
       } else {
-        // No availability date set — slight penalty
         score -= 5;
       }
 
-      // Grade (8% weight)
+      // Grade (6% weight)
       var grade = (c.custom_text6 || "").toUpperCase();
-      if (grade === "A") { score += 8; factors.push("Grade A"); }
-      else if (grade === "B") { score += 5; factors.push("Grade B"); }
+      if (grade === "A") { score += 6; factors.push("Grade A"); }
+      else if (grade === "B") { score += 4; factors.push("Grade B"); }
       else if (grade === "C") { score += 2; }
 
-      // Location proximity (5% weight)
+      // Location proximity (4% weight)
       if (jobLocation && c.address_state) {
         var jobState = (jobLocation.split(",").pop() || "").trim().toLowerCase();
-        if (c.address_state.toLowerCase() === jobState) { score += 5; factors.push("Same state"); }
+        if (c.address_state.toLowerCase() === jobState) { score += 4; factors.push("Same state"); }
       }
 
       // Status (2% weight)
