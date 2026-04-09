@@ -2097,14 +2097,15 @@ async function dbGetDashboard() {
   )).rows;
   var newCandTotal = await getOne("SELECT COUNT(*) as count FROM candidates WHERE date_added >= $1", [past7]);
 
-  // Expiring placements (next 90 days — frontend shows 30-day label but we fetch wider)
+  // Expiring placements (next 30 days) — exclude full-time/permanent (they don't expire)
+  var PERM_FILTER = "AND (employment_type IS NULL OR (employment_type NOT ILIKE '%direct%' AND employment_type NOT ILIKE '%permanent%' AND employment_type NOT ILIKE '%full%time%'))";
   var expRows = (await query(
-    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (status ILIKE '%approved%' OR status ILIKE '%active%' OR status ILIKE '%contract%') ORDER BY date_end ASC", [now, in30Days]
+    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (status ILIKE '%approved%' OR status ILIKE '%active%' OR status ILIKE '%contract%') " + PERM_FILTER + " ORDER BY date_end ASC", [now, in30Days]
   )).rows;
   // If no rows with status filter, try without (some BH instances use different status names)
   if (expRows.length === 0) {
     expRows = (await query(
-      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_end ASC", [now, in30Days]
+      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) " + PERM_FILTER + " ORDER BY date_end ASC", [now, in30Days]
     )).rows;
   }
 
@@ -2364,13 +2365,15 @@ async function dbGetExpiringPlacements(days) {
   if (!dbReady) return null;
   var now = Date.now();
   var future = now + (days || 30) * 86400000;
+  // Exclude full-time/permanent placements — they don't expire
+  var PERM_FILTER2 = "AND (employment_type IS NULL OR (employment_type NOT ILIKE '%direct%' AND employment_type NOT ILIKE '%permanent%' AND employment_type NOT ILIKE '%full%time%'))";
   var rows = (await query(
-    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (status ILIKE '%approved%' OR status ILIKE '%active%' OR status ILIKE '%contract%') ORDER BY date_end ASC", [now, future]
+    "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (status ILIKE '%approved%' OR status ILIKE '%active%' OR status ILIKE '%contract%') " + PERM_FILTER2 + " ORDER BY date_end ASC", [now, future]
   )).rows;
   // Fallback without status filter if no results
   if (rows.length === 0) {
     rows = (await query(
-      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_end ASC", [now, future]
+      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) " + PERM_FILTER2 + " ORDER BY date_end ASC", [now, future]
     )).rows;
   }
 

@@ -1033,7 +1033,7 @@ app.get("/api/expiring-placements", async (req, res) => {
     if (db.ready) {
       try {
         var future = now + days * 86400000;
-        var expRows = await db.getAll("SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_end ASC", [now, future]);
+        var expRows = await db.getAll("SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) AND (employment_type IS NULL OR (employment_type NOT ILIKE '%direct%' AND employment_type NOT ILIKE '%permanent%' AND employment_type NOT ILIKE '%full%time%')) ORDER BY date_end ASC", [now, future]);
         var expResult = expRows.map(function (p) {
           var daysLeft = p.date_end ? Math.ceil((p.date_end - now) / 86400000) : null;
           var billRate = p.client_bill_rate || 0;
@@ -1058,13 +1058,19 @@ app.get("/api/expiring-placements", async (req, res) => {
     const futureMs = now + days * 86400000;
 
     // Bullhorn query/ endpoint uses millisecond timestamps for date comparisons
+    // Exclude full-time/permanent placements (Direct Hire, Permanent) — they don't expire
     const data = await bhFetchAll("query/Placement", {
-      where: `dateEnd IS NOT NULL AND dateEnd >= ${now} AND dateEnd <= ${futureMs}`,
+      where: `dateEnd IS NOT NULL AND dateEnd >= ${now} AND dateEnd <= ${futureMs} AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))`,
       fields: "id,candidate,jobOrder,status,dateBegin,dateEnd,payRate,clientBillRate,employmentType",
       orderBy: "dateEnd",
     });
 
     let placements = data.data || [];
+    // Extra safety filter in case Bullhorn returns unexpected employmentType values
+    placements = placements.filter(function(p) {
+      var et = (p.employmentType || "").toLowerCase();
+      return et.indexOf("direct") < 0 && et.indexOf("permanent") < 0 && et.indexOf("full time") < 0 && et.indexOf("full-time") < 0;
+    });
 
     const result = placements.map((p) => {
       const endMs = p.dateEnd;
@@ -2672,10 +2678,10 @@ app.get("/api/dashboard", async (req, res) => {
         count: 10,
         sort: "-dateAdded",
       }),
-      // Expiring placements (next 30 days)
+      // Expiring placements (next 30 days) — exclude full-time/permanent
       bhFetchAll("query/Placement", {
-        where: `dateEnd IS NOT NULL AND dateEnd >= ${nowMs} AND dateEnd <= ${in30DaysMs}`,
-        fields: "id,candidate,jobOrder,dateEnd,payRate,clientBillRate",
+        where: `dateEnd IS NOT NULL AND dateEnd >= ${nowMs} AND dateEnd <= ${in30DaysMs} AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))`,
+        fields: "id,candidate,jobOrder,dateEnd,payRate,clientBillRate,employmentType",
         orderBy: "dateEnd",
       }),
       // Candidates becoming available in next 14 days
