@@ -1800,7 +1800,9 @@ var PRIORITY_MAP = { "Urgent": 1, "Hot": 2, "Warm": 3, "Cold": 4 };
 
 function fmtDate(ms) {
   if (!ms) return "";
-  return new Date(ms).toLocaleDateString("en-US");
+  var n = Number(ms);
+  if (isNaN(n) || n <= 0) return "";
+  return new Date(n).toLocaleDateString("en-US");
 }
 function fmtMoney(v) {
   if (!v && v !== 0) return "—";
