@@ -2023,35 +2023,62 @@ app.get("/api/relationship-scores", async (req, res) => {
 // ═══ TREND ANALYTICS (from your own data) ════════════════════════
 app.get("/api/trends", async (req, res) => {
   try {
-    if (!db.ready) return res.status(503).json({ error: "Database not available for trend analysis" });
+    var certDemand = [];
+    var certSupply = [];
+    var rateTrends = [];
+    var velocityTrends = [];
+    var geoDemand = [];
+    var pipeline = [];
 
-    var nowMs = Date.now();
+    // Helper: try DB first, fall back to Bullhorn API
+    var useDB = db.ready;
 
     // 1. Certification Demand — which certs appear most in active jobs
-    var certDemand = [];
     try {
-      var jobCerts = (await db.query("SELECT custom_text1 FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND custom_text1 IS NOT NULL AND custom_text1 != ''")).rows;
+      var jobCertRows = [];
+      if (useDB) {
+        var dbJobs = await db.query("SELECT custom_text1 FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND custom_text1 IS NOT NULL AND custom_text1 != ''");
+        jobCertRows = (dbJobs.rows || []).map(function(r) { return r.custom_text1; });
+      }
+      if (jobCertRows.length === 0) {
+        // Fallback to Bullhorn
+        var bhJobs = await bhFetchAll("search/JobOrder", {
+          query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")',
+          fields: "id,customText1", sort: "-dateAdded"
+        });
+        jobCertRows = (bhJobs.data || []).map(function(j) { return j.customText1 || ""; }).filter(Boolean);
+      }
       var certCounts = {};
-      jobCerts.forEach(function (j) {
-        var certs = (j.custom_text1 || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      jobCertRows.forEach(function (ct1) {
+        var certs = (Array.isArray(ct1) ? ct1.join(", ") : ct1).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
         certs.forEach(function (c) { certCounts[c] = (certCounts[c] || 0) + 1; });
       });
       certDemand = Object.entries(certCounts).map(function (e) { return { cert: e[0], openJobs: e[1] }; })
         .sort(function (a, b) { return b.openJobs - a.openJobs; }).slice(0, 20);
-    } catch (e) {}
+    } catch (e) { console.log("[Trends] certDemand error:", e.message); }
 
     // 2. Certification Supply — how many candidates per cert
-    var certSupply = [];
     try {
-      var candCerts = (await db.query("SELECT custom_text1 FROM candidates WHERE status = 'Active' AND custom_text1 IS NOT NULL AND custom_text1 != ''")).rows;
+      var candCertRows = [];
+      if (useDB) {
+        var dbCands = await db.query("SELECT custom_text1 FROM candidates WHERE status = 'Active' AND custom_text1 IS NOT NULL AND custom_text1 != ''");
+        candCertRows = (dbCands.rows || []).map(function(r) { return r.custom_text1; });
+      }
+      if (candCertRows.length === 0) {
+        var bhCands = await bhFetchAll("search/Candidate", {
+          query: 'isDeleted:0 AND status:Active',
+          fields: "id,customText1", sort: "-dateLastModified"
+        });
+        candCertRows = (bhCands.data || []).map(function(c) { return c.customText1 || ""; }).filter(Boolean);
+      }
       var supplyCounts = {};
-      candCerts.forEach(function (c) {
-        var certs = (c.custom_text1 || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      candCertRows.forEach(function (ct1) {
+        var certs = (Array.isArray(ct1) ? ct1.join(", ") : ct1).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
         certs.forEach(function (cert) { supplyCounts[cert] = (supplyCounts[cert] || 0) + 1; });
       });
       certSupply = Object.entries(supplyCounts).map(function (e) { return { cert: e[0], activeCandidates: e[1] }; })
         .sort(function (a, b) { return b.activeCandidates - a.activeCandidates; }).slice(0, 20);
-    } catch (e) {}
+    } catch (e) { console.log("[Trends] certSupply error:", e.message); }
 
     // 3. Supply/Demand ratio — most competitive certs
     var supplyDemandMap = {};
@@ -2066,12 +2093,25 @@ app.get("/api/trends", async (req, res) => {
       return sd;
     }).sort(function (a, b) { return (a.ratio || 999) - (b.ratio || 999); });
 
-    // 4. Rate trends — average bill/pay rates for active placements by month
-    var rateTrends = [];
+    // 4. Rate trends — average bill/pay rates for placements by month
     try {
-      var placRates = (await db.query("SELECT date_begin, pay_rate, client_bill_rate, employment_type FROM placements WHERE pay_rate > 0 AND client_bill_rate > 0 AND date_begin IS NOT NULL ORDER BY date_begin ASC")).rows;
+      var placRows = [];
+      if (useDB) {
+        var dbPlac = await db.query("SELECT date_begin, pay_rate, client_bill_rate, employment_type FROM placements WHERE pay_rate > 0 AND client_bill_rate > 0 AND date_begin IS NOT NULL ORDER BY date_begin ASC");
+        placRows = dbPlac.rows || [];
+      }
+      if (placRows.length === 0) {
+        // Fallback: pull placements from Bullhorn
+        var bhPlac = await bhFetchAll("search/Placement", {
+          query: "id:>0",
+          fields: "id,dateBegin,dateAdded,payRate,clientBillRate,employmentType",
+          sort: "-dateBegin"
+        });
+        placRows = (bhPlac.data || []).filter(function(p) { return p.payRate > 0 && p.clientBillRate > 0 && p.dateBegin; })
+          .map(function(p) { return { date_begin: p.dateBegin, date_added: p.dateAdded, pay_rate: p.payRate, client_bill_rate: p.clientBillRate, employment_type: p.employmentType }; });
+      }
       var monthBuckets = {};
-      placRates.forEach(function (p) {
+      placRows.forEach(function (p) {
         if (p.employment_type === "Direct Hire" || p.employment_type === "Permanent") return;
         var d = new Date(p.date_begin);
         var key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
@@ -2089,35 +2129,51 @@ app.get("/api/trends", async (req, res) => {
           placements: b.billRates.length,
         };
       }).sort(function (a, b) { return a.month.localeCompare(b.month); });
-    } catch (e) {}
 
-    // 5. Placement velocity — new placements per month
-    var velocityTrends = [];
-    try {
-      var placDates = (await db.query("SELECT date_added FROM placements WHERE date_added IS NOT NULL ORDER BY date_added ASC")).rows;
+      // 5. Placement velocity — from same data
       var velBuckets = {};
-      placDates.forEach(function (p) {
-        var d = new Date(p.date_added);
+      placRows.forEach(function (p) {
+        var ts = p.date_added || p.date_begin;
+        if (!ts) return;
+        var d = new Date(ts);
         var key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
         velBuckets[key] = (velBuckets[key] || 0) + 1;
       });
       velocityTrends = Object.entries(velBuckets).map(function (e) {
         return { month: e[0], placements: e[1] };
       }).sort(function (a, b) { return a.month.localeCompare(b.month); });
-    } catch (e) {}
+    } catch (e) { console.log("[Trends] rate/velocity error:", e.message); }
 
     // 6. Geographic demand — where are the jobs
-    var geoDemand = [];
     try {
-      var geoRows = (await db.query("SELECT address_state, COUNT(*) as cnt FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND address_state IS NOT NULL AND address_state != '' GROUP BY address_state ORDER BY cnt DESC LIMIT 20")).rows;
+      var geoRows = [];
+      if (useDB) {
+        var dbGeo = await db.query("SELECT address_state, COUNT(*) as cnt FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND address_state IS NOT NULL AND address_state != '' GROUP BY address_state ORDER BY cnt DESC LIMIT 20");
+        geoRows = dbGeo.rows || [];
+      }
+      if (geoRows.length === 0) {
+        // Fallback: aggregate from Bullhorn jobs
+        var bhGeoJobs = await bhFetchAll("search/JobOrder", {
+          query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")',
+          fields: "id,address", sort: "-dateAdded"
+        });
+        var stateMap = {};
+        (bhGeoJobs.data || []).forEach(function(j) {
+          var st = j.address && j.address.state ? j.address.state : "";
+          if (st) stateMap[st] = (stateMap[st] || 0) + 1;
+        });
+        geoRows = Object.entries(stateMap).map(function(e) { return { address_state: e[0], cnt: e[1] }; })
+          .sort(function(a, b) { return b.cnt - a.cnt; }).slice(0, 20);
+      }
       geoDemand = geoRows.map(function (r) { return { state: r.address_state, openJobs: parseInt(r.cnt) }; });
-    } catch (e) {}
+    } catch (e) { console.log("[Trends] geoDemand error:", e.message); }
 
-    // 7. Pipeline snapshot — opportunities by status
-    var pipeline = [];
+    // 7. Pipeline snapshot — opportunities by status (DB only, skip if unavailable)
     try {
-      var pipeRows = (await db.query("SELECT status, COUNT(*) as cnt, SUM(COALESCE(deal_value, 0)) as total_value FROM opportunities WHERE (is_deleted IS NULL OR is_deleted = false) GROUP BY status ORDER BY cnt DESC")).rows;
-      pipeline = pipeRows.map(function (r) { return { status: r.status, count: parseInt(r.cnt), totalValue: Math.round(Number(r.total_value)) }; });
+      if (useDB) {
+        var pipeRows = (await db.query("SELECT status, COUNT(*) as cnt, SUM(COALESCE(deal_value, 0)) as total_value FROM opportunities WHERE (is_deleted IS NULL OR is_deleted = false) GROUP BY status ORDER BY cnt DESC")).rows;
+        pipeline = pipeRows.map(function (r) { return { status: r.status, count: parseInt(r.cnt), totalValue: Math.round(Number(r.total_value)) }; });
+      }
     } catch (e) {}
 
     res.json({
@@ -2736,39 +2792,37 @@ app.get("/api/export/revenue-report", async (req, res) => {
 // ── Market Intelligence — RSS feeds, LinkedIn clips, AI extraction ──────
 
 var INTEL_FEEDS = [
-  // ── Becker's Hospital Review ──
-  { name: "Becker's Health IT", url: "https://www.beckershospitalreview.com/healthcare-information-technology.feed?type=rss", type: "rss" },
-  { name: "Becker's EHR", url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs.feed?type=rss", type: "rss" },
-  { name: "Becker's Hospital News", url: "https://www.beckershospitalreview.com/hospital-management-administration.feed?type=rss", type: "rss" },
-  { name: "Becker's CFO", url: "https://www.beckershospitalreview.com/finance.feed?type=rss", type: "rss" },
-  // ── HIStalk ──
-  { name: "HIStalk", url: "https://www.histalk.com/feed/", type: "rss" },
-  // ── Healthcare IT News / HIMSS ──
-  { name: "Healthcare IT News", url: "https://www.healthcareitnews.com/feed", type: "rss" },
-  { name: "HIMSS News", url: "https://www.himss.org/news/rss.xml", type: "rss" },
-  // ── Modern Healthcare ──
-  { name: "Modern Healthcare", url: "https://www.modernhealthcare.com/section/rss", type: "rss" },
+  // ═══ DIRECT RSS FEEDS (verified working) ═══
+  // ── HIStalk (histalk2.com is the current working domain) ──
+  { name: "HIStalk", url: "https://histalk2.com/feed/", type: "rss" },
+  // ── Healthcare IT News (use content-feed/all, not /feed which redirects) ──
+  { name: "Healthcare IT News", url: "https://www.healthcareitnews.com/content-feed/all", type: "rss" },
   // ── Fierce Healthcare ──
   { name: "Fierce Healthcare", url: "https://www.fiercehealthcare.com/rss/xml", type: "rss" },
-  { name: "Fierce Health IT", url: "https://www.fiercehealthcare.com/health-tech/rss/xml", type: "rss" },
-  // ── Health Data Management ──
-  { name: "Health Data Management", url: "https://www.healthdatamanagement.com/feed", type: "rss" },
-  // ── KLAS Research (news/insights) ──
-  { name: "KLAS Research", url: "https://klasresearch.com/feed", type: "rss" },
-  // ── EHR Intelligence ──
-  { name: "EHR Intelligence", url: "https://ehrintelligence.com/feed", type: "rss" },
-  // ── Health IT Analytics ──
-  { name: "Health IT Analytics", url: "https://healthitanalytics.com/feed", type: "rss" },
-  // ── Revenue Cycle Intelligence ──
-  { name: "RevCycle Intelligence", url: "https://revcycleintelligence.com/feed", type: "rss" },
-  // ── Google News (targeted searches) ──
+
+  // ═══ GOOGLE NEWS — SITE-SPECIFIC (bypass paywalls/bot-blockers) ═══
+  // Becker's blocks server-side RSS but Google indexes their content
+  { name: "Becker's Health IT", url: "https://news.google.com/rss/search?q=site:beckershospitalreview.com+Epic+OR+EHR+OR+%22health+IT%22&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "Becker's Hospital News", url: "https://news.google.com/rss/search?q=site:beckershospitalreview.com+hospital+OR+%22health+system%22&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  // EHR Intelligence, Health IT Analytics, RevCycle Intelligence (Xtelligent Media — all Cloudflare-blocked)
+  { name: "EHR Intelligence", url: "https://news.google.com/rss/search?q=site:ehrintelligence.com&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "Health IT Analytics", url: "https://news.google.com/rss/search?q=site:healthitanalytics.com&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "RevCycle Intelligence", url: "https://news.google.com/rss/search?q=site:revcycleintelligence.com&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  // Modern Healthcare (paywall + no RSS)
+  { name: "Modern Healthcare", url: "https://news.google.com/rss/search?q=site:modernhealthcare.com+Epic+OR+EHR+OR+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  // KLAS Research (no public RSS)
+  { name: "KLAS Research", url: "https://news.google.com/rss/search?q=site:klasresearch.com+OR+%22KLAS%22+EHR+OR+Epic&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+
+  // ═══ GOOGLE NEWS — TOPIC SEARCHES ═══
   { name: "Google News - Epic EHR", url: "https://news.google.com/rss/search?q=Epic+EHR+implementation+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
   { name: "Google News - Epic Go-Live", url: "https://news.google.com/rss/search?q=%22Epic%22+%22go-live%22+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
   { name: "Google News - Health System EHR", url: "https://news.google.com/rss/search?q=health+system+EHR+migration+Epic&hl=en-US&gl=US&ceid=US:en", type: "rss" },
   { name: "Google News - Epic Consulting", url: "https://news.google.com/rss/search?q=%22Epic+consulting%22+OR+%22Epic+implementation%22+staffing&hl=en-US&gl=US&ceid=US:en", type: "rss" },
   { name: "Google News - Hospital M&A", url: "https://news.google.com/rss/search?q=hospital+merger+acquisition+health+system&hl=en-US&gl=US&ceid=US:en", type: "rss" },
   { name: "Google News - Epic Revenue Cycle", url: "https://news.google.com/rss/search?q=%22Epic%22+%22revenue+cycle%22+OR+%22professional+billing%22+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
-  // ── LinkedIn content via Google (Google indexes public LinkedIn posts/articles) ──
+  { name: "Google News - New CIO", url: "https://news.google.com/rss/search?q=%22new+CIO%22+OR+%22names+CIO%22+hospital+OR+%22health+system%22&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+
+  // ═══ LINKEDIN VIA GOOGLE (indexes public posts/articles) ═══
   { name: "LinkedIn - Epic Go-Live", url: "https://news.google.com/rss/search?q=site:linkedin.com+%22Epic%22+%22go-live%22+OR+%22implementation%22+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
   { name: "LinkedIn - EHR Consulting", url: "https://news.google.com/rss/search?q=site:linkedin.com+%22Epic+consulting%22+OR+%22EHR+implementation%22+OR+%22Epic+staffing%22&hl=en-US&gl=US&ceid=US:en", type: "rss" },
   { name: "LinkedIn - Health System News", url: "https://news.google.com/rss/search?q=site:linkedin.com+%22health+system%22+%22Epic%22+OR+%22go+live%22+OR+%22new+CIO%22&hl=en-US&gl=US&ceid=US:en", type: "rss" }
