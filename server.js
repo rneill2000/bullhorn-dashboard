@@ -799,83 +799,90 @@ app.get("/api/placements", async (req, res) => {
     const status = req.query.status || "";
     const type = req.query.type || "";
 
-    // Try Postgres first
+    // Try Postgres first (only trust DB if it actually has placement rows)
     if (db.ready) {
       try {
         var dbResult = await db.searchPlacements({ q, status, type });
-        if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
+        if (dbResult && dbResult.data && dbResult.data.length > 0) return res.json({ data: dbResult.data, total: dbResult.total });
       } catch (dbErr) { console.log("[Placements] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
 
-    // Use query endpoint for Placements (more reliable than search)
-    let where = "id IS NOT NULL";
+    // Use search endpoint for Placements (supports nested field expansion)
+    let searchQuery = "id:>0";
     if (q) {
-      where += ` AND (candidate.firstName LIKE '%${q}%' OR candidate.lastName LIKE '%${q}%' OR jobOrder.title LIKE '%${q}%')`;
+      searchQuery = `(candidate.firstName:${q}* OR candidate.lastName:${q}* OR jobOrder.title:${q}*)`;
     }
     if (status && status !== "All") {
-      where += ` AND status='${status}'`;
+      searchQuery += ` AND status:"${status}"`;
     }
     if (type === "Direct Hire") {
-      where += " AND employmentType='Direct Hire'";
+      searchQuery += ' AND employmentType:"Direct Hire"';
     } else if (type === "Consultant") {
-      where += " AND (employmentType='Contract' OR employmentType='Temp' OR employmentType='Temp to Hire')";
+      searchQuery += ' AND (employmentType:Contract OR employmentType:Temp OR employmentType:"Temp to Hire")';
     }
 
-    const data = await bhFetchAll("query/Placement", {
-      where,
+    const data = await bhFetchAll("search/Placement", {
+      query: searchQuery,
       fields:
-        "id,candidate,jobOrder,status,dateBegin,dateEnd,salary,payRate,clientBillRate,employmentType,fee",
-      orderBy: "-dateBegin",
+        "id,candidate(id,firstName,lastName),jobOrder(id,title,clientCorporation(id,name)),status,dateBegin,dateEnd,salary,payRate,clientBillRate,employmentType,fee",
+      sort: "-dateBegin",
     });
 
-    const placements = (data.data || []).map((p) => {
-      const isDH =
-        p.employmentType === "Direct Hire" ||
-        p.employmentType === "Permanent";
-      const payRate = p.payRate || 0;
-      const billRate = p.clientBillRate || 0;
-      const margin =
-        billRate > 0
-          ? Math.round(((billRate - payRate) / billRate) * 100) + "%"
-          : null;
+    const placements = [];
+    (data.data || []).forEach((p) => {
+      try {
+        const isDH =
+          p.employmentType === "Direct Hire" ||
+          p.employmentType === "Permanent";
+        const payRate = p.payRate || 0;
+        const billRate = p.clientBillRate || 0;
+        const margin =
+          billRate > 0
+            ? Math.round(((billRate - payRate) / billRate) * 100) + "%"
+            : null;
 
-      return {
-        id: p.id,
-        candidate: p.candidate
-          ? (p.candidate.firstName || "") +
-            " " +
-            (p.candidate.lastName || "")
-          : "",
-        job: p.jobOrder ? p.jobOrder.title : "",
-        client: p.jobOrder?.clientCorporation
-          ? p.jobOrder.clientCorporation.name
-          : "",
-        startDate: p.dateBegin
-          ? new Date(p.dateBegin).toLocaleDateString()
-          : "",
-        endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : null,
-        salary: isDH
-          ? p.salary
-            ? "$" + Number(p.salary).toLocaleString()
-            : "—"
-          : payRate
-            ? "$" + payRate + "/hr"
-            : "—",
-        pt: isDH ? "Direct Hire" : "Consultant",
-        status: p.status || "Unknown",
-        fee: isDH && p.fee ? "$" + Number(p.fee).toLocaleString() : null,
-        margin: isDH ? null : margin,
-        billRate: isDH
-          ? null
-          : billRate
-            ? "$" + billRate + "/hr"
-            : null,
-        payRate: isDH
-          ? null
-          : payRate
-            ? "$" + payRate + "/hr"
-            : null,
-      };
+        var clientName = "";
+        try { clientName = p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.name : ""; } catch(e2) {}
+
+        placements.push({
+          id: p.id,
+          candidateId: p.candidate ? p.candidate.id : null,
+          candidate: p.candidate
+            ? (p.candidate.firstName || "") +
+              " " +
+              (p.candidate.lastName || "")
+            : "",
+          job: p.jobOrder ? p.jobOrder.title : "",
+          client: clientName,
+          startDate: p.dateBegin
+            ? new Date(p.dateBegin).toLocaleDateString()
+            : "",
+          endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : null,
+          salary: isDH
+            ? p.salary
+              ? "$" + Number(p.salary).toLocaleString()
+              : "—"
+            : payRate
+              ? "$" + payRate + "/hr"
+              : "—",
+          pt: isDH ? "Direct Hire" : "Consultant",
+          status: p.status || "Unknown",
+          fee: isDH && p.fee ? "$" + Number(p.fee).toLocaleString() : null,
+          margin: isDH ? null : margin,
+          billRate: isDH
+            ? null
+            : billRate
+              ? "$" + billRate + "/hr"
+              : null,
+          payRate: isDH
+            ? null
+            : payRate
+              ? "$" + payRate + "/hr"
+              : null,
+        });
+      } catch (mapErr) {
+        console.log("[Placements] Skipping record", p.id, ":", mapErr.message);
+      }
     });
 
     res.json({ data: placements, total: data.total });
@@ -1382,19 +1389,48 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       });
       if (certsMatched.length === 0 && hasCerts) { certScore -= 30; matchFactors.push("❌ No cert match"); }
 
-      // ── Role Level Score (max 15) ──
+      // ── Role Level Score (max 15, can go negative for mismatches) ──
       let roleScore = 0;
-      if (isLeadershipRole && preferredRole) {
-        var candRoles = preferredRole.toLowerCase().split(",").map(function(s){return s.trim();});
+      if (isLeadershipRole) {
         var candRoleLevel = 0;
-        candRoles.forEach(function(r) {
-          Object.keys(ROLE_KEYWORDS).forEach(function(kw) {
-            if (r.indexOf(kw) >= 0 && ROLE_KEYWORDS[kw] > candRoleLevel) candRoleLevel = ROLE_KEYWORDS[kw];
+        // Check preferredRole (customText3) for role level
+        if (preferredRole) {
+          var candRoles = preferredRole.toLowerCase().split(",").map(function(s){return s.trim();});
+          candRoles.forEach(function(r) {
+            Object.keys(ROLE_KEYWORDS).forEach(function(kw) {
+              if (r.indexOf(kw) >= 0 && ROLE_KEYWORDS[kw] > candRoleLevel) candRoleLevel = ROLE_KEYWORDS[kw];
+            });
           });
+        }
+        // Also check their title/occupation for role level indicators
+        var candTitleLevel = 0;
+        var candTitleLower = (c.occupation || "").toLowerCase();
+        Object.keys(ROLE_KEYWORDS).forEach(function(kw) {
+          if (candTitleLower.indexOf(kw) >= 0 && ROLE_KEYWORDS[kw] > candTitleLevel) candTitleLevel = ROLE_KEYWORDS[kw];
         });
-        if (candRoleLevel >= detectedRoleLevel) { roleScore = 15; matchFactors.push("🎯 Role level match (" + preferredRole + ")"); }
-        else if (candRoleLevel >= detectedRoleLevel - 1) { roleScore = 10; matchFactors.push("🎯 Close role level (" + preferredRole + ")"); }
-        else if (candRoleLevel > 0) { roleScore = 3; }
+        // Also scan their resume/notes for leadership experience
+        var candExpText = [c.occupation || "", c.description || "", c.customTextBlock1 || ""].join(" ").toLowerCase().replace(/<[^>]*>/g, " ");
+        var hasLeadershipExp = candExpText.indexOf("director") >= 0 || candExpText.indexOf("project manage") >= 0 ||
+          candExpText.indexOf("program manage") >= 0 || candExpText.indexOf("led ") >= 0 || candExpText.indexOf("leadership") >= 0 ||
+          candExpText.indexOf("managed team") >= 0 || candExpText.indexOf("oversaw") >= 0;
+
+        var bestCandLevel = Math.max(candRoleLevel, candTitleLevel);
+
+        if (bestCandLevel >= detectedRoleLevel) { roleScore = 15; matchFactors.push("🎯 Role level match (" + (preferredRole || candTitleLower) + ")"); }
+        else if (bestCandLevel >= detectedRoleLevel - 1) { roleScore = 10; matchFactors.push("🎯 Close role level (" + (preferredRole || candTitleLower) + ")"); }
+        else if (hasLeadershipExp && bestCandLevel >= 1) { roleScore = 5; matchFactors.push("📋 Has leadership experience in profile"); }
+        else if (bestCandLevel > 0) { roleScore = 0; matchFactors.push("⬇️ Lower role level (" + (preferredRole || candTitleLower) + ")"); }
+        else {
+          // No role level detected at all — heavy penalty for leadership roles
+          roleScore = -20;
+          matchFactors.push("❌ No leadership/PM experience indicated");
+        }
+
+        // Additional penalty: if job needs Director (level 4+) and candidate is Analyst level (1)
+        if (detectedRoleLevel >= 4 && bestCandLevel <= 1 && !hasLeadershipExp) {
+          roleScore -= 15;
+          matchFactors.push("⬇️ Analyst-level for Director role");
+        }
       }
 
       // ── Experience Keyword Score (max 20) ──
@@ -1479,8 +1515,9 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       };
     });
 
-    // Filter out very low scores (noise)
-    var filtered = candidates.filter(function(c) { return c.score > 0; });
+    // Filter out low scores — stricter for leadership roles to keep analysts out
+    var minScore = isLeadershipRole ? 15 : 0;
+    var filtered = candidates.filter(function(c) { return c.score > minScore; });
     // Sort by score descending
     filtered.sort((a, b) => b.score - a.score);
 
@@ -2699,20 +2736,55 @@ app.get("/api/export/revenue-report", async (req, res) => {
 // ── Market Intelligence — RSS feeds, LinkedIn clips, AI extraction ──────
 
 var INTEL_FEEDS = [
+  // ── Becker's Hospital Review ──
   { name: "Becker's Health IT", url: "https://www.beckershospitalreview.com/healthcare-information-technology.feed?type=rss", type: "rss" },
   { name: "Becker's EHR", url: "https://www.beckershospitalreview.com/healthcare-information-technology/ehrs.feed?type=rss", type: "rss" },
   { name: "Becker's Hospital News", url: "https://www.beckershospitalreview.com/hospital-management-administration.feed?type=rss", type: "rss" },
+  { name: "Becker's CFO", url: "https://www.beckershospitalreview.com/finance.feed?type=rss", type: "rss" },
+  // ── HIStalk ──
   { name: "HIStalk", url: "https://www.histalk.com/feed/", type: "rss" },
+  // ── Healthcare IT News / HIMSS ──
+  { name: "Healthcare IT News", url: "https://www.healthcareitnews.com/feed", type: "rss" },
+  { name: "HIMSS News", url: "https://www.himss.org/news/rss.xml", type: "rss" },
+  // ── Modern Healthcare ──
+  { name: "Modern Healthcare", url: "https://www.modernhealthcare.com/section/rss", type: "rss" },
+  // ── Fierce Healthcare ──
+  { name: "Fierce Healthcare", url: "https://www.fiercehealthcare.com/rss/xml", type: "rss" },
+  { name: "Fierce Health IT", url: "https://www.fiercehealthcare.com/health-tech/rss/xml", type: "rss" },
+  // ── Health Data Management ──
+  { name: "Health Data Management", url: "https://www.healthdatamanagement.com/feed", type: "rss" },
+  // ── KLAS Research (news/insights) ──
+  { name: "KLAS Research", url: "https://klasresearch.com/feed", type: "rss" },
+  // ── EHR Intelligence ──
+  { name: "EHR Intelligence", url: "https://ehrintelligence.com/feed", type: "rss" },
+  // ── Health IT Analytics ──
+  { name: "Health IT Analytics", url: "https://healthitanalytics.com/feed", type: "rss" },
+  // ── Revenue Cycle Intelligence ──
+  { name: "RevCycle Intelligence", url: "https://revcycleintelligence.com/feed", type: "rss" },
+  // ── Google News (targeted searches) ──
   { name: "Google News - Epic EHR", url: "https://news.google.com/rss/search?q=Epic+EHR+implementation+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
   { name: "Google News - Epic Go-Live", url: "https://news.google.com/rss/search?q=%22Epic%22+%22go-live%22+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
-  { name: "Google News - Health System EHR", url: "https://news.google.com/rss/search?q=health+system+EHR+migration+Epic&hl=en-US&gl=US&ceid=US:en", type: "rss" }
+  { name: "Google News - Health System EHR", url: "https://news.google.com/rss/search?q=health+system+EHR+migration+Epic&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "Google News - Epic Consulting", url: "https://news.google.com/rss/search?q=%22Epic+consulting%22+OR+%22Epic+implementation%22+staffing&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "Google News - Hospital M&A", url: "https://news.google.com/rss/search?q=hospital+merger+acquisition+health+system&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "Google News - Epic Revenue Cycle", url: "https://news.google.com/rss/search?q=%22Epic%22+%22revenue+cycle%22+OR+%22professional+billing%22+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  // ── LinkedIn content via Google (Google indexes public LinkedIn posts/articles) ──
+  { name: "LinkedIn - Epic Go-Live", url: "https://news.google.com/rss/search?q=site:linkedin.com+%22Epic%22+%22go-live%22+OR+%22implementation%22+hospital&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "LinkedIn - EHR Consulting", url: "https://news.google.com/rss/search?q=site:linkedin.com+%22Epic+consulting%22+OR+%22EHR+implementation%22+OR+%22Epic+staffing%22&hl=en-US&gl=US&ceid=US:en", type: "rss" },
+  { name: "LinkedIn - Health System News", url: "https://news.google.com/rss/search?q=site:linkedin.com+%22health+system%22+%22Epic%22+OR+%22go+live%22+OR+%22new+CIO%22&hl=en-US&gl=US&ceid=US:en", type: "rss" }
 ];
 
 var EPIC_KEYWORDS = [
   "epic", "ehr", "electronic health record", "go-live", "golive", "implementation",
   "epic systems", "community connect", "epiccare", "revenue cycle", "beaker",
   "cadence", "cogito", "caboodle", "healthy planet", "mychart", "hyperspace",
-  "epic migration", "epic transition", "emr", "clinical system", "verona"
+  "epic migration", "epic transition", "emr", "clinical system", "verona",
+  "professional billing", "hospital billing", "resolute", "willow", "ambulatory",
+  "radiant", "optime", "tapestry", "wisdom", "cupid", "stork", "bones",
+  "cerner", "oracle health", "meditech", "ehr migration", "digital health",
+  "health it", "interoperability", "clinical transformation",
+  "consulting", "staffing", "go live support", "optimization",
+  "merger", "acquisition", "health system expansion"
 ];
 
 // Simple XML tag parser (no dependency needed)
@@ -2750,6 +2822,18 @@ function scoreRelevance(title, description) {
   if (text.indexOf("epic") >= 0 && text.indexOf("health system") >= 0) score += 15;
   if (text.indexOf("migration") >= 0) score += 10;
   if (text.indexOf("transition") >= 0 && text.indexOf("ehr") >= 0) score += 10;
+  // Consulting/staffing signals — direct business relevance
+  if (text.indexOf("consulting") >= 0 && (text.indexOf("epic") >= 0 || text.indexOf("ehr") >= 0)) score += 15;
+  if (text.indexOf("staffing") >= 0 && text.indexOf("health") >= 0) score += 10;
+  // M&A and expansion often trigger new implementations
+  if (text.indexOf("merger") >= 0 || text.indexOf("acquisition") >= 0) score += 10;
+  if (text.indexOf("new cio") >= 0 || text.indexOf("names cio") >= 0) score += 15;
+  // Competitor EHR systems being replaced (= Epic opportunity)
+  if ((text.indexOf("cerner") >= 0 || text.indexOf("meditech") >= 0 || text.indexOf("oracle health") >= 0) && text.indexOf("replac") >= 0) score += 20;
+  // Revenue cycle & billing — core Anura services
+  if (text.indexOf("revenue cycle") >= 0 && (text.indexOf("transform") >= 0 || text.indexOf("outsourc") >= 0 || text.indexOf("optimi") >= 0)) score += 15;
+  // KLAS rankings and reports
+  if (text.indexOf("klas") >= 0) score += 10;
   return Math.min(score, 100);
 }
 
@@ -2809,8 +2893,10 @@ async function processRSSFeed(feed) {
       if (existing.rows.length > 0) continue;
 
       var relevance = scoreRelevance(item.title, item.description);
-      // Only save if somewhat relevant (score > 0) or from HIStalk/Becker's directly
-      if (relevance === 0 && feed.name.indexOf("Google") >= 0) continue;
+      // Only save if somewhat relevant (score > 0) or from a trusted direct source
+      // Google News results with 0 relevance are noise; named feeds are always relevant
+      var isTrustedSource = feed.name.indexOf("Google") === -1;
+      if (relevance === 0 && !isTrustedSource) continue;
 
       var pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
       if (isNaN(pubDate.getTime())) pubDate = new Date();
