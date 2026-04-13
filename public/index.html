@@ -104,6 +104,20 @@ tbody tr:hover{background:#eff6ff}
 .file-meta{font-size:11px;color:#94a3b8}
 .file-dl{padding:4px 10px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none;white-space:nowrap}
 .file-dl:hover{background:#eff6ff;border-color:#176087}
+/* Edit profile */
+.edit-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+.edit-field{display:flex;flex-direction:column;gap:3px}
+.edit-field.full-width{grid-column:1/-1}
+.edit-field label{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em}
+.edit-field input,.edit-field select,.edit-field textarea{padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:inherit;color:#334155;background:#fff}
+.edit-field input:focus,.edit-field select:focus,.edit-field textarea:focus{border-color:#176087;outline:none;box-shadow:0 0 0 2px rgba(23,96,135,.1)}
+.edit-field textarea{resize:vertical;min-height:60px}
+.edit-section-title{font-size:13px;font-weight:700;color:#176087;text-transform:uppercase;letter-spacing:.04em;padding:12px 0 6px;border-bottom:1px solid #e2e8f0;margin-bottom:8px;grid-column:1/-1}
+.edit-save-bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:16px 24px;display:flex;gap:10px;justify-content:flex-end;z-index:5}
+.edit-save-bar .btn-save{padding:8px 24px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.edit-save-bar .btn-save:hover{background:#15803d}
+.edit-save-bar .btn-cancel{padding:8px 24px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-size:13px;cursor:pointer;font-family:inherit}
+.edit-save-bar .btn-cancel:hover{background:#f8fafc}
 /* Pipeline page */
 .pipe-funnel{display:flex;gap:6px;margin-bottom:24px;flex-wrap:wrap}
 .pipe-stage{flex:1;min-width:120px;text-align:center;padding:16px 10px;border-radius:12px;cursor:pointer;transition:all .15s;border:2px solid transparent;position:relative}
@@ -551,6 +565,7 @@ function openDetail(candidateId, candidateData) {
       loadSubmissions(candidateId);
       loadPipelineStats(candidateId);
       loadCandidateFiles(candidateId);
+      loadCandidateRefs(candidateId);
     }).catch(function(e) {
       dc.innerHTML = renderDetailContent(candidateData);
     });
@@ -631,6 +646,7 @@ function loadCandidateFiles(candidateId) {
         h += '<div class="file-info"><div class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</div>';
         h += '<div class="file-meta">' + esc(f.dateAdded || "") + (f.type ? ' • ' + esc(f.type) : '') + '</div></div>';
         h += '<a class="file-dl" href="/api/candidates/' + candidateId + '/files/' + f.id + '" target="_blank" onclick="event.stopPropagation()">View</a>';
+        h += '<a class="file-dl" href="/api/candidates/' + candidateId + '/files/' + f.id + '?download=1" download="' + esc(f.name) + '" onclick="event.stopPropagation()" style="background:#f0fdf4;color:#16a34a;border-color:#bbf7d0">Download</a>';
         h += '</div>';
       });
     }
@@ -638,6 +654,52 @@ function loadCandidateFiles(candidateId) {
   }).catch(function(e) {
     var el = document.getElementById("detail-files");
     if (el) el.innerHTML = '<h4>Files & Resume</h4><div style="color:#94a3b8;font-size:12px">Could not load files</div>';
+  });
+}
+
+function loadCandidateRefs(candidateId) {
+  apiFetch("candidates/" + candidateId + "/references").then(function(r) {
+    var el = document.getElementById("detail-references");
+    if (!el) return;
+    var refs = r.data || [];
+    var h = '<h4>References (' + refs.length + ')</h4>';
+    if (refs.length === 0) {
+      h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No references on file</div>';
+    } else {
+      refs.forEach(function(ref) {
+        h += '<div style="background:#f8fafc;border-radius:8px;padding:12px;margin-bottom:8px;border:1px solid #e2e8f0">';
+        h += '<div style="display:flex;justify-content:space-between;align-items:start">';
+        h += '<div><div style="font-weight:700;font-size:14px;color:#0E2E47">' + esc(ref.name) + '</div>';
+        if (ref.title || ref.company) {
+          h += '<div style="font-size:12px;color:#64748b">';
+          if (ref.title) h += esc(ref.title);
+          if (ref.title && ref.company) h += ' at ';
+          if (ref.company) h += esc(ref.company);
+          h += '</div>';
+        }
+        h += '</div>';
+        if (ref.relationship) h += '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#ede9fe;color:#7c3aed;font-weight:600">' + esc(ref.relationship) + '</span>';
+        h += '</div>';
+        // Contact info
+        var contacts = [];
+        if (ref.phone) contacts.push('<a href="tel:' + esc(ref.phone) + '" style="color:#176087;font-size:12px" onclick="event.stopPropagation()">📞 ' + esc(ref.phone) + '</a>');
+        if (ref.email) contacts.push('<a href="mailto:' + esc(ref.email) + '" style="color:#176087;font-size:12px" onclick="event.stopPropagation()">✉️ ' + esc(ref.email) + '</a>');
+        if (contacts.length > 0) h += '<div style="margin-top:6px;display:flex;gap:12px;flex-wrap:wrap">' + contacts.join("") + '</div>';
+        // Additional details
+        var details = [];
+        if (ref.candidateTitle) details.push("Candidate was: " + ref.candidateTitle);
+        if (ref.yearsKnown) details.push("Known " + ref.yearsKnown + " year" + (ref.yearsKnown != 1 ? "s" : ""));
+        if (ref.dateAdded) details.push("Added " + ref.dateAdded);
+        if (details.length > 0) h += '<div style="margin-top:6px;font-size:11px;color:#94a3b8">' + details.map(esc).join(" • ") + '</div>';
+        // Comments
+        if (ref.comments) h += '<div style="margin-top:8px;font-size:13px;color:#334155;line-height:1.5;background:#fff;padding:8px;border-radius:6px;border:1px solid #e2e8f0">' + esc(ref.comments) + '</div>';
+        h += '</div>';
+      });
+    }
+    el.innerHTML = h;
+  }).catch(function(e) {
+    var el = document.getElementById("detail-references");
+    if (el) el.innerHTML = '<h4>References</h4><div style="color:#94a3b8;font-size:12px">Could not load references</div>';
   });
 }
 
@@ -718,6 +780,7 @@ function renderDetailContent(c) {
   // Action buttons row
   h += '<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">';
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #176087;background:#fff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openTearsheet()">📄 Tearsheet</button>';
+  h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editCandidateProfile()">✏️ Edit Profile</button>';
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="showAddNoteForm()">📝 Add Note</button>';
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #7c3aed;background:#f5f3ff;color:#7c3aed;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="showSubmitForm()">📋 Submit to Job</button>';
   if(c.email) h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #ea580c;background:#fff7ed;color:#ea580c;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="detailSendEmail()">✉️ Send Email</button>';
@@ -773,9 +836,9 @@ function renderDetailContent(c) {
 
   // ── CUSTOM FIELDS (show any that have values) ──
   var customFields = [];
-  if(c.customText4) customFields.push(["Custom Text 4", c.customText4]);
-  if(c.customText8) customFields.push(["Custom Text 8", c.customText8]);
-  if(c.customText9) customFields.push(["Custom Text 9", c.customText9]);
+  if(c.customText4) customFields.push(["Category", c.customText4]);
+  if(c.customText8) customFields.push(["City", c.customText8]);
+  if(c.customText9) customFields.push(["State", c.customText9]);
   if(c.customText10) customFields.push(["Custom Text 10", c.customText10]);
   if(c.customFloat1) customFields.push(["Custom Float 1", c.customFloat1]);
   if(c.customFloat2) customFields.push(["Custom Float 2", c.customFloat2]);
@@ -854,6 +917,9 @@ function renderDetailContent(c) {
   // ── FILES & RESUME (loaded async) ──
   h += '<div class="detail-section" id="detail-files"><h4>Files & Resume</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading files…</div></div>';
 
+  // ── REFERENCES (loaded async) ──
+  h += '<div class="detail-section" id="detail-references"><h4>References</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading references…</div></div>';
+
   // ── SUBMISSIONS (loaded async) ──
   h += '<div class="detail-section" id="detail-submissions"><h4>Submissions</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading submissions…</div></div>';
 
@@ -883,6 +949,243 @@ function renderDetailContent(c) {
 function dField(label, value, isHtml, style) {
   var v = isHtml ? (value||"—") : esc(value||"—");
   return '<div class="detail-field"><div class="lbl">'+esc(label)+'</div><div class="val"'+(style?' style="'+style+'"':'')+'>'+v+'</div></div>';
+}
+
+// ── EDIT CANDIDATE PROFILE ──
+var _editFieldMeta = null; // cache Bullhorn field metadata
+
+function editCandidateProfile() {
+  var c = window._lastDetailCandidate;
+  if (!c) return;
+  var dc = document.getElementById("detail-content");
+  if (!dc) return;
+
+  // Build full edit form
+  var h = '<div style="padding:24px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  h += '<div><div style="font-size:20px;font-weight:700;color:#0f172a">Edit Profile</div>';
+  h += '<div style="font-size:13px;color:#94a3b8">' + esc((c.firstName || "") + " " + (c.lastName || "")) + '</div></div>';
+  h += '<button class="detail-close" onclick="openDetail(' + c.id + ', {})" style="position:static">✕</button>';
+  h += '</div>';
+
+  h += '<div class="edit-form-grid">';
+
+  // ── PERSONAL INFO ──
+  h += '<div class="edit-section-title">Personal Information</div>';
+  h += eField("firstName", "First Name", c.firstName);
+  h += eField("lastName", "Last Name", c.lastName);
+  h += eField("middleName", "Middle Name", c.middleName);
+  h += eField("nickName", "Nickname", c.nickName);
+  h += eField("occupation", "Title / Occupation", c.title || c.occupation);
+  h += eField("companyName", "Company Name", c.company || c.companyName);
+  h += eFieldSelect("status", "Status", c.status, ["New Lead","Active","Available","Placed","Do Not Contact","Inactive","Submitted","Interview","Shortlisted","On Assignment"]);
+  h += eFieldSelect("employeeType", "Employee Type", c.employeeType, ["W2","1099","Corp-to-Corp","W2 or 1099","Any"]);
+
+  // ── CONTACT INFO ──
+  h += '<div class="edit-section-title">Contact Information</div>';
+  h += eField("email", "Email", c.email, "email");
+  h += eField("email2", "Email 2", c.email2, "email");
+  h += eField("phone", "Phone", c.phone, "tel");
+  h += eField("phone2", "Phone 2", c.phone2, "tel");
+  h += eField("phone3", "Phone 3", c.phone3, "tel");
+  h += eField("mobile", "Mobile", c.mobile, "tel");
+
+  // ── ADDRESS ──
+  h += '<div class="edit-section-title">Address</div>';
+  h += eField("address1", "Address Line 1", c.address1);
+  h += eField("address2", "Address Line 2", c.address2);
+  h += eField("city", "City", c.city);
+  h += eField("state", "State", c.state);
+  h += eField("zip", "Zip Code", c.zip);
+
+  // ── EPIC / CERTIFICATIONS ──
+  h += '<div class="edit-section-title">Epic Certifications & Role</div>';
+  h += eField("customText1", "Primary Certifications", c.primaryCert);
+  h += eField("customText2", "Secondary Certifications", c.secondaryCert);
+  h += eField("customText5", "Epic Role", c.epicRole);
+  h += eField("customText3", "Preferred Roles", c.preferredRole);
+  h += eFieldSelect("customText6", "Grade", c.grade, ["A","B","C","D","F",""]);
+  h += eField("customText7", "Urgency", c.urgency);
+
+  // ── COMPENSATION & AVAILABILITY ──
+  h += '<div class="edit-section-title">Compensation & Availability</div>';
+  h += eField("salary", "Salary / Pay Rate", c.salary ? c.salary.replace(/[$,]/g, "") : "", "number");
+  h += eField("hourlyRate", "Hourly Rate", c.hourlyRate, "number");
+  h += eField("dayRate", "Day Rate", c.dayRate, "number");
+  h += eField("dateAvailable", "Date Available", c.available && c.available !== "—" ? formatDateForInput(c.available) : "", "date");
+  h += eFieldSelect("willRelocate", "Will Relocate", c.willRelocate ? "true" : "false", [["true","Yes"],["false","No"]]);
+  h += eField("travelLimit", "Travel Limit (%)", c.travelLimit, "number");
+
+  // ── BACKGROUND ──
+  h += '<div class="edit-section-title">Background</div>';
+  h += eField("educationDegree", "Education / Degree", c.education || c.educationDegree);
+  h += eField("source", "Source", c.source);
+
+  // ── CUSTOM TEXT FIELDS ──
+  h += '<div class="edit-section-title">Custom Fields</div>';
+  h += eField("customText4", "Category", c.customText4);
+  h += eField("customText8", "City (Custom)", c.customText8);
+  h += eField("customText9", "State (Custom)", c.customText9);
+  h += eField("customText10", "Custom Text 10", c.customText10);
+
+  // ── CUSTOM NUMBERS ──
+  h += eField("customFloat1", "Custom Float 1", c.customFloat1, "number");
+  h += eField("customFloat2", "Custom Float 2", c.customFloat2, "number");
+  h += eField("customInt1", "Custom Int 1", c.customInt1, "number");
+  h += eField("customInt2", "Custom Int 2", c.customInt2, "number");
+  h += eField("customInt3", "Custom Int 3", c.customInt3, "number");
+
+  h += '</div>'; // close edit-form-grid
+
+  // ── TEXT BLOCKS (full width) ──
+  h += '<div style="margin-top:16px">';
+  h += '<div class="edit-section-title" style="grid-column:unset">General Comments</div>';
+  h += '<div class="edit-field full-width" style="margin-bottom:12px"><textarea id="edit-customTextBlock1" rows="4">' + esc(c.generalComments || "") + '</textarea></div>';
+  h += '<div class="edit-section-title" style="grid-column:unset">Notes Block 2</div>';
+  h += '<div class="edit-field full-width" style="margin-bottom:12px"><textarea id="edit-customTextBlock2" rows="3">' + esc(c.customTextBlock2 || "") + '</textarea></div>';
+  h += '<div class="edit-section-title" style="grid-column:unset">Notes Block 3</div>';
+  h += '<div class="edit-field full-width" style="margin-bottom:12px"><textarea id="edit-customTextBlock3" rows="3">' + esc(c.customTextBlock3 || "") + '</textarea></div>';
+  h += '<div class="edit-section-title" style="grid-column:unset">Description / Resume Summary</div>';
+  h += '<div class="edit-field full-width"><textarea id="edit-description" rows="5">' + esc(c.description ? c.description.replace(/<[^>]*>/g, "") : "") + '</textarea></div>';
+  h += '</div>';
+
+  h += '</div>'; // close padding wrapper
+
+  // Sticky save bar
+  h += '<div class="edit-save-bar">';
+  h += '<button class="btn-cancel" onclick="openDetail(' + c.id + ', {})">Cancel</button>';
+  h += '<button class="btn-save" id="edit-save-btn" onclick="saveCandidateProfile(' + c.id + ')">Save Changes</button>';
+  h += '</div>';
+
+  dc.innerHTML = h;
+  dc.scrollTop = 0;
+
+  // Fetch field metadata in background to get proper labels for any unnamed custom fields
+  if (!_editFieldMeta) {
+    apiFetch("meta/candidate").then(function(meta) {
+      _editFieldMeta = meta.fields || {};
+      // Update any custom field labels we got from Bullhorn
+      var labelMap = {
+        "customText4": "customText4", "customText8": "customText8", "customText9": "customText9",
+        "customText10": "customText10", "customFloat1": "customFloat1", "customFloat2": "customFloat2",
+        "customInt1": "customInt1", "customInt2": "customInt2", "customInt3": "customInt3"
+      };
+      for (var fld in labelMap) {
+        if (_editFieldMeta[fld] && _editFieldMeta[fld].label) {
+          var lbl = document.querySelector('label[for="edit-' + fld + '"]');
+          if (lbl) lbl.textContent = _editFieldMeta[fld].label;
+        }
+      }
+    }).catch(function() {});
+  }
+}
+
+function eField(name, label, value, type) {
+  type = type || "text";
+  var val = (value === null || value === undefined) ? "" : value;
+  return '<div class="edit-field"><label for="edit-' + name + '">' + esc(label) + '</label>' +
+    '<input type="' + type + '" id="edit-' + name + '" value="' + esc(String(val)) + '"></div>';
+}
+
+function eFieldSelect(name, label, value, options) {
+  var h = '<div class="edit-field"><label for="edit-' + name + '">' + esc(label) + '</label><select id="edit-' + name + '">';
+  options.forEach(function(o) {
+    var optVal = Array.isArray(o) ? o[0] : o;
+    var optLabel = Array.isArray(o) ? o[1] : o;
+    var sel = (String(value) === String(optVal)) ? ' selected' : '';
+    h += '<option value="' + esc(optVal) + '"' + sel + '>' + esc(optLabel || "(none)") + '</option>';
+  });
+  h += '</select></div>';
+  return h;
+}
+
+function formatDateForInput(dateStr) {
+  if (!dateStr || dateStr === "—") return "";
+  try {
+    var d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    return d.toISOString().split("T")[0];
+  } catch(e) { return ""; }
+}
+
+function saveCandidateProfile(candidateId) {
+  var btn = document.getElementById("edit-save-btn");
+  if (!btn) return;
+  btn.textContent = "Saving...";
+  btn.disabled = true;
+
+  // Collect all field values
+  var fields = [
+    "firstName","lastName","middleName","nickName","occupation","companyName",
+    "status","employeeType","email","email2","phone","phone2","phone3","mobile",
+    "address1","address2","city","state","zip",
+    "customText1","customText2","customText3","customText4","customText5",
+    "customText6","customText7","customText8","customText9","customText10",
+    "salary","hourlyRate","dayRate","dateAvailable","willRelocate","travelLimit",
+    "educationDegree","source",
+    "customFloat1","customFloat2","customInt1","customInt2","customInt3"
+  ];
+
+  var updates = {};
+  fields.forEach(function(f) {
+    var el = document.getElementById("edit-" + f);
+    if (!el) return;
+    var val = el.value.trim();
+
+    // Skip empty values (don't overwrite with blank unless it was already empty)
+    if (val === "") return;
+
+    // Type conversions
+    if (f === "willRelocate") {
+      updates[f] = (val === "true");
+    } else if (f === "salary" || f === "hourlyRate" || f === "dayRate" || f === "travelLimit" ||
+               f === "customFloat1" || f === "customFloat2") {
+      var num = parseFloat(val);
+      if (!isNaN(num)) updates[f] = num;
+    } else if (f === "customInt1" || f === "customInt2" || f === "customInt3") {
+      var intVal = parseInt(val);
+      if (!isNaN(intVal)) updates[f] = intVal;
+    } else if (f === "dateAvailable") {
+      updates[f] = new Date(val).getTime();
+    } else {
+      updates[f] = val;
+    }
+  });
+
+  // Text blocks
+  var tb1 = document.getElementById("edit-customTextBlock1");
+  if (tb1) updates.customTextBlock1 = tb1.value;
+  var tb2 = document.getElementById("edit-customTextBlock2");
+  if (tb2) updates.customTextBlock2 = tb2.value;
+  var tb3 = document.getElementById("edit-customTextBlock3");
+  if (tb3) updates.customTextBlock3 = tb3.value;
+  var desc = document.getElementById("edit-description");
+  if (desc) updates.description = desc.value;
+
+  apiFetch("candidates/" + candidateId + "/update", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(updates)
+  }).then(function(r) {
+    if (r.success) {
+      // Show success briefly, then reload the profile
+      btn.textContent = "Saved!";
+      btn.style.background = "#16a34a";
+      setTimeout(function() {
+        openDetail(candidateId, {});
+      }, 800);
+    } else {
+      btn.textContent = "Error: " + (r.error || "Unknown");
+      btn.style.background = "#ef4444";
+      btn.disabled = false;
+      setTimeout(function() { btn.textContent = "Save Changes"; btn.style.background = "#16a34a"; }, 3000);
+    }
+  }).catch(function(e) {
+    btn.textContent = "Error saving";
+    btn.style.background = "#ef4444";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Save Changes"; btn.style.background = "#16a34a"; }, 3000);
+  });
 }
 
 // ── DETAIL PANEL ACTIONS ──
@@ -1511,10 +1814,20 @@ function renderSmartMatch(){
 }
 function renderSmartMatchResults(r){
   var h='';
-  h+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">';
+  // Job info banner with match strategy
+  h+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 20px;margin-bottom:16px">';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">';
   h+='<div><span style="font-weight:700;color:#176087;font-size:15px">'+esc(r.job.title)+'</span>';
-  h+='<div style="font-size:12px;color:#64748b;margin-top:2px">Matching on: <strong>'+esc(r.job.matchedCerts.join(", ")||"general match")+'</strong></div></div>';
+  var matchDesc = [];
+  if (r.job.matchedCerts && r.job.matchedCerts.length > 0) matchDesc.push("Certs: " + r.job.matchedCerts.join(", "));
+  if (r.job.roleLevel) matchDesc.push("Role: " + r.job.roleLevel);
+  if (r.job.experienceKeywords && r.job.experienceKeywords.length > 0) matchDesc.push(r.job.experienceKeywords.length + " experience keywords from description");
+  h+='<div style="font-size:12px;color:#64748b;margin-top:2px">Matching on: <strong>'+esc(matchDesc.join(" • ")||"general match")+'</strong></div></div>';
   h+='<div style="font-size:13px;color:#176087;font-weight:600">'+r.totalMatched+' candidate'+(r.totalMatched!==1?'s':'')+' matched</div>';
+  h+='</div>';
+  if (r.job.isLeadershipRole) {
+    h+='<div style="margin-top:8px;padding:6px 12px;border-radius:6px;background:#f5f3ff;border:1px solid #ddd6fe;font-size:12px;color:#7c3aed;font-weight:500">👔 Leadership role detected — matching on role level, experience keywords, and profile depth in addition to certifications</div>';
+  }
   h+='</div>';
 
   if(!r.candidates.length){
@@ -1528,7 +1841,7 @@ function renderSmartMatchResults(r){
 
   var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};
   h+='<div class="table-wrap"><table><thead><tr>';
-  h+='<th>Score</th><th>Name</th><th>Primary Cert</th><th>Grade</th><th>Available</th><th>Epic Role</th><th>Location</th><th>Status</th>';
+  h+='<th>Score</th><th>Name</th><th>Primary Cert</th><th>Role</th><th>Grade</th><th>Available</th><th>Why</th><th>Status</th>';
   h+='</tr></thead><tbody>';
   r.candidates.forEach(function(c,idx){
     var scorePct=r.candidates[0].score>0?Math.round(c.score/r.candidates[0].score*100):0;
@@ -1536,11 +1849,16 @@ function renderSmartMatchResults(r){
     h+='<tr style="cursor:pointer" onclick="openDetail('+c.id+',{})">';
     h+='<td><div style="display:flex;align-items:center;gap:6px"><div style="width:36px;height:36px;border-radius:8px;background:'+scoreColor+'14;display:flex;align-items:center;justify-content:center;font-weight:700;color:'+scoreColor+';font-size:13px">'+c.score+'</div></div></td>';
     h+='<td><span class="name-link">'+esc(c.firstName+" "+c.lastName)+'</span></td>';
-    h+='<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#176087" title="'+esc(c.primaryCert)+'">'+esc(c.primaryCert||"\u2014")+'</td>';
+    h+='<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#176087" title="'+esc(c.primaryCert)+'">'+esc(c.primaryCert||"\u2014")+'</td>';
+    h+='<td style="font-size:12px">'+(c.preferredRole?'<span style="padding:2px 8px;border-radius:10px;background:#ede9fe;color:#7c3aed;font-size:11px;font-weight:600">'+esc(c.preferredRole)+'</span>':'<span class="muted">\u2014</span>')+'</td>';
     h+='<td>'+(c.grade?'<span class="fw600" style="color:'+(gc[c.grade]||"#64748b")+'">'+esc(c.grade)+'</span>':'<span class="muted">\u2014</span>')+'</td>';
     h+='<td>'+(c.available&&c.available!=="\u2014"?'\uD83D\uDD52 '+esc(c.available):'<span class="muted">\u2014</span>')+'</td>';
-    h+='<td>'+esc(c.epicRole||"\u2014")+'</td>';
-    h+='<td>'+(c.location?'\uD83D\uDCCD '+esc(c.location):'<span class="muted">\u2014</span>')+'</td>';
+    // Why column — top 3 match factors
+    var factors = (c.matchFactors || []).slice(0, 3);
+    h+='<td style="font-size:11px;max-width:220px;line-height:1.4">';
+    if (factors.length > 0) { h+=factors.join('<br>'); }
+    else { h+='<span class="muted">\u2014</span>'; }
+    h+='</td>';
     h+='<td>'+badge(c.status)+'</td>';
     h+='</tr>';
   });

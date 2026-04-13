@@ -644,14 +644,45 @@ app.post("/api/candidates/:id/update", async (req, res) => {
   try {
     const candidateId = parseInt(req.params.id);
     const updates = req.body;
-    // Only allow updating specific safe fields
-    const ALLOWED_FIELDS = ["status", "customText1", "customText2", "customText3", "customText5", "customText6", "customText7", "email", "phone", "mobile", "dateAvailable", "customTextBlock1", "occupation"];
+    // All safe Candidate fields (excludes system/read-only fields)
+    const ALLOWED_FIELDS = [
+      "firstName", "lastName", "middleName", "nickName", "name", "occupation",
+      "status", "email", "email2", "phone", "phone2", "phone3", "mobile", "fax",
+      "pager", "salary", "salaryLow", "hourlyRate", "hourlyRateLow", "dayRate", "dayRateLow",
+      "dateAvailable", "employeeType", "ethnicity", "veteran", "disability",
+      "willRelocate", "travelLimit", "source", "educationDegree",
+      "companyName", "category", "dateOfBirth", "gender", "maritalStatus",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+      "customText6", "customText7", "customText8", "customText9", "customText10",
+      "customText11", "customText12", "customText13", "customText14", "customText15",
+      "customText16", "customText17", "customText18", "customText19", "customText20",
+      "customTextBlock1", "customTextBlock2", "customTextBlock3", "customTextBlock4", "customTextBlock5",
+      "customDate1", "customDate2", "customDate3",
+      "customFloat1", "customFloat2", "customFloat3",
+      "customInt1", "customInt2", "customInt3",
+      "description", "comments",
+    ];
     const safeUpdates = {};
     for (const key of Object.keys(updates)) {
       if (ALLOWED_FIELDS.includes(key)) {
         safeUpdates[key] = updates[key];
       }
     }
+
+    // Handle address sub-fields: flatten address.city → address: { city: ... }
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(updates)) {
+      if (addressFields.includes(key)) {
+        addrUpdates[key] = updates[key];
+        hasAddr = true;
+      }
+    }
+    if (hasAddr) {
+      safeUpdates.address = addrUpdates;
+    }
+
     if (Object.keys(safeUpdates).length === 0) {
       return res.status(400).json({ error: "No valid fields to update" });
     }
@@ -660,9 +691,35 @@ app.post("/api/candidates/:id/update", async (req, res) => {
     const result = await bhWrite(`entity/Candidate/${candidateId}`, safeUpdates, "POST");
     console.log("[Update Candidate]", candidateId, "→", Object.keys(safeUpdates), result);
 
-    res.json({ success: true, message: "Candidate updated" });
+    res.json({ success: true, message: "Candidate updated", changedFields: Object.keys(safeUpdates) });
   } catch (e) {
     console.error("[Update Candidate]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Candidate Field Metadata ─────────────────────
+app.get("/api/meta/candidate", async (req, res) => {
+  try {
+    const s = await authenticate();
+    const url = `${s.restUrl}meta/Candidate?fields=*&BhRestToken=${s.bhRestToken}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("Meta fetch failed: " + resp.status);
+    const meta = await resp.json();
+    // Return a simplified field map: { fieldName: { label, type, dataType, options } }
+    const fields = {};
+    (meta.fields || []).forEach(f => {
+      fields[f.name] = {
+        label: f.label || f.name,
+        type: f.type || "SCALAR",
+        dataType: f.dataType || "String",
+        options: f.options || null,
+        readOnly: f.readOnly || false,
+      };
+    });
+    res.json({ fields });
+  } catch (e) {
+    console.error("[Meta Candidate]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -1165,13 +1222,13 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
   try {
     const jobId = req.params.jobId;
 
-    // 1. Get the job details
+    // 1. Get the job details (including full description)
     const jobData = await bhFetch(`entity/JobOrder/${jobId}`, {
-      fields: "id,title,customText1,customText2,customText3,customText4,customText5,customText6,customText7,description,employmentType,status",
+      fields: "id,title,customText1,customText2,customText3,customText4,customText5,customText6,customText7,description,publicDescription,employmentType,status,address",
     });
     const job = jobData.data || jobData;
 
-    // 2. Extract cert keywords from job — use same alias/relationship logic as AI match
+    // 2. Extract cert keywords — scan EVERYTHING including the job description
     var SM_ALIASES = {
       "pb": "Professional Billing", "professional billing": "Professional Billing",
       "hb": "Hospital Billing", "hospital billing": "Hospital Billing",
@@ -1188,6 +1245,8 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       "order entry": "Orders", "healthy planet": "Healthy Planet",
       "claims": "Claims", "rte": "RTE", "referrals": "Referrals",
       "patient access": "Patient Access", "anesthesia": "Anesthesia",
+      "stork": "Stork", "bones": "Bones", "lumens": "Lumens",
+      "care everywhere": "Care Everywhere", "epic care link": "EpicCare Link",
     };
     var SM_RELATIONSHIPS = {
       "Professional Billing": ["Resolute", "Resolute Professional Billing", "Claims", "RTE"],
@@ -1199,7 +1258,11 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       "Ambulatory": ["EpicCare"],
       "Cadence": ["Referrals", "Prelude"],
     };
-    var jobText = [job.title, job.customText1, job.customText2, job.customText3, job.customText4, job.customText5].filter(Boolean).join(" ").toLowerCase();
+
+    // Strip HTML from description and scan ALL text sources
+    var descText = ((job.description || "") + " " + (job.publicDescription || "")).replace(/<[^>]*>/g, " ");
+    var jobText = [job.title, job.customText1, job.customText2, job.customText3, job.customText4, job.customText5, descText].filter(Boolean).join(" ").toLowerCase();
+
     var matchedCerts = [];
     Object.keys(SM_ALIASES).forEach(function(alias) {
       if (jobText.indexOf(alias) >= 0) {
@@ -1216,68 +1279,177 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       }
     });
 
-    // 3. Build a Lucene query for candidates matching those certs
-    let query = "isDeleted:0 AND (status:Active OR status:Available)";
+    // 3. Detect role level from job title/description
+    var ROLE_KEYWORDS = {
+      "executive": 5, "vp": 5, "vice president": 5, "c-suite": 5, "cio": 5, "cfo": 5,
+      "director": 4, "project director": 4, "program director": 4, "senior director": 4,
+      "program manager": 3, "project manager": 3, "manager": 3, "pm ": 3,
+      "lead": 2, "senior analyst": 2, "senior consultant": 2, "advisor": 2,
+      "analyst": 1, "consultant": 1, "trainer": 1,
+    };
+    var jobTitleLower = (job.title || "").toLowerCase();
+    var detectedRoleLevel = 0;
+    var detectedRoleName = "";
+    Object.keys(ROLE_KEYWORDS).forEach(function(kw) {
+      if (jobTitleLower.indexOf(kw) >= 0 && ROLE_KEYWORDS[kw] > detectedRoleLevel) {
+        detectedRoleLevel = ROLE_KEYWORDS[kw];
+        detectedRoleName = kw;
+      }
+    });
+    // Also check description for role indicators
+    if (detectedRoleLevel === 0) {
+      Object.keys(ROLE_KEYWORDS).forEach(function(kw) {
+        if (jobText.indexOf(kw) >= 0 && ROLE_KEYWORDS[kw] > detectedRoleLevel) {
+          detectedRoleLevel = ROLE_KEYWORDS[kw];
+          detectedRoleName = kw;
+        }
+      });
+    }
+    var isLeadershipRole = detectedRoleLevel >= 3; // PM+ level
+
+    // 4. Extract experience keywords from description for matching against candidate profiles
+    var EXPERIENCE_KEYWORDS = [];
+    var expPatterns = [
+      "implementation", "go-live", "go live", "optimization", "upgrade",
+      "migration", "build", "install", "workflow", "training",
+      "support", "maintenance", "conversion", "integration",
+      "revenue cycle", "clinical", "ambulatory", "inpatient",
+      "project management", "stakeholder", "budget", "timeline",
+      "change management", "testing", "validation", "cutover",
+      "sprint", "agile", "waterfall", "sdlc",
+    ];
+    expPatterns.forEach(function(kw) {
+      if (jobText.indexOf(kw) >= 0) EXPERIENCE_KEYWORDS.push(kw);
+    });
+
+    // 5. Build candidate query — two strategies
+    var hasCerts = matchedCerts.length > 0;
     var allSearchCerts = matchedCerts.concat(smRelated);
-    if (allSearchCerts.length > 0) {
+    var candidateFields = "id,firstName,lastName,occupation,status,address,salary,dateAvailable,email,phone,customText1,customText2,customText3,customText5,customText6,customText7,dateLastModified,description,customTextBlock1";
+
+    let query;
+    if (hasCerts) {
+      // Cert-based job: primary filter is certification match
+      query = "isDeleted:0 AND (status:Active OR status:Available OR status:\"Active-Reviewed\")";
       const certClauses = allSearchCerts.map(c => {
         const escaped = c.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
         return `(customText1:"${escaped}" OR customText2:"${escaped}")`;
       });
       query += " AND (" + certClauses.join(" OR ") + ")";
+    } else if (isLeadershipRole) {
+      // Leadership role without specific certs: fetch candidates by role level
+      query = "isDeleted:0 AND (status:Active OR status:Available OR status:\"Active-Reviewed\")";
+      // Search for candidates with leadership preferred roles
+      var roleClauses = [];
+      if (detectedRoleLevel >= 4) roleClauses = ['customText3:"Director"', 'customText3:"Executive"', 'customText3:"PM"'];
+      else if (detectedRoleLevel >= 3) roleClauses = ['customText3:"PM"', 'customText3:"Director"', 'customText3:"Manager"', 'customText3:"Executive"'];
+      else roleClauses = ['customText3:"PM"', 'customText3:"Manager"', 'customText3:"Director"'];
+      if (roleClauses.length > 0) query += " AND (" + roleClauses.join(" OR ") + ")";
+    } else {
+      // Fallback: broad search
+      query = "isDeleted:0 AND (status:Active OR status:Available OR status:\"Active-Reviewed\")";
     }
 
     const candData = await bhFetchAll("search/Candidate", {
       query,
-      fields: "id,firstName,lastName,occupation,status,address,salary,dateAvailable,email,phone,customText1,customText2,customText3,customText5,customText6,customText7,dateLastModified",
+      fields: candidateFields,
       sort: "-dateLastModified",
     });
 
-    // 4. Score candidates — cert match is dominant
+    // 6. Score candidates — multi-factor scoring
     const now = Date.now();
+    const jobState = (job.address && job.address.state) ? job.address.state.toLowerCase() : "";
+
     const candidates = (candData.data || []).map((c) => {
       const primaryCerts = (Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1) || "";
       const secondaryCerts = (Array.isArray(c.customText2) ? c.customText2.join(", ") : c.customText2) || "";
+      const preferredRole = (Array.isArray(c.customText3) ? c.customText3.join(", ") : c.customText3) || "";
       const primaryLower = primaryCerts.toLowerCase();
       const secondaryLower = secondaryCerts.toLowerCase();
+      const matchFactors = [];
 
+      // ── Certification Score (max 40) ──
       let certScore = 0;
       const certsMatched = [];
-      // Primary cert matches (full weight)
       matchedCerts.forEach(mc => {
-        if (primaryLower.includes(mc.toLowerCase())) { certScore += 20; certsMatched.push(mc + " (primary)"); }
-        else if (secondaryLower.includes(mc.toLowerCase())) { certScore += 12; certsMatched.push(mc + " (secondary)"); }
+        if (primaryLower.includes(mc.toLowerCase())) { certScore += 20; certsMatched.push(mc + " (primary)"); matchFactors.push("✅ " + mc + " primary cert"); }
+        else if (secondaryLower.includes(mc.toLowerCase())) { certScore += 12; certsMatched.push(mc + " (secondary)"); matchFactors.push("✅ " + mc + " secondary cert"); }
       });
-      // Related cert matches (partial weight)
       smRelated.forEach(mc => {
         if (primaryLower.includes(mc.toLowerCase()) || secondaryLower.includes(mc.toLowerCase())) {
-          certScore += 6; certsMatched.push(mc + " (related)");
+          certScore += 6; certsMatched.push(mc + " (related)"); matchFactors.push("🔗 " + mc + " related cert");
         }
       });
-      // Hard penalty if zero cert overlap
-      if (certsMatched.length === 0 && matchedCerts.length > 0) certScore -= 30;
+      if (certsMatched.length === 0 && hasCerts) { certScore -= 30; matchFactors.push("❌ No cert match"); }
 
-      // Grade bonus
+      // ── Role Level Score (max 15) ──
+      let roleScore = 0;
+      if (isLeadershipRole && preferredRole) {
+        var candRoles = preferredRole.toLowerCase().split(",").map(function(s){return s.trim();});
+        var candRoleLevel = 0;
+        candRoles.forEach(function(r) {
+          Object.keys(ROLE_KEYWORDS).forEach(function(kw) {
+            if (r.indexOf(kw) >= 0 && ROLE_KEYWORDS[kw] > candRoleLevel) candRoleLevel = ROLE_KEYWORDS[kw];
+          });
+        });
+        if (candRoleLevel >= detectedRoleLevel) { roleScore = 15; matchFactors.push("🎯 Role level match (" + preferredRole + ")"); }
+        else if (candRoleLevel >= detectedRoleLevel - 1) { roleScore = 10; matchFactors.push("🎯 Close role level (" + preferredRole + ")"); }
+        else if (candRoleLevel > 0) { roleScore = 3; }
+      }
+
+      // ── Experience Keyword Score (max 20) ──
+      let expScore = 0;
+      if (EXPERIENCE_KEYWORDS.length > 0) {
+        var candText = [c.occupation || "", c.description || "", c.customTextBlock1 || ""].join(" ").toLowerCase().replace(/<[^>]*>/g, " ");
+        var expHits = 0;
+        EXPERIENCE_KEYWORDS.forEach(function(kw) {
+          if (candText.indexOf(kw) >= 0) expHits++;
+        });
+        if (expHits > 0) {
+          var expPct = expHits / EXPERIENCE_KEYWORDS.length;
+          expScore = Math.round(expPct * 20);
+          if (expHits >= 3) matchFactors.push("📋 " + expHits + "/" + EXPERIENCE_KEYWORDS.length + " experience keywords");
+        }
+      }
+
+      // ── Grade Score (max 8) ──
       const grade = c.customText6 || "";
-      if (grade === "A") certScore += 8;
-      else if (grade === "B") certScore += 5;
-      else if (grade === "C") certScore += 2;
+      let gradeScore = 0;
+      if (grade === "A") { gradeScore = 8; matchFactors.push("⭐ Grade A"); }
+      else if (grade === "B") { gradeScore = 5; matchFactors.push("Grade B"); }
+      else if (grade === "C") { gradeScore = 2; }
 
-      // Availability bonus (high weight — sooner = better)
+      // ── Availability Score (max 25) ──
       let availScore = 0;
       const smAvailRaw = c.dateAvailable ? Number(c.dateAvailable) : 0;
       const smAvailDate = smAvailRaw > 946684800000 ? smAvailRaw : null;
       if (smAvailDate) {
         const daysUntilAvail = (smAvailDate - now) / 86400000;
-        if (daysUntilAvail <= 0) availScore = 25;
-        else if (daysUntilAvail <= 7) availScore = 22;
-        else if (daysUntilAvail <= 14) availScore = 18;
-        else if (daysUntilAvail <= 30) availScore = 14;
+        if (daysUntilAvail <= 0) { availScore = 25; matchFactors.push("🟢 Available now"); }
+        else if (daysUntilAvail <= 7) { availScore = 22; matchFactors.push("🟢 Available within 1 week"); }
+        else if (daysUntilAvail <= 14) { availScore = 18; matchFactors.push("🟡 Available within 2 weeks"); }
+        else if (daysUntilAvail <= 30) { availScore = 14; matchFactors.push("Available within 30 days"); }
         else if (daysUntilAvail <= 60) availScore = 8;
         else if (daysUntilAvail <= 90) availScore = 4;
       } else {
-        availScore = -5; // no date set = slight penalty
+        availScore = -5;
       }
+
+      // ── Location Score (max 5) ──
+      let locScore = 0;
+      var candState = (c.address && c.address.state) ? c.address.state.toLowerCase() : "";
+      if (jobState && candState && jobState === candState) { locScore = 5; matchFactors.push("📍 Same state"); }
+
+      // ── Profile Depth Score (max 10) ── candidates with resume/notes/description rank higher
+      let profileScore = 0;
+      var hasDesc = (c.description || "").replace(/<[^>]*>/g, "").trim().length > 50;
+      var hasNotes = (c.customTextBlock1 || "").trim().length > 20;
+      if (hasDesc && hasNotes) { profileScore = 10; matchFactors.push("📄 Resume + Notes on file"); }
+      else if (hasDesc) { profileScore = 6; matchFactors.push("📄 Resume on file"); }
+      else if (hasNotes) { profileScore = 5; matchFactors.push("📝 Notes on file"); }
+      else { profileScore = -10; matchFactors.push("⚠️ No resume or notes"); }
+
+      var totalScore = certScore + roleScore + expScore + gradeScore + availScore + locScore + profileScore;
 
       return {
         id: c.id,
@@ -1286,6 +1458,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
         title: c.occupation || "",
         primaryCert: primaryCerts,
         secondaryCert: secondaryCerts,
+        preferredRole: preferredRole,
         epicRole: (Array.isArray(c.customText5) ? c.customText5.join(", ") : c.customText5) || "",
         grade,
         status: c.status || "",
@@ -1293,20 +1466,32 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
         available: smAvailDate ? new Date(smAvailDate).toLocaleDateString() : "—",
         email: c.email || "",
         phone: c.phone || "",
-        score: certScore + availScore,
+        score: totalScore,
         certsMatched,
+        matchFactors,
         availScore,
         certScore,
+        roleScore,
+        expScore,
+        profileScore,
+        hasResume: hasDesc,
+        hasNotes: hasNotes,
       };
     });
 
+    // Filter out very low scores (noise)
+    var filtered = candidates.filter(function(c) { return c.score > 0; });
     // Sort by score descending
-    candidates.sort((a, b) => b.score - a.score);
+    filtered.sort((a, b) => b.score - a.score);
 
     res.json({
-      job: { id: job.id, title: job.title || "", matchedCerts, relatedCerts: smRelated },
-      candidates: candidates.slice(0, 50),
-      totalMatched: candidates.length,
+      job: {
+        id: job.id, title: job.title || "", matchedCerts, relatedCerts: smRelated,
+        roleLevel: detectedRoleName || null, isLeadershipRole,
+        experienceKeywords: EXPERIENCE_KEYWORDS,
+      },
+      candidates: filtered.slice(0, 50),
+      totalMatched: filtered.length,
     });
   } catch (e) {
     console.error("[Smart Match]", e.message);
@@ -3091,13 +3276,53 @@ app.get("/api/candidates/:id/files/:fileId", async (req, res) => {
     const contentType = fileRes.headers.get("content-type") || "application/octet-stream";
     const disposition = fileRes.headers.get("content-disposition");
     res.set("Content-Type", contentType);
-    if (disposition) res.set("Content-Disposition", disposition);
+    // If ?download=1, force browser download instead of inline view
+    if (req.query.download === "1") {
+      const fileName = disposition ? disposition.replace(/.*filename="?([^"]+)"?.*/, "$1") : `file-${fileId}`;
+      res.set("Content-Disposition", `attachment; filename="${fileName}"`);
+    } else if (disposition) {
+      res.set("Content-Disposition", disposition);
+    }
     // Stream the file body
     const arrayBuf = await fileRes.arrayBuffer();
     res.send(Buffer.from(arrayBuf));
   } catch (e) {
     console.error("[File Download]", e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ CANDIDATE REFERENCES ════════════════════════════════════════
+app.get("/api/candidates/:id/references", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await authenticate();
+    const data = await bhFetchAll("query/CandidateReference", {
+      where: `candidate.id=${id} AND isDeleted=false`,
+      fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,employmentType,relationship,yearsKnown,comments,dateAdded,candidateTitle,isDeleted,customText1,customText2,customText3",
+      orderBy: "-dateAdded",
+    });
+    const refs = (data.data || []).map(function(r) {
+      return {
+        id: r.id,
+        firstName: r.referenceFirstName || "",
+        lastName: r.referenceLastName || "",
+        name: ((r.referenceFirstName || "") + " " + (r.referenceLastName || "")).trim() || "Unnamed",
+        title: r.referenceTitle || "",
+        phone: r.referencePhone || "",
+        email: r.referenceEmail || "",
+        company: r.companyName || "",
+        relationship: r.relationship || "",
+        yearsKnown: r.yearsKnown || "",
+        candidateTitle: r.candidateTitle || "",
+        comments: r.comments || "",
+        dateAdded: r.dateAdded ? new Date(r.dateAdded).toLocaleDateString() : "",
+      };
+    });
+    res.json({ data: refs, total: refs.length });
+  } catch (e) {
+    console.error("[References]", e.message);
+    res.json({ data: [], total: 0 });
   }
 });
 
