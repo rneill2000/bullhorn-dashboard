@@ -907,25 +907,25 @@ app.get("/api/my-dashboard", async (req, res) => {
     // Try Postgres first (fast, no nested query issues)
     if (db.ready) {
       try {
-        var dbClients = (await db.query("SELECT * FROM clients WHERE owner_id = $1 ORDER BY date_last_modified DESC", [uid])).rows;
-        var dbJobs = (await db.query("SELECT * FROM jobs WHERE owner_id = $1 AND is_deleted = false ORDER BY date_last_modified DESC", [uid])).rows;
-        var dbPlacements = (await db.query(
+        const dbClients = (await db.query("SELECT * FROM clients WHERE owner_id = $1 ORDER BY date_last_modified DESC", [uid])).rows;
+        const dbJobs = (await db.query("SELECT * FROM jobs WHERE owner_id = $1 AND is_deleted = false ORDER BY date_last_modified DESC", [uid])).rows;
+        const dbPlacements = (await db.query(
           "SELECT p.*, j.owner_id as job_owner_id FROM placements p LEFT JOIN jobs j ON p.job_id = j.id WHERE (p.owner_id = $1 OR j.owner_id = $1) AND (p.status ILIKE '%approved%' OR p.status ILIKE '%active%' OR p.status ILIKE '%contract%')", [uid]
         )).rows;
 
-        var PRIORITY_LABELS = { "0": "", "1": "Urgent", "2": "Hot", "3": "Warm", "4": "Cold" };
-        var clients = dbClients.map(function(c) {
+        const DB_PRIORITY_LABELS = { "0": "", "1": "Urgent", "2": "Hot", "3": "Warm", "4": "Cold" };
+        const dbClientsOut = dbClients.map(function(c) {
           return { id: c.id, name: c.name || "", location: [c.address_city, c.address_state].filter(Boolean).join(", "), status: c.status || "" };
         });
-        var jobs = dbJobs.map(function(j) {
+        const dbJobsOut = dbJobs.map(function(j) {
           return {
             id: j.id, title: j.title || "", client: j.client_name || "",
-            status: j.status || "", priority: PRIORITY_LABELS[String(j.type)] || "",
+            status: j.status || "", priority: DB_PRIORITY_LABELS[String(j.type)] || "",
             openings: j.num_openings || 0, submissions: j.submission_count || 0,
             dateAdded: j.date_added ? new Date(Number(j.date_added)).toLocaleDateString("en-US") : "",
           };
         });
-        var placements = dbPlacements.map(function(p) {
+        const dbPlacementsOut = dbPlacements.map(function(p) {
           return {
             id: p.id, candidate: p.candidate_name || "", job: p.job_title || "",
             client: p.client_name || "", status: p.status || "",
@@ -935,14 +935,14 @@ app.get("/api/my-dashboard", async (req, res) => {
             payRate: p.pay_rate ? "$" + p.pay_rate + "/hr" : null,
           };
         });
-        var openJobs = jobs.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
-        var activeClients = clients.filter(function(c) { return c.status === "Active Account" || c.status === "Active"; });
+        const dbOpenJobs = dbJobsOut.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
+        const dbActiveClients = dbClientsOut.filter(function(c) { return c.status === "Active Account" || c.status === "Active"; });
 
         return res.json({
           user: { name: user.name, firstName: user.firstName },
-          myClients: { data: clients, active: activeClients.length, total: dbClients.length },
-          myJobs: { data: jobs, open: openJobs.length, total: dbJobs.length },
-          myPlacements: { data: placements, total: dbPlacements.length },
+          myClients: { data: dbClientsOut, active: dbActiveClients.length, total: dbClients.length },
+          myJobs: { data: dbJobsOut, open: dbOpenJobs.length, total: dbJobs.length },
+          myPlacements: { data: dbPlacementsOut, total: dbPlacements.length },
           source: "db",
         });
       } catch (dbErr) { console.log("[My Dashboard] DB query failed, falling back to Bullhorn:", dbErr.message); }
@@ -1013,8 +1013,8 @@ app.get("/api/my-dashboard", async (req, res) => {
 
     res.json({
       user: { name: user.name, firstName: user.firstName },
-      myClients: { data: clients, active: activeClients.length, total: myClients.total },
-      myJobs: { data: jobs, open: openJobs.length, total: myJobs.total },
+      myClients: { data: dbClientsOut, active: dbActiveClients.length, total: myClients.total },
+      myJobs: { data: dbJobsOut, open: dbOpenJobs.length, total: myJobs.total },
       myPlacements: { data: placements, total: myPlacements.total },
     });
   } catch (e) {
