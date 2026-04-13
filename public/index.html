@@ -142,6 +142,22 @@ tbody tr:hover{background:#eff6ff}
 .sl-card .sl-name{font-size:16px;font-weight:700;color:#0E2E47;margin-bottom:4px}
 .sl-card .sl-count{font-size:28px;font-weight:800;color:#176087}
 .sl-card .sl-sub{font-size:12px;color:#94a3b8;margin-top:4px}
+.sl-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:20px}
+.sl-search{padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;font-size:13px;font-family:inherit;width:260px}
+.sl-search:focus{border-color:#176087;outline:none}
+.sl-group-toggle{display:flex;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-left:auto}
+.sl-group-btn{padding:7px 16px;font-size:12px;font-weight:600;border:none;cursor:pointer;font-family:inherit;background:#fff;color:#64748b;transition:all .15s}
+.sl-group-btn.active{background:#176087;color:#fff}
+.sl-group-btn:hover:not(.active){background:#f1f5f9}
+.sl-filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.sl-filter-chip{padding:5px 12px;border-radius:16px;border:1px solid #e2e8f0;background:#fff;font-size:12px;color:#475569;cursor:pointer;font-family:inherit;transition:all .15s}
+.sl-filter-chip:hover,.sl-filter-chip.active{border-color:#176087;background:#eff6ff;color:#176087}
+.sl-card.role-card{border-left:4px solid #7c3aed}
+.sl-card.role-card:hover{border-color:#7c3aed}
+.sl-card.role-card .sl-count{color:#7c3aed}
+.sl-card.module-card{border-left:4px solid #0369a1}
+.sl-card.module-card:hover{border-color:#0369a1}
+.sl-card.module-card .sl-count{color:#0369a1}
 /* Ask Anura chat */
 .ask-container{max-width:800px;margin:0 auto}
 .ask-messages{min-height:200px;max-height:520px;overflow-y:auto;margin-bottom:16px;display:flex;flex-direction:column;gap:12px}
@@ -172,6 +188,8 @@ tbody tr:hover{background:#eff6ff}
 </style>
 </head>
 <body>
+<!-- Environment banner (shown only on non-prod, e.g. staging) -->
+<div id="env-banner" style="display:none;position:sticky;top:0;z-index:9999;width:100%;padding:8px 16px;text-align:center;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:#fde047;color:#78350f;border-bottom:2px solid #ca8a04;box-shadow:0 2px 4px rgba(0,0,0,0.05)"></div>
 <!-- Sidebar -->
 <aside>
   <div class="logo">
@@ -234,13 +252,16 @@ async function apiFetch(endpoint, opts) {
   return res.json();
 }
 var dbSyncStatus = null;
+var appEnvironment = "production";
 async function checkConnection() {
   try {
     var r = await apiFetch("status");
     apiConnected = r.connected;
     if (r.user) { currentUser = r.user; } else { currentUser = null; }
     if (r.db) { dbSyncStatus = r.db; }
+    if (r.environment) { appEnvironment = r.environment; }
   } catch(e) { apiConnected = false; currentUser = null; }
+  updateEnvBanner();
   updateStatusBadge();
   updateUserBox();
   updateSyncBanner();
@@ -284,6 +305,36 @@ function updateStatusBadge() {
   if (!el) return;
   if (apiConnected) { el.style.background="#dcfce7"; el.style.color="#176087"; el.textContent="\uD83D\uDFE2 Connected to Bullhorn"; }
   else { el.style.background="#fef2f2"; el.style.color="#dc2626"; el.textContent="\uD83D\uDD34 Not Connected"; }
+}
+function updateEnvBanner() {
+  var el = document.getElementById("env-banner");
+  if (!el) return;
+  var env = (appEnvironment || "production").toLowerCase();
+  if (env === "production" || env === "prod") {
+    el.style.display = "none";
+    document.title = "Anura Connect — Bullhorn Dashboard";
+    return;
+  }
+  el.style.display = "block";
+  if (env === "staging") {
+    el.style.background = "#fde047";
+    el.style.color = "#78350f";
+    el.style.borderBottom = "2px solid #ca8a04";
+    el.textContent = "\u26A0 STAGING ENVIRONMENT \u2014 Pre-production testing. Changes here do NOT affect the live dashboard.";
+    document.title = "[STAGING] Anura Connect — Bullhorn Dashboard";
+  } else if (env === "development" || env === "dev" || env === "local") {
+    el.style.background = "#bfdbfe";
+    el.style.color = "#1e3a8a";
+    el.style.borderBottom = "2px solid #2563eb";
+    el.textContent = "\uD83D\uDEE0 DEVELOPMENT \u2014 Local dev environment.";
+    document.title = "[DEV] Anura Connect — Bullhorn Dashboard";
+  } else {
+    el.style.background = "#fecaca";
+    el.style.color = "#7f1d1d";
+    el.style.borderBottom = "2px solid #dc2626";
+    el.textContent = "\u26A0 " + env.toUpperCase() + " ENVIRONMENT";
+    document.title = "[" + env.toUpperCase() + "] Anura Connect — Bullhorn Dashboard";
+  }
 }
 function showConnectionError() {
   return '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:32px;text-align:center;margin:20px 0">'
@@ -1684,26 +1735,210 @@ function renderReports(stats){
 /* ═══ ASK ANURA ═══ */
 var _askHistory = [];
 var _slExpanded = null;
+var _slGroupBy = "cert";
+var _slSearch = "";
+var _slFilterGrade = "";
+var _slFilterStatus = "";
+var _slFilterRole = "";
+var _slRawData = null;
+
+var EPIC_MODULES = {
+  "Access & Revenue Cycle": ["Resolute PB (Professional Billing)","Resolute HB (Hospital Billing)","PB Claims","HB Claims","RTE","Eligibility","Charge Router","Financial Assistance","Benefits Engine","Tapestry","Patient Access","Cadence","Prelude / ADT","Grand Central","Referrals","ASAP"],
+  "Clinical - Inpatient": ["EpicCare Inpatient","ClinDoc","Order Entry / Orders","Stork","Anesthesia","OpTime","Case Management","Nurse Triage","Decision Trees","MyChart Bedside"],
+  "Ambulatory / Outpatient": ["EpicCare Ambulatory","Healthy Planet","EpicCare Home Health","Welcome"],
+  "Ancillary & Diagnostics": ["Radiant","Beaker (Clinical Pathology)","Beaker (Anatomic Pathology)","Cupid","Lumens","Radiant Lumens","Radiant Cupid"],
+  "Pharmacy": ["Willow","Willow Inpatient","Beacon"],
+  "Specialty": ["Bones","Kaleidoscope","Dermatology","Wisdom Dentistry","Transplant","Bugsy","Phoenix","Cheers"],
+  "Patient Engagement": ["MyChart","EpicCare Link","EpicCare Everywhere","Care Everywhere"],
+  "Reporting & Analytics": ["Cogito","Registries"],
+  "Platform & Technical": ["Bridges","EDI/Integrations","Data Courier","Security","Chronicles Programmer","Core Analyst Badges","TED"],
+  "HIM & Coding": ["HIM (Health Information Management)"],
+  "Director & Above": []
+};
+
+function slBuildRoleLists(lists) {
+  var ROLE_LEVELS = ["Executive","Director","PM","Manager"];
+  var roleLists = {};
+  ROLE_LEVELS.forEach(function(r) { roleLists[r] = { name: r, candidates: [] }; });
+  var seen = {};
+  (lists || []).forEach(function(l) {
+    (l.candidates || []).forEach(function(c) {
+      var roles = (c.preferredRole || "").split(",").map(function(s){return s.trim();}).filter(Boolean);
+      roles.forEach(function(role) {
+        if (roleLists[role] && !seen[role + "_" + c.id]) {
+          seen[role + "_" + c.id] = true;
+          roleLists[role].candidates.push(c);
+        }
+      });
+    });
+  });
+  return ROLE_LEVELS.map(function(r){return roleLists[r];}).filter(function(l){return l.candidates.length > 0;});
+}
+
+function slBuildModuleLists(lists) {
+  var moduleMap = {};
+  Object.keys(EPIC_MODULES).forEach(function(mod) { moduleMap[mod] = { name: mod, candidates: [], certs: [] }; });
+  // Build reverse lookup: cert name → module
+  var certToModule = {};
+  Object.keys(EPIC_MODULES).forEach(function(mod) {
+    EPIC_MODULES[mod].forEach(function(cert) { certToModule[cert.toLowerCase()] = mod; });
+  });
+
+  // "Director & Above" is role-based, not cert-based
+  var directorSeen = {};
+  var LEADER_ROLES = ["Executive","Director","PM","Manager"];
+
+  (lists || []).forEach(function(l) {
+    var certName = l.name;
+    var matchedModule = null;
+    // Try exact match first
+    if (certToModule[certName.toLowerCase()]) {
+      matchedModule = certToModule[certName.toLowerCase()];
+    } else {
+      // Fuzzy: check if cert name contains a known module cert
+      Object.keys(certToModule).forEach(function(known) {
+        if (!matchedModule && certName.toLowerCase().indexOf(known) !== -1) matchedModule = certToModule[known];
+      });
+    }
+    if (!matchedModule) matchedModule = "Other";
+    if (!moduleMap[matchedModule]) moduleMap[matchedModule] = { name: matchedModule, candidates: [], certs: [] };
+    if (moduleMap[matchedModule].certs.indexOf(certName) === -1) moduleMap[matchedModule].certs.push(certName);
+
+    var seen = {};
+    l.candidates.forEach(function(c) {
+      if (!seen[c.id]) {
+        seen[c.id] = true;
+        // Check if already in this module (from another cert in same module)
+        var alreadyIn = moduleMap[matchedModule].candidates.some(function(ex){return ex.id===c.id;});
+        if (!alreadyIn) moduleMap[matchedModule].candidates.push(c);
+      }
+      // Also check for Director & Above
+      var roles = (c.preferredRole || "").split(",").map(function(s){return s.trim();}).filter(Boolean);
+      var isLeader = roles.some(function(r){ return LEADER_ROLES.indexOf(r) !== -1 && r !== "Analyst"; });
+      if (isLeader && !directorSeen[c.id]) {
+        directorSeen[c.id] = true;
+        moduleMap["Director & Above"].candidates.push(c);
+      }
+    });
+  });
+
+  // Sort modules: Director & Above first, then by count
+  var result = Object.values(moduleMap).filter(function(m){return m.candidates.length > 0;});
+  result.sort(function(a,b) {
+    if (a.name === "Director & Above") return -1;
+    if (b.name === "Director & Above") return 1;
+    return b.candidates.length - a.candidates.length;
+  });
+  return result;
+}
+
+function slApplyDrillFilters(candidates) {
+  var filtered = candidates;
+  if (_slFilterGrade) { filtered = filtered.filter(function(c){ return c.grade === _slFilterGrade; }); }
+  if (_slFilterStatus) { filtered = filtered.filter(function(c){ return c.status === _slFilterStatus; }); }
+  if (_slFilterRole) { filtered = filtered.filter(function(c){ var r = (c.preferredRole||"").toLowerCase(); return r.indexOf(_slFilterRole.toLowerCase()) !== -1; }); }
+  return filtered;
+}
+
+function slSetGroup(mode) { _slGroupBy = mode; _slExpanded = null; _slSearch = ""; _slFilterGrade=""; _slFilterStatus=""; _slFilterRole=""; slRerender(); }
+function slSearchInput(val) { _slSearch = val.toLowerCase(); slRerender(); }
+function slSetFilter(type, val) {
+  if (type === "grade") _slFilterGrade = (_slFilterGrade === val) ? "" : val;
+  if (type === "status") _slFilterStatus = (_slFilterStatus === val) ? "" : val;
+  if (type === "role") _slFilterRole = (_slFilterRole === val) ? "" : val;
+  slRerender();
+}
+function slRerender() {
+  if (_slRawData) {
+    var container = document.getElementById("page-content");
+    if (container) container.innerHTML = renderSmartLists(_slRawData);
+  }
+}
+
 function renderSmartLists(data) {
+  _slRawData = data;
   var lists = data.lists || [];
+  var isRoleMode = (_slGroupBy === "role");
+  var isModuleMode = (_slGroupBy === "module");
+  var displayLists = isRoleMode ? slBuildRoleLists(lists) : (isModuleMode ? slBuildModuleLists(lists) : lists);
+
+  // Count total unique for grouped modes
+  var groupTotal = 0;
+  if (isRoleMode || isModuleMode) {
+    var seenIds = {};
+    displayLists.forEach(function(l){ l.candidates.forEach(function(c){ seenIds[c.id]=true; }); });
+    groupTotal = Object.keys(seenIds).length;
+  }
+
   var html = '<div class="stats-row">';
-  html += statCard("\uD83D\uDCCB", "Smart Lists", lists.length, "By primary certification", "#176087");
-  html += statCard("\uD83D\uDC65", "Total Candidates", data.total || 0, "With certifications", "#10b981");
+  if (isRoleMode) {
+    html += statCard("\uD83D\uDC54", "Role Groups", displayLists.length, "PM, Director, Executive, Manager", "#7c3aed");
+    html += statCard("\uD83D\uDC65", "Leadership Candidates", groupTotal, "Non-analyst roles", "#10b981");
+  } else if (isModuleMode) {
+    html += statCard("\uD83C\uDFE5", "Epic Modules", displayLists.length, "Grouped by application area", "#0369a1");
+    html += statCard("\uD83D\uDC65", "Total Candidates", data.total || 0, "Across all modules", "#10b981");
+  } else {
+    html += statCard("\uD83D\uDCCB", "Smart Lists", lists.length, "By primary certification", "#176087");
+    html += statCard("\uD83D\uDC65", "Total Candidates", data.total || 0, "With certifications", "#10b981");
+  }
   html += '</div>';
 
   if (_slExpanded !== null) {
-    // Show expanded list view
-    var list = lists.find(function(l) { return l.name === _slExpanded; });
+    var list = displayLists.find(function(l) { return l.name === _slExpanded; });
     if (list) {
-      html += '<div style="margin-bottom:16px;display:flex;align-items:center;gap:12px">';
-      html += '<button class="btn-outline" onclick="_slExpanded=null;loadPage()" style="font-size:13px;padding:6px 14px">\u2190 All Lists</button>';
+      var allCandidates = list.candidates;
+      var filtered = slApplyDrillFilters(allCandidates);
+
+      html += '<div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
+      html += '<button class="btn-outline" onclick="_slExpanded=null;_slFilterGrade=\'\';_slFilterStatus=\'\';_slFilterRole=\'\';slRerender()" style="font-size:13px;padding:6px 14px">\u2190 All Lists</button>';
       html += '<h3 style="font-size:18px;font-weight:700;color:#0E2E47;margin:0">' + esc(list.name) + '</h3>';
-      html += '<span style="font-size:13px;color:#94a3b8">' + list.candidates.length + ' candidates</span>';
+      html += '<span style="font-size:13px;color:#94a3b8">' + filtered.length + (filtered.length !== allCandidates.length ? ' of ' + allCandidates.length : '') + ' candidates</span>';
       html += '<button class="btn-export" onclick="exportSmartList(\'' + esc(list.name).replace(/'/g, "\\'") + '\')" style="margin-left:auto">\uD83D\uDCE5 Export CSV</button>';
       html += '</div>';
+
+      // Show which certs are in this module (for module mode)
+      if (isModuleMode && list.certs && list.certs.length > 0 && list.name !== "Director & Above") {
+        html += '<div style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:6px">';
+        list.certs.forEach(function(cert) {
+          html += '<span style="display:inline-block;padding:3px 10px;border-radius:12px;background:#e0f2fe;color:#0369a1;font-size:11px;font-weight:600">' + esc(cert) + '</span>';
+        });
+        html += '</div>';
+      }
+
+      // Filter chips
+      var grades = {}; var statuses = {}; var roles = {};
+      allCandidates.forEach(function(c) {
+        if (c.grade) grades[c.grade] = (grades[c.grade]||0)+1;
+        if (c.status) statuses[c.status] = (statuses[c.status]||0)+1;
+        var rParts = (c.preferredRole||"").split(",").map(function(s){return s.trim();}).filter(Boolean);
+        rParts.forEach(function(r){ roles[r] = (roles[r]||0)+1; });
+      });
+      html += '<div class="sl-filters">';
+      ["A","B","C"].forEach(function(g) {
+        if (grades[g]) {
+          var active = _slFilterGrade===g?" active":"";
+          html += '<span class="sl-filter-chip'+active+'" onclick="slSetFilter(\'grade\',\''+g+'\')">Grade '+g+' ('+grades[g]+')</span>';
+        }
+      });
+      Object.keys(statuses).sort().forEach(function(s) {
+        var active = _slFilterStatus===s?" active":"";
+        html += '<span class="sl-filter-chip'+active+'" onclick="slSetFilter(\'status\',\''+esc(s).replace(/'/g,"\\'")+'\')">'+esc(s)+' ('+statuses[s]+')</span>';
+      });
+      if (!isRoleMode) {
+        ["Executive","Director","PM","Manager"].forEach(function(r) {
+          if (roles[r]) {
+            var active = _slFilterRole===r?" active":"";
+            html += '<span class="sl-filter-chip'+active+'" onclick="slSetFilter(\'role\',\''+r+'\')">'+r+' ('+roles[r]+')</span>';
+          }
+        });
+      }
+      html += '</div>';
+
       var cols = [
         {key:"name",label:"Name",render:function(r){return '<span class="name-link">' + esc(r.name) + '</span>';},exportVal:function(r){return r.name;}},
         {key:"title",label:"Title",exportVal:function(r){return r.title||"";}},
+        {key:"primaryCert",label:"Primary Cert",render:function(r){return r.primaryCert?esc(r.primaryCert):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.primaryCert||"";}},
+        {key:"preferredRole",label:"Role",render:function(r){var pr=r.preferredRole;if(!pr)return '<span class="muted">\u2014</span>';return pr.split(",").map(function(s){return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:#ede9fe;color:#7c3aed;font-size:11px;font-weight:600;margin:1px 2px">'+esc(s.trim())+'</span>';}).join("");},exportVal:function(r){return r.preferredRole||"";}},
         {key:"grade",label:"Grade",render:function(r){var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};return r.grade?'<span class="fw600" style="color:'+(gc[r.grade]||"#64748b")+'">'+esc(r.grade)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.grade||"";}},
         {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}},
         {key:"available",label:"Available",render:function(r){return r.available?'\uD83D\uDD52 '+esc(r.available):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.available||"";}},
@@ -1711,20 +1946,48 @@ function renderSmartLists(data) {
         {key:"location",label:"Location",render:function(r){return r.location?'\uD83D\uDCCD '+esc(r.location):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.location||"";}},
         {key:"email",label:"Email",render:function(r){return r.email?'<a href="mailto:'+esc(r.email)+'" style="color:#176087;font-size:13px" onclick="event.stopPropagation()">'+esc(r.email)+'</a>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.email||"";}}
       ];
-      _lastData.smartlist = list.candidates;
+      _lastData.smartlist = filtered;
       window.slCols = cols;
-      html += '<div class="table-wrap">' + makeTable(cols, list.candidates, "slClick") + '</div>';
+      html += '<div class="table-wrap">' + makeTable(cols, filtered, "slClick") + '</div>';
     }
   } else {
-    // Show grid of all lists
+    // Toolbar: search + group toggle
+    html += '<div class="sl-toolbar">';
+    html += '<input class="sl-search" type="text" placeholder="\uD83D\uDD0D Search lists..." value="'+esc(_slSearch)+'" oninput="slSearchInput(this.value)">';
+    html += '<div class="sl-group-toggle">';
+    html += '<button class="sl-group-btn'+(_slGroupBy==="cert"?" active":"")+'" onclick="slSetGroup(\'cert\')">By Certification</button>';
+    html += '<button class="sl-group-btn'+(_slGroupBy==="module"?" active":"")+'" onclick="slSetGroup(\'module\')">By Epic Module</button>';
+    html += '<button class="sl-group-btn'+(_slGroupBy==="role"?" active":"")+'" onclick="slSetGroup(\'role\')">By Role Level</button>';
+    html += '</div></div>';
+
+    // Filter cards by search
+    var filtered = displayLists;
+    if (_slSearch) {
+      filtered = filtered.filter(function(l){
+        if (l.name.toLowerCase().indexOf(_slSearch) !== -1) return true;
+        // Also search certs within modules
+        if (l.certs) return l.certs.some(function(c){ return c.toLowerCase().indexOf(_slSearch) !== -1; });
+        return false;
+      });
+    }
+
     html += '<div class="sl-grid">';
-    lists.forEach(function(l) {
-      var activeCount = l.candidates.filter(function(c){return c.status==="Active";}).length;
+    filtered.forEach(function(l) {
+      var activeCount = l.candidates.filter(function(c){return c.status==="Active"||c.status==="Active-Reviewed";}).length;
       var placedCount = l.candidates.filter(function(c){return c.status==="Placed";}).length;
-      html += '<div class="sl-card" onclick="_slExpanded=\'' + esc(l.name).replace(/'/g, "\\'") + '\';loadPage()">';
+      var cardClass = "sl-card";
+      if (isRoleMode || l.name === "Director & Above") cardClass = "sl-card role-card";
+      else if (isModuleMode) cardClass = "sl-card module-card";
+      html += '<div class="'+cardClass+'" onclick="_slExpanded=\'' + esc(l.name).replace(/'/g, "\\'") + '\';slRerender()">';
       html += '<div style="display:flex;justify-content:space-between;align-items:flex-start">';
       html += '<div><div class="sl-name">' + esc(l.name) + '</div>';
-      html += '<div class="sl-sub">' + activeCount + ' active \u2022 ' + placedCount + ' placed</div></div>';
+      // Show cert count for module mode
+      if (isModuleMode && l.certs && l.certs.length > 0 && l.name !== "Director & Above") {
+        html += '<div class="sl-sub">' + l.certs.length + ' cert' + (l.certs.length!==1?'s':'') + ' \u2022 ' + activeCount + ' active</div>';
+      } else {
+        html += '<div class="sl-sub">' + activeCount + ' active \u2022 ' + placedCount + ' placed</div>';
+      }
+      html += '</div>';
       html += '<div class="sl-count">' + l.candidates.length + '</div>';
       html += '</div></div>';
     });

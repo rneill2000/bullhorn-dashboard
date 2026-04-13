@@ -304,14 +304,18 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
 
 /* ═══ ROUTES ═══ */
 
+// Environment label for banner ("production" | "staging" | "development")
+// Set APP_ENV=staging in Railway staging environment to show the yellow banner.
+const APP_ENV = (process.env.APP_ENV || "production").toLowerCase();
+
 // Health check
 app.get("/api/status", async (req, res) => {
   try {
     await authenticate();
     const user = getUser(req);
-    res.json({ connected: true, restUrl: session.restUrl, version: "4.0.0", user: user || null, db: db.getSyncStatus() });
+    res.json({ connected: true, restUrl: session.restUrl, version: "4.0.0", environment: APP_ENV, user: user || null, db: db.getSyncStatus() });
   } catch (e) {
-    res.json({ connected: false, error: e.message, user: null, db: db.getSyncStatus() });
+    res.json({ connected: false, error: e.message, environment: APP_ENV, user: null, db: db.getSyncStatus() });
   }
 });
 
@@ -1013,8 +1017,8 @@ app.get("/api/my-dashboard", async (req, res) => {
 
     res.json({
       user: { name: user.name, firstName: user.firstName },
-      myClients: { data: dbClientsOut, active: dbActiveClients.length, total: myClients.total },
-      myJobs: { data: dbJobsOut, open: dbOpenJobs.length, total: myJobs.total },
+      myClients: { data: clients, active: activeClients.length, total: myClients.total },
+      myJobs: { data: jobs, open: openJobs.length, total: myJobs.total },
       myPlacements: { data: placements, total: myPlacements.total },
     });
   } catch (e) {
@@ -3456,7 +3460,7 @@ app.get("/api/smart-lists", async (req, res) => {
     // Fetch all non-deleted candidates with primary certs
     const data = await bhFetchAll("search/Candidate", {
       query: "isDeleted:0 AND customText1:[* TO *]",
-      fields: "id,firstName,lastName,occupation,status,customText1,customText2,customText5,customText6,salary,dateAvailable,address,email",
+      fields: "id,firstName,lastName,occupation,status,customText1,customText2,customText3,customText5,customText6,salary,dateAvailable,address,email",
       sort: "-dateLastModified",
     });
 
@@ -3474,6 +3478,7 @@ app.get("/api/smart-lists", async (req, res) => {
         status: c.status || "",
         primaryCert: cert,
         secondaryCert: typeof c.customText2 === "string" ? c.customText2 : (Array.isArray(c.customText2) ? c.customText2.join(", ") : ""),
+        preferredRole: typeof c.customText3 === "string" ? c.customText3 : (Array.isArray(c.customText3) ? c.customText3.join(", ") : ""),
         epicRole: typeof c.customText5 === "string" ? c.customText5 : "",
         grade: c.customText6 || "",
         salary: c.salary ? "$" + Number(c.salary).toLocaleString() : "—",

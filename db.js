@@ -2183,6 +2183,7 @@ async function dbGetSmartLists() {
       name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
       title: c.occupation || "", status: c.status || "",
       primaryCert: cert, secondaryCert: c.custom_text2 || "",
+      preferredRole: c.custom_text3 || "",
       epicRole: c.custom_text5 || "", grade: c.custom_text6 || "",
       salary: c.salary ? fmtMoney(c.salary) : "—",
       available: c.date_available ? fmtDate(c.date_available) : "",
