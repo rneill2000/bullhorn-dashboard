@@ -92,6 +92,18 @@ tbody tr:hover{background:#eff6ff}
 .detail-name{font-size:20px;font-weight:700;color:#0f172a}
 .detail-title{font-size:14px;color:#64748b;margin-top:2px}
 .detail-section{padding:20px 24px;border-bottom:1px solid #f1f5f9}
+.pipeline-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.pipeline-stat{text-align:center;padding:10px 6px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0}
+.pipeline-stat .ps-num{font-size:22px;font-weight:800;line-height:1}
+.pipeline-stat .ps-lbl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-top:4px}
+.file-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9}
+.file-item:last-child{border-bottom:none}
+.file-icon{width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.file-info{flex:1;min-width:0}
+.file-name{font-size:13px;font-weight:600;color:#0E2E47;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-meta{font-size:11px;color:#94a3b8}
+.file-dl{padding:4px 10px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none;white-space:nowrap}
+.file-dl:hover{background:#eff6ff;border-color:#176087}
 .detail-section h4{font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .detail-field{font-size:13px}
@@ -523,6 +535,8 @@ function openDetail(candidateId, candidateData) {
     apiFetch("candidates/" + candidateId).then(function(d) {
       dc.innerHTML = renderDetailContent(d);
       loadSubmissions(candidateId);
+      loadPipelineStats(candidateId);
+      loadCandidateFiles(candidateId);
     }).catch(function(e) {
       dc.innerHTML = renderDetailContent(candidateData);
     });
@@ -551,6 +565,65 @@ function loadSubmissions(candidateId) {
   }).catch(function(e) {
     var el = document.getElementById("detail-submissions");
     if (el) el.innerHTML = '<h4>Submissions</h4><div style="color:#94a3b8;font-size:12px">Could not load submissions</div>';
+  });
+}
+
+function loadPipelineStats(candidateId) {
+  apiFetch("candidates/" + candidateId + "/pipeline").then(function(st) {
+    var el = document.getElementById("detail-pipeline");
+    if (!el) return;
+    var h = '<h4>Pipeline Activity</h4>';
+    h += '<div class="pipeline-grid">';
+    h += pipelineStat(st.submitted || 0, "Submitted", "#176087");
+    h += pipelineStat(st.interviewed || 0, "Interviewed", "#7c3aed");
+    h += pipelineStat(st.offered || 0, "Offered", "#0891b2");
+    h += pipelineStat(st.placed || 0, "Placed", "#16a34a");
+    h += pipelineStat(st.rejected || 0, "Rejected", "#ef4444");
+    h += pipelineStat(st.declined || 0, "Declined", "#f59e0b");
+    h += '</div>';
+    if (st.placements > 0) {
+      h += '<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0;font-size:13px;color:#16a34a;font-weight:600">🏆 ' + st.placements + ' placement' + (st.placements !== 1 ? 's' : '') + ' on record</div>';
+    }
+    el.innerHTML = h;
+  }).catch(function(e) {
+    var el = document.getElementById("detail-pipeline");
+    if (el) el.innerHTML = '';
+  });
+}
+
+function pipelineStat(num, label, color) {
+  return '<div class="pipeline-stat"><div class="ps-num" style="color:' + color + '">' + num + '</div><div class="ps-lbl">' + label + '</div></div>';
+}
+
+function loadCandidateFiles(candidateId) {
+  apiFetch("candidates/" + candidateId + "/files").then(function(r) {
+    var el = document.getElementById("detail-files");
+    if (!el) return;
+    var files = r.data || [];
+    var h = '<h4>Files & Resume (' + files.length + ')</h4>';
+    if (files.length === 0) {
+      h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No files attached in Bullhorn</div>';
+    } else {
+      files.forEach(function(f) {
+        var icon = "📄";
+        var bg = "#f1f5f9";
+        var ext = (f.name || "").split(".").pop().toLowerCase();
+        if (ext === "pdf") { icon = "📕"; bg = "#fef2f2"; }
+        else if (ext === "doc" || ext === "docx") { icon = "📘"; bg = "#eff6ff"; }
+        else if (ext === "xls" || ext === "xlsx") { icon = "📗"; bg = "#f0fdf4"; }
+        else if (ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "gif") { icon = "🖼️"; bg = "#faf5ff"; }
+        h += '<div class="file-item">';
+        h += '<div class="file-icon" style="background:' + bg + '">' + icon + '</div>';
+        h += '<div class="file-info"><div class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</div>';
+        h += '<div class="file-meta">' + esc(f.dateAdded || "") + (f.type ? ' • ' + esc(f.type) : '') + '</div></div>';
+        h += '<a class="file-dl" href="/api/candidates/' + candidateId + '/files/' + f.id + '" target="_blank" onclick="event.stopPropagation()">View</a>';
+        h += '</div>';
+      });
+    }
+    el.innerHTML = h;
+  }).catch(function(e) {
+    var el = document.getElementById("detail-files");
+    if (el) el.innerHTML = '<h4>Files & Resume</h4><div style="color:#94a3b8;font-size:12px">Could not load files</div>';
   });
 }
 
@@ -760,6 +833,12 @@ function renderDetailContent(c) {
   h += '<button id="submit-job-btn" onclick="confirmSubmitToJob()" style="padding:6px 16px;border-radius:6px;border:none;background:#7c3aed;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Review & Submit</button>';
   h += '<button onclick="document.getElementById(\'detail-submit-job\').style.display=\'none\';document.getElementById(\'submit-confirmation\').style.display=\'none\'" style="padding:6px 16px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-size:12px;cursor:pointer;font-family:inherit">Cancel</button>';
   h += '</div></div>';
+
+  // ── PIPELINE STATS (loaded async) ──
+  h += '<div class="detail-section" id="detail-pipeline"><h4>Pipeline Activity</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading stats…</div></div>';
+
+  // ── FILES & RESUME (loaded async) ──
+  h += '<div class="detail-section" id="detail-files"><h4>Files & Resume</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading files…</div></div>';
 
   // ── SUBMISSIONS (loaded async) ──
   h += '<div class="detail-section" id="detail-submissions"><h4>Submissions</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading submissions…</div></div>';

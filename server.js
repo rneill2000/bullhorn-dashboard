@@ -834,11 +834,11 @@ app.get("/api/clients", async (req, res) => {
     const q = req.query.q || "";
     const status = req.query.status || "";
 
-    // Try Postgres first
+    // Try Postgres first (only trust DB if it actually has client rows)
     if (db.ready) {
       try {
         var dbResult = await db.searchClients({ q, status });
-        if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
+        if (dbResult && dbResult.data && dbResult.data.length > 0) return res.json({ data: dbResult.data, total: dbResult.total });
       } catch (dbErr) { console.log("[Clients] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
 
@@ -3049,6 +3049,98 @@ app.get("/api/candidates/:id/submissions", async (req, res) => {
   } catch (e) {
     console.error("[Submissions]", e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ CANDIDATE FILES / RESUME ═══════════════════════════════════
+app.get("/api/candidates/:id/files", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await authenticate();
+    const data = await bhFetch(`entityFiles/Candidate/${id}`);
+    const files = (data.EntityFiles || data.data || []).map(f => ({
+      id: f.id,
+      name: f.name || f.fileName || "Untitled",
+      type: f.type || f.contentType || "",
+      fileType: f.fileType || "",
+      size: f.fileSize || 0,
+      dateAdded: f.dateAdded ? new Date(f.dateAdded).toLocaleDateString() : "",
+      description: f.description || "",
+    }));
+    res.json({ data: files, total: files.length });
+  } catch (e) {
+    console.error("[Files]", e.message);
+    // Return empty list instead of 500 (some candidates just have no files)
+    res.json({ data: [], total: 0 });
+  }
+});
+
+app.get("/api/candidates/:id/files/:fileId", async (req, res) => {
+  try {
+    const { id, fileId } = req.params;
+    const s = await authenticate();
+    const url = `${s.restUrl}file/Candidate/${id}/${fileId}?BhRestToken=${s.bhRestToken}`;
+    const fileRes = await fetch(url);
+    if (!fileRes.ok) {
+      const err = await fileRes.text();
+      throw new Error(`Bullhorn file error (${fileRes.status}): ${err}`);
+    }
+    // Forward content type and pipe the binary response
+    const contentType = fileRes.headers.get("content-type") || "application/octet-stream";
+    const disposition = fileRes.headers.get("content-disposition");
+    res.set("Content-Type", contentType);
+    if (disposition) res.set("Content-Disposition", disposition);
+    // Stream the file body
+    const arrayBuf = await fileRes.arrayBuffer();
+    res.send(Buffer.from(arrayBuf));
+  } catch (e) {
+    console.error("[File Download]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ CANDIDATE PIPELINE STATS ═══════════════════════════════════
+app.get("/api/candidates/:id/pipeline", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await authenticate();
+
+    // Fetch all submissions for this candidate
+    const subData = await bhFetchAll("query/JobSubmission", {
+      where: `candidate.id=${id} AND isDeleted=false`,
+      fields: "id,status",
+    });
+    const subs = subData.data || [];
+
+    // Count by normalized status category
+    var stats = { submitted: 0, interviewed: 0, offered: 0, placed: 0, rejected: 0, declined: 0, other: 0 };
+    subs.forEach(function(s) {
+      var st = (s.status || "").toLowerCase();
+      if (st.indexOf("interview") !== -1) { stats.interviewed++; }
+      else if (st.indexOf("placed") !== -1 || st === "approved") { stats.placed++; }
+      else if (st.indexOf("reject") !== -1 || st.indexOf("not selected") !== -1) { stats.rejected++; }
+      else if (st.indexOf("decline") !== -1 || st.indexOf("withdrew") !== -1 || st.indexOf("withdrawn") !== -1) { stats.declined++; }
+      else if (st.indexOf("offer") !== -1) { stats.offered++; }
+      else if (st.indexOf("submit") !== -1 || st.indexOf("internal") !== -1 || st.indexOf("client") !== -1 || st === "new lead" || st === "new") { stats.submitted++; }
+      else { stats.other++; }
+    });
+    stats.total = subs.length;
+
+    // Also count placements
+    try {
+      const placData = await bhFetchAll("query/Placement", {
+        where: `candidate.id=${id}`,
+        fields: "id,status",
+      });
+      stats.placements = (placData.data || []).length;
+    } catch (pe) {
+      stats.placements = 0;
+    }
+
+    res.json(stats);
+  } catch (e) {
+    console.error("[Pipeline]", e.message);
+    res.json({ submitted: 0, interviewed: 0, offered: 0, placed: 0, rejected: 0, declined: 0, other: 0, total: 0, placements: 0 });
   }
 });
 
