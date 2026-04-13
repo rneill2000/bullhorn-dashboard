@@ -104,6 +104,20 @@ tbody tr:hover{background:#eff6ff}
 .file-meta{font-size:11px;color:#94a3b8}
 .file-dl{padding:4px 10px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none;white-space:nowrap}
 .file-dl:hover{background:#eff6ff;border-color:#176087}
+/* Pipeline page */
+.pipe-funnel{display:flex;gap:6px;margin-bottom:24px;flex-wrap:wrap}
+.pipe-stage{flex:1;min-width:120px;text-align:center;padding:16px 10px;border-radius:12px;cursor:pointer;transition:all .15s;border:2px solid transparent;position:relative}
+.pipe-stage:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.pipe-stage.active{border-color:currentColor;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+.pipe-stage .ps-num{font-size:28px;font-weight:800;line-height:1}
+.pipe-stage .ps-lbl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-top:4px;opacity:.8}
+.pipe-stage .ps-pct{font-size:10px;margin-top:2px;opacity:.6}
+.pipe-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px}
+.pipe-toggle{display:flex;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
+.pipe-toggle button{padding:6px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;font-family:inherit;background:#fff;color:#64748b;transition:all .15s}
+.pipe-toggle button.active{background:#176087;color:#fff}
+.pipe-toggle button:hover:not(.active){background:#f1f5f9}
+.pipe-time-select{padding:6px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:12px;font-family:inherit;color:#334155}
 .detail-section h4{font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .detail-field{font-size:13px}
@@ -1033,6 +1047,7 @@ var NAV_BASE=[
   {key:"consultants",label:"Consultants",emoji:"\uD83D\uDC54"},
   {key:"jobs",label:"Jobs",emoji:"\uD83D\uDCBC"},
   {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
+  {key:"pipeline",label:"Pipeline",emoji:"\uD83D\uDD04"},
   {key:"placements",label:"Placements",emoji:"\uD83D\uDCCB"},
   {key:"clients",label:"Clients",emoji:"\uD83C\uDFE2"},
   {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
@@ -1751,6 +1766,148 @@ function exportDQReport(){
   exportCSV("data-quality-report.csv",cols,rows);
 }
 
+/* ═══ PIPELINE ═══ */
+var _pipeData = null;
+var _pipeStage = null;
+var _pipeDays = 90;
+var _pipeView = "candidate"; // "candidate" | "job"
+
+function loadPipeline(days) {
+  _pipeDays = days || 90;
+  return apiFetch("pipeline", { days: _pipeDays });
+}
+
+function pipeSetStage(stage) {
+  _pipeStage = (_pipeStage === stage) ? null : stage;
+  pipeRerender();
+}
+function pipeSetView(view) {
+  _pipeView = view;
+  pipeRerender();
+}
+function pipeSetDays(days) {
+  _pipeDays = parseInt(days) || 90;
+  var container = document.getElementById("content");
+  if (container) container.innerHTML = '<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading pipeline…</div>';
+  loadPipeline(_pipeDays).then(function(data) {
+    _pipeData = data;
+    _pipeStage = null;
+    pipeRerender();
+  }).catch(function(e) {
+    if (container) container.innerHTML = showLoadError("pipeline", e.message);
+  });
+}
+function pipeRerender() {
+  if (_pipeData) {
+    var container = document.getElementById("content");
+    if (container) container.innerHTML = renderPipeline(_pipeData);
+  }
+}
+
+function renderPipeline(data) {
+  _pipeData = data;
+  var stages = data.stages || {};
+  var summary = data.summary || {};
+  var total = data.total || 0;
+
+  var html = '<div class="stats-row">';
+  html += statCard("\uD83D\uDD04", "Pipeline Activity", total, "Last " + _pipeDays + " days", "#176087");
+  var convRate = summary.placed && summary.submitted ? Math.round((summary.placed / summary.submitted) * 100) : 0;
+  html += statCard("\uD83C\uDFAF", "Conversion Rate", convRate + "%", "Submitted → Placed", "#16a34a");
+  var interviewRate = summary.interviewed && summary.submitted ? Math.round((summary.interviewed / summary.submitted) * 100) : 0;
+  html += statCard("\uD83D\uDDE3\uFE0F", "Interview Rate", interviewRate + "%", "Submitted → Interviewed", "#7c3aed");
+  html += '</div>';
+
+  // Funnel stages
+  var stageOrder = ["submitted","interviewed","offered","placed","rejected","declined","other"];
+  var bgColors = {submitted:"#eff6ff",interviewed:"#f5f3ff",offered:"#ecfeff",placed:"#f0fdf4",rejected:"#fef2f2",declined:"#fffbeb",other:"#f8fafc"};
+
+  html += '<div class="pipe-funnel">';
+  stageOrder.forEach(function(key) {
+    var s = stages[key];
+    if (!s) return;
+    var count = s.items ? s.items.length : 0;
+    var pct = total > 0 ? Math.round((count / total) * 100) : 0;
+    var isActive = _pipeStage === key;
+    html += '<div class="pipe-stage' + (isActive ? ' active' : '') + '" style="background:' + bgColors[key] + ';color:' + s.color + '" onclick="pipeSetStage(\'' + key + '\')">';
+    html += '<div class="ps-num">' + count + '</div>';
+    html += '<div class="ps-lbl">' + esc(s.label) + '</div>';
+    html += '<div class="ps-pct">' + pct + '% of total</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // Time range + view toggle toolbar
+  html += '<div class="pipe-toolbar">';
+  html += '<select class="pipe-time-select" onchange="pipeSetDays(this.value)">';
+  [30,60,90,180,365].forEach(function(d) {
+    html += '<option value="' + d + '"' + (d === _pipeDays ? ' selected' : '') + '>' + (d === 365 ? 'Last 12 months' : 'Last ' + d + ' days') + '</option>';
+  });
+  html += '</select>';
+  if (_pipeStage) {
+    html += '<div class="pipe-toggle" style="margin-left:auto">';
+    html += '<button class="' + (_pipeView === "candidate" ? "active" : "") + '" onclick="pipeSetView(\'candidate\')">By Candidate</button>';
+    html += '<button class="' + (_pipeView === "job" ? "active" : "") + '" onclick="pipeSetView(\'job\')">By Job</button>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Drill-down table
+  if (_pipeStage && stages[_pipeStage]) {
+    var stageData = stages[_pipeStage];
+    var items = stageData.items || [];
+
+    html += '<h3 style="font-size:16px;font-weight:700;color:' + stageData.color + ';margin-bottom:12px">' + esc(stageData.label) + ' (' + items.length + ')</h3>';
+
+    if (_pipeView === "job") {
+      // Group by job
+      var jobGroups = {};
+      items.forEach(function(item) {
+        var jk = item.jobTitle || "Unknown Job";
+        if (!jobGroups[jk]) jobGroups[jk] = { jobTitle: jk, jobId: item.jobId, client: item.client, candidates: [] };
+        jobGroups[jk].candidates.push(item);
+      });
+      var jobList = Object.values(jobGroups).sort(function(a, b) { return b.candidates.length - a.candidates.length; });
+
+      jobList.forEach(function(jg) {
+        html += '<div style="background:#f8fafc;border-radius:10px;padding:16px;margin-bottom:12px;border:1px solid #e2e8f0">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+        html += '<div><div style="font-weight:700;font-size:14px;color:#0E2E47">' + esc(jg.jobTitle) + '</div>';
+        if (jg.client) html += '<div style="font-size:12px;color:#64748b">' + esc(jg.client) + '</div>';
+        html += '</div>';
+        html += '<span style="background:' + stageData.color + '20;color:' + stageData.color + ';padding:4px 10px;border-radius:12px;font-size:12px;font-weight:700">' + jg.candidates.length + ' candidate' + (jg.candidates.length !== 1 ? 's' : '') + '</span>';
+        html += '</div>';
+        jg.candidates.forEach(function(c) {
+          html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1px solid #e2e8f0">';
+          html += '<span class="name-link" onclick="openDetail(' + c.candidateId + ',{})" style="font-size:13px;font-weight:600;color:#176087;cursor:pointer">' + esc(c.candidateName) + '</span>';
+          html += '<span style="font-size:11px;color:#94a3b8;margin-left:auto">' + esc(c.date) + '</span>';
+          if (c.submittedBy) html += '<span style="font-size:11px;color:#94a3b8">by ' + esc(c.submittedBy) + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+      });
+    } else {
+      // Candidate view — table
+      var cols = [
+        {key:"candidateName",label:"Candidate",render:function(r){return '<span class="name-link" onclick="openDetail('+r.candidateId+',{})">' + esc(r.candidateName) + '</span>';},exportVal:function(r){return r.candidateName||"";}},
+        {key:"jobTitle",label:"Job",exportVal:function(r){return r.jobTitle||"";}},
+        {key:"client",label:"Client",render:function(r){return r.client?esc(r.client):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.client||"";}},
+        {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}},
+        {key:"date",label:"Date",exportVal:function(r){return r.date||"";}},
+        {key:"submittedBy",label:"Submitted By",render:function(r){return r.submittedBy?esc(r.submittedBy):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.submittedBy||"";}}
+      ];
+      _lastData.pipeline = items;
+      html += '<div style="margin-bottom:10px;text-align:right"><button class="btn-export" onclick="exportCSV(\'pipeline-' + _pipeStage + '.csv\',slCols||[],_lastData.pipeline||[])">📥 Export CSV</button></div>';
+      html += '<div class="table-wrap">' + makeTable(cols, items) + '</div>';
+    }
+  } else if (!_pipeStage) {
+    // No stage selected — show a hint
+    html += '<div style="text-align:center;padding:32px;color:#94a3b8;font-size:14px">Click a stage above to drill into the details</div>';
+  }
+
+  return html;
+}
+
 function renderReports(stats){
   var s=stats||{activeCandidates:6,openJobs:5,activePlacements:8,dhCount:4,conCount:5,dhRevenue:109000,conRevenue:467000};
   var dhRev=s.dhRevenue||0; var cRev=s.conRevenue||0;
@@ -1929,7 +2086,7 @@ function slSetFilter(type, val) {
 }
 function slRerender() {
   if (_slRawData) {
-    var container = document.getElementById("page-content");
+    var container = document.getElementById("content");
     if (container) container.innerHTML = renderSmartLists(_slRawData);
   }
 }
@@ -4010,6 +4167,10 @@ async function loadPage(){
         h=renderJobs(jr.data,jr.total);break;
       case "smartmatch":
         h=renderSmartMatch();break;
+      case "pipeline":
+        var pipeResult=await loadPipeline(_pipeDays);
+        _pipeData=pipeResult;
+        h=renderPipeline(pipeResult);break;
       case "placements":
         var pr=await loadPlacements(q,sf,tf);
         h=renderPlacements(pr.data,pr.total);break;

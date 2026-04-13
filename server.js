@@ -861,22 +861,24 @@ app.get("/api/clients", async (req, res) => {
     // Try to fetch placement counts per client (non-blocking)
     let placByClient = {};
     try {
-      const placData = await bhFetchAll("query/Placement", {
-        where: "status='Approved' OR status='Actively On Contract'",
+      const placData = await bhFetchAll("search/Placement", {
+        query: "status:Approved OR status:\"Actively On Contract\"",
         fields: "id,candidate,jobOrder",
       });
-      // Group by client — jobOrder has a nested clientCorporation ref
+      // Group by client — jobOrder may or may not have clientCorporation expanded
       (placData.data || []).forEach(function (p) {
-        var cid = null;
-        if (p.jobOrder && p.jobOrder.clientCorporation) {
-          cid = p.jobOrder.clientCorporation.id || null;
-        }
-        if (cid) {
-          if (!placByClient[cid]) placByClient[cid] = [];
-          var cName = "Unknown";
-          if (p.candidate) cName = ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim();
-          placByClient[cid].push({ candidateName: cName });
-        }
+        try {
+          var cid = null;
+          if (p.jobOrder && p.jobOrder.clientCorporation) {
+            cid = typeof p.jobOrder.clientCorporation === "object" ? p.jobOrder.clientCorporation.id : p.jobOrder.clientCorporation;
+          }
+          if (cid) {
+            if (!placByClient[cid]) placByClient[cid] = [];
+            var cName = "Unknown";
+            if (p.candidate) cName = ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim();
+            placByClient[cid].push({ candidateName: cName });
+          }
+        } catch (innerErr) { /* skip this placement */ }
       });
     } catch (placErr) {
       console.log("[Clients] Placement query failed (non-blocking):", placErr.message);
@@ -3141,6 +3143,89 @@ app.get("/api/candidates/:id/pipeline", async (req, res) => {
   } catch (e) {
     console.error("[Pipeline]", e.message);
     res.json({ submitted: 0, interviewed: 0, offered: 0, placed: 0, rejected: 0, declined: 0, other: 0, total: 0, placements: 0 });
+  }
+});
+
+// ═══ PIPELINE OVERVIEW ══════════════════════════════════════════
+app.get("/api/pipeline", async (req, res) => {
+  try {
+    await authenticate();
+    var days = parseInt(req.query.days) || 90;
+    var cutoff = Date.now() - days * 86400000;
+
+    // Fetch all submissions within the time range
+    const subData = await bhFetchAll("query/JobSubmission", {
+      where: `isDeleted=false AND dateAdded>=${cutoff}`,
+      fields: "id,candidate,jobOrder,status,dateAdded,sendingUser",
+      orderBy: "-dateAdded",
+    });
+    var subs = subData.data || [];
+
+    // Categorize each submission
+    var stages = {
+      submitted: { label: "Submitted", color: "#176087", items: [] },
+      interviewed: { label: "Interviewed", color: "#7c3aed", items: [] },
+      offered: { label: "Offered", color: "#0891b2", items: [] },
+      placed: { label: "Placed", color: "#16a34a", items: [] },
+      rejected: { label: "Rejected", color: "#ef4444", items: [] },
+      declined: { label: "Declined", color: "#f59e0b", items: [] },
+      other: { label: "Other", color: "#64748b", items: [] },
+    };
+
+    subs.forEach(function(s) {
+      var st = (s.status || "").toLowerCase();
+      var stage;
+      if (st.indexOf("interview") !== -1) stage = "interviewed";
+      else if (st.indexOf("placed") !== -1 || st === "approved") stage = "placed";
+      else if (st.indexOf("reject") !== -1 || st.indexOf("not selected") !== -1) stage = "rejected";
+      else if (st.indexOf("decline") !== -1 || st.indexOf("withdrew") !== -1 || st.indexOf("withdrawn") !== -1) stage = "declined";
+      else if (st.indexOf("offer") !== -1) stage = "offered";
+      else if (st.indexOf("submit") !== -1 || st.indexOf("internal") !== -1 || st.indexOf("client") !== -1 || st === "new lead" || st === "new") stage = "submitted";
+      else stage = "other";
+
+      var candName = "Unknown";
+      var candId = null;
+      if (s.candidate) {
+        candName = ((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim();
+        candId = s.candidate.id || null;
+      }
+      var jobTitle = "";
+      var jobId = null;
+      var clientName = "";
+      if (s.jobOrder) {
+        jobTitle = s.jobOrder.title || "";
+        jobId = s.jobOrder.id || null;
+        if (s.jobOrder.clientCorporation) {
+          clientName = typeof s.jobOrder.clientCorporation === "object" ? (s.jobOrder.clientCorporation.name || "") : "";
+        }
+      }
+      stages[stage].items.push({
+        id: s.id,
+        candidateName: candName,
+        candidateId: candId,
+        jobTitle: jobTitle,
+        jobId: jobId,
+        client: clientName,
+        status: s.status || "",
+        date: s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "",
+        dateRaw: s.dateAdded || 0,
+        submittedBy: s.sendingUser ? ((s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "")).trim() : "",
+      });
+    });
+
+    // Build summary counts
+    var summary = {};
+    var totalAll = 0;
+    Object.keys(stages).forEach(function(key) {
+      summary[key] = stages[key].items.length;
+      totalAll += stages[key].items.length;
+    });
+    summary.total = totalAll;
+
+    res.json({ stages, summary, days, total: totalAll });
+  } catch (e) {
+    console.error("[Pipeline]", e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
