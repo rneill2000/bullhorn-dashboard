@@ -915,24 +915,12 @@ app.get("/api/clients", async (req, res) => {
       where += ` AND status='${status}'`;
     }
 
-    // Fetch clients — omit owner from initial query (not a valid search field for ClientCorporation)
-    let data;
-    try {
-      const searchQuery = q ? `name:${q}*` : "isDeleted:0";
-      const fullQuery = (status && status !== "All") ? `(${searchQuery}) AND status:"${status}"` : searchQuery;
-      data = await bhFetchAll("search/ClientCorporation", {
-        query: fullQuery,
-        fields: "id,name,address,status,dateLastModified",
-        sort: "-dateLastModified",
-      });
-    } catch (searchErr) {
-      console.log("[Clients] Search failed, falling back to query:", searchErr.message);
-      data = await bhFetchAll("query/ClientCorporation", {
-        where,
-        fields: "id,name,address,status,dateLastModified",
-        orderBy: "-dateLastModified",
-      });
-    }
+    // Fetch clients via query endpoint (owner not valid on ClientCorporation, omitted)
+    let data = await bhFetchAll("query/ClientCorporation", {
+      where,
+      fields: "id,name,address,status,dateLastModified",
+      orderBy: "-dateLastModified",
+    });
 
     // Fetch owner names per client via entity endpoint (non-blocking)
     let ownerMap = {};
@@ -4381,7 +4369,7 @@ app.get("/api/ask", async (req, res) => {
       answer = `You have **${r.total}** active placements.`;
 
     } else if (question.match(/how many\s+clients/)) {
-      const r = await bhFetchAll("search/ClientCorporation", { query: "isDeleted:0", fields: "id", });
+      const r = await bhFetchAll("query/ClientCorporation", { where: "id IS NOT NULL", fields: "id", });
       answer = `You have **${r.total}** clients in Bullhorn.`;
 
     } else if (question.match(/urgent|hot/) && question.match(/jobs/)) {
