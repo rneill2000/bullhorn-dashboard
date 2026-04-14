@@ -1612,6 +1612,110 @@ app.get("/api/expiring-placements", async (req, res) => {
   }
 });
 
+// ── Contract End Matching: Match expiring consultants to open jobs ──
+app.get("/api/contract-end-matches", async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 35;
+    const now = Date.now();
+    const futureMs = now + days * 86400000;
+
+    // 1. Get expiring placements with candidate details
+    const expData = await bhFetchAll("query/Placement", {
+      where: `dateEnd IS NOT NULL AND dateEnd >= ${now} AND dateEnd <= ${futureMs} AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))`,
+      fields: "id,candidate,jobOrder,dateEnd,payRate,clientBillRate",
+      orderBy: "dateEnd",
+    });
+    var placements = (expData.data || []).filter(function(p) {
+      var et = (p.employmentType || "").toLowerCase();
+      return et.indexOf("direct") < 0 && et.indexOf("permanent") < 0;
+    });
+    if (placements.length === 0) return res.json({ data: [], total: 0 });
+
+    // 2. Get candidate details (certs, role, grade, location)
+    var candidateIds = [...new Set(placements.map(p => p.candidate ? p.candidate.id : null).filter(Boolean))];
+    var candidateMap = {};
+    for (var i = 0; i < candidateIds.length; i += 20) {
+      var batch = candidateIds.slice(i, i + 20);
+      var details = await Promise.all(batch.map(id =>
+        bhFetch("entity/Candidate/" + id, { fields: "id,firstName,lastName,customText1,customText2,customText5,customText6,address(state)" }).catch(() => null)
+      ));
+      details.forEach(function(d) {
+        if (d && d.data) {
+          var c = d.data;
+          candidateMap[c.id] = {
+            name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+            primaryCert: (Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1) || "",
+            secondaryCert: (Array.isArray(c.customText2) ? c.customText2.join(", ") : c.customText2) || "",
+            epicRole: c.customText5 || "",
+            grade: c.customText6 || "",
+            state: c.address ? c.address.state : "",
+          };
+        }
+      });
+    }
+
+    // 3. Get all open jobs
+    var openJobs = await bhFetchAll("search/JobOrder", {
+      query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")',
+      fields: "id,title,clientCorporation,customText1,customText5,numOpenings,address,payRate,clientBillRate,type",
+      count: 200,
+    });
+    var jobs = (openJobs.data || []);
+    if (jobs.length === 0) return res.json({ data: placements.map(p => ({ placement: p, matches: [] })), total: placements.length });
+
+    // 4. Match each expiring consultant to open jobs by cert overlap
+    var results = placements.map(function(p) {
+      var candId = p.candidate ? p.candidate.id : null;
+      var cand = candidateMap[candId] || {};
+      var daysLeft = p.dateEnd ? Math.ceil((p.dateEnd - now) / 86400000) : null;
+      var candCerts = ((cand.primaryCert || "") + ", " + (cand.secondaryCert || "")).toLowerCase().split(/,\s*/).filter(Boolean);
+
+      // Score each job
+      var scored = jobs.map(function(j) {
+        var jobCerts = ((Array.isArray(j.customText1) ? j.customText1.join(", ") : j.customText1) || "").toLowerCase().split(/,\s*/).filter(Boolean);
+        var certOverlap = 0;
+        candCerts.forEach(function(cc) {
+          jobCerts.forEach(function(jc) {
+            if (cc && jc && (cc.indexOf(jc) >= 0 || jc.indexOf(cc) >= 0)) certOverlap++;
+          });
+        });
+        var roleMatch = cand.epicRole && j.customText5 && cand.epicRole.toLowerCase() === (j.customText5 || "").toLowerCase() ? 2 : 0;
+        var score = certOverlap * 3 + roleMatch;
+        return { job: j, score: score, certOverlap: certOverlap, roleMatch: roleMatch > 0 };
+      }).filter(function(s) { return s.score > 0; })
+        .sort(function(a, b) { return b.score - a.score; })
+        .slice(0, 5);
+
+      return {
+        candidateId: candId,
+        candidateName: cand.name || (p.candidate ? (p.candidate.firstName + " " + p.candidate.lastName) : ""),
+        primaryCert: cand.primaryCert || "",
+        grade: cand.grade || "",
+        currentJob: p.jobOrder ? p.jobOrder.title : "",
+        endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : "",
+        daysLeft: daysLeft,
+        urgency: daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
+        matches: scored.map(function(s) {
+          return {
+            jobId: s.job.id,
+            title: s.job.title || "",
+            client: s.job.clientCorporation ? s.job.clientCorporation.name : "",
+            openings: s.job.numOpenings || 0,
+            certOverlap: s.certOverlap,
+            roleMatch: s.roleMatch,
+            score: s.score,
+          };
+        }),
+      };
+    });
+
+    res.json({ data: results, total: results.length });
+  } catch (e) {
+    console.error("[Contract End Matches]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Smart Match: Given a job, find best-fit candidates ──
 app.get("/api/smart-match/:jobId", async (req, res) => {
   try {
@@ -3617,10 +3721,10 @@ app.get("/api/dashboard", async (req, res) => {
 
     const now = Date.now();
     const nowMs = now;
-    const in30DaysMs = now + 30 * 86400000;
+    const in35DaysMs = now + 35 * 86400000;
     const past7 = new Date(now - 7 * 86400000).toISOString().split("T")[0].replace(/-/g, "");
 
-    const [stats, urgentJobs, newCandidates, expiringPlac, recentlyAvail] = await Promise.all([
+    const [stats, urgentJobs, newCandidates, expiringPlac, recentlyAvail, newJobsThisWeek] = await Promise.all([
       // Basic stats
       (async () => {
         const [c, j] = await Promise.all([
@@ -3645,7 +3749,7 @@ app.get("/api/dashboard", async (req, res) => {
       }),
       // Expiring placements (next 30 days) — exclude full-time/permanent
       bhFetchAll("query/Placement", {
-        where: `dateEnd IS NOT NULL AND dateEnd >= ${nowMs} AND dateEnd <= ${in30DaysMs} AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))`,
+        where: `dateEnd IS NOT NULL AND dateEnd >= ${nowMs} AND dateEnd <= ${in35DaysMs} AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))`,
         fields: "id,candidate,jobOrder,dateEnd,payRate,clientBillRate,employmentType",
         orderBy: "dateEnd",
       }),
@@ -3660,6 +3764,12 @@ app.get("/api/dashboard", async (req, res) => {
           sort: "dateAvailable",
         });
       })(),
+      // Jobs added in last 7 days
+      bhFetch("search/JobOrder", {
+        query: `isDeleted:0 AND dateAdded:[${past7} TO *]`,
+        fields: "id",
+        count: 1,
+      }),
     ]);
 
     const PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
@@ -3727,6 +3837,7 @@ app.get("/api/dashboard", async (req, res) => {
         available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
       })),
       availableSoonTotal: recentlyAvail.total || 0,
+      newJobsThisWeek: newJobsThisWeek.total || 0,
     });
   } catch (e) {
     console.error("[Dashboard]", e.message);

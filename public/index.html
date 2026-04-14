@@ -2026,8 +2026,8 @@ function renderConsultants(data,bhTotal){
     {key:"title",label:"Title",exportVal:function(r){return r.title||"";}},
     {key:"primaryCert",label:"Primary Cert",render:function(r){return r.primaryCert?'<span style="font-size:12px;color:#176087;max-width:200px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.primaryCert)+'">'+esc(r.primaryCert)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.primaryCert||"";}},
     {key:"grade",label:"Grade",render:function(r){var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};return r.grade?'<span class="fw600" style="color:'+(gc[r.grade]||"#64748b")+'">'+esc(r.grade)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.grade||"";}},
-    {key:"location",label:"Location",render:function(r){return r.location?'\uD83D\uDCCD '+esc(r.location):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.location||"";}},
     {key:"email",label:"Email",render:function(r){return r.email?'<a href="mailto:'+esc(r.email)+'" style="color:#176087;font-size:13px" onclick="event.stopPropagation()">'+esc(r.email)+'</a>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.email||"";}},
+    {key:"owner",label:"Owner",render:function(r){return r.owner?esc(r.owner):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.owner||"";}},
     {key:"status",label:"Status",render:function(r){return '<span class="badge" style="background:#10b98118;color:#10b981;border:1px solid #10b98140">Active Consultant</span>';},exportVal:function(r){return "Placed";}}
   ];
 
@@ -2042,7 +2042,7 @@ function renderConsultants(data,bhTotal){
   var q=getQ();
   if(q){
     f=f.filter(function(r){
-      return matchQ(r.firstName+" "+r.lastName)||matchQ(r.title||"")||matchQ(r.primaryCert||"")||matchQ(r.location||"");
+      return matchQ(r.firstName+" "+r.lastName)||matchQ(r.title||"")||matchQ(r.primaryCert||"")||matchQ(r.owner||"");
     });
   }
 
@@ -2263,6 +2263,50 @@ function renderMyDash(d){
   return html;
 }
 
+/* ═══ CONTRACT END MATCHING ═══ */
+function showContractEndMatches(){
+  var mc=document.getElementById("main-content");
+  if(!mc) return;
+  mc.innerHTML='<div style="padding:24px"><div style="display:flex;align-items:center;gap:12px;margin-bottom:20px"><button class="chip" onclick="setPage(\'home\')" style="font-size:12px">\u2190 Back</button><div><div style="font-size:20px;font-weight:700;color:#0f172a">Contract End \u2192 Next Role Matching</div><div style="font-size:13px;color:#94a3b8">AI-suggested open positions for consultants with expiring contracts</div></div></div><div id="cem-loading" style="text-align:center;padding:40px;color:#94a3b8">Loading matches...</div></div>';
+  apiFetch("contract-end-matches").then(function(r){
+    var el=document.getElementById("cem-loading");
+    if(!el) return;
+    var results=r.data||[];
+    if(results.length===0){el.innerHTML='<div style="color:#94a3b8;font-size:14px">No expiring placements found in the next 35 days.</div>';return;}
+    var h='';
+    results.forEach(function(c){
+      var urg=c.urgency==="critical"?"#dc2626":c.urgency==="warning"?"#f59e0b":"#10b981";
+      h+='<div style="border:1px solid #e9eef4;border-radius:12px;padding:16px;margin-bottom:16px">';
+      h+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
+      h+='<div style="width:36px;height:36px;border-radius:8px;background:'+urg+'14;display:flex;align-items:center;justify-content:center;font-weight:700;color:'+urg+';font-size:12px;flex-shrink:0">'+c.daysLeft+'d</div>';
+      h+='<div style="flex:1"><div style="font-weight:700;font-size:14px;color:#0f172a;cursor:pointer" onclick="candClick('+results.indexOf(c)+');window._lastData=window._lastData||{};window._lastData.contractEnd=[{id:'+c.candidateId+'}]">'+esc(c.candidateName)+'</div>';
+      h+='<div style="font-size:12px;color:#64748b">'+esc(c.primaryCert||"No certs")+(c.grade?' \u2022 Grade '+esc(c.grade):'')+' \u2022 Current: '+esc(c.currentJob)+' \u2022 Ends '+esc(c.endDate)+'</div></div></div>';
+      if(c.matches.length===0){
+        h+='<div style="padding:8px 12px;color:#94a3b8;font-size:13px;font-style:italic">No matching open jobs found based on certifications</div>';
+      } else {
+        h+='<div style="margin-left:48px">';
+        h+='<div style="font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;margin-bottom:6px">Suggested Next Roles</div>';
+        c.matches.forEach(function(m){
+          h+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f8fafc">';
+          h+='<div style="flex:1;min-width:0"><span style="font-weight:600;font-size:13px;color:#176087;cursor:pointer" onclick="event.stopPropagation()">'+esc(m.title)+'</span>';
+          h+=' <span style="font-size:12px;color:#64748b">\u2022 '+esc(m.client)+'</span></div>';
+          h+='<div style="display:flex;gap:6px;flex-shrink:0">';
+          if(m.roleMatch) h+='<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#10b98118;color:#10b981">Role Match</span>';
+          h+='<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#176087;color:#fff">'+m.certOverlap+' cert'+(m.certOverlap!==1?'s':'')+' match</span>';
+          h+='<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#f1f5f9;color:#64748b">'+m.openings+' opening'+(m.openings!==1?'s':'')+'</span>';
+          h+='</div></div>';
+        });
+        h+='</div>';
+      }
+      h+='</div>';
+    });
+    el.innerHTML=h;
+  }).catch(function(e){
+    var el=document.getElementById("cem-loading");
+    if(el) el.innerHTML='<div style="color:#dc2626;font-size:14px">Error loading matches: '+esc(e.message||"Unknown error")+'</div>';
+  });
+}
+
 /* ═══ HOME DASHBOARD ═══ */
 function renderHome(d){
   if(!d) return showConnectionError();
@@ -2273,15 +2317,16 @@ function renderHome(d){
   html+=statCard("\uD83D\uDCBC","Open Jobs",d.stats.openJobs,"Accepting candidates","#f59e0b");
   html+=statCard("\uD83D\uDD25","Urgent/Hot Jobs",d.urgentJobsTotal,"Need attention","#dc2626");
   html+=statCard("\uD83C\uDD95","New This Week",d.newCandidatesTotal,"Candidates added","#10b981");
+  html+=statCard("\uD83D\uDCCB","New Jobs This Week",d.newJobsThisWeek||0,"Jobs added","#8b5cf6");
   html+='</div>';
 
   // Two-column action grid
   html+='<div class="chart-grid">';
 
   // Expiring Placements
-  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u26A0\uFE0F Expiring Placements <span style="font-size:12px;font-weight:400;color:#94a3b8">Next 30 days</span></h3>';
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u26A0\uFE0F Expiring Placements <span style="font-size:12px;font-weight:400;color:#94a3b8">Next 35 days</span></h3>';
   if(d.expiringPlacements.length===0){
-    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">\u2705 No placements expiring in the next 30 days</div>';
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">\u2705 No placements expiring in the next 35 days</div>';
   } else {
     d.expiringPlacements.forEach(function(p){
       var urg=p.daysLeft<=14?"#dc2626":p.daysLeft<=30?"#f59e0b":"#94a3b8";
@@ -2289,9 +2334,9 @@ function renderHome(d){
       html+='<div style="width:40px;height:40px;border-radius:10px;background:'+urg+'14;display:flex;align-items:center;justify-content:center;font-weight:700;color:'+urg+';font-size:13px;flex-shrink:0">'+p.daysLeft+'d</div>';
       html+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(p.candidate)+'</div>';
       html+='<div style="font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(p.job)+' \u2022 Ends '+esc(p.endDate)+'</div></div>';
-      // margin amount removed per Rachel's request
       html+='</div>';
     });
+    html+='<div style="padding:10px 0;text-align:center"><button class="chip on" style="font-size:12px" onclick="showContractEndMatches()">Find Next Roles for Expiring Consultants</button></div>';
   }
   html+='</div>';
 
@@ -4296,7 +4341,7 @@ function renderRevenue(data){
     h+='<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:16px;margin-bottom:20px">';
     h+='<div style="font-weight:700;color:#92400e;margin-bottom:8px">\u26A0\uFE0F Revenue at Risk</div>';
     h+='<div style="display:flex;gap:24px;margin-bottom:10px">';
-    h+='<span><strong>Next 30 days:</strong> '+fmtDollar(data.expiringRevenue.next30)+'/mo</span>';
+    h+='<span><strong>Next 35 days:</strong> '+fmtDollar(data.expiringRevenue.next30)+'/mo</span>';
     h+='<span><strong>Next 60 days:</strong> '+fmtDollar(data.expiringRevenue.next60)+'/mo</span>';
     h+='<span><strong>Next 90 days:</strong> '+fmtDollar(data.expiringRevenue.next90)+'/mo</span>';
     h+='</div>';
