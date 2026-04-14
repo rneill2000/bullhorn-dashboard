@@ -1716,6 +1716,94 @@ app.get("/api/contract-end-matches", async (req, res) => {
   }
 });
 
+// ── Cert Expiration Tracker ──
+app.get("/api/cert-tracker", async (req, res) => {
+  try {
+    var now = Date.now();
+    var candidates = [];
+
+    if (db.ready) {
+      try {
+        var rows = await db.getAll(`
+          SELECT id, first_name, last_name, custom_text1, custom_text2, custom_text5, custom_text6,
+                 status, custom_date1, custom_date2, custom_date3, owner_name, email
+          FROM candidates
+          WHERE custom_text1 IS NOT NULL AND custom_text1 != ''
+            AND (status = 'Active' OR status = 'Placed' OR status = 'Available')
+            AND (is_deleted IS NULL OR is_deleted = false)
+          ORDER BY last_name ASC
+        `);
+        candidates = rows.map(function(c) {
+          var certExpDate = c.custom_date1 ? new Date(c.custom_date1).getTime() : null;
+          var daysUntilExpiry = certExpDate ? Math.ceil((certExpDate - now) / 86400000) : null;
+          return {
+            id: c.id,
+            name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+            primaryCert: c.custom_text1 || "",
+            secondaryCert: c.custom_text2 || "",
+            epicRole: c.custom_text5 || "",
+            grade: c.custom_text6 || "",
+            status: c.status || "",
+            certExpirationDate: certExpDate ? new Date(certExpDate).toLocaleDateString() : null,
+            daysUntilExpiry: daysUntilExpiry,
+            urgency: daysUntilExpiry === null ? "unknown" : daysUntilExpiry <= 0 ? "expired" : daysUntilExpiry <= 30 ? "critical" : daysUntilExpiry <= 90 ? "warning" : "ok",
+            owner: c.owner_name || "",
+            email: c.email || "",
+          };
+        });
+      } catch (dbErr) { console.log("[Cert Tracker] DB error:", dbErr.message); }
+    }
+
+    if (candidates.length === 0) {
+      // Fallback to Bullhorn
+      var bhData = await bhFetchAll("search/Candidate", {
+        query: 'isDeleted:0 AND (status:"Active" OR status:"Placed" OR status:"Available") AND customText1:[* TO *]',
+        fields: "id,firstName,lastName,customText1,customText2,customText5,customText6,status,customDate1,customDate2,customDate3,owner,email",
+        sort: "lastName",
+      });
+      candidates = (bhData.data || []).map(function(c) {
+        var certExpDate = c.customDate1 ? new Date(c.customDate1).getTime() : null;
+        var daysUntilExpiry = certExpDate ? Math.ceil((certExpDate - now) / 86400000) : null;
+        return {
+          id: c.id,
+          name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+          primaryCert: (Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1) || "",
+          secondaryCert: (Array.isArray(c.customText2) ? c.customText2.join(", ") : c.customText2) || "",
+          epicRole: c.customText5 || "",
+          grade: c.customText6 || "",
+          status: c.status || "",
+          certExpirationDate: certExpDate ? new Date(certExpDate).toLocaleDateString() : null,
+          daysUntilExpiry: daysUntilExpiry,
+          urgency: daysUntilExpiry === null ? "unknown" : daysUntilExpiry <= 0 ? "expired" : daysUntilExpiry <= 30 ? "critical" : daysUntilExpiry <= 90 ? "warning" : "ok",
+          owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
+          email: c.email || "",
+        };
+      });
+    }
+
+    // Sort: expired first, then by days until expiry, then unknown at end
+    candidates.sort(function(a, b) {
+      var aSort = a.daysUntilExpiry === null ? 99999 : a.daysUntilExpiry;
+      var bSort = b.daysUntilExpiry === null ? 99999 : b.daysUntilExpiry;
+      return aSort - bSort;
+    });
+
+    var expired = candidates.filter(c => c.urgency === "expired").length;
+    var critical = candidates.filter(c => c.urgency === "critical").length;
+    var warning = candidates.filter(c => c.urgency === "warning").length;
+    var unknown = candidates.filter(c => c.urgency === "unknown").length;
+
+    res.json({
+      data: candidates,
+      total: candidates.length,
+      summary: { expired, critical, warning, unknown },
+    });
+  } catch (e) {
+    console.error("[Cert Tracker]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Smart Match: Given a job, find best-fit candidates ──
 app.get("/api/smart-match/:jobId", async (req, res) => {
   try {
@@ -2681,6 +2769,200 @@ app.get("/api/trends", async (req, res) => {
   } catch (e) {
     console.error("[Trends]", e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Shareable Market Intelligence Report ──────
+app.get("/report/market", async (req, res) => {
+  try {
+    // Fetch trend data internally
+    var trendRes = await new Promise(function(resolve, reject) {
+      var mockRes = { json: resolve, status: function() { return { json: reject }; } };
+      // Re-fetch trends inline
+      (async () => {
+        var certDemand = [], certSupply = [], supplyDemand = [], rateTrends = [], geoDemand = [];
+        var useDB = db.ready;
+        try {
+          var jobCertRows = [];
+          if (useDB) {
+            var dbJobs = await db.query("SELECT custom_text1 FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND custom_text1 IS NOT NULL AND custom_text1 != ''");
+            jobCertRows = (dbJobs.rows || []).map(r => r.custom_text1);
+          }
+          if (jobCertRows.length === 0) {
+            var bhJobs = await bhFetchAll("search/JobOrder", { query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")', fields: "id,customText1", sort: "-dateAdded" });
+            jobCertRows = (bhJobs.data || []).map(j => j.customText1 || "").filter(Boolean);
+          }
+          var certCounts = {};
+          jobCertRows.forEach(ct1 => { (Array.isArray(ct1) ? ct1.join(", ") : ct1).split(",").map(s => s.trim()).filter(Boolean).forEach(c => { certCounts[c] = (certCounts[c] || 0) + 1; }); });
+          certDemand = Object.entries(certCounts).map(e => ({ cert: e[0], openJobs: e[1] })).sort((a, b) => b.openJobs - a.openJobs).slice(0, 15);
+        } catch (e) {}
+        try {
+          var candCertRows = [];
+          if (useDB) {
+            var dbCands = await db.query("SELECT custom_text1 FROM candidates WHERE status = 'Active' AND custom_text1 IS NOT NULL AND custom_text1 != ''");
+            candCertRows = (dbCands.rows || []).map(r => r.custom_text1);
+          }
+          if (candCertRows.length === 0) {
+            var bhCands = await bhFetchAll("search/Candidate", { query: 'isDeleted:0 AND status:Active', fields: "id,customText1", sort: "-dateLastModified" });
+            candCertRows = (bhCands.data || []).map(c => c.customText1 || "").filter(Boolean);
+          }
+          var supplyCounts = {};
+          candCertRows.forEach(ct1 => { (Array.isArray(ct1) ? ct1.join(", ") : ct1).split(",").map(s => s.trim()).filter(Boolean).forEach(c => { supplyCounts[c] = (supplyCounts[c] || 0) + 1; }); });
+          certSupply = Object.entries(supplyCounts).map(e => ({ cert: e[0], activeCandidates: e[1] })).sort((a, b) => b.activeCandidates - a.activeCandidates).slice(0, 15);
+        } catch (e) {}
+        var sdMap = {};
+        certDemand.forEach(d => { sdMap[d.cert] = { cert: d.cert, demand: d.openJobs, supply: 0 }; });
+        certSupply.forEach(s => { if (sdMap[s.cert]) sdMap[s.cert].supply = s.activeCandidates; else sdMap[s.cert] = { cert: s.cert, demand: 0, supply: s.activeCandidates }; });
+        supplyDemand = Object.values(sdMap).map(sd => { sd.ratio = sd.demand > 0 ? Math.round((sd.supply / sd.demand) * 10) / 10 : null; sd.status = sd.ratio === null ? "no demand" : sd.ratio < 1 ? "shortage" : sd.ratio < 3 ? "tight" : "available"; return sd; }).sort((a, b) => (a.ratio || 999) - (b.ratio || 999));
+        try {
+          var placRows = [];
+          if (useDB) {
+            var dbPlac = await db.query("SELECT date_begin, pay_rate, client_bill_rate, employment_type FROM placements WHERE pay_rate > 0 AND client_bill_rate > 0 AND date_begin IS NOT NULL ORDER BY date_begin ASC");
+            placRows = dbPlac.rows || [];
+          }
+          var monthBuckets = {};
+          placRows.forEach(p => {
+            if (p.employment_type === "Direct Hire" || p.employment_type === "Permanent") return;
+            var d = new Date(p.date_begin); var key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+            if (!monthBuckets[key]) monthBuckets[key] = { month: key, billRates: [], payRates: [] };
+            monthBuckets[key].billRates.push(Number(p.client_bill_rate)); monthBuckets[key].payRates.push(Number(p.pay_rate));
+          });
+          rateTrends = Object.values(monthBuckets).map(b => {
+            var avgBill = b.billRates.reduce((s, v) => s + v, 0) / b.billRates.length;
+            var avgPay = b.payRates.reduce((s, v) => s + v, 0) / b.payRates.length;
+            return { month: b.month, avgBillRate: Math.round(avgBill), avgPayRate: Math.round(avgPay), placements: b.billRates.length };
+          }).sort((a, b) => a.month.localeCompare(b.month)).slice(-12);
+        } catch (e) {}
+        try {
+          var geoRows = [];
+          if (useDB) {
+            var dbGeo = await db.query("SELECT address_state, COUNT(*) as cnt FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND address_state IS NOT NULL AND address_state != '' GROUP BY address_state ORDER BY cnt DESC LIMIT 10");
+            geoRows = dbGeo.rows || [];
+          }
+          geoDemand = geoRows.map(r => ({ state: r.address_state, openJobs: parseInt(r.cnt) }));
+        } catch (e) {}
+        resolve({ certDemand, certSupply, supplyDemand, rateTrends, geoDemand });
+      })();
+    });
+
+    var d = trendRes;
+    var now = new Date();
+    var dateStr = now.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    var qtr = "Q" + Math.ceil((now.getMonth() + 1) / 3) + " " + now.getFullYear();
+
+    // Build branded HTML report
+    var html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Epic Staffing Market Intelligence | Anura Connect</title>
+<style>
+@media print { .no-print { display:none !important; } body { font-size:11px; } .report-card { break-inside:avoid; } }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc;color:#0f172a;line-height:1.5}
+.report-wrap{max-width:900px;margin:0 auto;padding:32px 24px}
+.report-header{text-align:center;margin-bottom:32px;padding-bottom:24px;border-bottom:3px solid #176087}
+.report-header h1{font-size:28px;font-weight:800;color:#0E2E47;margin-bottom:4px}
+.report-header .subtitle{font-size:16px;color:#176087;font-weight:600;margin-bottom:8px}
+.report-header .date{font-size:13px;color:#94a3b8}
+.report-header .brand{font-size:13px;color:#64748b;margin-top:8px}
+.section{margin-bottom:28px}
+.section h2{font-size:18px;font-weight:700;color:#0E2E47;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid #e9eef4}
+.section p.insight{font-size:14px;color:#475569;margin-bottom:12px;line-height:1.6}
+.report-card{background:#fff;border:1px solid #e9eef4;border-radius:10px;padding:16px;margin-bottom:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 10px;background:#f1f5f9;color:#64748b;font-weight:600;font-size:12px;text-transform:uppercase}
+td{padding:8px 10px;border-bottom:1px solid #f1f5f9}
+.badge{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600}
+.badge-shortage{background:#fef2f2;color:#dc2626}
+.badge-tight{background:#fffbeb;color:#d97706}
+.badge-available{background:#f0fdf4;color:#16a34a}
+.stat-row{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.stat-box{flex:1;min-width:120px;background:#fff;border:1px solid #e9eef4;border-radius:10px;padding:14px;text-align:center}
+.stat-box .val{font-size:24px;font-weight:800;color:#176087}
+.stat-box .lbl{font-size:11px;color:#94a3b8;text-transform:uppercase;font-weight:600}
+.bar-wrap{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.bar-label{width:160px;font-size:12px;font-weight:600;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{height:20px;border-radius:4px;min-width:2px}
+.bar-val{font-size:12px;color:#64748b;width:30px;text-align:right}
+.footer{text-align:center;margin-top:32px;padding-top:16px;border-top:2px solid #e9eef4;font-size:12px;color:#94a3b8}
+.cta{display:inline-block;margin-top:12px;padding:10px 24px;background:#176087;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px}
+.print-btn{position:fixed;bottom:24px;right:24px;padding:12px 20px;background:#176087;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.15);font-size:14px}
+</style></head><body>
+<button class="print-btn no-print" onclick="window.print()">Download PDF</button>
+<div class="report-wrap">
+<div class="report-header">
+  <h1>Epic Staffing Market Intelligence</h1>
+  <div class="subtitle">${qtr} Report</div>
+  <div class="date">Generated ${dateStr}</div>
+  <div class="brand">Prepared by Anura Connect &bull; anuraconnect.com</div>
+</div>`;
+
+    // Stats summary
+    var totalDemand = d.certDemand.reduce((s, c) => s + c.openJobs, 0);
+    var totalSupply = d.certSupply.reduce((s, c) => s + c.activeCandidates, 0);
+    var shortages = d.supplyDemand.filter(s => s.status === "shortage").length;
+    html += `<div class="stat-row">
+  <div class="stat-box"><div class="val">${d.certDemand.length}</div><div class="lbl">Active Cert Categories</div></div>
+  <div class="stat-box"><div class="val">${totalDemand}</div><div class="lbl">Open Job Requisitions</div></div>
+  <div class="stat-box"><div class="val">${totalSupply}</div><div class="lbl">Available Consultants</div></div>
+  <div class="stat-box"><div class="val">${shortages}</div><div class="lbl">Talent Shortages</div></div>
+</div>`;
+
+    // Supply/Demand
+    html += `<div class="section"><h2>Certification Supply &amp; Demand</h2>
+<p class="insight">The table below shows the balance between open positions and available talent for each Epic certification. A ratio below 1.0 indicates a talent shortage — more jobs than qualified consultants.</p>
+<div class="report-card"><table><tr><th>Certification</th><th>Open Jobs</th><th>Available Talent</th><th>Ratio</th><th>Market Status</th></tr>`;
+    d.supplyDemand.slice(0, 12).forEach(sd => {
+      var badgeClass = sd.status === "shortage" ? "badge-shortage" : sd.status === "tight" ? "badge-tight" : "badge-available";
+      var ratioStr = sd.ratio !== null ? sd.ratio + ":1" : "—";
+      html += `<tr><td><strong>${sd.cert}</strong></td><td>${sd.demand}</td><td>${sd.supply}</td><td>${ratioStr}</td><td><span class="badge ${badgeClass}">${sd.status}</span></td></tr>`;
+    });
+    html += `</table></div></div>`;
+
+    // Top certs in demand (bar chart)
+    var maxDemand = d.certDemand.length > 0 ? d.certDemand[0].openJobs : 1;
+    html += `<div class="section"><h2>Most In-Demand Certifications</h2>
+<p class="insight">Current open positions by Epic certification, showing where hospitals are actively hiring.</p><div class="report-card">`;
+    d.certDemand.slice(0, 10).forEach(c => {
+      var pct = Math.round((c.openJobs / maxDemand) * 100);
+      html += `<div class="bar-wrap"><div class="bar-label">${c.cert}</div><div class="bar" style="width:${pct}%;background:#176087"></div><div class="bar-val">${c.openJobs}</div></div>`;
+    });
+    html += `</div></div>`;
+
+    // Rate trends
+    if (d.rateTrends.length > 0) {
+      html += `<div class="section"><h2>Rate Trends (12-Month)</h2>
+<p class="insight">Average hourly bill rates for Epic consulting engagements over the past year.</p>
+<div class="report-card"><table><tr><th>Month</th><th>Avg Bill Rate</th><th>Avg Pay Rate</th><th>Placements</th></tr>`;
+      d.rateTrends.forEach(t => {
+        html += `<tr><td>${t.month}</td><td>$${t.avgBillRate}/hr</td><td>$${t.avgPayRate}/hr</td><td>${t.placements}</td></tr>`;
+      });
+      html += `</table></div></div>`;
+    }
+
+    // Geographic demand
+    if (d.geoDemand.length > 0) {
+      var maxGeo = d.geoDemand[0].openJobs;
+      html += `<div class="section"><h2>Geographic Demand</h2>
+<p class="insight">Where hospitals are actively hiring Epic consultants, by state.</p><div class="report-card">`;
+      d.geoDemand.forEach(g => {
+        var pct = Math.round((g.openJobs / maxGeo) * 100);
+        html += `<div class="bar-wrap"><div class="bar-label">${g.state}</div><div class="bar" style="width:${pct}%;background:#10b981"></div><div class="bar-val">${g.openJobs}</div></div>`;
+      });
+      html += `</div></div>`;
+    }
+
+    // Footer with CTA
+    html += `<div class="footer">
+  <p>This report contains proprietary market intelligence compiled by Anura Connect.</p>
+  <p>For staffing inquiries or to discuss your Epic implementation needs:</p>
+  <a href="mailto:rachel@anuraconnect.com" class="cta no-print">Contact Anura Connect</a>
+  <p style="margin-top:12px">&copy; ${now.getFullYear()} Anura Connect &bull; rachel@anuraconnect.com</p>
+</div></div></body></html>`;
+
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
+  } catch (e) {
+    console.error("[Market Report]", e.message);
+    res.status(500).send("Error generating report: " + e.message);
   }
 });
 

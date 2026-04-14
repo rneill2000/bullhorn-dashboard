@@ -1871,6 +1871,7 @@ var NAV_GROUPS=[
     {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
     {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
     {key:"relationships",label:"Relationships",emoji:"\u2764\uFE0F"},
+    {key:"certtracker",label:"Cert Tracker",emoji:"\uD83D\uDCC5"},
     {key:"trends",label:"Trends",emoji:"\uD83D\uDCC8"},
     {key:"revenue",label:"Revenue",emoji:"\uD83D\uDCB0"},
     {key:"golives",label:"Go-Lives",emoji:"\uD83C\uDFE5"},
@@ -2261,6 +2262,15 @@ function renderMyDash(d){
 
   html+='</div>';
   return html;
+}
+
+/* ═══ SHAREABLE REPORT HELPERS ═══ */
+function copyReportLink(){
+  var url=window.location.origin+"/report/market";
+  navigator.clipboard.writeText(url).then(function(){
+    var btn=document.getElementById("copy-report-btn");
+    if(btn){btn.textContent="Copied!";setTimeout(function(){btn.textContent="Copy Shareable Link";},2000);}
+  }).catch(function(){prompt("Copy this link:",url);});
 }
 
 /* ═══ CONTRACT END MATCHING ═══ */
@@ -2850,6 +2860,63 @@ function renderPipeline(data) {
   return html;
 }
 
+/* ═══ CERT TRACKER ═══ */
+var _ctFilter = "all";
+function renderCertTracker(data) {
+  var candidates = data.data || [];
+  var summary = data.summary || {};
+  var html = '';
+
+  // KPI cards
+  html += '<div class="stats-row">';
+  html += statCard("\u274C", "Expired", summary.expired || 0, "Certs past due", "#dc2626");
+  html += statCard("\u26A0\uFE0F", "Expiring Soon", summary.critical || 0, "Within 30 days", "#f59e0b");
+  html += statCard("\uD83D\uDD52", "Upcoming", summary.warning || 0, "Within 90 days", "#3b82f6");
+  html += statCard("\u2753", "No Date Set", summary.unknown || 0, "Needs attention", "#94a3b8");
+  html += '</div>';
+
+  // Info banner
+  html += '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#1e40af">';
+  html += '<strong>How it works:</strong> Set cert expiration dates using the <strong>customDate1</strong> field on each candidate in Bullhorn (or via Edit Profile here). Consultants with dates set will show expiry countdown. Those without dates show as "No Date Set."';
+  html += '</div>';
+
+  // Filter chips
+  html += '<div class="toolbar"><div class="chips">';
+  var ctFilters = [["all","All ("+candidates.length+")"],["expired","Expired"],["critical","< 30 Days"],["warning","< 90 Days"],["unknown","No Date"]];
+  ctFilters.forEach(function(f) {
+    html += '<button class="chip'+(_ctFilter===f[0]?" on":"")+'" onclick="_ctFilter=\''+f[0]+'\';loadPage(\'certtracker\')">'+f[1]+'</button>';
+  });
+  html += '</div></div>';
+
+  // Filter
+  var filtered = candidates;
+  if (_ctFilter !== "all") { filtered = filtered.filter(function(c) { return c.urgency === _ctFilter; }); }
+
+  // Table
+  var urgColors = { expired: "#dc2626", critical: "#f59e0b", warning: "#3b82f6", ok: "#10b981", unknown: "#94a3b8" };
+  var urgLabels = { expired: "EXPIRED", critical: "< 30 days", warning: "< 90 days", ok: "OK", unknown: "No date" };
+  html += '<div class="count-line"><span>' + filtered.length + ' consultant' + (filtered.length !== 1 ? 's' : '') + '</span></div>';
+  html += '<div class="table-wrap"><table class="data-table"><thead><tr>';
+  html += '<th>Name</th><th>Primary Cert</th><th>Grade</th><th>Status</th><th>Cert Expiration</th><th>Days Left</th><th>Alert</th><th>Owner</th>';
+  html += '</tr></thead><tbody>';
+  filtered.forEach(function(c) {
+    var urg = urgColors[c.urgency] || "#94a3b8";
+    html += '<tr style="cursor:pointer" onclick="openDetail(' + c.id + ',{})">';
+    html += '<td><span class="name-link">' + esc(c.name) + '</span></td>';
+    html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(c.primaryCert) + '">' + esc(c.primaryCert) + '</td>';
+    var gc = {"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};
+    html += '<td>' + (c.grade ? '<span class="fw600" style="color:' + (gc[c.grade]||"#64748b") + '">' + esc(c.grade) + '</span>' : '<span class="muted">\u2014</span>') + '</td>';
+    html += '<td>' + badge(c.status) + '</td>';
+    html += '<td>' + (c.certExpirationDate || '<span class="muted">Not set</span>') + '</td>';
+    html += '<td>' + (c.daysUntilExpiry !== null ? '<span class="fw600" style="color:' + urg + '">' + c.daysUntilExpiry + 'd</span>' : '<span class="muted">\u2014</span>') + '</td>';
+    html += '<td><span class="badge" style="background:' + urg + '18;color:' + urg + ';border:1px solid ' + urg + '40">' + (urgLabels[c.urgency] || "") + '</span></td>';
+    html += '<td>' + esc(c.owner) + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
 function renderReports(stats){
   var s=stats||{activeCandidates:6,openJobs:5,activePlacements:8,dhCount:4,conCount:5,dhRevenue:109000,conRevenue:467000};
   var dhRev=s.dhRevenue||0; var cRev=s.conRevenue||0;
@@ -2859,6 +2926,12 @@ function renderReports(stats){
   html+=statCard("\uD83D\uDCC8","Combined Revenue","$"+((dhRev+cRev)>=1000?((dhRev+cRev)/1000).toFixed(0)+"k":(dhRev+cRev).toFixed(0)),"All placements","#10b981");
   html+=statCard("\uD83D\uDCBC","Open Jobs",s.openJobs||0,"Currently active","#f59e0b");
   html+=statCard("\uD83D\uDC65","Active Candidates",s.activeCandidates||0,"Ready to place","#53A2BE");
+  html+='</div>';
+
+  // Shareable report buttons
+  html+='<div style="margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap">';
+  html+='<a href="/report/market" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:10px 18px;background:#176087;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">Share Market Intelligence Report</a>';
+  html+='<button onclick="copyReportLink()" style="display:inline-flex;align-items:center;gap:6px;padding:10px 18px;background:#fff;color:#176087;border:1px solid #176087;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer" id="copy-report-btn">Copy Shareable Link</button>';
   html+='</div>';
 
   // Placement breakdown chart from live data
@@ -5145,6 +5218,9 @@ async function loadPage(){
         h=await renderPortal();break;
       case "aimatch":
         h=renderAIMatch();break;
+      case "certtracker":
+        var ctData=await apiFetch("cert-tracker");
+        h=renderCertTracker(ctData);break;
       case "relationships":
         var relData=await apiFetch("relationship-scores",{type:_relTab||"candidates",sort:_relSort||"risk",limit:200});
         h=renderRelationships(relData);break;
