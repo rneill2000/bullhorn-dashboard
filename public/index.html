@@ -1920,6 +1920,11 @@ function renderNav(){
   });
   document.getElementById("nav").innerHTML=h;
 }
+function getPageLabel(){
+  var lbl="Dashboard";
+  getNavGroups().forEach(function(g){g.items.forEach(function(n){if(n.key===currentPage)lbl=n.label;});});
+  return lbl;
+}
 
 /* ═══ MOBILE MENU ═══ */
 function toggleMobileMenu(){
@@ -2133,17 +2138,11 @@ function renderPlacements(data,bhTotal){
 }
 
 function renderClients(data,bhTotal){
-  var sf=filters.status||"All";
+  var sf=filters.status||"Active Account";
   var f=data||[];
   _lastData.clients=f;
-  // Build dynamic status list from actual data + known statuses
-  var statusCounts={};
-  f.forEach(function(r){ var s=r.status||"Unknown"; statusCounts[s]=(statusCounts[s]||0)+1; });
-  var ss=["All"];
-  // Add statuses in a logical order: known important ones first, then alphabetical remainder
-  var preferred=["Active Account","Active","New","Inactive","Archive","Prospect","Dead","Closed"];
-  preferred.forEach(function(s){ if(statusCounts[s]) ss.push(s); });
-  Object.keys(statusCounts).sort().forEach(function(s){ if(ss.indexOf(s)<0) ss.push(s); });
+  // Fixed status list — always show these regardless of current filter
+  var ss=["All","Active Account","Active","Prospect","Passive Account","Unqualified","Archive"];
   var displayTotal=bhTotal||f.length;
   var totalPlaced=f.reduce(function(s,r){return s+(r.activePlacements||0);},0);
   var clientsWithPlaced=f.filter(function(r){return r.activePlacements>0;}).length;
@@ -2173,8 +2172,7 @@ function renderClients(data,bhTotal){
   html+='<div class="search-wrap"><span class="ico">\uD83D\uDD0D</span><input type="text" placeholder="Search clients by name, industry, or location\u2026" value="'+esc(filters.q||"")+'" oninput="filters.q=this.value;render()"></div>';
   html+='<div class="chips">';
   ss.forEach(function(s){
-    var cnt=s==="All"?f.length:(statusCounts[s]||0);
-    html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+' <span style="font-size:11px;opacity:.7">('+cnt+')</span></button>';
+    html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+'</button>';
   });
   html+='</div></div>';
   // Apply client-side status filter
@@ -5032,11 +5030,11 @@ function render(){
   clearTimeout(_debounceTimer);
   _debounceTimer=setTimeout(function(){loadPage();},apiConnected?300:50);
   renderNav();
-  document.getElementById("page-title").textContent=(getNav().find(function(n){return n.key===currentPage;})||{}).label||"Dashboard";
+  document.getElementById("page-title").textContent=getPageLabel();
 }
 async function loadPage(){
   renderNav();
-  document.getElementById("page-title").textContent=(getNav().find(function(n){return n.key===currentPage;})||{}).label||"Dashboard";
+  document.getElementById("page-title").textContent=getPageLabel();
   if(!apiConnected){document.getElementById("content").innerHTML=showConnectionError();return;}
   // Show loading state
   document.getElementById("content").innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading from Bullhorn\u2026</div>';

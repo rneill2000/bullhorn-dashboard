@@ -958,14 +958,18 @@ app.get("/api/clients", async (req, res) => {
       } catch (dbErr) { console.log("[Clients] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
 
-    // Use query endpoint for Clients — default to Active accounts
+    // Use query endpoint for Clients
+    // Default to "Active Account" if no status specified; "All" means no filter
     let where = "id IS NOT NULL";
     if (q) {
       where += ` AND (name LIKE '%${q}%')`;
     }
-    if (status && status !== "All") {
+    if (status === "All") {
+      // No status filter — return everything
+    } else if (status && status !== "") {
       where += ` AND status='${status}'`;
-    } else if (!status || status === "") {
+    } else {
+      // No status param at all — default to Active Account
       where += " AND status='Active Account'";
     }
 
