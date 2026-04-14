@@ -2300,7 +2300,7 @@ function copyReportLink(){
 
 /* ═══ CONTRACT END MATCHING ═══ */
 function showContractEndMatches(){
-  var mc=document.getElementById("main-content");
+  var mc=document.getElementById("content");
   if(!mc) return;
   mc.innerHTML='<div style="padding:24px"><div style="display:flex;align-items:center;gap:12px;margin-bottom:20px"><button class="chip" onclick="setPage(\'home\')" style="font-size:12px">\u2190 Back</button><div><div style="font-size:20px;font-weight:700;color:#0f172a">Contract End \u2192 Next Role Matching</div><div style="font-size:13px;color:#94a3b8">AI-suggested open positions for consultants with expiring contracts</div></div></div><div id="cem-loading" style="text-align:center;padding:40px;color:#94a3b8">Loading matches...</div></div>';
   apiFetch("contract-end-matches").then(function(r){
