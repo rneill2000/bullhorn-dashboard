@@ -2685,6 +2685,7 @@ app.get("/api/trends", async (req, res) => {
       });
       certDemand = Object.entries(certCounts).map(function (e) { return { cert: e[0], openJobs: e[1] }; })
         .sort(function (a, b) { return b.openJobs - a.openJobs; }).slice(0, 20);
+      console.log("[Trends] jobTextRows:", jobTextRows.length, "certCounts:", JSON.stringify(certCounts));
     } catch (e) { console.log("[Trends] certDemand error:", e.message); }
 
     // 2. Certification Supply — how many candidates per cert
