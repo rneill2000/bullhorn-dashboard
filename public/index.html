@@ -5485,29 +5485,56 @@ function renderTrends(data){
   // Cert demand
   h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
   h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDD25 Certification Demand (Open Jobs)</div>';
-  (data.certDemand||[]).slice(0,10).forEach(function(d){
-    var maxJobs=data.certDemand[0]?data.certDemand[0].openJobs:1;
-    var pct=Math.round((d.openJobs/maxJobs)*100);
-    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
-    h+='<span style="font-size:13px;min-width:160px;font-weight:500">'+esc(d.cert)+'</span>';
-    h+='<div style="flex:1;height:20px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#176087,#53A2BE);border-radius:4px"></div></div>';
-    h+='<span style="font-size:12px;font-weight:700;min-width:30px;text-align:right">'+d.openJobs+'</span>';
-    h+='</div>';
-  });
+  if((data.certDemand||[]).length===0){
+    h+='<div style="padding:16px;color:#94a3b8;font-size:13px;text-align:center">No cert demand data yet — add Epic cert keywords to job titles or descriptions</div>';
+  } else {
+    (data.certDemand||[]).slice(0,10).forEach(function(d){
+      var maxJobs=data.certDemand[0]?data.certDemand[0].openJobs:1;
+      var pct=Math.round((d.openJobs/maxJobs)*100);
+      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+      h+='<span style="font-size:13px;min-width:160px;font-weight:500">'+esc(d.cert)+'</span>';
+      h+='<div style="flex:1;height:20px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#176087,#53A2BE);border-radius:4px"></div></div>';
+      h+='<span style="font-size:12px;font-weight:700;min-width:30px;text-align:right">'+d.openJobs+'</span>';
+      h+='</div>';
+    });
+  }
   h+='</div>';
-  // Supply/demand ratio
+  // Candidate Supply
+  h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
+  h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDC65 Candidate Supply (Active by Cert)</div>';
+  if((data.certSupply||[]).length===0){
+    h+='<div style="padding:16px;color:#94a3b8;font-size:13px;text-align:center">No candidate supply data</div>';
+  } else {
+    (data.certSupply||[]).slice(0,10).forEach(function(s){
+      var maxC=data.certSupply[0]?data.certSupply[0].activeCandidates:1;
+      var pct=Math.round((s.activeCandidates/maxC)*100);
+      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+      h+='<span style="font-size:13px;min-width:160px;font-weight:500">'+esc(s.cert)+'</span>';
+      h+='<div style="flex:1;height:20px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:4px"></div></div>';
+      h+='<span style="font-size:12px;font-weight:700;min-width:30px;text-align:right">'+s.activeCandidates+'</span>';
+      h+='</div>';
+    });
+  }
+  h+='</div></div>';
+  // Supply/demand ratio — full width
+  h+='<div style="margin-bottom:24px">';
   h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
   h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\u2696\uFE0F Supply vs Demand Ratio</div>';
   h+='<div style="font-size:12px;color:#64748b;margin-bottom:8px">Lower ratio = harder to fill. Below 1.0 means shortage.</div>';
-  (data.supplyDemand||[]).filter(function(sd){return sd.demand>0;}).slice(0,10).forEach(function(sd){
-    var color=sd.ratio<1?"#dc2626":sd.ratio<3?"#d97706":"#059669";
-    var badge=sd.status==="shortage"?"\uD83D\uDEA8 Shortage":sd.status==="tight"?"\u26A0\uFE0F Tight":"\u2705 Available";
-    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:13px">';
-    h+='<span style="min-width:140px;font-weight:500">'+esc(sd.cert)+'</span>';
-    h+='<span style="font-weight:700;color:'+color+';min-width:40px">'+((sd.ratio!==null)?sd.ratio+"x":"—")+'</span>';
-    h+='<span style="font-size:11px">'+badge+' ('+sd.supply+' candidates / '+sd.demand+' jobs)</span>';
-    h+='</div>';
-  });
+  var sdFiltered=(data.supplyDemand||[]).filter(function(sd){return sd.demand>0;}).slice(0,10);
+  if(sdFiltered.length===0){
+    h+='<div style="padding:16px;color:#94a3b8;font-size:13px;text-align:center">Needs both supply and demand data to calculate ratios</div>';
+  } else {
+    sdFiltered.forEach(function(sd){
+      var color=sd.ratio<1?"#dc2626":sd.ratio<3?"#d97706":"#059669";
+      var badge=sd.status==="shortage"?"\uD83D\uDEA8 Shortage":sd.status==="tight"?"\u26A0\uFE0F Tight":"\u2705 Available";
+      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:13px">';
+      h+='<span style="min-width:140px;font-weight:500">'+esc(sd.cert)+'</span>';
+      h+='<span style="font-weight:700;color:'+color+';min-width:40px">'+((sd.ratio!==null)?sd.ratio+"x":"—")+'</span>';
+      h+='<span style="font-size:11px">'+badge+' ('+sd.supply+' candidates / '+sd.demand+' jobs)</span>';
+      h+='</div>';
+    });
+  }
   h+='</div></div>';
   // Rate trends
   if(data.rateTrends&&data.rateTrends.length>0){

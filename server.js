@@ -2644,25 +2644,44 @@ app.get("/api/trends", async (req, res) => {
     // Helper: try DB first, fall back to Bullhorn API
     var useDB = db.ready;
 
-    // 1. Certification Demand — which certs appear most in active jobs
+    // 1. Certification Demand — extract certs from job titles, customText1, and descriptions
+    var TREND_CERT_KEYWORDS = {
+      "professional billing": "Professional Billing", "pb ": "Professional Billing", "resolute pb": "Professional Billing",
+      "hospital billing": "Hospital Billing", "hb ": "Hospital Billing", "resolute hb": "Hospital Billing",
+      "cadence": "Cadence", "willow": "Willow", "beaker": "Beaker", "cupid": "Cupid",
+      "tapestry": "Tapestry", "cogito": "Cogito", "bridges": "Bridges", "radiant": "Radiant",
+      "prelude": "Prelude", "phoenix": "Phoenix", "resolute": "Resolute", "rover": "Rover",
+      "clarity": "Clarity", "ambulatory": "Ambulatory", "epiccare ambulatory": "Ambulatory",
+      "inpatient": "Inpatient", "epiccare inpatient": "Inpatient", "optime": "OpTime",
+      "grand central": "Grand Central", "mychart": "MyChart", "beacon": "Beacon",
+      "clindoc": "ClinDoc", "clinical documentation": "ClinDoc", "adt": "ADT",
+      "him": "HIM", "orders": "Orders", "healthy planet": "Healthy Planet",
+      "claims": "Claims", "referrals": "Referrals", "patient access": "Patient Access",
+      "anesthesia": "Anesthesia", "stork": "Stork", "bones": "Bones", "lumens": "Lumens",
+      "care everywhere": "Care Everywhere", "asap": "ASAP",
+    };
     try {
-      var jobCertRows = [];
+      var jobTextRows = [];
       if (useDB) {
-        var dbJobs = await db.query("SELECT custom_text1 FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND custom_text1 IS NOT NULL AND custom_text1 != ''");
-        jobCertRows = (dbJobs.rows || []).map(function(r) { return r.custom_text1; });
+        var dbJobs = await db.query("SELECT title, custom_text1, description FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND is_deleted = false");
+        jobTextRows = (dbJobs.rows || []).map(function(r) { return [r.title || "", r.custom_text1 || "", (r.description || "").replace(/<[^>]*>/g, " ")].join(" "); });
       }
-      if (jobCertRows.length === 0) {
-        // Fallback to Bullhorn
+      if (jobTextRows.length === 0) {
         var bhJobs = await bhFetchAll("search/JobOrder", {
           query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")',
-          fields: "id,customText1", sort: "-dateAdded"
+          fields: "id,title,customText1,description", sort: "-dateAdded"
         });
-        jobCertRows = (bhJobs.data || []).map(function(j) { return j.customText1 || ""; }).filter(Boolean);
+        jobTextRows = (bhJobs.data || []).map(function(j) { return [j.title || "", j.customText1 || "", (j.description || "").replace(/<[^>]*>/g, " ")].join(" "); });
       }
       var certCounts = {};
-      jobCertRows.forEach(function (ct1) {
-        var certs = (Array.isArray(ct1) ? ct1.join(", ") : ct1).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-        certs.forEach(function (c) { certCounts[c] = (certCounts[c] || 0) + 1; });
+      jobTextRows.forEach(function (text) {
+        var lower = text.toLowerCase();
+        var found = {};
+        Object.keys(TREND_CERT_KEYWORDS).forEach(function(kw) {
+          if (lower.indexOf(kw) >= 0) found[TREND_CERT_KEYWORDS[kw]] = true;
+        });
+        // Also parse customText1 comma-separated certs
+        Object.keys(found).forEach(function(c) { certCounts[c] = (certCounts[c] || 0) + 1; });
       });
       certDemand = Object.entries(certCounts).map(function (e) { return { cert: e[0], openJobs: e[1] }; })
         .sort(function (a, b) { return b.openJobs - a.openJobs; }).slice(0, 20);
