@@ -4986,7 +4986,6 @@ if (db.ready || db.isEnabled()) {
           revoked BOOLEAN DEFAULT false
         )`);
         console.log("[Outlook] Token table ready");
-      }
         // Also create email_log table for tracking synced emails
         await db.query(`CREATE TABLE IF NOT EXISTS email_log (
           id SERIAL PRIMARY KEY,
@@ -5007,7 +5006,7 @@ if (db.ready || db.isEnabled()) {
         )`);
         console.log("[Outlook] Email log table ready");
       }
-    } catch (e) { console.log("[Outlook] Could not create token table:", e.message); }
+    } catch (e) { console.log("[Outlook] Could not create tables:", e.message); }
   }, 5000);
 }
 
