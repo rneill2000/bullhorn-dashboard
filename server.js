@@ -2632,13 +2632,6 @@ app.get("/api/relationship-scores", async (req, res) => {
 });
 
 // ═══ TREND ANALYTICS (from your own data) ════════════════════════
-app.get("/api/trends/debug", async (req, res) => {
-  try {
-    var dbJobs = db.ready ? await db.query("SELECT id, title, status, custom_text1 FROM jobs WHERE is_deleted = false LIMIT 30") : { rows: [] };
-    var openJobs = db.ready ? await db.query("SELECT id, title, status, custom_text1 FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND is_deleted = false") : { rows: [] };
-    res.json({ allJobs: dbJobs.rows.length, allStatuses: [...new Set(dbJobs.rows.map(r => r.status))], openJobs: openJobs.rows.length, openTitles: openJobs.rows.map(r => ({ id: r.id, title: r.title, status: r.status, ct1: r.custom_text1 })) });
-  } catch (e) { res.json({ error: e.message }); }
-});
 app.get("/api/trends", async (req, res) => {
   try {
     var certDemand = [];
@@ -2692,7 +2685,6 @@ app.get("/api/trends", async (req, res) => {
       });
       certDemand = Object.entries(certCounts).map(function (e) { return { cert: e[0], openJobs: e[1] }; })
         .sort(function (a, b) { return b.openJobs - a.openJobs; }).slice(0, 20);
-      console.log("[Trends] jobTextRows:", jobTextRows.length, "certCounts:", JSON.stringify(certCounts));
     } catch (e) { console.log("[Trends] certDemand error:", e.message); }
 
     // 2. Certification Supply — how many candidates per cert
