@@ -1544,19 +1544,11 @@ function editCandidateProfile() {
   h += eField("educationDegree", "Education / Degree", c.education || c.educationDegree);
   h += eField("source", "Source", c.source);
 
-  // ── CUSTOM TEXT FIELDS ──
-  h += '<div class="edit-section-title">Custom Fields</div>';
+  // ── OTHER FIELDS ──
+  h += '<div class="edit-section-title">Other</div>';
   h += eField("customText4", "Category", c.customText4);
-  h += eField("customText8", "City (Custom)", c.customText8);
-  h += eField("customText9", "State (Custom)", c.customText9);
-  h += eField("customText10", "Custom Text 10", c.customText10);
-
-  // ── CUSTOM NUMBERS ──
-  h += eField("customFloat1", "Custom Float 1", c.customFloat1, "number");
-  h += eField("customFloat2", "Custom Float 2", c.customFloat2, "number");
-  h += eField("customInt1", "Custom Int 1", c.customInt1, "number");
-  h += eField("customInt2", "Custom Int 2", c.customInt2, "number");
-  h += eField("customInt3", "Custom Int 3", c.customInt3, "number");
+  h += eField("customText8", "City", c.customText8);
+  h += eField("customText9", "State", c.customText9);
 
   h += '</div>'; // close edit-form-grid
 
@@ -1564,10 +1556,6 @@ function editCandidateProfile() {
   h += '<div style="margin-top:16px">';
   h += '<div class="edit-section-title" style="grid-column:unset">General Comments</div>';
   h += '<div class="edit-field full-width" style="margin-bottom:12px"><textarea id="edit-customTextBlock1" rows="4">' + esc(c.generalComments || "") + '</textarea></div>';
-  h += '<div class="edit-section-title" style="grid-column:unset">Notes Block 2</div>';
-  h += '<div class="edit-field full-width" style="margin-bottom:12px"><textarea id="edit-customTextBlock2" rows="3">' + esc(c.customTextBlock2 || "") + '</textarea></div>';
-  h += '<div class="edit-section-title" style="grid-column:unset">Notes Block 3</div>';
-  h += '<div class="edit-field full-width" style="margin-bottom:12px"><textarea id="edit-customTextBlock3" rows="3">' + esc(c.customTextBlock3 || "") + '</textarea></div>';
   h += '<div class="edit-section-title" style="grid-column:unset">Description / Resume Summary</div>';
   h += '<div class="edit-field full-width"><textarea id="edit-description" rows="5">' + esc(c.description ? c.description.replace(/<[^>]*>/g, "") : "") + '</textarea></div>';
   h += '</div>';
@@ -1589,9 +1577,7 @@ function editCandidateProfile() {
       _editFieldMeta = meta.fields || {};
       // Update any custom field labels we got from Bullhorn
       var labelMap = {
-        "customText4": "customText4", "customText8": "customText8", "customText9": "customText9",
-        "customText10": "customText10", "customFloat1": "customFloat1", "customFloat2": "customFloat2",
-        "customInt1": "customInt1", "customInt2": "customInt2", "customInt3": "customInt3"
+        "customText4": "customText4", "customText8": "customText8", "customText9": "customText9"
       };
       for (var fld in labelMap) {
         if (_editFieldMeta[fld] && _editFieldMeta[fld].label) {
@@ -1645,8 +1631,7 @@ function saveCandidateProfile(candidateId) {
     "customText1","customText2","customText3","customText4","customText5",
     "customText6","customText7","customText8","customText9","customText10",
     "salary","hourlyRate","dayRate","dateAvailable","willRelocate","travelLimit",
-    "educationDegree","source",
-    "customFloat1","customFloat2","customInt1","customInt2","customInt3"
+    "educationDegree","source"
   ];
 
   var updates = {};
@@ -1661,13 +1646,9 @@ function saveCandidateProfile(candidateId) {
     // Type conversions
     if (f === "willRelocate") {
       updates[f] = (val === "true");
-    } else if (f === "salary" || f === "hourlyRate" || f === "dayRate" || f === "travelLimit" ||
-               f === "customFloat1" || f === "customFloat2") {
+    } else if (f === "salary" || f === "hourlyRate" || f === "dayRate" || f === "travelLimit") {
       var num = parseFloat(val);
       if (!isNaN(num)) updates[f] = num;
-    } else if (f === "customInt1" || f === "customInt2" || f === "customInt3") {
-      var intVal = parseInt(val);
-      if (!isNaN(intVal)) updates[f] = intVal;
     } else if (f === "dateAvailable") {
       updates[f] = new Date(val).getTime();
     } else {
@@ -1684,10 +1665,6 @@ function saveCandidateProfile(candidateId) {
   // Text blocks
   var tb1 = document.getElementById("edit-customTextBlock1");
   if (tb1) updates.customTextBlock1 = tb1.value;
-  var tb2 = document.getElementById("edit-customTextBlock2");
-  if (tb2) updates.customTextBlock2 = tb2.value;
-  var tb3 = document.getElementById("edit-customTextBlock3");
-  if (tb3) updates.customTextBlock3 = tb3.value;
   var desc = document.getElementById("edit-description");
   if (desc) updates.description = desc.value;
 
