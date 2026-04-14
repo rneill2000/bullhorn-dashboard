@@ -783,6 +783,7 @@ function openDetail(candidateId, candidateData) {
       loadPipelineStats(candidateId);
       loadCandidateFiles(candidateId);
       loadCandidateRefs(candidateId);
+      loadEmailHistory(candidateId);
     }).catch(function(e) {
       dc.innerHTML = renderDetailContent(candidateData);
     });
@@ -839,6 +840,62 @@ function loadPipelineStats(candidateId) {
 
 function pipelineStat(num, label, color) {
   return '<div class="pipeline-stat"><div class="ps-num" style="color:' + color + '">' + num + '</div><div class="ps-lbl">' + label + '</div></div>';
+}
+
+function loadEmailHistory(candidateId) {
+  apiFetch("outlook/history/candidate/" + candidateId).then(function(r) {
+    var el = document.getElementById("detail-email-history");
+    if (!el) return;
+    var emails = r.emails || [];
+    var notes = r.notes || [];
+    var total = emails.length + notes.length;
+    var h = '<h4>Email Correspondence (' + total + ')</h4>';
+    if (total === 0) {
+      h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No email correspondence found for this candidate</div>';
+      el.innerHTML = h;
+      return;
+    }
+    // Merge and sort by date (newest first)
+    var all = [];
+    emails.forEach(function(e) {
+      all.push({ type: "email", subject: e.subject, from: e.from_name || e.from_email, to: e.to_emails, date: e.received_at, preview: e.body_preview, logged: e.logged_to_bullhorn, user: e.outlook_user });
+    });
+    notes.forEach(function(n) {
+      if (n.action === "Email") {
+        all.push({ type: "note", subject: "", from: n.commenting_person_name, to: "", date: n.date_added ? new Date(Number(n.date_added)).toISOString() : "", preview: (n.comments_text || "").substring(0, 200), logged: true, user: n.commenting_person_name });
+      }
+    });
+    all.sort(function(a, b) { return (b.date || "").localeCompare(a.date || ""); });
+
+    h += '<div style="max-height:400px;overflow-y:auto">';
+    all.forEach(function(e) {
+      var d = e.date ? new Date(e.date) : null;
+      var dateStr = d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+      var isSent = e.type === "email" && e.user && e.from && e.from.toLowerCase().indexOf("anura") >= 0;
+      var arrow = isSent ? "→ Sent" : "← Received";
+      var arrowColor = isSent ? "#16a34a" : "#176087";
+      h += '<div style="padding:10px 0;border-bottom:1px solid #f1f5f9">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">';
+      h += '<div style="flex:1;min-width:0">';
+      h += '<div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.subject || "(no subject)") + '</div>';
+      h += '<div style="font-size:12px;color:#64748b;margin-top:2px">';
+      h += '<span style="color:' + arrowColor + ';font-weight:600">' + arrow + '</span> ';
+      h += esc(e.from || "") + (e.to ? " → " + esc(e.to) : "");
+      h += '</div>';
+      if (e.preview) h += '<div style="font-size:12px;color:#94a3b8;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.preview.substring(0, 120)) + '</div>';
+      h += '</div>';
+      h += '<div style="flex-shrink:0;text-align:right">';
+      h += '<div style="font-size:11px;color:#94a3b8">' + dateStr + '</div>';
+      if (e.user && e.type === "email") h += '<div style="font-size:10px;color:#64748b;margin-top:2px">via ' + esc(e.user) + '</div>';
+      if (e.logged) h += '<div style="font-size:10px;color:#16a34a;margin-top:2px">✓ In Bullhorn</div>';
+      h += '</div></div></div>';
+    });
+    h += '</div>';
+    el.innerHTML = h;
+  }).catch(function(e) {
+    var el = document.getElementById("detail-email-history");
+    if (el) el.innerHTML = '<h4>Email Correspondence</h4><div style="color:#94a3b8;font-size:12px">Could not load email history</div>';
+  });
 }
 
 function detectFileTag(f) {
@@ -1449,6 +1506,9 @@ function renderDetailContent(c) {
 
   // ── SUBMISSIONS (loaded async) ──
   h += '<div class="detail-section" id="detail-submissions"><h4>Submissions</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading submissions…</div></div>';
+
+  // ── EMAIL CORRESPONDENCE (loaded async) ──
+  h += '<div class="detail-section" id="detail-email-history"><h4>Email Correspondence</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading email history…</div></div>';
 
   // ── ACTIVITY NOTES ──
   if(c.notes && Array.isArray(c.notes) && c.notes.length) {

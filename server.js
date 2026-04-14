@@ -1368,7 +1368,7 @@ app.get("/api/my-dashboard", async (req, res) => {
         const dbClients = (await db.query("SELECT * FROM clients WHERE owner_id = $1 ORDER BY date_last_modified DESC", [uid])).rows;
         const dbJobs = (await db.query("SELECT * FROM jobs WHERE owner_id = $1 AND is_deleted = false ORDER BY date_last_modified DESC", [uid])).rows;
         const dbPlacements = (await db.query(
-          "SELECT p.*, j.owner_id as job_owner_id FROM placements p LEFT JOIN jobs j ON p.job_id = j.id WHERE (p.owner_id = $1 OR j.owner_id = $1) AND (p.status ILIKE '%approved%' OR p.status ILIKE '%active%' OR p.status ILIKE '%contract%')", [uid]
+          "SELECT p.*, j.owner_id as job_owner_id FROM placements p LEFT JOIN jobs j ON p.job_id = j.id WHERE j.owner_id = $1 AND (p.status ILIKE '%approved%' OR p.status ILIKE '%active%' OR p.status ILIKE '%contract%')", [uid]
         )).rows;
 
         const DB_PRIORITY_LABELS = { "0": "", "1": "Urgent", "2": "Hot", "3": "Warm", "4": "Cold" };
@@ -4987,9 +4987,180 @@ if (db.ready || db.isEnabled()) {
         )`);
         console.log("[Outlook] Token table ready");
       }
+        // Also create email_log table for tracking synced emails
+        await db.query(`CREATE TABLE IF NOT EXISTS email_log (
+          id SERIAL PRIMARY KEY,
+          message_id TEXT UNIQUE,
+          outlook_user TEXT,
+          subject TEXT,
+          from_email TEXT,
+          from_name TEXT,
+          to_emails TEXT,
+          body_preview TEXT,
+          received_at TIMESTAMPTZ,
+          matched_entity_type TEXT,
+          matched_entity_id INTEGER,
+          matched_entity_name TEXT,
+          bullhorn_note_id INTEGER,
+          logged_to_bullhorn BOOLEAN DEFAULT false,
+          synced_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
+        console.log("[Outlook] Email log table ready");
+      }
     } catch (e) { console.log("[Outlook] Could not create token table:", e.message); }
   }, 5000);
 }
+
+// ═══ AUTO EMAIL SYNC ═══════════════════════════════════════════════
+var _lastEmailSync = 0;
+var _emailSyncRunning = false;
+
+async function syncOutlookEmails() {
+  if (_emailSyncRunning) return;
+  if (!db.ready) return;
+  _emailSyncRunning = true;
+  console.log("[Email Sync] Starting auto-sync...");
+
+  try {
+    // Get all connected Outlook users
+    var connectedUsers = Object.keys(_outlookUsers);
+    if (connectedUsers.length === 0) {
+      // Try loading from DB
+      try {
+        var rows = await db.getAll("SELECT email FROM outlook_tokens WHERE revoked = false");
+        rows.forEach(function(r) { if (r.email && !_outlookUsers[r.email]) connectedUsers.push(r.email); });
+      } catch (e) {}
+    }
+    if (connectedUsers.length === 0) { _emailSyncRunning = false; return; }
+
+    var totalSynced = 0;
+    for (var u = 0; u < connectedUsers.length; u++) {
+      var userEmail = connectedUsers[u];
+      try {
+        // Fetch recent emails (last 48 hours of inbox + sent)
+        var folders = ["inbox", "sentitems"];
+        for (var f = 0; f < folders.length; f++) {
+          var endpoint = "/me/mailFolders/" + folders[f] + "/messages?$top=50&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,body";
+          var data = await graphFetch(userEmail, endpoint);
+          var messages = data.value || [];
+
+          for (var m = 0; m < messages.length; m++) {
+            var msg = messages[m];
+            // Skip if already synced
+            try {
+              var exists = await db.getOne("SELECT id FROM email_log WHERE message_id = $1", [msg.id]);
+              if (exists) continue;
+            } catch (e) { continue; }
+
+            var fromAddr = msg.from && msg.from.emailAddress ? msg.from.emailAddress.address : "";
+            var fromName = msg.from && msg.from.emailAddress ? msg.from.emailAddress.name : "";
+            var toAddrs = (msg.toRecipients || []).map(function(r) { return r.emailAddress ? r.emailAddress.address : ""; }).filter(Boolean);
+
+            // Match to Bullhorn records by email address
+            var allAddrs = [fromAddr].concat(toAddrs).filter(Boolean).map(function(a) { return a.toLowerCase(); });
+            // Remove team member emails from matching
+            var teamEmails = connectedUsers.map(function(e) { return e.toLowerCase(); });
+            var externalAddrs = allAddrs.filter(function(a) { return teamEmails.indexOf(a) < 0; });
+
+            var matchedRecord = null;
+            if (externalAddrs.length > 0) {
+              try {
+                var ph = externalAddrs.map(function(_, i) { return "$" + (i + 1); }).join(",");
+                var candMatch = await db.getOne("SELECT id, first_name, last_name FROM candidates WHERE LOWER(email) IN (" + ph + ") OR LOWER(email2) IN (" + ph + ") LIMIT 1", externalAddrs.concat(externalAddrs));
+                if (candMatch) {
+                  matchedRecord = { type: "candidate", id: candMatch.id, name: (candMatch.first_name + " " + candMatch.last_name).trim() };
+                } else {
+                  var contactMatch = await db.getOne("SELECT id, first_name, last_name FROM client_contacts WHERE LOWER(email) IN (" + ph + ") LIMIT 1", externalAddrs);
+                  if (contactMatch) {
+                    matchedRecord = { type: "contact", id: contactMatch.id, name: (contactMatch.first_name + " " + contactMatch.last_name).trim() };
+                  }
+                }
+              } catch (e) {}
+            }
+
+            // Log to email_log table
+            var bodyText = (msg.body && msg.body.content) ? msg.body.content.replace(/<[^>]*>/g, "").substring(0, 500) : (msg.bodyPreview || "");
+            await db.query(
+              `INSERT INTO email_log (message_id, outlook_user, subject, from_email, from_name, to_emails, body_preview, received_at, matched_entity_type, matched_entity_id, matched_entity_name)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+               ON CONFLICT (message_id) DO NOTHING`,
+              [msg.id, userEmail, msg.subject || "", fromAddr, fromName, toAddrs.join(", "), bodyText, msg.receivedDateTime, matchedRecord ? matchedRecord.type : null, matchedRecord ? matchedRecord.id : null, matchedRecord ? matchedRecord.name : null]
+            );
+
+            // Auto-log to Bullhorn as a Note if matched
+            if (matchedRecord) {
+              try {
+                await authenticate();
+                var noteBody = "Email: " + (msg.subject || "(no subject)") + "\nFrom: " + fromAddr + " (" + fromName + ")" + "\nTo: " + toAddrs.join(", ") + "\nDate: " + (msg.receivedDateTime || "") + "\n\n" + bodyText;
+                var noteData = { action: "Email", comments: noteBody };
+                if (matchedRecord.type === "candidate") {
+                  noteData.personReference = { id: matchedRecord.id };
+                } else {
+                  noteData.clientContactReferences = { total: 1, data: [{ id: matchedRecord.id }] };
+                }
+                var noteResult = await bhFetch("entity/Note", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(noteData) });
+                var noteId = noteResult.changedEntityId || null;
+                await db.query("UPDATE email_log SET logged_to_bullhorn = true, bullhorn_note_id = $1 WHERE message_id = $2", [noteId, msg.id]);
+                totalSynced++;
+              } catch (noteErr) { console.log("[Email Sync] Note creation failed for " + fromAddr + ":", noteErr.message); }
+            }
+          }
+        }
+      } catch (userErr) { console.log("[Email Sync] Error for user " + userEmail + ":", userErr.message); }
+    }
+
+    _lastEmailSync = Date.now();
+    console.log("[Email Sync] Complete — " + totalSynced + " emails logged to Bullhorn");
+  } catch (e) {
+    console.error("[Email Sync] Error:", e.message);
+  }
+  _emailSyncRunning = false;
+}
+
+// Run email sync every 15 minutes
+setInterval(function() { syncOutlookEmails().catch(function(e) { console.error("[Email Sync] Interval error:", e.message); }); }, 15 * 60 * 1000);
+// Also run 30 seconds after startup
+setTimeout(function() { syncOutlookEmails().catch(function(e) { console.error("[Email Sync] Startup error:", e.message); }); }, 30000);
+
+// Manual trigger
+app.post("/api/outlook/sync-now", async (req, res) => {
+  syncOutlookEmails().catch(function(e) { console.error("[Email Sync] Manual trigger error:", e.message); });
+  res.json({ started: true, lastSync: _lastEmailSync ? new Date(_lastEmailSync).toISOString() : null });
+});
+
+// Get email history for a specific candidate or contact
+app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
+  try {
+    var entityType = req.params.entityType;
+    var entityId = parseInt(req.params.entityId);
+    if (!entityId || !entityType) return res.status(400).json({ error: "Missing entityType or entityId" });
+
+    // Get emails from the log that matched this entity
+    var loggedEmails = [];
+    if (db.ready) {
+      loggedEmails = await db.getAll(
+        "SELECT * FROM email_log WHERE matched_entity_type = $1 AND matched_entity_id = $2 ORDER BY received_at DESC LIMIT 100",
+        [entityType, entityId]
+      );
+    }
+
+    // Also get Bullhorn Notes with action=Email for this entity
+    var bhNotes = [];
+    if (db.ready) {
+      try {
+        bhNotes = await db.getAll(
+          "SELECT id, action, comments_text, date_added, commenting_person_name FROM notes WHERE person_id = $1 AND action = 'Email' ORDER BY date_added DESC LIMIT 50",
+          [entityId]
+        );
+      } catch (e) {}
+    }
+
+    res.json({ emails: loggedEmails, notes: bhNotes, total: loggedEmails.length + bhNotes.length });
+  } catch (e) {
+    console.error("[Email History]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ═══ DATA QUALITY REPORT ════════════════════════════════════════
 app.get("/api/data-quality", async (req, res) => {
