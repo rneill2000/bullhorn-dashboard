@@ -1912,7 +1912,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
     // 5. Build candidate query — two strategies
     var hasCerts = matchedCerts.length > 0;
     var allSearchCerts = matchedCerts.concat(smRelated);
-    var candidateFields = "id,firstName,lastName,occupation,status,address,salary,dateAvailable,email,phone,customText1,customText2,customText3,customText5,customText6,customText7,dateLastModified,description,customTextBlock1";
+    var candidateFields = "id,firstName,lastName,occupation,status,address,salary,dateAvailable,email,phone,customText1,customText2,customText3,customText5,customText6,customText7,dateLastModified,description,customTextBlock1,employeeType";
 
     let query;
     if (hasCerts) {
@@ -1942,6 +1942,10 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       fields: candidateFields,
       sort: "-dateLastModified",
     });
+
+    // 5b. Detect job employment type for filtering
+    var jobEmploymentType = (job.employmentType || "").toLowerCase().trim();
+    var isDirectHire = jobEmploymentType === "direct hire" || jobEmploymentType === "permanent";
 
     // 6. Score candidates — multi-factor scoring
     const now = Date.now();
@@ -2006,6 +2010,12 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
           matchFactors.push("❌ No leadership/PM experience indicated");
         }
 
+        // Overqualified penalty: Executive/Director (4-5) should NOT match Manager (3) roles
+        if (bestCandLevel >= 4 && detectedRoleLevel <= 3) {
+          roleScore = -25;
+          matchFactors.push("⬆️ Overqualified — " + (bestCandLevel >= 5 ? "Executive" : "Director") + " level for Manager role");
+        }
+
         // Additional penalty: if job needs Director (level 4+) and candidate is Analyst level (1)
         if (detectedRoleLevel >= 4 && bestCandLevel <= 1 && !hasLeadershipExp) {
           roleScore -= 15;
@@ -2065,7 +2075,21 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       else if (hasNotes) { profileScore = 5; matchFactors.push("📝 Notes on file"); }
       else { profileScore = -10; matchFactors.push("⚠️ No resume or notes"); }
 
-      var totalScore = certScore + roleScore + expScore + gradeScore + availScore + locScore + profileScore;
+      // ── Employment Type Compatibility (penalty for mismatch) ──
+      var empTypeScore = 0;
+      var candEmployeeType = (c.employeeType || "").toLowerCase().trim();
+      if (isDirectHire && candEmployeeType) {
+        // Candidate is W2-only → not a fit for Direct Hire
+        var isW2Only = (candEmployeeType === "w2" || candEmployeeType === "w-2") &&
+          candEmployeeType.indexOf("direct") < 0 && candEmployeeType.indexOf("perm") < 0 &&
+          candEmployeeType.indexOf("hire") < 0;
+        if (isW2Only) {
+          empTypeScore = -40;
+          matchFactors.push("❌ W2 only — not open to Direct Hire");
+        }
+      }
+
+      var totalScore = certScore + roleScore + expScore + gradeScore + availScore + locScore + profileScore + empTypeScore;
 
       return {
         id: c.id,
@@ -2076,6 +2100,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
         secondaryCert: secondaryCerts,
         preferredRole: preferredRole,
         epicRole: (Array.isArray(c.customText5) ? c.customText5.join(", ") : c.customText5) || "",
+        employeeType: c.employeeType || "",
         grade,
         status: c.status || "",
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
@@ -2090,6 +2115,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
         roleScore,
         expScore,
         profileScore,
+        empTypeScore,
         hasResume: hasDesc,
         hasNotes: hasNotes,
       };
@@ -2105,6 +2131,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       job: {
         id: job.id, title: job.title || "", matchedCerts, relatedCerts: smRelated,
         roleLevel: detectedRoleName || null, isLeadershipRole,
+        employmentType: job.employmentType || "", isDirectHire,
         experienceKeywords: EXPERIENCE_KEYWORDS,
       },
       candidates: filtered.slice(0, 50),
