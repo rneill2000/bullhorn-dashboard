@@ -4654,18 +4654,6 @@ var _outlookUsers = {};
 // Check if Outlook integration is configured
 function outlookEnabled() { return !!(OUTLOOK_CONFIG.clientId && OUTLOOK_CONFIG.clientSecret); }
 
-// Debug — remove after testing
-app.get("/api/outlook/debug", (req, res) => {
-  res.json({
-    clientIdLength: (OUTLOOK_CONFIG.clientId || "").length,
-    secretLength: (OUTLOOK_CONFIG.clientSecret || "").length,
-    secretFirst3: (OUTLOOK_CONFIG.clientSecret || "").substring(0, 3),
-    secretLast3: (OUTLOOK_CONFIG.clientSecret || "").substring((OUTLOOK_CONFIG.clientSecret || "").length - 3),
-    tenant: OUTLOOK_TENANT,
-    redirectUri: OUTLOOK_CONFIG.redirectUri,
-  });
-});
-
 // Status endpoint
 app.get("/api/outlook/status", (req, res) => {
   var configured = outlookEnabled();
