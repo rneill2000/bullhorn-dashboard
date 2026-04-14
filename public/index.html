@@ -1483,6 +1483,27 @@ function editCandidateProfile() {
   h += eFieldSelect("status", "Status", c.status, ["New Lead","Active","Available","Placed","Do Not Contact","Inactive","Submitted","Interview","Shortlisted","On Assignment"]);
   h += eFieldSelect("employeeType", "Employee Type", c.employeeType, ["W2","1099","Corp-to-Corp","W2 or 1099","Any"]);
 
+  // Owner dropdown — populated async from /api/users
+  h += '<div class="edit-field"><label for="edit-ownerId">Account Owner</label>';
+  h += '<select id="edit-ownerId"><option value="">Loading...</option></select></div>';
+
+  // Fetch users and populate owner dropdown
+  apiFetch("users").then(function(r) {
+    var sel = document.getElementById("edit-ownerId");
+    if (!sel) return;
+    var users = r.data || [];
+    var currentOwnerId = c.ownerId || "";
+    var opts = '<option value="">(none)</option>';
+    users.forEach(function(u) {
+      var selected = (String(u.id) === String(currentOwnerId)) ? " selected" : "";
+      opts += '<option value="' + u.id + '"' + selected + '>' + esc(u.name) + '</option>';
+    });
+    sel.innerHTML = opts;
+  }).catch(function() {
+    var sel = document.getElementById("edit-ownerId");
+    if (sel) sel.innerHTML = '<option value="">Could not load users</option>';
+  });
+
   // ── CONTACT INFO ──
   h += '<div class="edit-section-title">Contact Information</div>';
   h += eField("email", "Email", c.email, "email");
@@ -1507,7 +1528,7 @@ function editCandidateProfile() {
   h += eField("customText5", "Epic Role", c.epicRole);
   h += eField("customText3", "Preferred Roles", c.preferredRole);
   h += eFieldSelect("customText6", "Grade", c.grade, ["A","B","C","D","F",""]);
-  h += eField("customText7", "Urgency", c.urgency);
+  h += eFieldSelect("customText7", "Urgency", c.urgency, ["","Hot","Urgent","Warm","Cold","Active","Passive","Do Not Contact"]);
 
   // ── COMPENSATION & AVAILABILITY ──
   h += '<div class="edit-section-title">Compensation & Availability</div>';
@@ -1653,6 +1674,12 @@ function saveCandidateProfile(candidateId) {
       updates[f] = val;
     }
   });
+
+  // Owner (association field — sent as ownerId)
+  var ownerSel = document.getElementById("edit-ownerId");
+  if (ownerSel && ownerSel.value) {
+    updates.ownerId = parseInt(ownerSel.value);
+  }
 
   // Text blocks
   var tb1 = document.getElementById("edit-customTextBlock1");

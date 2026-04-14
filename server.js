@@ -669,6 +669,13 @@ app.post("/api/candidates/:id/update", async (req, res) => {
       }
     }
 
+    // Handle owner as an association: { id: userId }
+    if (updates.owner && typeof updates.owner === "object" && updates.owner.id) {
+      safeUpdates.owner = { id: parseInt(updates.owner.id) };
+    } else if (updates.ownerId) {
+      safeUpdates.owner = { id: parseInt(updates.ownerId) };
+    }
+
     // Handle address sub-fields: flatten address.city → address: { city: ... }
     const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
     const addrUpdates = {};
@@ -695,6 +702,26 @@ app.post("/api/candidates/:id/update", async (req, res) => {
   } catch (e) {
     console.error("[Update Candidate]", e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Corporate Users (for owner dropdowns) ────────
+app.get("/api/users", async (req, res) => {
+  try {
+    const data = await bhFetchAll("query/CorporateUser", {
+      where: "isDeleted = false AND enabled = true",
+      fields: "id,firstName,lastName,email",
+      orderBy: "lastName",
+    });
+    const users = (data.data || []).map(u => ({
+      id: u.id,
+      name: ((u.firstName || "") + " " + (u.lastName || "")).trim(),
+      email: u.email || "",
+    }));
+    res.json({ data: users });
+  } catch (e) {
+    console.error("[Users]", e.message);
+    res.status(500).json({ error: e.message, data: [] });
   }
 });
 
