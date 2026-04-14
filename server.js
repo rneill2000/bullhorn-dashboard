@@ -826,6 +826,28 @@ app.get("/api/placements", async (req, res) => {
       orderBy: "-dateBegin",
     });
 
+    // Resolve client names — query/ returns jobOrder.clientCorporation as an ID
+    var clientNameMap = {};
+    try {
+      var clientIds = [];
+      (data.data || []).forEach(function(p) {
+        if (p.jobOrder && p.jobOrder.clientCorporation) {
+          var cid = typeof p.jobOrder.clientCorporation === "object" ? p.jobOrder.clientCorporation.id : p.jobOrder.clientCorporation;
+          if (cid && clientIds.indexOf(cid) < 0) clientIds.push(cid);
+        }
+      });
+      // Batch fetch client names
+      for (var ci = 0; ci < clientIds.length; ci += 20) {
+        var batch = clientIds.slice(ci, ci + 20);
+        var proms = batch.map(function(cid) {
+          return bhFetch("entity/ClientCorporation/" + cid, { fields: "id,name" })
+            .then(function(r) { var d = r.data || r; clientNameMap[d.id] = d.name || ""; })
+            .catch(function() {});
+        });
+        await Promise.all(proms);
+      }
+    } catch(cnErr) { console.log("[Placements] Client name lookup failed:", cnErr.message); }
+
     const placements = [];
     // Post-filter by search text (query/ endpoint can't search nested candidate/job fields)
     var filteredData = data.data || [];
@@ -850,7 +872,10 @@ app.get("/api/placements", async (req, res) => {
             : null;
 
         var clientName = "";
-        try { clientName = p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.name : ""; } catch(e2) {}
+        if (p.jobOrder && p.jobOrder.clientCorporation) {
+          var ccId = typeof p.jobOrder.clientCorporation === "object" ? p.jobOrder.clientCorporation.id : p.jobOrder.clientCorporation;
+          clientName = clientNameMap[ccId] || "";
+        }
 
         placements.push({
           id: p.id,
@@ -914,13 +939,15 @@ app.get("/api/clients", async (req, res) => {
       } catch (dbErr) { console.log("[Clients] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
 
-    // Use query endpoint for Clients
+    // Use query endpoint for Clients — default to Active accounts
     let where = "id IS NOT NULL";
     if (q) {
       where += ` AND (name LIKE '%${q}%')`;
     }
     if (status && status !== "All") {
       where += ` AND status='${status}'`;
+    } else if (!status || status === "") {
+      where += " AND status='Active'";
     }
 
     // Fetch clients via query endpoint (owner not valid on ClientCorporation, omitted)
@@ -953,8 +980,8 @@ app.get("/api/clients", async (req, res) => {
       console.log("[Clients] Owner fetch failed (non-blocking):", ownerErr.message);
     }
 
-    // Try to fetch placement counts per client (non-blocking)
-    // Use query/ endpoint (search/ doesn't reliably return Placement data in this Bullhorn instance)
+    // Fetch active placements and group by client
+    // Use query/ endpoint — jobOrder.clientCorporation comes back as a number (ID), not an object
     let placByClient = {};
     try {
       const placData = await bhFetchAll("query/Placement", {
@@ -962,10 +989,10 @@ app.get("/api/clients", async (req, res) => {
         fields: "id,candidate,jobOrder",
         orderBy: "-dateBegin",
       });
-      // Group by client — query/ endpoint returns nested objects for candidate and jobOrder
       (placData.data || []).forEach(function (p) {
         try {
           var cid = null;
+          // jobOrder.clientCorporation is a number (ID) from query/ endpoint
           if (p.jobOrder && p.jobOrder.clientCorporation) {
             cid = typeof p.jobOrder.clientCorporation === "object" ? p.jobOrder.clientCorporation.id : p.jobOrder.clientCorporation;
           }
@@ -975,8 +1002,9 @@ app.get("/api/clients", async (req, res) => {
             if (p.candidate) cName = ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim();
             placByClient[cid].push({ candidateName: cName });
           }
-        } catch (innerErr) { /* skip this placement */ }
+        } catch (innerErr) { /* skip */ }
       });
+      console.log("[Clients] Placement grouping: " + Object.keys(placByClient).length + " clients with active placements, " + (placData.data || []).length + " total placements");
     } catch (placErr) {
       console.log("[Clients] Placement query failed (non-blocking):", placErr.message);
     }
