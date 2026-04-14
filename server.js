@@ -1240,14 +1240,22 @@ app.get("/api/clients/:id", async (req, res) => {
       id: corp.id,
       name: corp.name || "",
       address: corp.address || {},
+      address1: corp.address ? corp.address.address1 || "" : "",
+      address2: corp.address ? corp.address.address2 || "" : "",
+      city: corp.address ? corp.address.city || "" : "",
+      state: corp.address ? corp.address.state || "" : "",
+      zip: corp.address ? corp.address.zip || "" : "",
       location: corp.address ? [corp.address.city, corp.address.state].filter(Boolean).join(", ") : "",
       phone: corp.phone || "",
       fax: corp.fax || "",
       website: corp.companyURL || "",
       status: corp.status || "",
       industry: corp.industryList || "",
+      numOffices: corp.numOffices || null,
       numEmployees: corp.numEmployees || null,
       annualRevenue: corp.annualRevenue || null,
+      billingPhone: corp.billingPhone || "",
+      billingContact: corp.billingContact || "",
       owner: corp.owner ? ((corp.owner.firstName || "") + " " + (corp.owner.lastName || "")).trim() : "",
       ownerId: corp.owner ? corp.owner.id : null,
       dateAdded: corp.dateAdded ? new Date(corp.dateAdded).toLocaleDateString() : "",
@@ -1264,6 +1272,253 @@ app.get("/api/clients/:id", async (req, res) => {
     });
   } catch (e) {
     console.error("[Client Detail]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Client Update ─────────────────────────────
+app.post("/api/clients/:id/update", async (req, res) => {
+  try {
+    const clientId = parseInt(req.params.id);
+    const updates = req.body;
+    const ALLOWED_FIELDS = [
+      "name", "status", "phone", "fax", "companyURL", "notes",
+      "industryList", "numOffices", "annualRevenue", "numEmployees",
+      "billingPhone", "billingContact",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+      "customText6", "customText7", "customText8", "customText9", "customText10",
+      "customTextBlock1", "customTextBlock2", "customTextBlock3",
+      "customFloat1", "customFloat2", "customFloat3",
+      "customInt1", "customInt2", "customInt3",
+    ];
+    const safeUpdates = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        safeUpdates[key] = updates[key];
+      }
+    }
+    // Handle owner as association
+    if (updates.owner && typeof updates.owner === "object" && updates.owner.id) {
+      safeUpdates.owner = { id: parseInt(updates.owner.id) };
+    } else if (updates.ownerId) {
+      safeUpdates.owner = { id: parseInt(updates.ownerId) };
+    }
+    // Handle address sub-fields
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(updates)) {
+      if (addressFields.includes(key)) {
+        addrUpdates[key] = updates[key];
+        hasAddr = true;
+      }
+    }
+    if (hasAddr) {
+      safeUpdates.address = addrUpdates;
+    }
+    if (Object.keys(safeUpdates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+    const result = await bhWrite(`entity/ClientCorporation/${clientId}`, safeUpdates, "POST");
+    console.log("[Update Client]", clientId, "→", Object.keys(safeUpdates), result);
+    res.json({ success: true, message: "Client updated", changedFields: Object.keys(safeUpdates) });
+  } catch (e) {
+    console.error("[Update Client]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Client Contact Create / Update ────────────
+app.post("/api/client-contacts/:id/update", async (req, res) => {
+  try {
+    const contactId = parseInt(req.params.id);
+    const updates = req.body;
+    const ALLOWED_FIELDS = [
+      "firstName", "lastName", "title", "email", "email2",
+      "phone", "phone2", "mobile", "fax",
+      "occupation", "status", "type", "comments", "description",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+    ];
+    const safeUpdates = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        safeUpdates[key] = updates[key];
+      }
+    }
+    // Handle address sub-fields
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(updates)) {
+      if (addressFields.includes(key)) {
+        addrUpdates[key] = updates[key];
+        hasAddr = true;
+      }
+    }
+    if (hasAddr) safeUpdates.address = addrUpdates;
+    if (Object.keys(safeUpdates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+    const result = await bhWrite(`entity/ClientContact/${contactId}`, safeUpdates, "POST");
+    console.log("[Update ClientContact]", contactId, "→", Object.keys(safeUpdates), result);
+    res.json({ success: true, message: "Contact updated", changedFields: Object.keys(safeUpdates) });
+  } catch (e) {
+    console.error("[Update ClientContact]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/client-contacts", async (req, res) => {
+  try {
+    const body = req.body;
+    if (!body.clientCorporation || !body.clientCorporation.id) {
+      return res.status(400).json({ error: "clientCorporation.id is required" });
+    }
+    if (!body.firstName || !body.lastName) {
+      return res.status(400).json({ error: "firstName and lastName are required" });
+    }
+    const ALLOWED_FIELDS = [
+      "firstName", "lastName", "title", "email", "email2",
+      "phone", "phone2", "mobile", "fax",
+      "occupation", "status", "type", "comments", "description",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+    ];
+    const newContact = {
+      clientCorporation: { id: parseInt(body.clientCorporation.id) },
+      status: body.status || "Active",
+    };
+    for (const key of Object.keys(body)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        newContact[key] = body[key];
+      }
+    }
+    // Handle address
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(body)) {
+      if (addressFields.includes(key)) { addrUpdates[key] = body[key]; hasAddr = true; }
+    }
+    if (hasAddr) newContact.address = addrUpdates;
+    const result = await bhWrite("entity/ClientContact", newContact, "PUT");
+    console.log("[Create ClientContact]", result);
+    res.json({ success: true, message: "Contact created", data: result });
+  } catch (e) {
+    console.error("[Create ClientContact]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Job Update ────────────────────────────────
+app.post("/api/jobs/:id/update", async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.id);
+    const updates = req.body;
+    const ALLOWED_FIELDS = [
+      "title", "status", "employmentType", "salary", "numOpenings",
+      "startDate", "dateEnd", "type", "description", "publicDescription",
+      "benefits", "willRelocate", "travelRequirements",
+      "yearsRequired", "degreeList", "certificationList", "skillList",
+      "bonusPackage", "educationDegree", "externalCategoryID",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+      "customText6", "customText7", "customText8", "customText9", "customText10",
+      "customTextBlock1", "customTextBlock2", "customTextBlock3",
+      "customFloat1", "customFloat2", "customFloat3",
+      "customInt1", "customInt2", "customInt3",
+      "customDate1", "customDate2", "customDate3",
+    ];
+    const safeUpdates = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        safeUpdates[key] = updates[key];
+      }
+    }
+    // Handle owner as association
+    if (updates.owner && typeof updates.owner === "object" && updates.owner.id) {
+      safeUpdates.owner = { id: parseInt(updates.owner.id) };
+    } else if (updates.ownerId) {
+      safeUpdates.owner = { id: parseInt(updates.ownerId) };
+    }
+    // Handle clientCorporation as association
+    if (updates.clientCorporation && typeof updates.clientCorporation === "object" && updates.clientCorporation.id) {
+      safeUpdates.clientCorporation = { id: parseInt(updates.clientCorporation.id) };
+    } else if (updates.clientCorporationId) {
+      safeUpdates.clientCorporation = { id: parseInt(updates.clientCorporationId) };
+    }
+    // Handle address sub-fields
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(updates)) {
+      if (addressFields.includes(key)) { addrUpdates[key] = updates[key]; hasAddr = true; }
+    }
+    if (hasAddr) safeUpdates.address = addrUpdates;
+    if (Object.keys(safeUpdates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+    const result = await bhWrite(`entity/JobOrder/${jobId}`, safeUpdates, "POST");
+    console.log("[Update Job]", jobId, "→", Object.keys(safeUpdates), result);
+    res.json({ success: true, message: "Job updated", changedFields: Object.keys(safeUpdates) });
+  } catch (e) {
+    console.error("[Update Job]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Job Create ────────────────────────────────
+app.put("/api/jobs", async (req, res) => {
+  try {
+    const body = req.body;
+    if (!body.title) {
+      return res.status(400).json({ error: "Job title is required" });
+    }
+    const ALLOWED_FIELDS = [
+      "title", "status", "employmentType", "salary", "numOpenings",
+      "startDate", "dateEnd", "type", "description", "publicDescription",
+      "benefits", "willRelocate", "travelRequirements",
+      "yearsRequired", "degreeList", "certificationList", "skillList",
+      "bonusPackage", "educationDegree", "externalCategoryID",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+      "customText6", "customText7", "customText8", "customText9", "customText10",
+      "customTextBlock1", "customTextBlock2", "customTextBlock3",
+      "customFloat1", "customFloat2", "customFloat3",
+      "customInt1", "customInt2", "customInt3",
+      "customDate1", "customDate2", "customDate3",
+    ];
+    const newJob = {
+      status: body.status || "Accepting Candidates",
+      isDeleted: false,
+    };
+    for (const key of Object.keys(body)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        newJob[key] = body[key];
+      }
+    }
+    // Handle owner
+    if (body.owner && typeof body.owner === "object" && body.owner.id) {
+      newJob.owner = { id: parseInt(body.owner.id) };
+    } else if (body.ownerId) {
+      newJob.owner = { id: parseInt(body.ownerId) };
+    }
+    // Handle clientCorporation
+    if (body.clientCorporation && typeof body.clientCorporation === "object" && body.clientCorporation.id) {
+      newJob.clientCorporation = { id: parseInt(body.clientCorporation.id) };
+    } else if (body.clientCorporationId) {
+      newJob.clientCorporation = { id: parseInt(body.clientCorporationId) };
+    }
+    // Handle address
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(body)) {
+      if (addressFields.includes(key)) { addrUpdates[key] = body[key]; hasAddr = true; }
+    }
+    if (hasAddr) newJob.address = addrUpdates;
+    const result = await bhWrite("entity/JobOrder", newJob, "PUT");
+    console.log("[Create Job]", result);
+    res.json({ success: true, message: "Job created", data: result });
+  } catch (e) {
+    console.error("[Create Job]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -1328,23 +1583,40 @@ app.get("/api/jobs/:id", async (req, res) => {
       client: j.clientCorporation ? j.clientCorporation.name : "",
       clientId: j.clientCorporation ? j.clientCorporation.id : null,
       location: j.address ? [j.address.city, j.address.state].filter(Boolean).join(", ") : "",
+      address1: j.address ? j.address.address1 || "" : "",
+      address2: j.address ? j.address.address2 || "" : "",
+      addressCity: j.address ? j.address.city || "" : "",
+      addressState: j.address ? j.address.state || "" : "",
+      addressZip: j.address ? j.address.zip || "" : "",
       type: j.employmentType || "",
+      rawSalary: j.salary || "",
       salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
       status: j.status || "",
       priority: PRIORITY_LABELS[j.type] || "",
+      priorityRaw: j.type || 0,
       openings: j.numOpenings || 0,
       submissionCount: j.submissions ? j.submissions.total : 0,
       dateAdded: j.dateAdded ? new Date(j.dateAdded).toLocaleDateString() : "",
       startDate: j.startDate ? new Date(j.startDate).toLocaleDateString() : "",
+      rawStartDate: j.startDate || null,
       dateEnd: j.dateEnd ? new Date(j.dateEnd).toLocaleDateString() : null,
+      rawDateEnd: j.dateEnd || null,
       owner: j.owner ? ((j.owner.firstName || "") + " " + (j.owner.lastName || "")).trim() : "",
+      ownerId: j.owner ? j.owner.id : null,
       description: j.description || j.publicDescription || "",
       descriptionText: descText,
       certs: j.customText1 || "",
+      customText2: j.customText2 || "",
+      customText3: j.customText3 || "",
+      customText4: j.customText4 || "",
       epicRole: j.customText5 || "",
+      customText6: j.customText6 || "",
       benefits: j.benefits || "",
       yearsRequired: j.yearsRequired || null,
       travelRequirements: j.travelRequirements || null,
+      willRelocate: j.willRelocate || false,
+      skillList: j.skillList || "",
+      degreeList: j.degreeList || "",
       submissions: submissions,
       placements: placements,
       daysOpen: j.dateAdded && (j.status === "Accepting Candidates" || j.status === "Open") ? Math.floor((Date.now() - j.dateAdded) / 86400000) : null,

@@ -1059,7 +1059,10 @@ function renderClientDetail(d) {
   var h = '<div class="cd-header" style="display:flex;align-items:start;justify-content:space-between">';
   h += '<div><h2>🏢 ' + esc(d.name) + '</h2>';
   h += '<div class="cd-sub">' + esc(d.location) + (d.industry ? ' • ' + esc(d.industry) : '') + ' • ' + badge(d.status) + '</div></div>';
-  h += '<button class="detail-close" onclick="closeDetail()">✕</button></div>';
+  h += '<div style="display:flex;align-items:center;gap:8px">';
+  h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editClientProfile()">✏️ Edit</button>';
+  h += '<button class="detail-close" onclick="closeDetail()">✕</button>';
+  h += '</div></div>';
 
   // KPI row
   h += '<div class="cd-section" style="padding-bottom:0"><div class="cd-kpi-row">';
@@ -1103,8 +1106,10 @@ function switchClientTab(tab) {
 }
 
 function renderClientContacts(contacts) {
-  if (contacts.length === 0) return '<div class="cd-section"><div class="empty-state"><div class="big">👤</div><div class="title">No contacts found</div><div class="sub">Add contacts in Bullhorn to see them here</div></div></div>';
+  var d = window._lastClientDetail;
   var h = '<div class="cd-section">';
+  h += '<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button style="padding:5px 12px;border-radius:6px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="addClientContact(' + (d ? d.id : 0) + ')">+ Add Contact</button></div>';
+  if (contacts.length === 0) { h += '<div class="empty-state"><div class="big">👤</div><div class="title">No contacts found</div><div class="sub">Click Add Contact to create one</div></div></div>'; return h; }
   contacts.forEach(function(c) {
     var initials = (c.name || "?").split(" ").map(function(w) { return w[0] || ""; }).join("").toUpperCase().substring(0, 2);
     var bgColor = c.daysSince > 30 ? "#dc2626" : c.daysSince > 14 ? "#f59e0b" : "#176087";
@@ -1120,7 +1125,10 @@ function renderClientContacts(contacts) {
     if (c.email) h += '<span>📧 ' + esc(c.email) + '</span>';
     if (c.phone) h += '<span>📞 ' + esc(c.phone) + '</span>';
     h += '</div></div>';
+    h += '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">';
     h += '<div class="touch-alert ' + alertClass + '">' + esc(alertText) + '</div>';
+    h += '<button style="padding:2px 8px;border-radius:4px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-size:10px;cursor:pointer;font-family:inherit" onclick="editClientContactForm(' + c.id + ')">Edit</button>';
+    h += '</div>';
     h += '</div>';
   });
   h += '</div>';
@@ -1128,10 +1136,12 @@ function renderClientContacts(contacts) {
 }
 
 function renderClientJobs(jobs) {
-  if (jobs.length === 0) return '<div class="cd-section"><div class="empty-state"><div class="big">💼</div><div class="title">No jobs found</div></div></div>';
+  var d = window._lastClientDetail;
+  var h = '<div class="cd-section">';
+  h += '<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button style="padding:5px 12px;border-radius:6px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openCreateJob(' + (d ? d.id : 0) + ')">+ New Job</button></div>';
+  if (jobs.length === 0) { h += '<div class="empty-state"><div class="big">💼</div><div class="title">No jobs found</div></div></div>'; return h; }
   var open = jobs.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
   var closed = jobs.filter(function(j) { return j.status !== "Accepting Candidates" && j.status !== "Open"; });
-  var h = '<div class="cd-section">';
   if (open.length > 0) {
     h += '<h4 style="font-size:12px;font-weight:600;color:#16a34a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Open Jobs (' + open.length + ')</h4>';
     open.forEach(function(j) { h += jobRow(j); });
@@ -1194,6 +1204,283 @@ function renderClientInfo(d) {
   return h;
 }
 
+/* ═══ CLIENT EDIT FORM ═══ */
+function editClientProfile() {
+  var d = window._lastClientDetail;
+  if (!d) return;
+  var dc = document.getElementById("detail-content");
+  if (!dc) return;
+
+  var h = '<div style="padding:24px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  h += '<div><div style="font-size:20px;font-weight:700;color:#0f172a">Edit Client</div>';
+  h += '<div style="font-size:13px;color:#94a3b8">' + esc(d.name) + '</div></div>';
+  h += '<button class="detail-close" onclick="openClientDetail(' + d.id + ')" style="position:static">✕</button>';
+  h += '</div>';
+
+  h += '<div class="edit-form-grid">';
+
+  h += '<div class="edit-section-title">Company Information</div>';
+  h += eField("cl-name", "Company Name", d.name);
+  h += eFieldSelect("cl-status", "Status", d.status, ["Active Account","Inactive","Prospect","Former","Do Not Contact",""]);
+  h += eField("cl-phone", "Phone", d.phone, "tel");
+  h += eField("cl-fax", "Fax", d.fax, "tel");
+  h += eField("cl-companyURL", "Website", d.website);
+  h += eField("cl-industryList", "Industry", d.industry);
+
+  // Owner dropdown
+  h += '<div class="edit-field"><label for="edit-cl-ownerId">Account Owner</label>';
+  h += '<select id="edit-cl-ownerId"><option value="">Loading...</option></select></div>';
+
+  h += '<div class="edit-section-title">Address</div>';
+  h += eField("cl-address1", "Address Line 1", d.address1);
+  h += eField("cl-address2", "Address Line 2", d.address2);
+  h += eField("cl-city", "City", d.city);
+  h += eField("cl-state", "State", d.state);
+  h += eField("cl-zip", "Zip Code", d.zip);
+
+  h += '<div class="edit-section-title">Financial Details</div>';
+  h += eField("cl-annualRevenue", "Annual Revenue", d.annualRevenue, "number");
+  h += eField("cl-numEmployees", "Number of Employees", d.numEmployees, "number");
+  h += eField("cl-numOffices", "Number of Offices", d.numOffices, "number");
+  h += eField("cl-billingPhone", "Billing Phone", d.billingPhone, "tel");
+  h += eField("cl-billingContact", "Billing Contact", d.billingContact);
+
+  h += '</div>'; // close edit-form-grid
+
+  // Notes - full width
+  h += '<div style="margin-top:16px">';
+  h += '<div class="edit-section-title" style="grid-column:unset">Notes</div>';
+  h += '<div class="edit-field full-width"><textarea id="edit-cl-notes" rows="5">' + esc(d.notes || "") + '</textarea></div>';
+  h += '</div>';
+
+  h += '</div>'; // close padding wrapper
+
+  h += '<div class="edit-save-bar">';
+  h += '<button class="btn-cancel" onclick="openClientDetail(' + d.id + ')">Cancel</button>';
+  h += '<button class="btn-save" id="cl-edit-save-btn" onclick="saveClientProfile(' + d.id + ')">Save Changes</button>';
+  h += '</div>';
+
+  dc.innerHTML = h;
+  dc.scrollTop = 0;
+
+  // Populate owner dropdown
+  apiFetch("users").then(function(r) {
+    var sel = document.getElementById("edit-cl-ownerId");
+    if (!sel) return;
+    var users = r.data || [];
+    var currentOwnerId = d.ownerId || "";
+    var opts = '<option value="">(none)</option>';
+    users.forEach(function(u) {
+      var selected = (String(u.id) === String(currentOwnerId)) ? " selected" : "";
+      opts += '<option value="' + u.id + '"' + selected + '>' + esc(u.name) + '</option>';
+    });
+    sel.innerHTML = opts;
+  }).catch(function() {
+    var sel = document.getElementById("edit-cl-ownerId");
+    if (sel) sel.innerHTML = '<option value="">Could not load users</option>';
+  });
+}
+
+function saveClientProfile(clientId) {
+  var btn = document.getElementById("cl-edit-save-btn");
+  if (!btn) return;
+  btn.textContent = "Saving...";
+  btn.disabled = true;
+
+  var fieldMap = {
+    "cl-name": "name", "cl-status": "status", "cl-phone": "phone", "cl-fax": "fax",
+    "cl-companyURL": "companyURL", "cl-industryList": "industryList",
+    "cl-address1": "address1", "cl-address2": "address2", "cl-city": "city",
+    "cl-state": "state", "cl-zip": "zip",
+    "cl-annualRevenue": "annualRevenue", "cl-numEmployees": "numEmployees",
+    "cl-numOffices": "numOffices", "cl-billingPhone": "billingPhone",
+    "cl-billingContact": "billingContact",
+  };
+  var updates = {};
+  for (var editId in fieldMap) {
+    var el = document.getElementById("edit-" + editId);
+    if (el) {
+      var val = el.value.trim();
+      if (val !== "") updates[fieldMap[editId]] = val;
+    }
+  }
+  // Notes textarea
+  var notesEl = document.getElementById("edit-cl-notes");
+  if (notesEl) updates.notes = notesEl.value;
+  // Owner
+  var ownerEl = document.getElementById("edit-cl-ownerId");
+  if (ownerEl && ownerEl.value) updates.ownerId = ownerEl.value;
+  // Numeric fields
+  ["annualRevenue", "numEmployees", "numOffices"].forEach(function(f) {
+    if (updates[f]) updates[f] = Number(updates[f]) || 0;
+  });
+
+  apiFetch("clients/" + clientId + "/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  }).then(function(r) {
+    btn.textContent = "✓ Saved!";
+    btn.style.background = "#16a34a";
+    setTimeout(function() { openClientDetail(clientId); }, 800);
+  }).catch(function(e) {
+    btn.textContent = "Error: " + e.message;
+    btn.style.background = "#dc2626";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Save Changes"; btn.style.background = "#16a34a"; }, 3000);
+  });
+}
+
+/* ═══ CLIENT CONTACT EDIT / ADD ═══ */
+function editClientContactForm(contactId) {
+  var d = window._lastClientDetail;
+  if (!d) return;
+  var contact = null;
+  d.contacts.forEach(function(c) { if (c.id === contactId) contact = c; });
+  if (!contact) return;
+
+  var dc = document.getElementById("detail-content");
+  if (!dc) return;
+
+  // Fetch full contact detail from Bullhorn for editing
+  var h = '<div style="padding:24px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  h += '<div><div style="font-size:20px;font-weight:700;color:#0f172a">Edit Contact</div>';
+  h += '<div style="font-size:13px;color:#94a3b8">' + esc(contact.name) + ' at ' + esc(d.name) + '</div></div>';
+  h += '<button class="detail-close" onclick="openClientDetail(' + d.id + ')" style="position:static">✕</button>';
+  h += '</div>';
+
+  h += '<div class="edit-form-grid">';
+  h += '<div class="edit-section-title">Contact Information</div>';
+  var nameParts = (contact.name || "").split(" ");
+  h += eField("cc-firstName", "First Name", nameParts[0] || "");
+  h += eField("cc-lastName", "Last Name", nameParts.slice(1).join(" ") || "");
+  h += eField("cc-title", "Title", contact.title);
+  h += eField("cc-email", "Email", contact.email, "email");
+  h += eField("cc-phone", "Phone", contact.phone, "tel");
+  h += eField("cc-mobile", "Mobile", "", "tel");
+  h += eFieldSelect("cc-status", "Status", contact.status || "Active", ["Active","Inactive","New Lead","Do Not Contact",""]);
+  h += '</div>';
+
+  h += '</div>';
+
+  h += '<div class="edit-save-bar">';
+  h += '<button class="btn-cancel" onclick="openClientDetail(' + d.id + ')">Cancel</button>';
+  h += '<button class="btn-save" id="cc-edit-save-btn" onclick="saveClientContact(' + contactId + ',' + d.id + ')">Save Changes</button>';
+  h += '</div>';
+
+  dc.innerHTML = h;
+  dc.scrollTop = 0;
+}
+
+function addClientContact(clientCorpId) {
+  var d = window._lastClientDetail;
+  var dc = document.getElementById("detail-content");
+  if (!dc) return;
+
+  var h = '<div style="padding:24px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  h += '<div><div style="font-size:20px;font-weight:700;color:#0f172a">New Contact</div>';
+  h += '<div style="font-size:13px;color:#94a3b8">at ' + esc(d ? d.name : "") + '</div></div>';
+  h += '<button class="detail-close" onclick="openClientDetail(' + clientCorpId + ')" style="position:static">✕</button>';
+  h += '</div>';
+
+  h += '<div class="edit-form-grid">';
+  h += '<div class="edit-section-title">Contact Information</div>';
+  h += eField("cc-firstName", "First Name", "");
+  h += eField("cc-lastName", "Last Name", "");
+  h += eField("cc-title", "Title", "");
+  h += eField("cc-email", "Email", "", "email");
+  h += eField("cc-phone", "Phone", "", "tel");
+  h += eField("cc-mobile", "Mobile", "", "tel");
+  h += eFieldSelect("cc-status", "Status", "Active", ["Active","Inactive","New Lead","Do Not Contact",""]);
+  h += eField("cc-occupation", "Role / Occupation", "");
+  h += '</div>';
+
+  h += '</div>';
+
+  h += '<div class="edit-save-bar">';
+  h += '<button class="btn-cancel" onclick="openClientDetail(' + clientCorpId + ')">Cancel</button>';
+  h += '<button class="btn-save" id="cc-edit-save-btn" onclick="createClientContact(' + clientCorpId + ')">Create Contact</button>';
+  h += '</div>';
+
+  dc.innerHTML = h;
+  dc.scrollTop = 0;
+}
+
+function saveClientContact(contactId, clientCorpId) {
+  var btn = document.getElementById("cc-edit-save-btn");
+  if (!btn) return;
+  btn.textContent = "Saving...";
+  btn.disabled = true;
+
+  var updates = {};
+  var fieldMap = {
+    "cc-firstName": "firstName", "cc-lastName": "lastName", "cc-title": "title",
+    "cc-email": "email", "cc-phone": "phone", "cc-mobile": "mobile", "cc-status": "status",
+  };
+  for (var editId in fieldMap) {
+    var el = document.getElementById("edit-" + editId);
+    if (el && el.value.trim() !== "") updates[fieldMap[editId]] = el.value.trim();
+  }
+
+  apiFetch("client-contacts/" + contactId + "/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  }).then(function(r) {
+    btn.textContent = "✓ Saved!";
+    btn.style.background = "#16a34a";
+    setTimeout(function() { openClientDetail(clientCorpId); }, 800);
+  }).catch(function(e) {
+    btn.textContent = "Error: " + e.message;
+    btn.style.background = "#dc2626";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Save Changes"; btn.style.background = "#16a34a"; }, 3000);
+  });
+}
+
+function createClientContact(clientCorpId) {
+  var btn = document.getElementById("cc-edit-save-btn");
+  if (!btn) return;
+  btn.textContent = "Creating...";
+  btn.disabled = true;
+
+  var newContact = { clientCorporation: { id: clientCorpId } };
+  var fieldMap = {
+    "cc-firstName": "firstName", "cc-lastName": "lastName", "cc-title": "title",
+    "cc-email": "email", "cc-phone": "phone", "cc-mobile": "mobile",
+    "cc-status": "status", "cc-occupation": "occupation",
+  };
+  for (var editId in fieldMap) {
+    var el = document.getElementById("edit-" + editId);
+    if (el && el.value.trim() !== "") newContact[fieldMap[editId]] = el.value.trim();
+  }
+  if (!newContact.firstName || !newContact.lastName) {
+    btn.textContent = "First & last name required";
+    btn.style.background = "#dc2626";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Create Contact"; btn.style.background = "#16a34a"; }, 2000);
+    return;
+  }
+
+  apiFetch("client-contacts", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(newContact),
+  }).then(function(r) {
+    btn.textContent = "✓ Created!";
+    btn.style.background = "#16a34a";
+    setTimeout(function() { openClientDetail(clientCorpId); }, 800);
+  }).catch(function(e) {
+    btn.textContent = "Error: " + e.message;
+    btn.style.background = "#dc2626";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Create Contact"; btn.style.background = "#16a34a"; }, 3000);
+  });
+}
+
 /* ═══ JOB DETAIL PANEL ═══ */
 function openJobDetail(jobId) {
   var p = document.getElementById("detail-panel");
@@ -1219,7 +1506,10 @@ function renderJobDetail(d) {
   h += esc(d.location) + ' • ' + badge(d.status);
   if (d.priority && pColor) h += ' <span class="badge" style="background:' + pColor + '18;color:' + pColor + ';border:1px solid ' + pColor + '40;font-weight:700">' + esc(d.priority) + '</span>';
   h += '</div></div>';
-  h += '<button class="detail-close" onclick="closeDetail()">✕</button></div>';
+  h += '<div style="display:flex;align-items:center;gap:8px">';
+  h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editJobProfile()">✏️ Edit</button>';
+  h += '<button class="detail-close" onclick="closeDetail()">✕</button>';
+  h += '</div></div>';
 
   // KPI row
   h += '<div class="cd-section" style="padding-bottom:0"><div class="cd-kpi-row">';
@@ -1322,6 +1612,321 @@ function renderJobPlacements(placements) {
   });
   h += '</div>';
   return h;
+}
+
+/* ═══ JOB EDIT FORM ═══ */
+function editJobProfile() {
+  var d = window._lastJobDetail;
+  if (!d) return;
+  var dc = document.getElementById("detail-content");
+  if (!dc) return;
+
+  var h = '<div style="padding:24px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  h += '<div><div style="font-size:20px;font-weight:700;color:#0f172a">Edit Job</div>';
+  h += '<div style="font-size:13px;color:#94a3b8">' + esc(d.title) + '</div></div>';
+  h += '<button class="detail-close" onclick="openJobDetail(' + d.id + ')" style="position:static">✕</button>';
+  h += '</div>';
+
+  h += '<div class="edit-form-grid">';
+
+  h += '<div class="edit-section-title">Job Information</div>';
+  h += eField("jb-title", "Job Title", d.title);
+  h += eFieldSelect("jb-status", "Status", d.status, ["Accepting Candidates","Open","Filled","Closed","Cancelled","On Hold",""]);
+  h += eFieldSelect("jb-employmentType", "Employment Type", d.type, ["Contract","Direct Hire","Permanent","Contract to Hire","Temp to Perm",""]);
+  h += eFieldSelect("jb-type", "Priority", String(d.priorityRaw || 0), [["0","None"],["1","Urgent"],["2","Hot"],["3","Warm"],["4","Cold"]]);
+  h += eField("jb-salary", "Bill Rate / Salary", d.rawSalary || "", "number");
+  h += eField("jb-numOpenings", "Number of Openings", d.openings, "number");
+
+  // Client dropdown
+  h += '<div class="edit-field"><label for="edit-jb-clientCorporationId">Client</label>';
+  h += '<select id="edit-jb-clientCorporationId"><option value="">Loading...</option></select></div>';
+
+  // Owner dropdown
+  h += '<div class="edit-field"><label for="edit-jb-ownerId">Owner</label>';
+  h += '<select id="edit-jb-ownerId"><option value="">Loading...</option></select></div>';
+
+  h += '<div class="edit-section-title">Location</div>';
+  h += eField("jb-address1", "Address", d.address1 || "");
+  h += eField("jb-city", "City", d.addressCity || "");
+  h += eField("jb-state", "State", d.addressState || "");
+  h += eField("jb-zip", "Zip", d.addressZip || "");
+
+  h += '<div class="edit-section-title">Dates</div>';
+  h += eField("jb-startDate", "Start Date", d.rawStartDate ? formatDateForInput(new Date(d.rawStartDate).toLocaleDateString()) : "", "date");
+  h += eField("jb-dateEnd", "End Date", d.rawDateEnd ? formatDateForInput(new Date(d.rawDateEnd).toLocaleDateString()) : "", "date");
+
+  h += '<div class="edit-section-title">Requirements</div>';
+  h += eField("jb-customText1", "Certifications (customText1)", d.certs);
+  h += eField("jb-customText5", "Epic Role (customText5)", d.epicRole);
+  h += eField("jb-customText2", "Custom Text 2", d.customText2 || "");
+  h += eField("jb-customText3", "Custom Text 3", d.customText3 || "");
+  h += eField("jb-yearsRequired", "Years Experience Required", d.yearsRequired, "number");
+  h += eField("jb-travelRequirements", "Travel Requirements", d.travelRequirements || "");
+  h += eField("jb-skillList", "Skills", d.skillList || "");
+  h += eField("jb-degreeList", "Degree Required", d.degreeList || "");
+
+  h += '</div>'; // close grid
+
+  // Description - full width
+  h += '<div style="margin-top:16px">';
+  h += '<div class="edit-section-title" style="grid-column:unset">Description</div>';
+  h += '<div class="edit-field full-width" style="margin-bottom:12px"><textarea id="edit-jb-description" rows="8">' + esc(d.descriptionText || "") + '</textarea></div>';
+  h += '<div class="edit-section-title" style="grid-column:unset">Benefits</div>';
+  h += '<div class="edit-field full-width"><textarea id="edit-jb-benefits" rows="4">' + esc(d.benefits || "") + '</textarea></div>';
+  h += '</div>';
+
+  h += '</div>'; // close padding
+
+  h += '<div class="edit-save-bar">';
+  h += '<button class="btn-cancel" onclick="openJobDetail(' + d.id + ')">Cancel</button>';
+  h += '<button class="btn-save" id="jb-edit-save-btn" onclick="saveJobProfile(' + d.id + ')">Save Changes</button>';
+  h += '</div>';
+
+  dc.innerHTML = h;
+  dc.scrollTop = 0;
+
+  // Populate owner dropdown
+  apiFetch("users").then(function(r) {
+    var sel = document.getElementById("edit-jb-ownerId");
+    if (!sel) return;
+    var users = r.data || [];
+    var opts = '<option value="">(none)</option>';
+    users.forEach(function(u) {
+      var selected = (String(u.id) === String(d.ownerId || "")) ? " selected" : "";
+      opts += '<option value="' + u.id + '"' + selected + '>' + esc(u.name) + '</option>';
+    });
+    sel.innerHTML = opts;
+  }).catch(function() {});
+
+  // Populate client dropdown
+  apiFetch("clients").then(function(r) {
+    var sel = document.getElementById("edit-jb-clientCorporationId");
+    if (!sel) return;
+    var clients = r.data || [];
+    var opts = '<option value="">(none)</option>';
+    clients.forEach(function(c) {
+      var selected = (String(c.id) === String(d.clientId || "")) ? " selected" : "";
+      opts += '<option value="' + c.id + '"' + selected + '>' + esc(c.name) + '</option>';
+    });
+    sel.innerHTML = opts;
+  }).catch(function() {});
+}
+
+function saveJobProfile(jobId) {
+  var btn = document.getElementById("jb-edit-save-btn");
+  if (!btn) return;
+  btn.textContent = "Saving...";
+  btn.disabled = true;
+
+  var fieldMap = {
+    "jb-title": "title", "jb-status": "status", "jb-employmentType": "employmentType",
+    "jb-type": "type", "jb-salary": "salary", "jb-numOpenings": "numOpenings",
+    "jb-address1": "address1", "jb-city": "city", "jb-state": "state", "jb-zip": "zip",
+    "jb-startDate": "startDate", "jb-dateEnd": "dateEnd",
+    "jb-customText1": "customText1", "jb-customText2": "customText2",
+    "jb-customText3": "customText3", "jb-customText5": "customText5",
+    "jb-yearsRequired": "yearsRequired", "jb-travelRequirements": "travelRequirements",
+    "jb-skillList": "skillList", "jb-degreeList": "degreeList",
+  };
+  var updates = {};
+  for (var editId in fieldMap) {
+    var el = document.getElementById("edit-" + editId);
+    if (el && el.value.trim() !== "") updates[fieldMap[editId]] = el.value.trim();
+  }
+  // Textareas
+  var descEl = document.getElementById("edit-jb-description");
+  if (descEl) updates.description = descEl.value;
+  var benEl = document.getElementById("edit-jb-benefits");
+  if (benEl) updates.benefits = benEl.value;
+  // Owner
+  var ownerEl = document.getElementById("edit-jb-ownerId");
+  if (ownerEl && ownerEl.value) updates.ownerId = ownerEl.value;
+  // Client
+  var clientEl = document.getElementById("edit-jb-clientCorporationId");
+  if (clientEl && clientEl.value) updates.clientCorporationId = clientEl.value;
+  // Numeric
+  ["salary", "numOpenings", "yearsRequired", "type"].forEach(function(f) {
+    if (updates[f]) updates[f] = Number(updates[f]) || 0;
+  });
+  // Dates to timestamps
+  ["startDate", "dateEnd"].forEach(function(f) {
+    if (updates[f]) updates[f] = new Date(updates[f]).getTime();
+  });
+
+  apiFetch("jobs/" + jobId + "/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  }).then(function(r) {
+    btn.textContent = "✓ Saved!";
+    btn.style.background = "#16a34a";
+    setTimeout(function() { openJobDetail(jobId); }, 800);
+  }).catch(function(e) {
+    btn.textContent = "Error: " + e.message;
+    btn.style.background = "#dc2626";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Save Changes"; btn.style.background = "#16a34a"; }, 3000);
+  });
+}
+
+/* ═══ JOB CREATE FORM ═══ */
+function openCreateJob(presetClientId) {
+  var p = document.getElementById("detail-panel");
+  var o = document.getElementById("detail-overlay");
+  var dc = document.getElementById("detail-content");
+  p.classList.add("open");
+  o.classList.add("open");
+
+  var h = '<div style="padding:24px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  h += '<div><div style="font-size:20px;font-weight:700;color:#0f172a">New Job Requisition</div>';
+  h += '<div style="font-size:13px;color:#94a3b8">Create a new job order in Bullhorn</div></div>';
+  h += '<button class="detail-close" onclick="closeDetail()" style="position:static">✕</button>';
+  h += '</div>';
+
+  h += '<div class="edit-form-grid">';
+
+  h += '<div class="edit-section-title">Job Information</div>';
+  h += eField("nj-title", "Job Title", "");
+  h += eFieldSelect("nj-status", "Status", "Accepting Candidates", ["Accepting Candidates","Open","On Hold",""]);
+  h += eFieldSelect("nj-employmentType", "Employment Type", "Contract", ["Contract","Direct Hire","Permanent","Contract to Hire","Temp to Perm",""]);
+  h += eFieldSelect("nj-type", "Priority", "0", [["0","None"],["1","Urgent"],["2","Hot"],["3","Warm"],["4","Cold"]]);
+  h += eField("nj-salary", "Bill Rate / Salary", "", "number");
+  h += eField("nj-numOpenings", "Number of Openings", "1", "number");
+
+  // Client dropdown
+  h += '<div class="edit-field"><label for="edit-nj-clientCorporationId">Client</label>';
+  h += '<select id="edit-nj-clientCorporationId"><option value="">Loading...</option></select></div>';
+
+  // Owner dropdown
+  h += '<div class="edit-field"><label for="edit-nj-ownerId">Owner</label>';
+  h += '<select id="edit-nj-ownerId"><option value="">Loading...</option></select></div>';
+
+  h += '<div class="edit-section-title">Location</div>';
+  h += eField("nj-address1", "Address", "");
+  h += eField("nj-city", "City", "");
+  h += eField("nj-state", "State", "");
+  h += eField("nj-zip", "Zip", "");
+
+  h += '<div class="edit-section-title">Dates</div>';
+  h += eField("nj-startDate", "Start Date", "", "date");
+  h += eField("nj-dateEnd", "End Date", "", "date");
+
+  h += '<div class="edit-section-title">Requirements</div>';
+  h += eField("nj-customText1", "Certifications", "");
+  h += eField("nj-customText5", "Epic Role", "");
+  h += eField("nj-yearsRequired", "Years Experience Required", "", "number");
+  h += eField("nj-travelRequirements", "Travel Requirements", "");
+  h += eField("nj-skillList", "Skills", "");
+  h += eField("nj-degreeList", "Degree Required", "");
+
+  h += '</div>'; // close grid
+
+  h += '<div style="margin-top:16px">';
+  h += '<div class="edit-section-title" style="grid-column:unset">Description</div>';
+  h += '<div class="edit-field full-width" style="margin-bottom:12px"><textarea id="edit-nj-description" rows="8" placeholder="Enter job description..."></textarea></div>';
+  h += '<div class="edit-section-title" style="grid-column:unset">Benefits</div>';
+  h += '<div class="edit-field full-width"><textarea id="edit-nj-benefits" rows="4" placeholder="Benefits package details..."></textarea></div>';
+  h += '</div>';
+
+  h += '</div>'; // close padding
+
+  h += '<div class="edit-save-bar">';
+  h += '<button class="btn-cancel" onclick="closeDetail()">Cancel</button>';
+  h += '<button class="btn-save" id="nj-save-btn" onclick="submitNewJob()">Create Job</button>';
+  h += '</div>';
+
+  dc.innerHTML = h;
+  dc.scrollTop = 0;
+
+  // Populate dropdowns
+  apiFetch("users").then(function(r) {
+    var sel = document.getElementById("edit-nj-ownerId");
+    if (!sel) return;
+    var users = r.data || [];
+    var opts = '<option value="">(none)</option>';
+    users.forEach(function(u) { opts += '<option value="' + u.id + '">' + esc(u.name) + '</option>'; });
+    sel.innerHTML = opts;
+  }).catch(function() {});
+
+  apiFetch("clients").then(function(r) {
+    var sel = document.getElementById("edit-nj-clientCorporationId");
+    if (!sel) return;
+    var clients = r.data || [];
+    var opts = '<option value="">(select client)</option>';
+    clients.forEach(function(c) {
+      var selected = (presetClientId && String(c.id) === String(presetClientId)) ? " selected" : "";
+      opts += '<option value="' + c.id + '"' + selected + '>' + esc(c.name) + '</option>';
+    });
+    sel.innerHTML = opts;
+  }).catch(function() {});
+}
+
+function submitNewJob() {
+  var btn = document.getElementById("nj-save-btn");
+  if (!btn) return;
+  btn.textContent = "Creating...";
+  btn.disabled = true;
+
+  var fieldMap = {
+    "nj-title": "title", "nj-status": "status", "nj-employmentType": "employmentType",
+    "nj-type": "type", "nj-salary": "salary", "nj-numOpenings": "numOpenings",
+    "nj-address1": "address1", "nj-city": "city", "nj-state": "state", "nj-zip": "zip",
+    "nj-startDate": "startDate", "nj-dateEnd": "dateEnd",
+    "nj-customText1": "customText1", "nj-customText5": "customText5",
+    "nj-yearsRequired": "yearsRequired", "nj-travelRequirements": "travelRequirements",
+    "nj-skillList": "skillList", "nj-degreeList": "degreeList",
+  };
+  var newJob = {};
+  for (var editId in fieldMap) {
+    var el = document.getElementById("edit-" + editId);
+    if (el && el.value.trim() !== "") newJob[fieldMap[editId]] = el.value.trim();
+  }
+  var descEl = document.getElementById("edit-nj-description");
+  if (descEl && descEl.value.trim()) newJob.description = descEl.value.trim();
+  var benEl = document.getElementById("edit-nj-benefits");
+  if (benEl && benEl.value.trim()) newJob.benefits = benEl.value.trim();
+  var ownerEl = document.getElementById("edit-nj-ownerId");
+  if (ownerEl && ownerEl.value) newJob.ownerId = ownerEl.value;
+  var clientEl = document.getElementById("edit-nj-clientCorporationId");
+  if (clientEl && clientEl.value) newJob.clientCorporationId = clientEl.value;
+
+  if (!newJob.title) {
+    btn.textContent = "Job title is required";
+    btn.style.background = "#dc2626";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Create Job"; btn.style.background = "#16a34a"; }, 2000);
+    return;
+  }
+
+  // Numeric fields
+  ["salary", "numOpenings", "yearsRequired", "type"].forEach(function(f) {
+    if (newJob[f]) newJob[f] = Number(newJob[f]) || 0;
+  });
+  // Dates
+  ["startDate", "dateEnd"].forEach(function(f) {
+    if (newJob[f]) newJob[f] = new Date(newJob[f]).getTime();
+  });
+
+  apiFetch("jobs", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(newJob),
+  }).then(function(r) {
+    btn.textContent = "✓ Created!";
+    btn.style.background = "#16a34a";
+    var newId = r.data && r.data.changedEntityId ? r.data.changedEntityId : null;
+    setTimeout(function() {
+      if (newId) { openJobDetail(newId); }
+      else { closeDetail(); if (currentPage === "jobs") loadPage(); }
+    }, 800);
+  }).catch(function(e) {
+    btn.textContent = "Error: " + e.message;
+    btn.style.background = "#dc2626";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Create Job"; btn.style.background = "#16a34a"; }, 3000);
+  });
 }
 
 function openTearsheet() {
@@ -2205,6 +2810,7 @@ function renderJobs(data,bhTotal){
   ss.forEach(function(s){html+='<button class="chip'+(sf===s?" on":"")+'" onclick="filters.status=\''+s+'\';render()">'+s+'</button>';});
   html+='</div></div>';
   html+='<div class="count-line"><span>'+displayTotal+' job'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
+  html+='<button style="padding:5px 14px;border-radius:6px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;margin-right:8px" onclick="openCreateJob()">+ New Job</button>';
   html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'jobs.csv\',jobCols,_lastData.jobs)">\uD83D\uDCE5 Export CSV</button></div>';
   _lastData.filteredJobs=f;
   html+='<div class="table-wrap">'+makeTable(cols,f,"_jobRowClick")+'</div>';
