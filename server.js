@@ -4637,10 +4637,10 @@ app.get("/api/pipeline", async (req, res) => {
 // ═══ MICROSOFT OUTLOOK / 365 INTEGRATION ════════════════════════
 // Per-user OAuth2 flow with Microsoft Graph API for email read/send/sync
 
-var OUTLOOK_TENANT = process.env.OUTLOOK_TENANT_ID || "common";
+var OUTLOOK_TENANT = (process.env.OUTLOOK_TENANT_ID || "common").trim();
 var OUTLOOK_CONFIG = {
-  clientId: process.env.OUTLOOK_CLIENT_ID || "",
-  clientSecret: process.env.OUTLOOK_CLIENT_SECRET || "",
+  clientId: (process.env.OUTLOOK_CLIENT_ID || "").trim(),
+  clientSecret: (process.env.OUTLOOK_CLIENT_SECRET || "").trim(),
   redirectUri: (process.env.RAILWAY_PUBLIC_DOMAIN ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.BASE_URL || "https://bullhorn-dashboard-production.up.railway.app") + "/auth/outlook/callback",
   scopes: "openid profile email offline_access Mail.Read Mail.Send User.Read",
   authorizeUrl: "https://login.microsoftonline.com/" + OUTLOOK_TENANT + "/oauth2/v2.0/authorize",
