@@ -915,23 +915,46 @@ app.get("/api/clients", async (req, res) => {
       where += ` AND status='${status}'`;
     }
 
-    // Fetch clients — use search endpoint (more reliable with nested fields)
+    // Fetch clients — omit owner from initial query (not a valid search field for ClientCorporation)
     let data;
     try {
       const searchQuery = q ? `name:${q}*` : "isDeleted:0";
       const fullQuery = (status && status !== "All") ? `(${searchQuery}) AND status:"${status}"` : searchQuery;
       data = await bhFetchAll("search/ClientCorporation", {
         query: fullQuery,
-        fields: "id,name,address,status,dateLastModified,owner(id,firstName,lastName)",
+        fields: "id,name,address,status,dateLastModified",
         sort: "-dateLastModified",
       });
     } catch (searchErr) {
       console.log("[Clients] Search failed, falling back to query:", searchErr.message);
       data = await bhFetchAll("query/ClientCorporation", {
         where,
-        fields: "id,name,address,status,dateLastModified,owner",
+        fields: "id,name,address,status,dateLastModified",
         orderBy: "-dateLastModified",
       });
+    }
+
+    // Fetch owner names per client via entity endpoint (non-blocking)
+    let ownerMap = {};
+    try {
+      const clientIds = (data.data || []).filter(c => c.id).map(c => c.id);
+      // Fetch in batches of 20 to avoid URL length issues
+      for (let i = 0; i < clientIds.length; i += 20) {
+        const batch = clientIds.slice(i, i + 20);
+        const ownerPromises = batch.map(cid =>
+          bhFetch(`entity/ClientCorporation/${cid}`, { fields: "id,owner" })
+            .then(r => {
+              const d = r.data || r;
+              if (d.owner && typeof d.owner === "object") {
+                ownerMap[cid] = ((d.owner.firstName || "") + " " + (d.owner.lastName || "")).trim();
+              }
+            })
+            .catch(() => {})
+        );
+        await Promise.all(ownerPromises);
+      }
+    } catch (ownerErr) {
+      console.log("[Clients] Owner fetch failed (non-blocking):", ownerErr.message);
     }
 
     // Try to fetch placement counts per client (non-blocking)
@@ -960,23 +983,17 @@ app.get("/api/clients", async (req, res) => {
       console.log("[Clients] Placement query failed (non-blocking):", placErr.message);
     }
 
-    const clients = (data.data || []).map((c) => {
-      var ownerName = "";
-      if (c.owner && typeof c.owner === "object") {
-        ownerName = ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim();
-      }
-      return {
-        id: c.id,
-        name: c.name || "",
-        owner: ownerName,
-        location: c.address && typeof c.address === "object"
-          ? [c.address.city, c.address.state].filter(Boolean).join(", ")
-          : "",
-        status: c.status || "Unknown",
-        activePlacements: placByClient[c.id] ? placByClient[c.id].length : 0,
-        placedConsultants: placByClient[c.id] || [],
-      };
-    });
+    const clients = (data.data || []).map((c) => ({
+      id: c.id,
+      name: c.name || "",
+      owner: ownerMap[c.id] || "",
+      location: c.address && typeof c.address === "object"
+        ? [c.address.city, c.address.state].filter(Boolean).join(", ")
+        : "",
+      status: c.status || "Unknown",
+      activePlacements: placByClient[c.id] ? placByClient[c.id].length : 0,
+      placedConsultants: placByClient[c.id] || [],
+    }));
 
     res.json({ data: clients, total: data.total });
   } catch (e) {
@@ -990,10 +1007,18 @@ app.get("/api/clients/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
-    // 1. Client corporation details
+    // 1. Client corporation details (owner fetched separately — not a valid field on some Bullhorn configs)
     const corpData = await bhFetch(`entity/ClientCorporation/${id}`, {
-      fields: "id,name,address,phone,fax,status,companyURL,dateAdded,dateLastModified,notes,industryList,numOffices,annualRevenue,numEmployees,billingPhone,billingContact,owner"
+      fields: "id,name,address,phone,fax,status,companyURL,dateAdded,dateLastModified,notes,industryList,numOffices,annualRevenue,numEmployees,billingPhone,billingContact"
     });
+    // Try to get owner separately
+    try {
+      const ownerData = await bhFetch(`entity/ClientCorporation/${id}`, { fields: "id,owner" });
+      const od = ownerData.data || ownerData;
+      if (od.owner && typeof od.owner === "object") {
+        (corpData.data || corpData).owner = od.owner;
+      }
+    } catch(oe) { console.log("[ClientDetail] Owner field not available:", oe.message); }
     const corp = corpData.data || corpData;
 
     // 2. Contacts at this client
@@ -1001,7 +1026,7 @@ app.get("/api/clients/:id", async (req, res) => {
     try {
       const contactData = await bhFetchAll("search/ClientContact", {
         query: `isDeleted:0 AND clientCorporation.id:${id}`,
-        fields: "id,firstName,lastName,title,email,phone,mobile,status,dateLastModified,owner,occupation",
+        fields: "id,firstName,lastName,title,email,phone,mobile,status,dateLastModified,occupation",
         sort: "-dateLastModified"
       });
 
