@@ -814,8 +814,8 @@ function openDetail(candidateId, candidateData) {
       loadSubmissions(candidateId);
       loadPipelineStats(candidateId);
       loadCandidateFiles(candidateId);
-      loadCandidateRefs(candidateId);
-      loadEmailHistory(candidateId);
+      loadCandidateRefs(candidateId, d.references || []);
+      loadEmailHistory(candidateId, d.emails || []);
     }).catch(function(e) {
       dc.innerHTML = renderDetailContent(candidateData);
     });
@@ -874,13 +874,19 @@ function pipelineStat(num, label, color) {
   return '<div class="pipeline-stat"><div class="ps-num" style="color:' + color + '">' + num + '</div><div class="ps-lbl">' + label + '</div></div>';
 }
 
-function loadEmailHistory(candidateId) {
+function loadEmailHistory(candidateId, inlineEmails) {
+  // Try Outlook integration first, fall back to Bullhorn notes (inline emails from detail endpoint)
   apiFetch("outlook/history/candidate/" + candidateId).then(function(r) {
     var el = document.getElementById("detail-email-history");
     if (!el) return;
     var emails = r.emails || [];
     var notes = r.notes || [];
     var total = emails.length + notes.length;
+    // If Outlook returned nothing, use inline Bullhorn email notes
+    if (total === 0 && inlineEmails && inlineEmails.length > 0) {
+      renderInlineEmails(el, inlineEmails);
+      return;
+    }
     var h = '<h4>Email Correspondence (' + total + ')</h4>';
     if (total === 0) {
       h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No email correspondence found for this candidate</div>';
@@ -925,9 +931,35 @@ function loadEmailHistory(candidateId) {
     h += '</div>';
     el.innerHTML = h;
   }).catch(function(e) {
+    // Outlook failed — use inline Bullhorn email notes
     var el = document.getElementById("detail-email-history");
-    if (el) el.innerHTML = '<h4>Email Correspondence</h4><div style="color:#94a3b8;font-size:12px">Could not load email history</div>';
+    if (!el) return;
+    if (inlineEmails && inlineEmails.length > 0) {
+      renderInlineEmails(el, inlineEmails);
+    } else {
+      el.innerHTML = '<h4>Email Correspondence</h4><div style="color:#94a3b8;font-size:12px">No email correspondence found</div>';
+    }
   });
+}
+
+function renderInlineEmails(el, emails) {
+  var h = '<h4>Email Correspondence (' + emails.length + ')</h4>';
+  h += '<div style="max-height:400px;overflow-y:auto">';
+  emails.forEach(function(e) {
+    h += '<div style="padding:10px 0;border-bottom:1px solid #f1f5f9">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-size:12px;color:#64748b">';
+    h += '<span style="color:#176087;font-weight:600">✉️ ' + esc(e.action || "Email") + '</span>';
+    if (e.by) h += ' by ' + esc(e.by);
+    h += '</div>';
+    if (e.comments) h += '<div style="font-size:13px;color:#334155;margin-top:4px;line-height:1.5">' + esc(e.comments.substring(0, 300)) + (e.comments.length > 300 ? "..." : "") + '</div>';
+    h += '</div>';
+    h += '<div style="flex-shrink:0;font-size:11px;color:#94a3b8">' + esc(e.date || "") + '</div>';
+    h += '</div></div>';
+  });
+  h += '</div>';
+  el.innerHTML = h;
 }
 
 function detectFileTag(f) {
@@ -988,7 +1020,7 @@ function loadCandidateFiles(candidateId) {
   });
 }
 
-function loadCandidateRefs(candidateId) {
+function loadCandidateRefs(candidateId, inlineRefs) {
   apiFetch("candidates/" + candidateId + "/references").then(function(r) {
     var el = document.getElementById("detail-references");
     if (!el) return;
@@ -2033,16 +2065,19 @@ function renderDetailContent(c) {
 
   // ── PROFESSIONAL DETAILS ──
   h += '<div class="detail-section"><h4>Professional Details</h4><div class="detail-grid">';
-  h += dField("Pay Rate / Salary", c.salary || "—");
-  if(c.hourlyRate) h += dField("Hourly Rate", "$" + c.hourlyRate + "/hr");
+  h += dField("Current Salary", c.salary || "—");
+  if(c.salaryLow) h += dField("Desired Salary", "$" + Number(c.salaryLow).toLocaleString());
+  if(c.hourlyRate) h += dField("Desired Pay Rate", "$" + c.hourlyRate + "/hr");
   if(c.dayRate) h += dField("Day Rate", "$" + c.dayRate + "/day");
-  h += dField("Available", c.available || "—");
+  h += dField("Employment Preference", c.employmentPreference || "—");
+  h += dField("Date Available", c.available || "—");
+  if(c.willRelocate !== undefined && c.willRelocate !== null) h += dField("Willing to Relocate", c.willRelocate ? "Yes" : "No");
+  if(c.travelLimit) h += dField("Travel Preferences", c.travelLimit + "%");
   h += dField("Current Company", c.company || "—");
   h += dField("Education", c.education || "—");
   h += dField("Source", c.source || "—");
   h += dField("Owner", c.owner || "—");
-  if(c.willRelocate !== undefined && c.willRelocate !== null) h += dField("Will Relocate", c.willRelocate ? "Yes" : "No");
-  if(c.travelLimit) h += dField("Travel Limit", c.travelLimit + "%");
+  if(c.skillList) h += dField("Additional Skills", c.skillList);
   h += '</div></div>';
 
   // ── DATES & TRACKING ──

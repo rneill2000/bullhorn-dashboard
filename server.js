@@ -380,8 +380,19 @@ app.get("/api/candidates", async (req, res) => {
     // Build Lucene query
     let query = "isDeleted:0";
     if (q) {
-      const escaped = q.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
-      query += ` AND (firstName:${escaped}* OR lastName:${escaped}* OR occupation:${escaped}* OR customText1:${escaped}* OR customText2:${escaped}*)`;
+      // Split query into words so "Juan Felipe Hernandez" matches firstName:Juan* AND lastName:Hernandez* etc.
+      var words = q.trim().split(/\s+/);
+      if (words.length === 1) {
+        var escaped = words[0].replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
+        query += ` AND (firstName:${escaped}* OR lastName:${escaped}* OR occupation:${escaped}* OR customText1:${escaped}* OR customText2:${escaped}*)`;
+      } else {
+        // Multi-word: each word must match at least one field
+        var wordClauses = words.map(function(w) {
+          var ew = w.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
+          return `(firstName:${ew}* OR lastName:${ew}* OR occupation:${ew}* OR customText1:${ew}* OR customText2:${ew}*)`;
+        });
+        query += " AND " + wordClauses.join(" AND ");
+      }
     }
     if (status && status !== "All") {
       query += ` AND status:"${status}"`;
@@ -476,7 +487,7 @@ app.get("/api/candidates/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const data = await bhFetch(`entity/Candidate/${id}`, {
-      fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
+      fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,salaryLow,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,skillList,employmentPreference,linkedPerson,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customText11,customText12,customText13,customText14,customText15,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
     });
     const c = data.data || data;
     const addr = c.address || {};
@@ -515,6 +526,9 @@ app.get("/api/candidates/:id", async (req, res) => {
       employeeType: c.employeeType || "",
       willRelocate: c.willRelocate,
       travelLimit: c.travelLimit || "",
+      employmentPreference: c.employmentPreference || "",
+      salaryLow: c.salaryLow || null,
+      skillList: c.skillList || "",
       description: c.description || "",
       // Epic-specific fields
       primaryCert: Array.isArray(c.customText1) ? c.customText1.join(", ") : (c.customText1 || ""),
@@ -542,21 +556,49 @@ app.get("/api/candidates/:id", async (req, res) => {
       customInt3: c.customInt3,
     };
 
-    // Also fetch notes
+    // Also fetch notes (more records to capture email history)
     try {
-      const notes = await bhFetch(`entity/Candidate/${id}/notes`, {
+      const notes = await bhFetchAll("search/Note", {
+        query: `personReference.id:${id} AND isDeleted:0`,
         fields: "id,action,comments,dateAdded,commentingPerson",
-        count: 20,
-        orderBy: "-dateAdded",
+        sort: "-dateAdded",
       });
-      detail.notes = (notes.data || []).map(n => ({
+      var allNotes = (notes.data || []).map(n => ({
         id: n.id,
         action: n.action || "",
         comments: n.comments || "",
         date: n.dateAdded ? new Date(n.dateAdded).toLocaleDateString() : "",
         by: n.commentingPerson ? (n.commentingPerson.firstName + " " + n.commentingPerson.lastName) : "",
       }));
-    } catch(e) { detail.notes = []; }
+      detail.notes = allNotes.filter(n => {
+        var a = (n.action || "").toLowerCase();
+        return a !== "email" && a !== "sent email" && a !== "received email";
+      });
+      detail.emails = allNotes.filter(n => {
+        var a = (n.action || "").toLowerCase();
+        return a === "email" || a === "sent email" || a === "received email";
+      });
+    } catch(e) { detail.notes = []; detail.emails = []; }
+
+    // Fetch references
+    try {
+      const refs = await bhFetch(`entity/Candidate/${id}/references`, {
+        fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,customTextBlock1,dateAdded,status",
+        count: 50,
+        orderBy: "-dateAdded",
+      });
+      detail.references = (refs.data || []).map(r => ({
+        id: r.id,
+        name: ((r.referenceFirstName || "") + " " + (r.referenceLastName || "")).trim(),
+        title: r.referenceTitle || "",
+        phone: r.referencePhone || "",
+        email: r.referenceEmail || "",
+        company: r.companyName || "",
+        comments: r.customTextBlock1 || "",
+        date: r.dateAdded ? new Date(r.dateAdded).toLocaleDateString() : "",
+        status: r.status || "",
+      }));
+    } catch(e) { detail.references = []; console.log("[Candidate Detail] References error:", e.message); }
 
     res.json(detail);
   } catch (e) {

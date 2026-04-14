@@ -1825,9 +1825,13 @@ async function dbSearchCandidates(filters) {
     conditions.push("status != 'Placed'");
   }
   if (filters.q) {
-    n++; var q = "%" + filters.q + "%";
-    conditions.push("(first_name ILIKE $" + n + " OR last_name ILIKE $" + n + " OR occupation ILIKE $" + n + " OR custom_text1 ILIKE $" + n + " OR custom_text2 ILIKE $" + n + ")");
-    params.push(q);
+    // Split query into words so "Juan Felipe Hernandez" matches across first_name + last_name
+    var words = filters.q.trim().split(/\s+/);
+    words.forEach(function(w) {
+      n++; var wq = "%" + w + "%";
+      conditions.push("(first_name ILIKE $" + n + " OR last_name ILIKE $" + n + " OR occupation ILIKE $" + n + " OR custom_text1 ILIKE $" + n + " OR custom_text2 ILIKE $" + n + ")");
+      params.push(wq);
+    });
   }
   if (filters.cert) {
     n++; conditions.push("(custom_text1 ILIKE $" + n + " OR custom_text2 ILIKE $" + n + ")");
