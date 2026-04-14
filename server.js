@@ -918,8 +918,8 @@ app.get("/api/clients", async (req, res) => {
     // Fetch clients — use search endpoint (more reliable with nested fields)
     let data;
     try {
-      const searchQuery = q ? `name:${q}*` : "id:[0 TO 999999999]";
-      const fullQuery = (status && status !== "All") ? `(${searchQuery}) AND status:${status}` : searchQuery;
+      const searchQuery = q ? `name:${q}*` : "isDeleted:0";
+      const fullQuery = (status && status !== "All") ? `(${searchQuery}) AND status:"${status}"` : searchQuery;
       data = await bhFetchAll("search/ClientCorporation", {
         query: fullQuery,
         fields: "id,name,address,status,dateLastModified,owner(id,firstName,lastName)",
