@@ -807,29 +807,37 @@ app.get("/api/placements", async (req, res) => {
       } catch (dbErr) { console.log("[Placements] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
 
-    // Use search endpoint for Placements (supports nested field expansion)
-    let searchQuery = "id:>0";
-    if (q) {
-      searchQuery = `(candidate.firstName:${q}* OR candidate.lastName:${q}* OR jobOrder.title:${q}*)`;
-    }
+    // Use query/ endpoint for Placements (search/ returns 0 results in this Bullhorn instance)
+    let where = "id IS NOT NULL";
     if (status && status !== "All") {
-      searchQuery += ` AND status:"${status}"`;
+      where += ` AND status = '${status}'`;
+    } else {
+      where += " AND status = 'Actively On Contract'";
     }
     if (type === "Direct Hire") {
-      searchQuery += ' AND employmentType:"Direct Hire"';
+      where += " AND employmentType = 'Direct Hire'";
     } else if (type === "Consultant") {
-      searchQuery += ' AND (employmentType:Contract OR employmentType:Temp OR employmentType:"Temp to Hire")';
+      where += " AND (employmentType = 'Contract' OR employmentType = 'Temp' OR employmentType = 'Temp to Hire')";
     }
 
-    const data = await bhFetchAll("search/Placement", {
-      query: searchQuery,
-      fields:
-        "id,candidate(id,firstName,lastName),jobOrder(id,title,clientCorporation(id,name)),status,dateBegin,dateEnd,salary,payRate,clientBillRate,employmentType,fee",
-      sort: "-dateBegin",
+    const data = await bhFetchAll("query/Placement", {
+      where,
+      fields: "id,candidate,jobOrder,status,dateBegin,dateEnd,salary,payRate,clientBillRate,employmentType,fee",
+      orderBy: "-dateBegin",
     });
 
     const placements = [];
-    (data.data || []).forEach((p) => {
+    // Post-filter by search text (query/ endpoint can't search nested candidate/job fields)
+    var filteredData = data.data || [];
+    if (q) {
+      var ql = q.toLowerCase();
+      filteredData = filteredData.filter(function(p) {
+        var cName = p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).toLowerCase() : "";
+        var jTitle = p.jobOrder ? (p.jobOrder.title || "").toLowerCase() : "";
+        return cName.indexOf(ql) >= 0 || jTitle.indexOf(ql) >= 0;
+      });
+    }
+    filteredData.forEach((p) => {
       try {
         const isDH =
           p.employmentType === "Direct Hire" ||
@@ -885,7 +893,7 @@ app.get("/api/placements", async (req, res) => {
       }
     });
 
-    res.json({ data: placements, total: data.total });
+    res.json({ data: placements, total: placements.length });
   } catch (e) {
     console.error("[Placements]", e.message);
     res.status(500).json({ error: e.message });
@@ -946,13 +954,15 @@ app.get("/api/clients", async (req, res) => {
     }
 
     // Try to fetch placement counts per client (non-blocking)
+    // Use query/ endpoint (search/ doesn't reliably return Placement data in this Bullhorn instance)
     let placByClient = {};
     try {
-      const placData = await bhFetchAll("search/Placement", {
-        query: "status:Approved OR status:\"Actively On Contract\"",
+      const placData = await bhFetchAll("query/Placement", {
+        where: "status = 'Actively On Contract'",
         fields: "id,candidate,jobOrder",
+        orderBy: "-dateBegin",
       });
-      // Group by client — jobOrder may or may not have clientCorporation expanded
+      // Group by client — query/ endpoint returns nested objects for candidate and jobOrder
       (placData.data || []).forEach(function (p) {
         try {
           var cid = null;
