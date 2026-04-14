@@ -395,6 +395,28 @@ tbody tr:hover{background:#eff6ff}
   /* Misc */
   .empty-state{padding:32px 16px}
   .badge{font-size:11px;padding:2px 8px}
+
+  /* ─── Inline grid overrides for JS-rendered pages ─── */
+  /* Trends & Outreach 2-col grids → stack */
+  .trends-grid{grid-template-columns:1fr !important}
+  .outreach-compose-grid{grid-template-columns:1fr !important}
+
+  /* Smart Match job select — don't overflow */
+  #sm-job-select{min-width:0 !important;max-width:100%;width:100% !important}
+
+  /* Outreach export links — stack on mobile */
+  .outreach-exports{flex-direction:column}
+  .outreach-exports a{width:100%;justify-content:center;text-align:center}
+
+  /* Trend bar labels — shrink on mobile */
+  .trend-bar-label{min-width:100px !important;font-size:12px !important}
+
+  /* Email correspondence section in detail */
+  #detail-email-history .email-item{flex-direction:column !important;align-items:flex-start !important;gap:4px !important}
+
+  /* Home page h3 flex headers — wrap on mobile */
+  .chart-card h3{flex-wrap:wrap;gap:4px}
+  .chart-card h3 span{font-size:11px !important}
 }
 
 /* ═══ SMALL MOBILE (≤480px) ═══ */
@@ -407,6 +429,16 @@ tbody tr:hover{background:#eff6ff}
   .ts-sheet{padding:16px}
   .ts-name{font-size:18px}
   .ts-brand .ts-logo{font-size:18px}
+
+  /* Outreach compose grid — full stack */
+  .content textarea{min-height:120px}
+
+  /* Contract end matches — compact */
+  .cem-matches{margin-left:16px !important}
+
+  /* Detail panel sections tighter */
+  .detail-section{padding:12px}
+  .detail-section h4{font-size:11px}
 }
 
 /* ═══ PRINT ═══ */
@@ -2378,13 +2410,13 @@ function showContractEndMatches(){
       if(c.matches.length===0){
         h+='<div style="padding:8px 12px;color:#94a3b8;font-size:13px;font-style:italic">No matching open jobs found based on certifications</div>';
       } else {
-        h+='<div style="margin-left:48px">';
+        h+='<div class="cem-matches" style="margin-left:48px">';
         h+='<div style="font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;margin-bottom:6px">Suggested Next Roles</div>';
         c.matches.forEach(function(m){
-          h+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f8fafc">';
+          h+='<div class="cem-match-row" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f8fafc;flex-wrap:wrap">';
           h+='<div style="flex:1;min-width:0"><span style="font-weight:600;font-size:13px;color:#176087;cursor:pointer" onclick="event.stopPropagation()">'+esc(m.title)+'</span>';
           h+=' <span style="font-size:12px;color:#64748b">\u2022 '+esc(m.client)+'</span></div>';
-          h+='<div style="display:flex;gap:6px;flex-shrink:0">';
+          h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
           if(m.roleMatch) h+='<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#10b98118;color:#10b981">Role Match</span>';
           h+='<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#176087;color:#fff">'+m.certOverlap+' cert'+(m.certOverlap!==1?'s':'')+' match</span>';
           h+='<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#f1f5f9;color:#64748b">'+m.openings+' opening'+(m.openings!==1?'s':'')+'</span>';
@@ -2514,7 +2546,7 @@ function renderSmartMatch(){
   var html='<div style="margin-bottom:20px">';
   html+='<div style="display:flex;align-items:end;gap:12px;flex-wrap:wrap">';
   html+='<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Select a Job';
-  html+='<select id="sm-job-select" style="padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;font-family:inherit;min-width:360px;color:#334155" onchange="runSmartMatch(this.value)">';
+  html+='<select id="sm-job-select" style="padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;font-family:inherit;min-width:280px;max-width:100%;width:100%;color:#334155" onchange="runSmartMatch(this.value)">';
   html+='<option value="">Choose a job to match candidates\u2026</option>';
   // Jobs will be populated after loading
   html+='</select></label>';
@@ -5016,12 +5048,12 @@ async function renderOutreach(){
   h+='<p style="color:#64748b;font-size:14px;margin-bottom:20px">Compose and send emails using templates. Emails are logged as touches in Bullhorn automatically.</p>';
 
   // Export buttons
-  h+='<div style="display:flex;gap:12px;margin-bottom:20px">';
+  h+='<div class="outreach-exports" style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">';
   h+='<a href="'+apiBase+'/export/market-report" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#176087;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">\uD83D\uDCC4 Export Market Report (CSV)</a>';
   h+='<a href="'+apiBase+'/export/revenue-report" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#059669;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">\uD83D\uDCB0 Export Revenue Report (CSV)</a>';
   h+='</div>';
 
-  h+='<div style="display:grid;grid-template-columns:300px 1fr;gap:20px">';
+  h+='<div class="outreach-compose-grid" style="display:grid;grid-template-columns:300px 1fr;gap:20px">';
 
   // Left: recipient lookup + template picker
   h+='<div>';
@@ -5481,7 +5513,7 @@ function renderTrends(data){
   var h='';
   h+='<p style="color:#64748b;font-size:14px;margin-bottom:20px">Market intelligence generated from your Bullhorn data. Use these insights for sales conversations, pricing decisions, and resource planning.</p>';
   // Supply/Demand section
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">';
+  h+='<div class="trends-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">';
   // Cert demand
   h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
   h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDD25 Certification Demand (Open Jobs)</div>';
@@ -5491,8 +5523,8 @@ function renderTrends(data){
     (data.certDemand||[]).slice(0,10).forEach(function(d){
       var maxJobs=data.certDemand[0]?data.certDemand[0].openJobs:1;
       var pct=Math.round((d.openJobs/maxJobs)*100);
-      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
-      h+='<span style="font-size:13px;min-width:160px;font-weight:500">'+esc(d.cert)+'</span>';
+      h+='<div class="trend-bar-row" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+      h+='<span class="trend-bar-label" style="font-size:13px;min-width:160px;font-weight:500">'+esc(d.cert)+'</span>';
       h+='<div style="flex:1;height:20px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#176087,#53A2BE);border-radius:4px"></div></div>';
       h+='<span style="font-size:12px;font-weight:700;min-width:30px;text-align:right">'+d.openJobs+'</span>';
       h+='</div>';
@@ -5508,8 +5540,8 @@ function renderTrends(data){
     (data.certSupply||[]).slice(0,10).forEach(function(s){
       var maxC=data.certSupply[0]?data.certSupply[0].activeCandidates:1;
       var pct=Math.round((s.activeCandidates/maxC)*100);
-      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
-      h+='<span style="font-size:13px;min-width:160px;font-weight:500">'+esc(s.cert)+'</span>';
+      h+='<div class="trend-bar-row" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+      h+='<span class="trend-bar-label" style="font-size:13px;min-width:160px;font-weight:500">'+esc(s.cert)+'</span>';
       h+='<div style="flex:1;height:20px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:4px"></div></div>';
       h+='<span style="font-size:12px;font-weight:700;min-width:30px;text-align:right">'+s.activeCandidates+'</span>';
       h+='</div>';
@@ -5528,8 +5560,8 @@ function renderTrends(data){
     sdFiltered.forEach(function(sd){
       var color=sd.ratio<1?"#dc2626":sd.ratio<3?"#d97706":"#059669";
       var badge=sd.status==="shortage"?"\uD83D\uDEA8 Shortage":sd.status==="tight"?"\u26A0\uFE0F Tight":"\u2705 Available";
-      h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:13px">';
-      h+='<span style="min-width:140px;font-weight:500">'+esc(sd.cert)+'</span>';
+      h+='<div class="trend-bar-row" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:13px;flex-wrap:wrap">';
+      h+='<span class="trend-bar-label" style="min-width:140px;font-weight:500">'+esc(sd.cert)+'</span>';
       h+='<span style="font-weight:700;color:'+color+';min-width:40px">'+((sd.ratio!==null)?sd.ratio+"x":"—")+'</span>';
       h+='<span style="font-size:11px">'+badge+' ('+sd.supply+' candidates / '+sd.demand+' jobs)</span>';
       h+='</div>';
@@ -5551,7 +5583,7 @@ function renderTrends(data){
     h+='</tbody></table></div></div>';
   }
   // Geographic demand + placement velocity side by side
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">';
+  h+='<div class="trends-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">';
   if(data.geoDemand&&data.geoDemand.length>0){
     h+='<div class="stat-card" style="flex-direction:column;align-items:stretch;padding:20px">';
     h+='<div style="font-size:15px;font-weight:700;margin-bottom:12px">\uD83D\uDDFA\uFE0F Geographic Demand</div>';
@@ -5593,7 +5625,7 @@ function renderTrends(data){
     });
     h+='</tbody></table></div></div>';
   }
-  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;flex-wrap:wrap;gap:8px">';
   h+='<div style="font-size:11px;color:#94a3b8">Generated '+esc(data.generatedAt?new Date(data.generatedAt).toLocaleString():"—")+' from your Bullhorn data</div>';
   h+='<a href="'+apiBase+'/export/market-report" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#176087;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600">\uD83D\uDCE5 Export Market Report CSV</a>';
   h+='</div>';
