@@ -1831,7 +1831,7 @@ var savedSearches = JSON.parse(localStorage.getItem("bh_saved_searches")||"[]");
 var filters = {};
 var advOpen = false;
 
-function setPage(pg){ currentPage=pg; filters={}; advOpen=false; _sortCol=null; _sortDir="asc"; if(pg==="jobs") filters.status="Accepting Candidates"; if(pg==="consultants") filters.status="Placed"; if(pg==="clients") filters.status="Active"; loadPage(); }
+function setPage(pg){ currentPage=pg; filters={}; advOpen=false; _sortCol=null; _sortDir="asc"; if(pg==="jobs") filters.status="Accepting Candidates"; if(pg==="consultants") filters.status="Placed"; if(pg==="clients") filters.status="Active Account"; loadPage(); }
 function getQ(){ return (filters.q||"").toLowerCase(); }
 function matchQ(text){ return text.toLowerCase().indexOf(getQ())>=0; }
 function toggleAdv(){ advOpen=!advOpen; loadPage(); }

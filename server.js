@@ -308,6 +308,19 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
 // Set APP_ENV=staging in Railway staging environment to show the yellow banner.
 const APP_ENV = (process.env.APP_ENV || "production").toLowerCase();
 
+// Debug: raw placement data (TEMP — remove after debugging)
+app.get("/api/debug/placements-raw", async (req, res) => {
+  try {
+    await authenticate();
+    const data = await bhFetchAll("query/Placement", {
+      where: "status = 'Actively On Contract'",
+      fields: "id,candidate,jobOrder",
+      orderBy: "-dateBegin",
+    });
+    res.json({ total: data.total, sample: (data.data || []).slice(0, 3) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Health check
 app.get("/api/status", async (req, res) => {
   try {
@@ -947,7 +960,7 @@ app.get("/api/clients", async (req, res) => {
     if (status && status !== "All") {
       where += ` AND status='${status}'`;
     } else if (!status || status === "") {
-      where += " AND status='Active'";
+      where += " AND status='Active Account'";
     }
 
     // Fetch clients via query endpoint (owner not valid on ClientCorporation, omitted)
