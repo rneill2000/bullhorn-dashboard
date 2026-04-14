@@ -308,19 +308,6 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
 // Set APP_ENV=staging in Railway staging environment to show the yellow banner.
 const APP_ENV = (process.env.APP_ENV || "production").toLowerCase();
 
-// Debug: raw placement data (TEMP — remove after debugging)
-app.get("/api/debug/placements-raw", async (req, res) => {
-  try {
-    await authenticate();
-    const data = await bhFetchAll("query/Placement", {
-      where: "status = 'Actively On Contract'",
-      fields: "id,candidate,jobOrder",
-      orderBy: "-dateBegin",
-    });
-    res.json({ total: data.total, sample: (data.data || []).slice(0, 3) });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
 // Health check
 app.get("/api/status", async (req, res) => {
   try {
@@ -839,26 +826,46 @@ app.get("/api/placements", async (req, res) => {
       orderBy: "-dateBegin",
     });
 
-    // Resolve client names — query/ returns jobOrder.clientCorporation as an ID
-    var clientNameMap = {};
+    // Resolve client names — query/ doesn't include jobOrder.clientCorporation
+    // Step 1: look up each jobOrder to get its clientCorporation ID
+    // Step 2: look up each clientCorporation to get its name
+    var clientNameMap = {}; // placementJobOrderId -> clientName
+    var jobToClientId = {};
     try {
-      var clientIds = [];
+      var jobIds = [];
       (data.data || []).forEach(function(p) {
-        if (p.jobOrder && p.jobOrder.clientCorporation) {
-          var cid = typeof p.jobOrder.clientCorporation === "object" ? p.jobOrder.clientCorporation.id : p.jobOrder.clientCorporation;
-          if (cid && clientIds.indexOf(cid) < 0) clientIds.push(cid);
-        }
+        if (p.jobOrder && p.jobOrder.id && jobIds.indexOf(p.jobOrder.id) < 0) jobIds.push(p.jobOrder.id);
       });
-      // Batch fetch client names
-      for (var ci = 0; ci < clientIds.length; ci += 20) {
-        var batch = clientIds.slice(ci, ci + 20);
-        var proms = batch.map(function(cid) {
-          return bhFetch("entity/ClientCorporation/" + cid, { fields: "id,name" })
-            .then(function(r) { var d = r.data || r; clientNameMap[d.id] = d.name || ""; })
-            .catch(function() {});
-        });
-        await Promise.all(proms);
+      // Step 1: jobOrder -> clientCorporation ID
+      for (var ji = 0; ji < jobIds.length; ji += 20) {
+        var jBatch = jobIds.slice(ji, ji + 20);
+        await Promise.all(jBatch.map(function(jid) {
+          return bhFetch("entity/JobOrder/" + jid, { fields: "id,clientCorporation" })
+            .then(function(r) {
+              var d = r.data || r;
+              if (d.clientCorporation) {
+                jobToClientId[jid] = typeof d.clientCorporation === "object" ? d.clientCorporation.id : d.clientCorporation;
+              }
+            }).catch(function() {});
+        }));
       }
+      // Step 2: clientCorporation ID -> name
+      var clientIds = [];
+      Object.values(jobToClientId).forEach(function(cid) { if (clientIds.indexOf(cid) < 0) clientIds.push(cid); });
+      var cidToName = {};
+      for (var ci = 0; ci < clientIds.length; ci += 20) {
+        var cBatch = clientIds.slice(ci, ci + 20);
+        await Promise.all(cBatch.map(function(cid) {
+          return bhFetch("entity/ClientCorporation/" + cid, { fields: "id,name" })
+            .then(function(r) { var d = r.data || r; cidToName[d.id] = d.name || ""; })
+            .catch(function() {});
+        }));
+      }
+      // Build final map: jobOrderId -> clientName
+      Object.keys(jobToClientId).forEach(function(jid) {
+        var cid = jobToClientId[jid];
+        if (cidToName[cid]) clientNameMap[parseInt(jid)] = cidToName[cid];
+      });
     } catch(cnErr) { console.log("[Placements] Client name lookup failed:", cnErr.message); }
 
     const placements = [];
@@ -885,9 +892,8 @@ app.get("/api/placements", async (req, res) => {
             : null;
 
         var clientName = "";
-        if (p.jobOrder && p.jobOrder.clientCorporation) {
-          var ccId = typeof p.jobOrder.clientCorporation === "object" ? p.jobOrder.clientCorporation.id : p.jobOrder.clientCorporation;
-          clientName = clientNameMap[ccId] || "";
+        if (p.jobOrder && p.jobOrder.id) {
+          clientName = clientNameMap[p.jobOrder.id] || "";
         }
 
         placements.push({
@@ -994,7 +1000,7 @@ app.get("/api/clients", async (req, res) => {
     }
 
     // Fetch active placements and group by client
-    // Use query/ endpoint — jobOrder.clientCorporation comes back as a number (ID), not an object
+    // query/ doesn't return jobOrder.clientCorporation — need to look up each jobOrder separately
     let placByClient = {};
     try {
       const placData = await bhFetchAll("query/Placement", {
@@ -1002,13 +1008,33 @@ app.get("/api/clients", async (req, res) => {
         fields: "id,candidate,jobOrder",
         orderBy: "-dateBegin",
       });
-      (placData.data || []).forEach(function (p) {
+      var allPlacs = placData.data || [];
+
+      // Collect unique jobOrder IDs and look up their clientCorporation
+      var jobIds = [];
+      allPlacs.forEach(function(p) {
+        if (p.jobOrder && p.jobOrder.id && jobIds.indexOf(p.jobOrder.id) < 0) jobIds.push(p.jobOrder.id);
+      });
+      var jobToClient = {}; // jobOrderId -> clientCorporationId
+      for (var ji = 0; ji < jobIds.length; ji += 20) {
+        var batch = jobIds.slice(ji, ji + 20);
+        var proms = batch.map(function(jid) {
+          return bhFetch("entity/JobOrder/" + jid, { fields: "id,clientCorporation" })
+            .then(function(r) {
+              var d = r.data || r;
+              if (d.clientCorporation) {
+                jobToClient[jid] = typeof d.clientCorporation === "object" ? d.clientCorporation.id : d.clientCorporation;
+              }
+            })
+            .catch(function() {});
+        });
+        await Promise.all(proms);
+      }
+
+      // Now group placements by client
+      allPlacs.forEach(function(p) {
         try {
-          var cid = null;
-          // jobOrder.clientCorporation is a number (ID) from query/ endpoint
-          if (p.jobOrder && p.jobOrder.clientCorporation) {
-            cid = typeof p.jobOrder.clientCorporation === "object" ? p.jobOrder.clientCorporation.id : p.jobOrder.clientCorporation;
-          }
+          var cid = p.jobOrder ? jobToClient[p.jobOrder.id] : null;
           if (cid) {
             if (!placByClient[cid]) placByClient[cid] = [];
             var cName = "Unknown";
@@ -1017,7 +1043,7 @@ app.get("/api/clients", async (req, res) => {
           }
         } catch (innerErr) { /* skip */ }
       });
-      console.log("[Clients] Placement grouping: " + Object.keys(placByClient).length + " clients with active placements, " + (placData.data || []).length + " total placements");
+      console.log("[Clients] Placement grouping: " + Object.keys(placByClient).length + " clients with active placements from " + allPlacs.length + " total placements");
     } catch (placErr) {
       console.log("[Clients] Placement query failed (non-blocking):", placErr.message);
     }
