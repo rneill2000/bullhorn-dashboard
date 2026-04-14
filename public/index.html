@@ -2043,17 +2043,16 @@ function renderDetailContent(c) {
 
   // ── CONTACT INFORMATION ──
   h += '<div class="detail-section"><h4>Contact Information</h4><div class="detail-grid">';
+  var bestPhone = c.mobile || c.phone || "";
   h += dField("Email", c.email ? '<a href="mailto:'+esc(c.email)+'" style="color:#176087">'+esc(c.email)+'</a>' : "—", true);
-  if(c.email2) h += dField("Email 2", '<a href="mailto:'+esc(c.email2)+'" style="color:#176087">'+esc(c.email2)+'</a>', true);
-  h += dField("Phone", c.phone ? '<a href="tel:'+esc(c.phone)+'" style="color:#176087">'+esc(c.phone)+'</a>' : "—", true);
-  if(c.phone2) h += dField("Phone 2", '<a href="tel:'+esc(c.phone2)+'" style="color:#176087">'+esc(c.phone2)+'</a>', true);
-  if(c.mobile) h += dField("Mobile", '<a href="tel:'+esc(c.mobile)+'" style="color:#176087">'+esc(c.mobile)+'</a>', true);
-  h += dField("Location", "📍 " + esc(c.location || "—"), true);
-  if(c.address1) h += dField("Address", esc(c.address1) + (c.address2 ? ", " + esc(c.address2) : "") + "<br>" + esc(c.city||"") + ", " + esc(c.state||"") + " " + esc(c.zip||""), true);
+  h += dField("Phone", bestPhone ? '<a href="tel:'+esc(bestPhone)+'" style="color:#176087">'+esc(bestPhone)+'</a>' : "—", true);
+  h += dField("Location", c.location || "—");
+  h += dField("Source", c.source || "—");
+  h += dField("Owner", c.owner || "—");
   h += '</div></div>';
 
   // ── EPIC CERTIFICATIONS & ROLE ──
-  h += '<div class="detail-section"><h4>Epic Certifications & Role</h4><div class="detail-grid">';
+  h += '<div class="detail-section"><h4>Certifications & Role</h4><div class="detail-grid">';
   h += dField("Primary Certifications", c.primaryCert || "—", false, c.primaryCert ? "color:#176087;font-weight:600" : "");
   h += dField("Secondary Certifications", c.secondaryCert || "—");
   h += dField("Epic Role", c.epicRole || "—");
@@ -2061,54 +2060,22 @@ function renderDetailContent(c) {
   var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};
   h += dField("Grade", c.grade || "—", false, c.grade ? "font-weight:700;color:"+(gc[c.grade]||"#64748b") : "");
   if(c.urgency) h += dField("Urgency", c.urgency);
-  h += '</div></div>';
-
-  // ── PROFESSIONAL DETAILS ──
-  h += '<div class="detail-section"><h4>Professional Details</h4><div class="detail-grid">';
-  h += dField("Current Salary", c.salary || "—");
-  if(c.salaryLow) h += dField("Desired Salary", "$" + Number(c.salaryLow).toLocaleString());
-  if(c.hourlyRate) h += dField("Desired Pay Rate", "$" + c.hourlyRate + "/hr");
-  if(c.dayRate) h += dField("Day Rate", "$" + c.dayRate + "/day");
-  h += dField("Employment Preference", c.employmentPreference || "—");
-  h += dField("Date Available", c.available || "—");
-  if(c.willRelocate !== undefined && c.willRelocate !== null) h += dField("Willing to Relocate", c.willRelocate ? "Yes" : "No");
-  if(c.travelLimit) h += dField("Travel Preferences", c.travelLimit + "%");
-  h += dField("Current Company", c.company || "—");
-  h += dField("Education", c.education || "—");
-  h += dField("Source", c.source || "—");
-  h += dField("Owner", c.owner || "—");
   if(c.skillList) h += dField("Additional Skills", c.skillList);
   h += '</div></div>';
 
-  // ── DATES & TRACKING ──
-  h += '<div class="detail-section"><h4>Dates & Tracking</h4><div class="detail-grid">';
-  h += dField("Date Added", c.dateAdded || "—");
-  h += dField("Last Modified", c.lastModified || "—");
-  if(c.lastComment) h += dField("Last Comment", c.lastComment);
-  if(c.customDate1) h += dField("Custom Date 1", c.customDate1);
-  if(c.customDate2) h += dField("Custom Date 2", c.customDate2);
-  if(c.customDate3) h += dField("Custom Date 3", c.customDate3);
+  // ── COMPENSATION & AVAILABILITY ──
+  h += '<div class="detail-section"><h4>Compensation & Availability</h4><div class="detail-grid">';
+  h += dField("Current Salary", c.salary || "—");
+  if(c.salaryLow) h += dField("Desired Salary", "$" + Number(c.salaryLow).toLocaleString());
+  if(c.hourlyRate) h += dField("Desired Pay Rate", "$" + c.hourlyRate + "/hr");
+  h += dField("Employment Preference", c.employeeType || "—");
+  h += dField("Date Available", c.available || "—");
+  if(c.willRelocate !== undefined && c.willRelocate !== null) h += dField("Willing to Relocate", c.willRelocate ? "Yes" : "No");
+  if(c.travelLimit) h += dField("Travel Preferences", c.travelLimit + "%");
   h += '</div></div>';
 
-  // ── CUSTOM FIELDS (show any that have values) ──
-  var customFields = [];
-  if(c.customText4) customFields.push(["Category", c.customText4]);
-  if(c.customText8) customFields.push(["City", c.customText8]);
-  if(c.customText9) customFields.push(["State", c.customText9]);
-  if(c.customText10) customFields.push(["Custom Text 10", c.customText10]);
-  if(c.customFloat1) customFields.push(["Custom Float 1", c.customFloat1]);
-  if(c.customFloat2) customFields.push(["Custom Float 2", c.customFloat2]);
-  if(c.customInt1) customFields.push(["Custom Int 1", c.customInt1]);
-  if(c.customInt2) customFields.push(["Custom Int 2", c.customInt2]);
-  if(c.customInt3) customFields.push(["Custom Int 3", c.customInt3]);
-  if(customFields.length) {
-    h += '<div class="detail-section"><h4>Additional Fields</h4><div class="detail-grid">';
-    customFields.forEach(function(f) { h += dField(f[0], f[1]); });
-    h += '</div></div>';
-  }
-
-  // ── GENERAL COMMENTS (customTextBlock1) ──
-  h += '<div class="detail-section"><h4>General Comments</h4>';
+  // ── GENERAL COMMENTS ──
+  h += '<div class="detail-section"><h4>General Candidate Comments</h4>';
   if(c.generalComments) {
     h += '<div style="font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;border:1px solid #e2e8f0;max-height:200px;overflow-y:auto">'+esc(c.generalComments)+'</div>';
   } else {
@@ -2116,19 +2083,9 @@ function renderDetailContent(c) {
   }
   h += '</div>';
 
-  // customTextBlock2 / 3
-  if(c.customTextBlock2) {
-    h += '<div class="detail-section"><h4>Additional Notes (Block 2)</h4>';
-    h += '<div style="font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;border:1px solid #e2e8f0;max-height:200px;overflow-y:auto">'+esc(c.customTextBlock2)+'</div></div>';
-  }
-  if(c.customTextBlock3) {
-    h += '<div class="detail-section"><h4>Additional Notes (Block 3)</h4>';
-    h += '<div style="font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;border:1px solid #e2e8f0;max-height:200px;overflow-y:auto">'+esc(c.customTextBlock3)+'</div></div>';
-  }
-
-  // ── DESCRIPTION ──
+  // ── DESCRIPTION / RESUME SUMMARY ──
   if(c.description) {
-    h += '<div class="detail-section"><h4>Description / Resume Summary</h4>';
+    h += '<div class="detail-section"><h4>Resume Summary</h4>';
     h += '<div style="font-size:13px;color:#334155;line-height:1.6;max-height:300px;overflow-y:auto">'+c.description+'</div></div>';
   }
 
@@ -2237,7 +2194,7 @@ function editCandidateProfile() {
   h += eField("nickName", "Nickname", c.nickName);
   h += eField("occupation", "Title / Occupation", c.title || c.occupation);
   h += eField("companyName", "Company Name", c.company || c.companyName);
-  h += eFieldSelect("status", "Status", c.status, ["New Lead","Active","Available","Placed","Do Not Contact","Inactive","Submitted","Interview","Shortlisted","On Assignment"]);
+  h += eFieldSelect("status", "Status", c.status, ["New Lead","Active","Active-Reviewed","Available","Placed","Do Not Contact","Inactive","Submitted","Interview","Shortlisted","On Assignment"]);
   h += eFieldSelect("employeeType", "Employee Type", c.employeeType, ["W2","1099","Corp-to-Corp","W2 or 1099","Any"]);
 
   // Owner dropdown — populated async from /api/users

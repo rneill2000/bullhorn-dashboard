@@ -487,7 +487,7 @@ app.get("/api/candidates/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const data = await bhFetch(`entity/Candidate/${id}`, {
-      fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,salaryLow,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,skillList,employmentPreference,linkedPerson,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customText11,customText12,customText13,customText14,customText15,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
+      fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,salaryLow,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,skillList,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
     });
     const c = data.data || data;
     const addr = c.address || {};
@@ -526,7 +526,6 @@ app.get("/api/candidates/:id", async (req, res) => {
       employeeType: c.employeeType || "",
       willRelocate: c.willRelocate,
       travelLimit: c.travelLimit || "",
-      employmentPreference: c.employmentPreference || "",
       salaryLow: c.salaryLow || null,
       skillList: c.skillList || "",
       description: c.description || "",
