@@ -1385,8 +1385,9 @@ app.get("/api/my-dashboard", async (req, res) => {
         });
         const dbPlacementsOut = dbPlacements.map(function(p) {
           return {
-            id: p.id, candidate: p.candidate_name || "", job: p.job_title || "",
-            client: p.client_name || "", status: p.status || "",
+            id: p.id, candidateId: p.candidate_id, candidate: p.candidate_name || "",
+            jobId: p.job_id, job: p.job_title || "",
+            clientId: p.client_id, client: p.client_name || "", status: p.status || "",
             startDate: p.date_begin ? new Date(Number(p.date_begin)).toLocaleDateString("en-US") : "",
             endDate: p.date_end ? new Date(Number(p.date_end)).toLocaleDateString("en-US") : null,
             billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : null,
@@ -1456,8 +1457,11 @@ app.get("/api/my-dashboard", async (req, res) => {
 
     const placements = (myPlacements.data || []).map(p => ({
       id: p.id,
+      candidateId: p.candidate ? p.candidate.id : null,
       candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+      jobId: p.jobOrder ? p.jobOrder.id : null,
       job: p.jobOrder ? p.jobOrder.title : "",
+      clientId: p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.id : null,
       client: p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.name : "",
       status: p.status || "",
       startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString("en-US") : "",

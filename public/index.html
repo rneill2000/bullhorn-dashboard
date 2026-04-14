@@ -2303,9 +2303,9 @@ function renderMyDash(d){
   } else {
     openJobs.slice(0,10).forEach(function(j){
       var pColor={"Urgent":"#dc2626","Hot":"#f59e0b","Warm":"#53A2BE","Cold":"#94a3b8"}[j.priority]||"#94a3b8";
-      html+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="setPage(\'jobs\')">';
+      html+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="openJobDetail('+j.id+')">';
       html+='<div style="width:8px;height:8px;border-radius:50%;background:'+pColor+';flex-shrink:0"></div>';
-      html+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(j.title)+'</div>';
+      html+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#176087;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(j.title)+'</div>';
       html+='<div style="font-size:12px;color:#64748b">'+esc(j.client)+' \u2022 '+j.openings+' opening'+(j.openings!==1?'s':'')+' \u2022 '+j.submissions+' sub'+(j.submissions!==1?'s':'')+'</div></div>';
       if(j.priority) html+='<span class="badge" style="background:'+pColor+'18;color:'+pColor+';border:1px solid '+pColor+'40;font-size:11px">'+esc(j.priority)+'</span>';
       html+='</div>';
@@ -2320,10 +2320,10 @@ function renderMyDash(d){
     html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No active placements for your accounts</div>';
   } else {
     d.myPlacements.data.slice(0,10).forEach(function(p){
-      html+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9">';
+      html+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="'+(p.candidateId?'openDetail('+p.candidateId+',{})':'')+'">';
       html+='<div style="width:40px;height:40px;border-radius:10px;background:#10b98114;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">\uD83D\uDC54</div>';
-      html+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#0f172a">'+esc(p.candidate)+'</div>';
-      html+='<div style="font-size:12px;color:#64748b">'+esc(p.job)+' @ '+esc(p.client)+'</div></div>';
+      html+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#176087">'+esc(p.candidate)+'</div>';
+      html+='<div style="font-size:12px;color:#64748b"><span style="cursor:pointer;color:#176087;text-decoration:underline" onclick="event.stopPropagation();openJobDetail('+p.jobId+')">'+esc(p.job)+'</span> @ <span style="cursor:pointer;color:#176087;text-decoration:underline" onclick="event.stopPropagation();openClientDetail('+p.clientId+')">'+esc(p.client)+'</span></div></div>';
       if(p.billRate) html+='<div style="font-size:12px;font-weight:600;color:#10b981">'+esc(p.billRate)+'</div>';
       html+='</div>';
     });
@@ -2337,7 +2337,7 @@ function renderMyDash(d){
     html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No clients assigned to you</div>';
   } else {
     var clientCols=[
-      {key:"name",label:"Client Name",render:function(r){return '<span class="name-link">'+esc(r.name)+'</span>';},exportVal:function(r){return r.name||"";}},
+      {key:"name",label:"Client Name",render:function(r){return '<span class="name-link" onclick="openClientDetail('+r.id+')">'+esc(r.name)+'</span>';},exportVal:function(r){return r.name||"";}},
       {key:"location",label:"Location",render:function(r){return r.location?'\uD83D\uDCCD '+esc(r.location):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.location||"";}},
       {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}}
     ];
