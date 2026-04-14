@@ -3351,6 +3351,238 @@ app.get("/api/outreach/templates", (req, res) => {
   res.json({ templates: OUTREACH_TEMPLATES });
 });
 
+// ── Outreach Sequences (automated multi-step cadences) ──
+var SEQUENCE_TEMPLATES = [
+  {
+    id: "contract-ending",
+    name: "Contract Ending Redeployment",
+    trigger: "contract_ending_35d",
+    description: "Auto-enroll consultants whose contracts end in 35 days",
+    steps: [
+      { day: 0, templateId: "redeployment", subject: "Your Next Epic Opportunity", delayLabel: "Immediately" },
+      { day: 7, templateId: "follow-up", subject: "Following Up — New Opportunities", delayLabel: "+7 days" },
+      { day: 14, templateId: "candidate-checkin", subject: "Quick Check-In — Availability Update?", delayLabel: "+14 days" },
+    ],
+  },
+  {
+    id: "new-prospect",
+    name: "New Client Prospecting",
+    trigger: "manual",
+    description: "Multi-touch outreach to new hospital contacts",
+    steps: [
+      { day: 0, templateId: "intro", subject: "Anura Connect — Epic Consulting Staffing", delayLabel: "Immediately" },
+      { day: 3, templateId: "follow-up", subject: "Following Up — Anura Connect", delayLabel: "+3 days" },
+      { day: 7, templateId: "golive-prospect", subject: "Epic Implementation Support", delayLabel: "+7 days" },
+      { day: 14, templateId: "follow-up", subject: "One More Try — Anura Connect", delayLabel: "+14 days" },
+    ],
+  },
+  {
+    id: "stale-candidate",
+    name: "Re-engage Stale Candidates",
+    trigger: "manual",
+    description: "Reach out to candidates not contacted in 60+ days",
+    steps: [
+      { day: 0, templateId: "candidate-checkin", subject: "We Miss You — Any Updates?", delayLabel: "Immediately" },
+      { day: 10, templateId: "redeployment", subject: "New Opportunities Available", delayLabel: "+10 days" },
+    ],
+  },
+];
+
+// In-memory sequence enrollments (persists until server restart — will move to DB)
+var _sequenceEnrollments = [];
+
+app.get("/api/outreach/sequences", (req, res) => {
+  res.json({
+    sequences: SEQUENCE_TEMPLATES,
+    enrollments: _sequenceEnrollments,
+    activeCount: _sequenceEnrollments.filter(e => e.status === "active").length,
+    completedCount: _sequenceEnrollments.filter(e => e.status === "completed").length,
+  });
+});
+
+app.post("/api/outreach/sequences/enroll", express.json(), (req, res) => {
+  try {
+    var { sequenceId, recipientId, recipientName, recipientEmail, recipientType, variables } = req.body;
+    if (!sequenceId || !recipientEmail) return res.status(400).json({ error: "Missing sequenceId or recipientEmail" });
+    var seq = SEQUENCE_TEMPLATES.find(s => s.id === sequenceId);
+    if (!seq) return res.status(404).json({ error: "Sequence not found" });
+
+    // Check if already enrolled
+    var existing = _sequenceEnrollments.find(e =>
+      e.sequenceId === sequenceId && e.recipientId === recipientId && e.status === "active"
+    );
+    if (existing) return res.json({ success: true, message: "Already enrolled", enrollment: existing });
+
+    var enrollment = {
+      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 4),
+      sequenceId: sequenceId,
+      sequenceName: seq.name,
+      recipientId: recipientId || null,
+      recipientName: recipientName || "",
+      recipientEmail: recipientEmail,
+      recipientType: recipientType || "candidate",
+      variables: variables || {},
+      status: "active",
+      currentStep: 0,
+      enrolledAt: new Date().toISOString(),
+      nextStepAt: new Date().toISOString(),
+      stepsCompleted: [],
+    };
+    _sequenceEnrollments.push(enrollment);
+    res.json({ success: true, enrollment: enrollment });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/outreach/sequences/cancel", express.json(), (req, res) => {
+  var { enrollmentId } = req.body;
+  var enrollment = _sequenceEnrollments.find(e => e.id === enrollmentId);
+  if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
+  enrollment.status = "cancelled";
+  res.json({ success: true });
+});
+
+app.post("/api/outreach/sequences/execute-step", express.json(), async (req, res) => {
+  try {
+    var { enrollmentId } = req.body;
+    var enrollment = _sequenceEnrollments.find(e => e.id === enrollmentId && e.status === "active");
+    if (!enrollment) return res.status(404).json({ error: "Active enrollment not found" });
+
+    var seq = SEQUENCE_TEMPLATES.find(s => s.id === enrollment.sequenceId);
+    if (!seq) return res.status(404).json({ error: "Sequence not found" });
+
+    if (enrollment.currentStep >= seq.steps.length) {
+      enrollment.status = "completed";
+      return res.json({ success: true, message: "Sequence already completed" });
+    }
+
+    var step = seq.steps[enrollment.currentStep];
+    var template = OUTREACH_TEMPLATES.find(t => t.id === step.templateId);
+    var subject = step.subject || (template ? template.subject : "");
+    var body = template ? template.body : "";
+
+    // Replace variables
+    var vars = enrollment.variables || {};
+    Object.keys(vars).forEach(function(key) {
+      var regex = new RegExp("\\{\\{" + key + "\\}\\}", "g");
+      subject = subject.replace(regex, vars[key] || "");
+      body = body.replace(regex, vars[key] || "");
+    });
+
+    // Send via existing outreach/send endpoint logic
+    var sendResult = { method: "mailto" };
+    if (process.env.SENDGRID_API_KEY) {
+      try {
+        var sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + process.env.SENDGRID_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            personalizations: [{ to: [{ email: enrollment.recipientEmail, name: enrollment.recipientName }] }],
+            from: { email: process.env.SENDGRID_FROM_EMAIL || "team@anuraconnect.com", name: "Anura Connect" },
+            subject: subject,
+            content: [{ type: "text/plain", value: body }]
+          })
+        });
+        if (sgResp.ok) sendResult = { method: "sendgrid" };
+        else sendResult = { method: "failed", error: await sgResp.text() };
+      } catch (sgErr) { sendResult = { method: "failed", error: sgErr.message }; }
+    }
+
+    enrollment.stepsCompleted.push({
+      step: enrollment.currentStep,
+      sentAt: new Date().toISOString(),
+      subject: subject,
+      method: sendResult.method,
+    });
+    enrollment.currentStep++;
+
+    if (enrollment.currentStep >= seq.steps.length) {
+      enrollment.status = "completed";
+    } else {
+      var nextStep = seq.steps[enrollment.currentStep];
+      enrollment.nextStepAt = new Date(Date.now() + nextStep.day * 86400000).toISOString();
+    }
+
+    res.json({ success: true, sendResult: sendResult, enrollment: enrollment });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Email Inbox (inbound email processing) ──
+var _inboundEmails = []; // In-memory store, will move to DB
+
+// Webhook endpoint for SendGrid Inbound Parse (or manual logging)
+app.post("/api/inbox/receive", express.json(), async (req, res) => {
+  try {
+    var { from, fromName, to, subject, body, text, html: htmlBody, date } = req.body;
+    var emailBody = text || body || (htmlBody ? htmlBody.replace(/<[^>]*>/g, "") : "");
+
+    // Try to match sender to a Bullhorn candidate or contact
+    var senderEmail = (from || "").toLowerCase().trim();
+    var matchedEntity = null;
+    if (senderEmail && db.ready) {
+      try {
+        var candMatch = await db.getAll("SELECT id, first_name, last_name, 'candidate' as entity_type FROM candidates WHERE LOWER(email) = $1 OR LOWER(email2) = $1 LIMIT 1", [senderEmail]);
+        if (candMatch.length > 0) matchedEntity = { id: candMatch[0].id, name: candMatch[0].first_name + " " + candMatch[0].last_name, type: "candidate" };
+        else {
+          var contactMatch = await db.getAll("SELECT id, first_name, last_name, 'contact' as entity_type FROM client_contacts WHERE LOWER(email) = $1 LIMIT 1", [senderEmail]);
+          if (contactMatch.length > 0) matchedEntity = { id: contactMatch[0].id, name: contactMatch[0].first_name + " " + contactMatch[0].last_name, type: "contact" };
+        }
+      } catch (e) {}
+    }
+
+    // Detect if this looks like a job request
+    var isJobRequest = false;
+    var bodyLower = emailBody.toLowerCase();
+    var jobKeywords = ["need a consultant", "looking for", "epic analyst", "epic consultant", "staffing need", "open position", "job order", "req ", "requisition", "go-live", "implementation", "need help with", "looking to hire", "need someone"];
+    jobKeywords.forEach(function(kw) { if (bodyLower.indexOf(kw) !== -1) isJobRequest = true; });
+
+    var inboundEmail = {
+      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 4),
+      from: from || "",
+      fromName: fromName || "",
+      to: to || "",
+      subject: subject || "(no subject)",
+      body: emailBody.substring(0, 2000),
+      date: date || new Date().toISOString(),
+      matchedEntity: matchedEntity,
+      isJobRequest: isJobRequest,
+      status: "new",
+      processedAt: null,
+    };
+    _inboundEmails.unshift(inboundEmail);
+    // Keep only last 200 emails in memory
+    if (_inboundEmails.length > 200) _inboundEmails = _inboundEmails.slice(0, 200);
+
+    res.json({ success: true, email: inboundEmail });
+  } catch (e) {
+    console.error("[Inbox]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/inbox", (req, res) => {
+  var filter = req.query.filter || "all";
+  var emails = _inboundEmails;
+  if (filter === "job-requests") emails = emails.filter(e => e.isJobRequest);
+  else if (filter === "new") emails = emails.filter(e => e.status === "new");
+  res.json({
+    data: emails,
+    total: emails.length,
+    newCount: _inboundEmails.filter(e => e.status === "new").length,
+    jobRequestCount: _inboundEmails.filter(e => e.isJobRequest).length,
+  });
+});
+
+app.post("/api/inbox/mark-read", express.json(), (req, res) => {
+  var { emailId } = req.body;
+  var email = _inboundEmails.find(e => e.id === emailId);
+  if (email) { email.status = "read"; email.processedAt = new Date().toISOString(); }
+  res.json({ success: true });
+});
+
 app.post("/api/outreach/preview", express.json(), (req, res) => {
   try {
     var { templateId, variables } = req.body;

@@ -841,27 +841,52 @@ function pipelineStat(num, label, color) {
   return '<div class="pipeline-stat"><div class="ps-num" style="color:' + color + '">' + num + '</div><div class="ps-lbl">' + label + '</div></div>';
 }
 
+function detectFileTag(f) {
+  var name = (f.name || "").toLowerCase();
+  var type = (f.type || "").toLowerCase();
+  var desc = (f.description || "").toLowerCase();
+  var ft = (f.fileType || "").toLowerCase();
+  var all = name + " " + type + " " + desc + " " + ft;
+  if (all.indexOf("anura") !== -1 || all.indexOf("branded") !== -1 || all.indexOf("formatted") !== -1) return { tag: "Anura Resume", color: "#176087", bg: "#e0f2fe" };
+  if (all.indexOf("cert") !== -1 || all.indexOf("epic") !== -1 || all.indexOf("credential") !== -1 || all.indexOf("badge") !== -1) return { tag: "Epic Certs", color: "#7c3aed", bg: "#ede9fe" };
+  if (all.indexOf("reference") !== -1 || all.indexOf("ref ") !== -1 || all.indexOf("refs") !== -1) return { tag: "References", color: "#d97706", bg: "#fffbeb" };
+  if (all.indexOf("resume") !== -1 || all.indexOf("cv ") !== -1 || all.indexOf("cv.") !== -1 || type.indexOf("resume") !== -1 || ft.indexOf("resume") !== -1) return { tag: "Original Resume", color: "#16a34a", bg: "#f0fdf4" };
+  return null;
+}
+
 function loadCandidateFiles(candidateId) {
   apiFetch("candidates/" + candidateId + "/files").then(function(r) {
     var el = document.getElementById("detail-files");
     if (!el) return;
     var files = r.data || [];
-    var h = '<h4>Files & Resume (' + files.length + ')</h4>';
+    var h = '<h4>Files & Documents (' + files.length + ')</h4>';
+
+    // Tag legend
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">';
+    h += '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#f0fdf4;color:#16a34a;font-weight:600">Original Resume</span>';
+    h += '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#e0f2fe;color:#176087;font-weight:600">Anura Resume</span>';
+    h += '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#fffbeb;color:#d97706;font-weight:600">References</span>';
+    h += '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#ede9fe;color:#7c3aed;font-weight:600">Epic Certs</span>';
+    h += '</div>';
+
     if (files.length === 0) {
       h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No files attached in Bullhorn</div>';
     } else {
       files.forEach(function(f) {
-        var icon = "📄";
+        var icon = "\uD83D\uDCC4";
         var bg = "#f1f5f9";
         var ext = (f.name || "").split(".").pop().toLowerCase();
-        if (ext === "pdf") { icon = "📕"; bg = "#fef2f2"; }
-        else if (ext === "doc" || ext === "docx") { icon = "📘"; bg = "#eff6ff"; }
-        else if (ext === "xls" || ext === "xlsx") { icon = "📗"; bg = "#f0fdf4"; }
-        else if (ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "gif") { icon = "🖼️"; bg = "#faf5ff"; }
+        if (ext === "pdf") { icon = "\uD83D\uDCD5"; bg = "#fef2f2"; }
+        else if (ext === "doc" || ext === "docx") { icon = "\uD83D\uDCD8"; bg = "#eff6ff"; }
+        else if (ext === "xls" || ext === "xlsx") { icon = "\uD83D\uDCD7"; bg = "#f0fdf4"; }
+        else if (ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "gif") { icon = "\uD83D\uDDBC\uFE0F"; bg = "#faf5ff"; }
+        var tag = detectFileTag(f);
         h += '<div class="file-item">';
         h += '<div class="file-icon" style="background:' + bg + '">' + icon + '</div>';
-        h += '<div class="file-info"><div class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</div>';
-        h += '<div class="file-meta">' + esc(f.dateAdded || "") + (f.type ? ' • ' + esc(f.type) : '') + '</div></div>';
+        h += '<div class="file-info"><div class="file-name" title="' + esc(f.name) + '">' + esc(f.name);
+        if (tag) h += ' <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:' + tag.bg + ';color:' + tag.color + ';font-weight:600;margin-left:4px">' + tag.tag + '</span>';
+        h += '</div>';
+        h += '<div class="file-meta">' + esc(f.dateAdded || "") + (f.type ? ' \u2022 ' + esc(f.type) : '') + '</div></div>';
         h += '<a class="file-dl" href="/api/candidates/' + candidateId + '/files/' + f.id + '" target="_blank" onclick="event.stopPropagation()">View</a>';
         h += '<a class="file-dl" href="/api/candidates/' + candidateId + '/files/' + f.id + '?download=1" download="' + esc(f.name) + '" onclick="event.stopPropagation()" style="background:#f0fdf4;color:#16a34a;border-color:#bbf7d0">Download</a>';
         h += '</div>';
@@ -870,7 +895,7 @@ function loadCandidateFiles(candidateId) {
     el.innerHTML = h;
   }).catch(function(e) {
     var el = document.getElementById("detail-files");
-    if (el) el.innerHTML = '<h4>Files & Resume</h4><div style="color:#94a3b8;font-size:12px">Could not load files</div>';
+    if (el) el.innerHTML = '<h4>Files & Documents</h4><div style="color:#94a3b8;font-size:12px">Could not load files</div>';
   });
 }
 
@@ -4901,15 +4926,34 @@ async function saveClip(){
 var _outreachTemplates=[];
 var _outreachSelectedTemplate="";
 var _outreachRecipients=[];
+var _outreachTab="compose";
+var _outreachSequences=[];
+var _outreachEnrollments=[];
 
 async function renderOutreach(){
-  // Fetch templates
+  // Fetch templates and sequences
   try{
     var tmplData=await apiFetch("outreach/templates");
     _outreachTemplates=tmplData.templates||[];
   }catch(e){_outreachTemplates=[];}
+  try{
+    var seqData=await apiFetch("outreach/sequences");
+    _outreachSequences=seqData.sequences||[];
+    _outreachEnrollments=seqData.enrollments||[];
+  }catch(e){_outreachSequences=[];_outreachEnrollments=[];}
 
   var h='';
+
+  // Tab selector
+  h+='<div style="display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid #e9eef4;padding-bottom:0">';
+  h+='<button style="padding:10px 20px;font-size:14px;font-weight:600;border:none;cursor:pointer;border-bottom:3px solid '+(_outreachTab==="compose"?"#176087":"transparent")+';color:'+(_outreachTab==="compose"?"#176087":"#64748b")+';background:none" onclick="_outreachTab=\'compose\';loadPage(\'outreach\')">Compose</button>';
+  h+='<button style="padding:10px 20px;font-size:14px;font-weight:600;border:none;cursor:pointer;border-bottom:3px solid '+(_outreachTab==="sequences"?"#176087":"transparent")+';color:'+(_outreachTab==="sequences"?"#176087":"#64748b")+';background:none" onclick="_outreachTab=\'sequences\';loadPage(\'outreach\')">Sequences</button>';
+  h+='<button style="padding:10px 20px;font-size:14px;font-weight:600;border:none;cursor:pointer;border-bottom:3px solid '+(_outreachTab==="inbox"?"#176087":"transparent")+';color:'+(_outreachTab==="inbox"?"#176087":"#64748b")+';background:none" onclick="_outreachTab=\'inbox\';loadPage(\'outreach\')">Inbox</button>';
+  h+='</div>';
+
+  if(_outreachTab==="sequences") return h + renderOutreachSequences();
+  if(_outreachTab==="inbox") return h + await renderInbox();
+
   h+='<p style="color:#64748b;font-size:14px;margin-bottom:20px">Compose and send emails using templates. Emails are logged as touches in Bullhorn automatically.</p>';
 
   // Export buttons
@@ -4961,6 +5005,231 @@ async function renderOutreach(){
 
   h+='</div>';
   return h;
+}
+
+function renderOutreachSequences(){
+  var h='';
+
+  // Active enrollments summary
+  var active=_outreachEnrollments.filter(function(e){return e.status==="active";});
+  var completed=_outreachEnrollments.filter(function(e){return e.status==="completed";});
+  h+='<div class="stats-row">';
+  h+=statCard("\uD83D\uDE80","Active Sequences",active.length,"Currently running","#176087");
+  h+=statCard("\u2705","Completed",completed.length,"Finished all steps","#10b981");
+  h+=statCard("\uD83D\uDCCB","Templates",_outreachSequences.length,"Sequence templates","#7c3aed");
+  h+='</div>';
+
+  // Sequence templates
+  h+='<div style="font-size:16px;font-weight:700;color:#0f172a;margin-bottom:12px">Sequence Templates</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:24px">';
+  _outreachSequences.forEach(function(seq){
+    h+='<div style="background:#fff;border:1px solid #e9eef4;border-radius:10px;padding:16px">';
+    h+='<div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:4px">'+esc(seq.name)+'</div>';
+    h+='<div style="font-size:12px;color:#64748b;margin-bottom:10px">'+esc(seq.description)+'</div>';
+    h+='<div style="font-size:11px;color:#94a3b8;margin-bottom:10px">'+seq.steps.length+' steps \u2022 Trigger: '+esc(seq.trigger==="manual"?"Manual enrollment":seq.trigger)+'</div>';
+    // Steps preview
+    seq.steps.forEach(function(step,i){
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">';
+      h+='<span style="width:20px;height:20px;border-radius:50%;background:#176087;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">'+(i+1)+'</span>';
+      h+='<span style="color:#334155">'+esc(step.subject||step.templateId)+'</span>';
+      h+='<span style="color:#94a3b8;margin-left:auto;font-size:10px">'+esc(step.delayLabel)+'</span>';
+      h+='</div>';
+    });
+    h+='<button onclick="showSequenceEnroll(\''+seq.id+'\')" style="margin-top:10px;width:100%;padding:8px;background:#176087;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Enroll Recipient</button>';
+    h+='</div>';
+  });
+  h+='</div>';
+
+  // Enrollment modal placeholder
+  h+='<div id="seq-enroll-modal"></div>';
+
+  // Active enrollments table
+  if(_outreachEnrollments.length>0){
+    h+='<div style="font-size:16px;font-weight:700;color:#0f172a;margin-bottom:12px">Enrollments</div>';
+    h+='<div class="table-wrap"><table class="data-table"><thead><tr>';
+    h+='<th>Recipient</th><th>Sequence</th><th>Status</th><th>Progress</th><th>Enrolled</th><th>Actions</th>';
+    h+='</tr></thead><tbody>';
+    _outreachEnrollments.forEach(function(e){
+      var seq=_outreachSequences.find(function(s){return s.id===e.sequenceId;})||{steps:[]};
+      var progress=e.currentStep+'/'+seq.steps.length;
+      var statusColor=e.status==="active"?"#10b981":e.status==="completed"?"#176087":"#94a3b8";
+      h+='<tr>';
+      h+='<td><strong>'+esc(e.recipientName||e.recipientEmail)+'</strong><div style="font-size:11px;color:#64748b">'+esc(e.recipientEmail)+'</div></td>';
+      h+='<td>'+esc(e.sequenceName)+'</td>';
+      h+='<td><span class="badge" style="background:'+statusColor+'18;color:'+statusColor+';border:1px solid '+statusColor+'40">'+e.status+'</span></td>';
+      h+='<td><span class="fw600">'+progress+'</span></td>';
+      h+='<td style="font-size:12px">'+new Date(e.enrolledAt).toLocaleDateString()+'</td>';
+      h+='<td>';
+      if(e.status==="active"){
+        h+='<button onclick="executeSequenceStep(\''+e.id+'\')" style="padding:4px 10px;background:#176087;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;margin-right:4px">Send Next</button>';
+        h+='<button onclick="cancelSequence(\''+e.id+'\')" style="padding:4px 10px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:4px;cursor:pointer;font-size:11px">Cancel</button>';
+      }
+      h+='</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  return h;
+}
+
+function showSequenceEnroll(seqId){
+  var modal=document.getElementById("seq-enroll-modal");
+  if(!modal) return;
+  var h='<div style="background:#fff;border:1px solid #e9eef4;border-radius:10px;padding:20px;margin-top:16px">';
+  h+='<div style="font-size:14px;font-weight:700;margin-bottom:12px">Enroll in Sequence</div>';
+  h+='<input id="seq-enroll-search" type="text" placeholder="Search candidates..." style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;margin-bottom:8px" onkeyup="if(event.key===\'Enter\')searchSequenceRecipient(\''+seqId+'\')">';
+  h+='<button onclick="searchSequenceRecipient(\''+seqId+'\')" style="background:#176087;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px">Search</button>';
+  h+='<button onclick="document.getElementById(\'seq-enroll-modal\').innerHTML=\'\'" style="background:#e5e7eb;color:#374151;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:8px">Cancel</button>';
+  h+='<div id="seq-enroll-results" style="margin-top:8px"></div>';
+  h+='</div>';
+  modal.innerHTML=h;
+}
+
+async function searchSequenceRecipient(seqId){
+  var q=document.getElementById("seq-enroll-search").value;
+  if(!q) return;
+  var el=document.getElementById("seq-enroll-results");
+  el.innerHTML='<div style="color:#64748b;font-size:12px">Searching...</div>';
+  try{
+    var cands=await apiFetch("candidates",{q:q,status:"All"});
+    var html="";
+    (cands.data||[]).slice(0,8).forEach(function(c){
+      var name=esc((c.firstName||"")+" "+(c.lastName||""));
+      var email=esc(c.email||"");
+      html+='<div style="padding:8px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;align-items:center" onclick="enrollInSequence(\''+seqId+'\','+c.id+',\''+name+'\',\''+email+'\')">';
+      html+='<div><strong>'+name+'</strong> <span style="color:#64748b">'+email+'</span></div>';
+      html+='<span style="font-size:11px;color:#176087;font-weight:600">Enroll \u2192</span>';
+      html+='</div>';
+    });
+    if((cands.data||[]).length===0) html='<div style="color:#94a3b8;font-size:12px">No candidates found</div>';
+    el.innerHTML=html;
+  }catch(e){el.innerHTML='<div style="color:#dc2626;font-size:12px">Error: '+esc(e.message)+'</div>';}
+}
+
+async function enrollInSequence(seqId,candId,name,email){
+  try{
+    var r=await apiFetch("outreach/sequences/enroll",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({sequenceId:seqId,recipientId:candId,recipientName:name,recipientEmail:email,recipientType:"candidate",variables:{firstName:name.split(" ")[0],senderName:"Rachel Neill",certifications:"Epic"}})
+    });
+    if(r.success){
+      document.getElementById("seq-enroll-modal").innerHTML='<div style="padding:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;color:#16a34a;font-size:13px;margin-top:12px">\u2705 '+esc(name)+' enrolled successfully!</div>';
+      setTimeout(function(){loadPage("outreach");},1500);
+    }
+  }catch(e){alert("Error enrolling: "+e.message);}
+}
+
+async function executeSequenceStep(enrollmentId){
+  try{
+    var r=await apiFetch("outreach/sequences/execute-step",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({enrollmentId:enrollmentId})
+    });
+    if(r.success){loadPage("outreach");}
+  }catch(e){alert("Error: "+e.message);}
+}
+
+async function cancelSequence(enrollmentId){
+  if(!confirm("Cancel this sequence?")) return;
+  try{
+    var r=await apiFetch("outreach/sequences/cancel",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({enrollmentId:enrollmentId})
+    });
+    if(r.success){loadPage("outreach");}
+  }catch(e){alert("Error: "+e.message);}
+}
+
+var _inboxFilter="all";
+async function renderInbox(){
+  var data;
+  try{ data=await apiFetch("inbox",{filter:_inboxFilter}); }catch(e){ data={data:[],total:0,newCount:0,jobRequestCount:0}; }
+  var emails=data.data||[];
+  var h='';
+  h+='<div class="stats-row">';
+  h+=statCard("\uD83D\uDCE8","Total Emails",data.total||0,"In inbox","#176087");
+  h+=statCard("\uD83C\uDD95","Unread",data.newCount||0,"Need attention","#f59e0b");
+  h+=statCard("\uD83D\uDCBC","Job Requests",data.jobRequestCount||0,"Auto-detected","#dc2626");
+  h+='</div>';
+
+  // Setup instructions
+  h+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#1e40af">';
+  h+='<strong>Setup:</strong> To receive emails automatically, configure SendGrid Inbound Parse to POST to: <code style="background:#dbeafe;padding:2px 6px;border-radius:4px">'+window.location.origin+'/api/inbox/receive</code>. You can also manually log emails below.';
+  h+='</div>';
+
+  // Manual email log form
+  h+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+  h+='<button onclick="showManualEmailLog()" style="padding:8px 16px;background:#176087;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">+ Log Email Manually</button>';
+  h+='</div>';
+  h+='<div id="manual-email-form"></div>';
+
+  // Filter chips
+  h+='<div class="chips" style="margin-bottom:12px">';
+  ["all","new","job-requests"].forEach(function(f){
+    var labels={"all":"All","new":"Unread","job-requests":"Job Requests"};
+    h+='<button class="chip'+(_inboxFilter===f?" on":"")+'" onclick="_inboxFilter=\''+f+'\';loadPage(\'outreach\')">'+labels[f]+'</button>';
+  });
+  h+='</div>';
+
+  if(emails.length===0){
+    h+='<div style="text-align:center;padding:40px;color:#94a3b8;font-size:14px">No emails yet. Set up inbound parsing or log emails manually.</div>';
+  } else {
+    emails.forEach(function(e){
+      var bgColor=e.status==="new"?"#fff":"#f8fafc";
+      var borderLeft=e.isJobRequest?"3px solid #dc2626":e.status==="new"?"3px solid #176087":"3px solid transparent";
+      h+='<div style="background:'+bgColor+';border:1px solid #e9eef4;border-left:'+borderLeft+';border-radius:8px;padding:14px;margin-bottom:8px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">';
+      h+='<div><span style="font-weight:700;font-size:13px;color:#0f172a">'+esc(e.fromName||e.from)+'</span>';
+      if(e.matchedEntity) h+=' <span style="font-size:10px;padding:2px 6px;border-radius:8px;background:#dbeafe;color:#1e40af">'+esc(e.matchedEntity.type)+': '+esc(e.matchedEntity.name)+'</span>';
+      if(e.isJobRequest) h+=' <span style="font-size:10px;padding:2px 6px;border-radius:8px;background:#fef2f2;color:#dc2626;font-weight:600">Job Request</span>';
+      h+='</div>';
+      h+='<span style="font-size:11px;color:#94a3b8">'+new Date(e.date).toLocaleString()+'</span>';
+      h+='</div>';
+      h+='<div style="font-weight:600;font-size:13px;color:#334155;margin-bottom:4px">'+esc(e.subject)+'</div>';
+      h+='<div style="font-size:12px;color:#64748b;max-height:60px;overflow:hidden;text-overflow:ellipsis">'+esc((e.body||"").substring(0,200))+'</div>';
+      if(e.status==="new"){
+        h+='<button onclick="markInboxRead(\''+e.id+'\')" style="margin-top:8px;padding:4px 12px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;cursor:pointer;font-size:11px;color:#64748b">Mark Read</button>';
+      }
+      h+='</div>';
+    });
+  }
+  return h;
+}
+
+function showManualEmailLog(){
+  var el=document.getElementById("manual-email-form");
+  if(!el) return;
+  var h='<div style="background:#fff;border:1px solid #e9eef4;border-radius:10px;padding:16px;margin-bottom:16px">';
+  h+='<div style="font-weight:700;margin-bottom:10px">Log Incoming Email</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
+  h+='<input id="manual-email-from" type="email" placeholder="From email" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+  h+='<input id="manual-email-name" type="text" placeholder="From name" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+  h+='</div>';
+  h+='<input id="manual-email-subject" type="text" placeholder="Subject" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;margin-bottom:8px">';
+  h+='<textarea id="manual-email-body" rows="4" placeholder="Email body..." style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;margin-bottom:8px"></textarea>';
+  h+='<div style="display:flex;gap:8px">';
+  h+='<button onclick="submitManualEmail()" style="padding:8px 16px;background:#176087;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Log Email</button>';
+  h+='<button onclick="document.getElementById(\'manual-email-form\').innerHTML=\'\'" style="padding:8px 16px;background:#e5e7eb;border:none;border-radius:6px;cursor:pointer;font-size:12px">Cancel</button>';
+  h+='</div></div>';
+  el.innerHTML=h;
+}
+
+async function submitManualEmail(){
+  var from=document.getElementById("manual-email-from").value;
+  var fromName=document.getElementById("manual-email-name").value;
+  var subject=document.getElementById("manual-email-subject").value;
+  var body=document.getElementById("manual-email-body").value;
+  if(!from||!subject){alert("From email and subject are required");return;}
+  try{
+    await apiFetch("inbox/receive",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:from,fromName:fromName,subject:subject,body:body})});
+    loadPage("outreach");
+  }catch(e){alert("Error: "+e.message);}
+}
+
+async function markInboxRead(emailId){
+  try{
+    await apiFetch("inbox/mark-read",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailId:emailId})});
+    loadPage("outreach");
+  }catch(e){}
 }
 
 var _outreachRecipient={};
