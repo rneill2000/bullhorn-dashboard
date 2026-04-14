@@ -5139,97 +5139,192 @@ async function cancelSequence(enrollmentId){
   }catch(e){alert("Error: "+e.message);}
 }
 
-var _inboxFilter="all";
+var _outlookUser="";
+var _outlookEmails=[];
 async function renderInbox(){
-  var data;
-  try{ data=await apiFetch("inbox",{filter:_inboxFilter}); }catch(e){ data={data:[],total:0,newCount:0,jobRequestCount:0}; }
-  var emails=data.data||[];
   var h='';
-  h+='<div class="stats-row">';
-  h+=statCard("\uD83D\uDCE8","Total Emails",data.total||0,"In inbox","#176087");
-  h+=statCard("\uD83C\uDD95","Unread",data.newCount||0,"Need attention","#f59e0b");
-  h+=statCard("\uD83D\uDCBC","Job Requests",data.jobRequestCount||0,"Auto-detected","#dc2626");
-  h+='</div>';
 
-  // Setup instructions
-  h+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#1e40af">';
-  h+='<strong>Setup:</strong> To receive emails automatically, configure SendGrid Inbound Parse to POST to: <code style="background:#dbeafe;padding:2px 6px;border-radius:4px">'+window.location.origin+'/api/inbox/receive</code>. You can also manually log emails below.';
-  h+='</div>';
+  // Check Outlook connection status
+  var status;
+  try{ status=await apiFetch("outlook/status"); }catch(e){ status={configured:false,connectedUsers:[]}; }
 
-  // Manual email log form
-  h+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
-  h+='<button onclick="showManualEmailLog()" style="padding:8px 16px;background:#176087;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">+ Log Email Manually</button>';
-  h+='</div>';
-  h+='<div id="manual-email-form"></div>';
-
-  // Filter chips
-  h+='<div class="chips" style="margin-bottom:12px">';
-  ["all","new","job-requests"].forEach(function(f){
-    var labels={"all":"All","new":"Unread","job-requests":"Job Requests"};
-    h+='<button class="chip'+(_inboxFilter===f?" on":"")+'" onclick="_inboxFilter=\''+f+'\';loadPage(\'outreach\')">'+labels[f]+'</button>';
-  });
-  h+='</div>';
-
-  if(emails.length===0){
-    h+='<div style="text-align:center;padding:40px;color:#94a3b8;font-size:14px">No emails yet. Set up inbound parsing or log emails manually.</div>';
-  } else {
-    emails.forEach(function(e){
-      var bgColor=e.status==="new"?"#fff":"#f8fafc";
-      var borderLeft=e.isJobRequest?"3px solid #dc2626":e.status==="new"?"3px solid #176087":"3px solid transparent";
-      h+='<div style="background:'+bgColor+';border:1px solid #e9eef4;border-left:'+borderLeft+';border-radius:8px;padding:14px;margin-bottom:8px">';
-      h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">';
-      h+='<div><span style="font-weight:700;font-size:13px;color:#0f172a">'+esc(e.fromName||e.from)+'</span>';
-      if(e.matchedEntity) h+=' <span style="font-size:10px;padding:2px 6px;border-radius:8px;background:#dbeafe;color:#1e40af">'+esc(e.matchedEntity.type)+': '+esc(e.matchedEntity.name)+'</span>';
-      if(e.isJobRequest) h+=' <span style="font-size:10px;padding:2px 6px;border-radius:8px;background:#fef2f2;color:#dc2626;font-weight:600">Job Request</span>';
-      h+='</div>';
-      h+='<span style="font-size:11px;color:#94a3b8">'+new Date(e.date).toLocaleString()+'</span>';
-      h+='</div>';
-      h+='<div style="font-weight:600;font-size:13px;color:#334155;margin-bottom:4px">'+esc(e.subject)+'</div>';
-      h+='<div style="font-size:12px;color:#64748b;max-height:60px;overflow:hidden;text-overflow:ellipsis">'+esc((e.body||"").substring(0,200))+'</div>';
-      if(e.status==="new"){
-        h+='<button onclick="markInboxRead(\''+e.id+'\')" style="margin-top:8px;padding:4px 12px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;cursor:pointer;font-size:11px;color:#64748b">Mark Read</button>';
-      }
-      h+='</div>';
-    });
+  if(!status.configured){
+    h+='<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:20px;margin-bottom:16px">';
+    h+='<div style="font-weight:700;font-size:16px;color:#92400e;margin-bottom:8px">Microsoft 365 Setup Required</div>';
+    h+='<div style="font-size:13px;color:#78350f;line-height:1.6">';
+    h+='<p style="margin-bottom:8px">To connect your team\'s Outlook emails, an admin needs to:</p>';
+    h+='<div style="margin-bottom:8px">1. Go to <a href="https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" style="color:#176087;font-weight:600">Azure Portal \u2192 App Registrations</a></div>';
+    h+='<div style="margin-bottom:8px">2. Create a new registration with redirect URI: <code style="background:#fef3c7;padding:2px 6px;border-radius:4px">'+esc(status.redirectUri||window.location.origin+"/auth/outlook/callback")+'</code></div>';
+    h+='<div style="margin-bottom:8px">3. Under API Permissions, add: <strong>Mail.Read</strong>, <strong>Mail.Send</strong>, <strong>User.Read</strong> (delegated)</div>';
+    h+='<div style="margin-bottom:8px">4. Under Certificates & Secrets, create a client secret</div>';
+    h+='<div style="margin-bottom:8px">5. In Railway, set environment variables: <code style="background:#fef3c7;padding:2px 6px;border-radius:4px">OUTLOOK_CLIENT_ID</code> and <code style="background:#fef3c7;padding:2px 6px;border-radius:4px">OUTLOOK_CLIENT_SECRET</code></div>';
+    h+='</div></div>';
+    return h;
   }
+
+  // Connected users
+  var connectedUsers=status.connectedUsers||[];
+  h+='<div class="stats-row">';
+  h+=statCard("\uD83D\uDD17","Connected Accounts",connectedUsers.length,"Team members linked","#176087");
+  h+=statCard("\uD83D\uDCE8","Inbox",_outlookEmails.length,"Emails loaded","#10b981");
+  h+='</div>';
+
+  // Connect account button
+  h+='<div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap">';
+  h+='<a href="/auth/outlook/login" style="display:inline-flex;align-items:center;gap:8px;padding:10px 18px;background:#0078d4;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">';
+  h+='<svg width="16" height="16" viewBox="0 0 16 16" fill="white"><path d="M7.3 0v7.3H0V0h7.3zm8.7 0v7.3H8.7V0H16zM7.3 8.7V16H0V8.7h7.3zM16 8.7V16H8.7V8.7H16z"/></svg>';
+  h+='Connect Outlook Account</a>';
+  if(connectedUsers.length>0){
+    h+='<span style="font-size:13px;color:#64748b">Connected: ';
+    connectedUsers.forEach(function(u,i){
+      if(i>0) h+=', ';
+      h+='<strong>'+esc(u.name||u.email)+'</strong>';
+    });
+    h+='</span>';
+  }
+  h+='</div>';
+
+  // User selector (if multiple accounts)
+  if(connectedUsers.length>1){
+    h+='<div class="chips" style="margin-bottom:12px">';
+    connectedUsers.forEach(function(u){
+      var active=_outlookUser===u.email?" on":"";
+      h+='<button class="chip'+active+'" onclick="_outlookUser=\''+esc(u.email)+'\';loadOutlookEmails()">'+esc(u.name||u.email)+'</button>';
+    });
+    h+='</div>';
+  }
+
+  if(connectedUsers.length===0){
+    h+='<div style="text-align:center;padding:40px;color:#94a3b8;font-size:14px">No accounts connected yet. Click "Connect Outlook Account" above to get started. Each team member can connect their own account.</div>';
+    return h;
+  }
+
+  // Auto-select first user
+  if(!_outlookUser && connectedUsers.length>0) _outlookUser=connectedUsers[0].email;
+
+  // Email list container
+  h+='<div style="display:flex;gap:8px;margin-bottom:12px">';
+  h+='<div class="search-wrap" style="flex:1"><span class="ico">\uD83D\uDD0D</span><input type="text" id="outlook-search" placeholder="Search emails..." style="width:100%" onkeyup="if(event.key===\'Enter\')loadOutlookEmails(this.value)"></div>';
+  h+='<button onclick="loadOutlookEmails(document.getElementById(\'outlook-search\').value)" style="padding:8px 16px;background:#176087;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Search</button>';
+  h+='<button onclick="loadOutlookEmails()" style="padding:8px 16px;background:#f1f5f9;color:#334155;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;font-size:12px">Refresh</button>';
+  h+='</div>';
+
+  h+='<div id="outlook-email-list"><div style="text-align:center;padding:20px;color:#94a3b8"><span class="loading-spinner"></span> Loading emails...</div></div>';
+
+  // Auto-load emails
+  setTimeout(function(){ loadOutlookEmails(); }, 100);
+
   return h;
 }
 
-function showManualEmailLog(){
-  var el=document.getElementById("manual-email-form");
+async function loadOutlookEmails(q){
+  var el=document.getElementById("outlook-email-list");
   if(!el) return;
-  var h='<div style="background:#fff;border:1px solid #e9eef4;border-radius:10px;padding:16px;margin-bottom:16px">';
-  h+='<div style="font-weight:700;margin-bottom:10px">Log Incoming Email</div>';
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
-  h+='<input id="manual-email-from" type="email" placeholder="From email" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
-  h+='<input id="manual-email-name" type="text" placeholder="From name" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+  el.innerHTML='<div style="text-align:center;padding:20px;color:#94a3b8"><span class="loading-spinner"></span> Loading...</div>';
+  try{
+    var params={user:_outlookUser,limit:50};
+    if(q) params.q=q;
+    var data=await apiFetch("outlook/emails",params);
+    _outlookEmails=data.data||[];
+    var h='';
+    if(_outlookEmails.length===0){
+      h='<div style="text-align:center;padding:30px;color:#94a3b8;font-size:14px">No emails found.</div>';
+    } else {
+      _outlookEmails.forEach(function(e,idx){
+        var bgColor=e.isRead?"#f8fafc":"#fff";
+        var fontWeight=e.isRead?"400":"700";
+        var matchBadge="";
+        if(e.matchedRecord){
+          var mColor=e.matchedRecord.type==="candidate"?"#176087":"#7c3aed";
+          var mBg=e.matchedRecord.type==="candidate"?"#e0f2fe":"#ede9fe";
+          matchBadge=' <span style="font-size:10px;padding:2px 6px;border-radius:8px;background:'+mBg+';color:'+mColor+';font-weight:600">'+esc(e.matchedRecord.type)+': '+esc(e.matchedRecord.name)+'</span>';
+        }
+        h+='<div style="background:'+bgColor+';border:1px solid #e9eef4;border-radius:8px;padding:12px 14px;margin-bottom:6px;cursor:pointer" onclick="viewOutlookEmail('+idx+')">';
+        h+='<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+        h+='<div style="flex:1;min-width:0"><span style="font-weight:'+fontWeight+';font-size:13px;color:#0f172a">'+esc(e.fromName||e.from)+'</span>'+matchBadge;
+        if(e.hasAttachments) h+=' <span style="font-size:10px;color:#94a3b8">\uD83D\uDCCE</span>';
+        if(e.importance==="high") h+=' <span style="font-size:10px;color:#dc2626">\u2757</span>';
+        h+='</div>';
+        h+='<span style="font-size:11px;color:#94a3b8;white-space:nowrap;margin-left:12px">'+new Date(e.date).toLocaleString()+'</span>';
+        h+='</div>';
+        h+='<div style="font-weight:'+fontWeight+';font-size:13px;color:#334155;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.subject)+'</div>';
+        h+='<div style="font-size:12px;color:#94a3b8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.preview)+'</div>';
+        h+='</div>';
+      });
+    }
+    el.innerHTML=h;
+  }catch(e){
+    el.innerHTML='<div style="color:#dc2626;padding:16px;font-size:13px">Error loading emails: '+esc(e.message||"Unknown error")+'</div>';
+  }
+}
+
+async function viewOutlookEmail(idx){
+  var e=_outlookEmails[idx];
+  if(!e) return;
+  // Show in a modal/panel
+  var el=document.getElementById("outlook-email-list");
+  if(!el) return;
+  var h='<div style="background:#fff;border:1px solid #e9eef4;border-radius:10px;padding:20px;margin-bottom:12px">';
+  h+='<button onclick="loadOutlookEmails()" style="padding:6px 14px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;font-size:12px;margin-bottom:12px">\u2190 Back to inbox</button>';
+  h+='<div style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:8px">'+esc(e.subject)+'</div>';
+  h+='<div style="font-size:13px;color:#64748b;margin-bottom:4px"><strong>From:</strong> '+esc(e.fromName||"")+ ' &lt;'+esc(e.from)+'&gt;</div>';
+  h+='<div style="font-size:13px;color:#64748b;margin-bottom:4px"><strong>To:</strong> '+esc(e.to)+'</div>';
+  h+='<div style="font-size:13px;color:#64748b;margin-bottom:12px"><strong>Date:</strong> '+new Date(e.date).toLocaleString()+'</div>';
+
+  // Matched record badge + log button
+  if(e.matchedRecord){
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px">';
+    h+='<span style="font-size:13px;color:#16a34a;font-weight:600">\u2705 Matched to '+esc(e.matchedRecord.type)+': '+esc(e.matchedRecord.name)+'</span>';
+    h+='<button onclick="logEmailToBullhorn(\''+esc(e.id)+'\',\''+esc(e.matchedRecord.type)+'\','+e.matchedRecord.id+',\''+esc(e.subject).replace(/'/g,"\\'")+'\',\''+esc(e.from)+'\')" style="padding:6px 14px;background:#176087;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;margin-left:auto">Log to Bullhorn</button>';
+    h+='</div>';
+  } else {
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px">';
+    h+='<span style="font-size:13px;color:#92400e">\u26A0\uFE0F No matching Bullhorn record found for sender/recipients</span>';
+    h+='</div>';
+  }
+
+  h+='<div style="border-top:1px solid #e9eef4;padding-top:12px;font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap">'+esc(e.preview)+'</div>';
+
+  // Reply button
+  h+='<div style="margin-top:16px;display:flex;gap:8px">';
+  h+='<button onclick="replyToOutlookEmail('+idx+')" style="padding:8px 16px;background:#176087;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">\u21A9\uFE0F Reply</button>';
   h+='</div>';
-  h+='<input id="manual-email-subject" type="text" placeholder="Subject" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;margin-bottom:8px">';
-  h+='<textarea id="manual-email-body" rows="4" placeholder="Email body..." style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;margin-bottom:8px"></textarea>';
+  h+='<div id="outlook-reply-form"></div>';
+
+  h+='</div>';
+  el.innerHTML=h;
+}
+
+function replyToOutlookEmail(idx){
+  var e=_outlookEmails[idx];
+  if(!e) return;
+  var el=document.getElementById("outlook-reply-form");
+  if(!el) return;
+  var h='<div style="margin-top:12px;border-top:1px solid #e9eef4;padding-top:12px">';
+  h+='<div style="font-weight:600;margin-bottom:8px">Reply</div>';
+  h+='<textarea id="outlook-reply-body" rows="6" placeholder="Type your reply..." style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;margin-bottom:8px"></textarea>';
   h+='<div style="display:flex;gap:8px">';
-  h+='<button onclick="submitManualEmail()" style="padding:8px 16px;background:#176087;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Log Email</button>';
-  h+='<button onclick="document.getElementById(\'manual-email-form\').innerHTML=\'\'" style="padding:8px 16px;background:#e5e7eb;border:none;border-radius:6px;cursor:pointer;font-size:12px">Cancel</button>';
+  h+='<button onclick="sendOutlookReply('+idx+')" style="padding:8px 16px;background:#176087;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">\uD83D\uDE80 Send Reply</button>';
+  h+='<button onclick="document.getElementById(\'outlook-reply-form\').innerHTML=\'\'" style="padding:8px 16px;background:#e5e7eb;border:none;border-radius:6px;cursor:pointer;font-size:12px">Cancel</button>';
   h+='</div></div>';
   el.innerHTML=h;
 }
 
-async function submitManualEmail(){
-  var from=document.getElementById("manual-email-from").value;
-  var fromName=document.getElementById("manual-email-name").value;
-  var subject=document.getElementById("manual-email-subject").value;
-  var body=document.getElementById("manual-email-body").value;
-  if(!from||!subject){alert("From email and subject are required");return;}
+async function sendOutlookReply(idx){
+  var e=_outlookEmails[idx];
+  var body=document.getElementById("outlook-reply-body").value;
+  if(!body){alert("Please type a reply");return;}
   try{
-    await apiFetch("inbox/receive",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:from,fromName:fromName,subject:subject,body:body})});
-    loadPage("outreach");
-  }catch(e){alert("Error: "+e.message);}
+    await apiFetch("outlook/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user:_outlookUser,to:e.from,subject:"Re: "+e.subject,body:body.replace(/\n/g,"<br>")})});
+    document.getElementById("outlook-reply-form").innerHTML='<div style="margin-top:8px;padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;color:#16a34a;font-size:13px">\u2705 Reply sent!</div>';
+  }catch(e){alert("Error sending: "+e.message);}
 }
 
-async function markInboxRead(emailId){
+async function logEmailToBullhorn(messageId,entityType,entityId,subject,fromEmail){
   try{
-    await apiFetch("inbox/mark-read",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailId:emailId})});
-    loadPage("outreach");
-  }catch(e){}
+    var r=await apiFetch("outlook/log-to-bullhorn",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messageId:messageId,user:_outlookUser,entityType:entityType,entityId:entityId,subject:subject,fromEmail:fromEmail})});
+    if(r.success) alert("Logged to Bullhorn!");
+  }catch(e){alert("Error: "+e.message);}
 }
 
 var _outreachRecipient={};

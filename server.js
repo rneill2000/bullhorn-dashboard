@@ -4607,6 +4607,362 @@ app.get("/api/pipeline", async (req, res) => {
   }
 });
 
+// ═══ MICROSOFT OUTLOOK / 365 INTEGRATION ════════════════════════
+// Per-user OAuth2 flow with Microsoft Graph API for email read/send/sync
+
+var OUTLOOK_CONFIG = {
+  clientId: process.env.OUTLOOK_CLIENT_ID || "",
+  clientSecret: process.env.OUTLOOK_CLIENT_SECRET || "",
+  redirectUri: (process.env.RAILWAY_PUBLIC_DOMAIN ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.BASE_URL || "https://bullhorn-dashboard-production.up.railway.app") + "/auth/outlook/callback",
+  scopes: "openid profile email offline_access Mail.Read Mail.Send User.Read",
+  authorizeUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+  tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+  graphUrl: "https://graph.microsoft.com/v1.0",
+};
+
+// In-memory token store (keyed by email). Production should use encrypted DB storage.
+var _outlookUsers = {};
+
+// Check if Outlook integration is configured
+function outlookEnabled() { return !!(OUTLOOK_CONFIG.clientId && OUTLOOK_CONFIG.clientSecret); }
+
+// Status endpoint
+app.get("/api/outlook/status", (req, res) => {
+  var configured = outlookEnabled();
+  var connectedUsers = Object.keys(_outlookUsers).map(email => ({
+    email: email,
+    name: _outlookUsers[email].name || email,
+    connectedAt: _outlookUsers[email].connectedAt,
+  }));
+
+  // Also check DB for persistent tokens
+  if (configured && db.ready && connectedUsers.length === 0) {
+    db.getAll("SELECT email, display_name, connected_at FROM outlook_tokens WHERE revoked = false ORDER BY connected_at DESC")
+      .then(rows => {
+        res.json({ configured, connectedUsers: rows.map(r => ({ email: r.email, name: r.display_name, connectedAt: r.connected_at })), redirectUri: OUTLOOK_CONFIG.redirectUri });
+      })
+      .catch(() => res.json({ configured, connectedUsers, redirectUri: OUTLOOK_CONFIG.redirectUri }));
+  } else {
+    res.json({ configured, connectedUsers, redirectUri: OUTLOOK_CONFIG.redirectUri });
+  }
+});
+
+// Step 1: Redirect user to Microsoft login
+app.get("/auth/outlook/login", (req, res) => {
+  if (!outlookEnabled()) return res.status(503).send("Outlook integration not configured. Set OUTLOOK_CLIENT_ID and OUTLOOK_CLIENT_SECRET in Railway environment variables.");
+  var state = crypto.randomBytes(16).toString("hex");
+  var url = OUTLOOK_CONFIG.authorizeUrl + "?" + new URLSearchParams({
+    client_id: OUTLOOK_CONFIG.clientId,
+    response_type: "code",
+    redirect_uri: OUTLOOK_CONFIG.redirectUri,
+    scope: OUTLOOK_CONFIG.scopes,
+    response_mode: "query",
+    state: state,
+    prompt: "consent",
+  }).toString();
+  res.redirect(url);
+});
+
+// Step 2: Handle callback from Microsoft
+app.get("/auth/outlook/callback", async (req, res) => {
+  try {
+    var code = req.query.code;
+    if (!code) return res.status(400).send("No authorization code received. Error: " + (req.query.error_description || req.query.error || "unknown"));
+
+    // Exchange code for tokens
+    var tokenResp = await fetch(OUTLOOK_CONFIG.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: OUTLOOK_CONFIG.clientId,
+        client_secret: OUTLOOK_CONFIG.clientSecret,
+        code: code,
+        redirect_uri: OUTLOOK_CONFIG.redirectUri,
+        grant_type: "authorization_code",
+        scope: OUTLOOK_CONFIG.scopes,
+      }).toString(),
+    });
+    if (!tokenResp.ok) {
+      var errBody = await tokenResp.text();
+      return res.status(400).send("Token exchange failed: " + errBody);
+    }
+    var tokens = await tokenResp.json();
+
+    // Get user profile
+    var profileResp = await fetch(OUTLOOK_CONFIG.graphUrl + "/me", {
+      headers: { Authorization: "Bearer " + tokens.access_token },
+    });
+    var profile = profileResp.ok ? await profileResp.json() : {};
+    var userEmail = (profile.mail || profile.userPrincipalName || "").toLowerCase();
+
+    if (!userEmail) return res.status(400).send("Could not determine your email address from Microsoft.");
+
+    // Store tokens
+    _outlookUsers[userEmail] = {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresAt: Date.now() + (tokens.expires_in || 3600) * 1000,
+      name: profile.displayName || userEmail,
+      connectedAt: new Date().toISOString(),
+    };
+
+    // Persist to DB if available
+    if (db.ready) {
+      try {
+        await db.query(`
+          INSERT INTO outlook_tokens (email, display_name, access_token, refresh_token, expires_at, connected_at, revoked)
+          VALUES ($1, $2, $3, $4, $5, NOW(), false)
+          ON CONFLICT (email) DO UPDATE SET access_token=$3, refresh_token=$4, expires_at=$5, display_name=$2, revoked=false, connected_at=NOW()
+        `, [userEmail, profile.displayName || "", tokens.access_token, tokens.refresh_token, new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString()]);
+      } catch (e) { console.log("[Outlook] DB persist failed:", e.message); }
+    }
+
+    // Redirect back to dashboard
+    res.redirect("/?outlook=connected&user=" + encodeURIComponent(userEmail));
+  } catch (e) {
+    console.error("[Outlook Callback]", e.message);
+    res.status(500).send("Error connecting Outlook: " + e.message);
+  }
+});
+
+// Refresh token helper
+async function refreshOutlookToken(userEmail) {
+  var user = _outlookUsers[userEmail];
+  if (!user || !user.refreshToken) {
+    // Try loading from DB
+    if (db.ready) {
+      try {
+        var rows = await db.getAll("SELECT * FROM outlook_tokens WHERE email=$1 AND revoked=false LIMIT 1", [userEmail]);
+        if (rows.length > 0) {
+          user = { accessToken: rows[0].access_token, refreshToken: rows[0].refresh_token, expiresAt: new Date(rows[0].expires_at).getTime(), name: rows[0].display_name, connectedAt: rows[0].connected_at };
+          _outlookUsers[userEmail] = user;
+        }
+      } catch (e) {}
+    }
+    if (!user || !user.refreshToken) throw new Error("No Outlook connection for " + userEmail);
+  }
+  if (user.expiresAt && Date.now() < user.expiresAt - 60000) return user.accessToken;
+
+  var resp = await fetch(OUTLOOK_CONFIG.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: OUTLOOK_CONFIG.clientId,
+      client_secret: OUTLOOK_CONFIG.clientSecret,
+      refresh_token: user.refreshToken,
+      grant_type: "refresh_token",
+      scope: OUTLOOK_CONFIG.scopes,
+    }).toString(),
+  });
+  if (!resp.ok) throw new Error("Token refresh failed");
+  var tokens = await resp.json();
+  user.accessToken = tokens.access_token;
+  if (tokens.refresh_token) user.refreshToken = tokens.refresh_token;
+  user.expiresAt = Date.now() + (tokens.expires_in || 3600) * 1000;
+
+  // Update DB
+  if (db.ready) {
+    try { await db.query("UPDATE outlook_tokens SET access_token=$1, refresh_token=$2, expires_at=$3 WHERE email=$4", [user.accessToken, user.refreshToken, new Date(user.expiresAt).toISOString(), userEmail]); } catch (e) {}
+  }
+  return user.accessToken;
+}
+
+// Graph API helper
+async function graphFetch(userEmail, endpoint, options) {
+  var token = await refreshOutlookToken(userEmail);
+  var resp = await fetch(OUTLOOK_CONFIG.graphUrl + endpoint, {
+    ...options,
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", ...(options && options.headers ? options.headers : {}) },
+  });
+  if (!resp.ok) {
+    var errText = await resp.text();
+    throw new Error("Graph API error (" + resp.status + "): " + errText.substring(0, 200));
+  }
+  return resp.json();
+}
+
+// Read emails
+app.get("/api/outlook/emails", async (req, res) => {
+  try {
+    var userEmail = req.query.user;
+    if (!userEmail) {
+      var users = Object.keys(_outlookUsers);
+      if (users.length === 0) return res.json({ data: [], total: 0, error: "No Outlook accounts connected" });
+      userEmail = users[0];
+    }
+    var folder = req.query.folder || "inbox";
+    var top = parseInt(req.query.limit) || 50;
+    var skip = parseInt(req.query.skip) || 0;
+    var q = req.query.q || "";
+
+    var endpoint = "/me/mailFolders/" + folder + "/messages?$top=" + top + "&$skip=" + skip + "&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,importance";
+    if (q) endpoint += "&$search=\"" + encodeURIComponent(q) + "\"";
+
+    var data = await graphFetch(userEmail, endpoint);
+    var emails = (data.value || []).map(function(m) {
+      return {
+        id: m.id,
+        subject: m.subject || "(no subject)",
+        from: m.from ? (m.from.emailAddress ? m.from.emailAddress.address : "") : "",
+        fromName: m.from ? (m.from.emailAddress ? m.from.emailAddress.name : "") : "",
+        to: (m.toRecipients || []).map(r => r.emailAddress ? r.emailAddress.address : "").join(", "),
+        date: m.receivedDateTime || "",
+        preview: m.bodyPreview || "",
+        isRead: m.isRead,
+        hasAttachments: m.hasAttachments,
+        importance: m.importance || "normal",
+      };
+    });
+
+    // Match emails to Bullhorn records
+    if (db.ready) {
+      var allAddresses = new Set();
+      emails.forEach(function(e) {
+        if (e.from) allAddresses.add(e.from.toLowerCase());
+        (e.to || "").split(",").forEach(function(a) { var t = a.trim().toLowerCase(); if (t) allAddresses.add(t); });
+      });
+      var addressList = Array.from(allAddresses);
+      if (addressList.length > 0) {
+        try {
+          var placeholders = addressList.map((_, i) => "$" + (i + 1)).join(",");
+          var candMatches = await db.getAll("SELECT id, first_name, last_name, email, email2 FROM candidates WHERE LOWER(email) IN (" + placeholders + ") OR LOWER(email2) IN (" + placeholders + ")", addressList.concat(addressList));
+          var contactMatches = await db.getAll("SELECT id, first_name, last_name, email FROM client_contacts WHERE LOWER(email) IN (" + placeholders + ")", addressList);
+
+          var matchMap = {};
+          candMatches.forEach(function(c) {
+            var e1 = (c.email || "").toLowerCase();
+            var e2 = (c.email2 || "").toLowerCase();
+            if (e1) matchMap[e1] = { id: c.id, name: c.first_name + " " + c.last_name, type: "candidate" };
+            if (e2) matchMap[e2] = { id: c.id, name: c.first_name + " " + c.last_name, type: "candidate" };
+          });
+          contactMatches.forEach(function(c) {
+            var e = (c.email || "").toLowerCase();
+            if (e) matchMap[e] = { id: c.id, name: c.first_name + " " + c.last_name, type: "contact" };
+          });
+
+          emails.forEach(function(e) {
+            e.matchedRecord = matchMap[e.from.toLowerCase()] || null;
+            // Also check recipients
+            if (!e.matchedRecord) {
+              (e.to || "").split(",").forEach(function(a) {
+                var t = a.trim().toLowerCase();
+                if (t && matchMap[t]) e.matchedRecord = matchMap[t];
+              });
+            }
+          });
+        } catch (e) { console.log("[Outlook Emails] Record matching error:", e.message); }
+      }
+    }
+
+    res.json({ data: emails, total: data["@odata.count"] || emails.length, user: userEmail });
+  } catch (e) {
+    console.error("[Outlook Emails]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Read single email (full body)
+app.get("/api/outlook/emails/:messageId", async (req, res) => {
+  try {
+    var userEmail = req.query.user || Object.keys(_outlookUsers)[0];
+    if (!userEmail) return res.status(400).json({ error: "No Outlook account specified" });
+    var data = await graphFetch(userEmail, "/me/messages/" + req.params.messageId + "?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments,importance");
+    res.json({ data: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Send email
+app.post("/api/outlook/send", express.json(), async (req, res) => {
+  try {
+    var { user, to, subject, body, cc, saveToSentItems } = req.body;
+    var userEmail = user || Object.keys(_outlookUsers)[0];
+    if (!userEmail) return res.status(400).json({ error: "No Outlook account connected" });
+    if (!to || !subject) return res.status(400).json({ error: "Missing 'to' and 'subject'" });
+
+    var message = {
+      subject: subject,
+      body: { contentType: "HTML", content: body || "" },
+      toRecipients: to.split(",").map(function(e) { return { emailAddress: { address: e.trim() } }; }),
+    };
+    if (cc) message.ccRecipients = cc.split(",").map(function(e) { return { emailAddress: { address: e.trim() } }; });
+
+    await graphFetch(userEmail, "/me/sendMail", {
+      method: "POST",
+      body: JSON.stringify({ message: message, saveToSentItems: saveToSentItems !== false }),
+    });
+
+    res.json({ success: true, method: "outlook" });
+  } catch (e) {
+    console.error("[Outlook Send]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Log email to Bullhorn as a Note/Activity
+app.post("/api/outlook/log-to-bullhorn", express.json(), async (req, res) => {
+  try {
+    var { messageId, user, entityType, entityId, subject, body, fromEmail } = req.body;
+    if (!entityId || !entityType) return res.status(400).json({ error: "Missing entityType or entityId" });
+    await authenticate();
+
+    var noteBody = "Email: " + (subject || "(no subject)") + "\nFrom: " + (fromEmail || "") + "\n\n" + (body || "").replace(/<[^>]*>/g, "").substring(0, 2000);
+
+    var noteData = {
+      action: "Email",
+      comments: noteBody,
+      personReference: entityType === "candidate" ? { id: parseInt(entityId) } : undefined,
+    };
+    // For contacts, use clientContactReferences
+    if (entityType === "contact") {
+      noteData.personReference = undefined;
+      noteData.clientContactReferences = { total: 1, data: [{ id: parseInt(entityId) }] };
+    }
+
+    await bhFetch("entity/Note", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(noteData),
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error("[Outlook Log]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Disconnect account
+app.post("/api/outlook/disconnect", express.json(), (req, res) => {
+  var { email } = req.body;
+  if (_outlookUsers[email]) delete _outlookUsers[email];
+  if (db.ready) {
+    db.query("UPDATE outlook_tokens SET revoked=true WHERE email=$1", [email]).catch(() => {});
+  }
+  res.json({ success: true });
+});
+
+// Create outlook_tokens table if it doesn't exist
+if (db.ready || db.isEnabled()) {
+  setTimeout(async function() {
+    try {
+      if (db.ready) {
+        await db.query(`CREATE TABLE IF NOT EXISTS outlook_tokens (
+          email TEXT PRIMARY KEY,
+          display_name TEXT,
+          access_token TEXT,
+          refresh_token TEXT,
+          expires_at TEXT,
+          connected_at TIMESTAMP DEFAULT NOW(),
+          revoked BOOLEAN DEFAULT false
+        )`);
+        console.log("[Outlook] Token table ready");
+      }
+    } catch (e) { console.log("[Outlook] Could not create token table:", e.message); }
+  }, 5000);
+}
+
 // ═══ DATA QUALITY REPORT ════════════════════════════════════════
 app.get("/api/data-quality", async (req, res) => {
   try {
