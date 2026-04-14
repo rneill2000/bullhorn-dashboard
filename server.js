@@ -915,12 +915,24 @@ app.get("/api/clients", async (req, res) => {
       where += ` AND status='${status}'`;
     }
 
-    // Fetch clients first (reliable query)
-    const data = await bhFetchAll("query/ClientCorporation", {
-      where,
-      fields: "id,name,address,status,dateLastModified,owner",
-      orderBy: "-dateLastModified",
-    });
+    // Fetch clients — use search endpoint (more reliable with nested fields)
+    let data;
+    try {
+      const searchQuery = q ? `name:${q}*` : "id:[0 TO 999999999]";
+      const fullQuery = (status && status !== "All") ? `(${searchQuery}) AND status:${status}` : searchQuery;
+      data = await bhFetchAll("search/ClientCorporation", {
+        query: fullQuery,
+        fields: "id,name,address,status,dateLastModified,owner(id,firstName,lastName)",
+        sort: "-dateLastModified",
+      });
+    } catch (searchErr) {
+      console.log("[Clients] Search failed, falling back to query:", searchErr.message);
+      data = await bhFetchAll("query/ClientCorporation", {
+        where,
+        fields: "id,name,address,status,dateLastModified,owner",
+        orderBy: "-dateLastModified",
+      });
+    }
 
     // Try to fetch placement counts per client (non-blocking)
     let placByClient = {};
@@ -948,21 +960,276 @@ app.get("/api/clients", async (req, res) => {
       console.log("[Clients] Placement query failed (non-blocking):", placErr.message);
     }
 
-    const clients = (data.data || []).map((c) => ({
-      id: c.id,
-      name: c.name || "",
-      owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
-      location: c.address
-        ? [c.address.city, c.address.state].filter(Boolean).join(", ")
-        : "",
-      status: c.status || "Unknown",
-      activePlacements: placByClient[c.id] ? placByClient[c.id].length : 0,
-      placedConsultants: placByClient[c.id] || [],
-    }));
+    const clients = (data.data || []).map((c) => {
+      var ownerName = "";
+      if (c.owner && typeof c.owner === "object") {
+        ownerName = ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim();
+      }
+      return {
+        id: c.id,
+        name: c.name || "",
+        owner: ownerName,
+        location: c.address && typeof c.address === "object"
+          ? [c.address.city, c.address.state].filter(Boolean).join(", ")
+          : "",
+        status: c.status || "Unknown",
+        activePlacements: placByClient[c.id] ? placByClient[c.id].length : 0,
+        placedConsultants: placByClient[c.id] || [],
+      };
+    });
 
     res.json({ data: clients, total: data.total });
   } catch (e) {
     console.error("[Clients]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Client Detail ──────────────────────────────
+app.get("/api/clients/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+
+    // 1. Client corporation details
+    const corpData = await bhFetch(`entity/ClientCorporation/${id}`, {
+      fields: "id,name,address,phone,fax,status,companyURL,dateAdded,dateLastModified,notes,industryList,numOffices,annualRevenue,numEmployees,billingPhone,billingContact,owner"
+    });
+    const corp = corpData.data || corpData;
+
+    // 2. Contacts at this client
+    var contacts = [];
+    try {
+      const contactData = await bhFetchAll("search/ClientContact", {
+        query: `isDeleted:0 AND clientCorporation.id:${id}`,
+        fields: "id,firstName,lastName,title,email,phone,mobile,status,dateLastModified,owner,occupation",
+        sort: "-dateLastModified"
+      });
+
+      // Fetch last touch for each contact
+      var contactIds = (contactData.data || []).map(c => c.id);
+      var touchMap = {};
+      if (contactIds.length > 0) {
+        var TOUCH_ACTIONS = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
+        for (var ci = 0; ci < contactIds.length; ci += 50) {
+          var batch = contactIds.slice(ci, ci + 50);
+          var personQuery = batch.map(pid => "personReference.id:" + pid).join(" OR ");
+          try {
+            var noteData = await bhFetchAll("search/Note", {
+              query: "isDeleted:0 AND (" + personQuery + ")",
+              fields: "id,personReference,action,dateAdded",
+              sort: "-dateAdded",
+              count: 500
+            });
+            (noteData.data || []).forEach(n => {
+              var pid = n.personReference ? n.personReference.id : null;
+              if (!pid || touchMap[pid]) return;
+              var isTouch = n.action && TOUCH_ACTIONS.some(a => a.toLowerCase() === (n.action || "").toLowerCase());
+              if (isTouch) touchMap[pid] = { date: n.dateAdded, action: n.action };
+            });
+          } catch(e) {}
+        }
+      }
+
+      contacts = (contactData.data || []).map(c => {
+        var touch = touchMap[c.id];
+        var lastTouchDate = touch ? touch.date : c.dateLastModified;
+        var daysSince = lastTouchDate ? Math.floor((Date.now() - lastTouchDate) / 86400000) : 999;
+        return {
+          id: c.id,
+          name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+          title: c.title || c.occupation || "",
+          email: c.email || "",
+          phone: c.phone || c.mobile || "",
+          status: c.status || "",
+          owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
+          lastTouched: lastTouchDate ? new Date(lastTouchDate).toLocaleDateString() : "Never",
+          lastTouchAction: touch ? touch.action : null,
+          daysSince: daysSince,
+        };
+      });
+    } catch(e) { console.log("[Client Detail] Contacts error:", e.message); }
+
+    // 3. Jobs at this client
+    var jobs = [];
+    try {
+      const jobData = await bhFetchAll("search/JobOrder", {
+        query: `isDeleted:0 AND clientCorporation.id:${id}`,
+        fields: "id,title,status,employmentType,numOpenings,submissions,dateAdded,type,salary,address",
+        sort: "-dateAdded"
+      });
+      var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
+      jobs = (jobData.data || []).map(j => ({
+        id: j.id,
+        title: j.title || "",
+        status: j.status || "",
+        type: j.employmentType || "",
+        priority: PRIORITY_LABELS[j.type] || "",
+        openings: j.numOpenings || 0,
+        submissions: j.submissions ? j.submissions.total : 0,
+        salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
+        location: j.address ? [j.address.city, j.address.state].filter(Boolean).join(", ") : "",
+        dateAdded: j.dateAdded ? new Date(j.dateAdded).toLocaleDateString() : "",
+      }));
+    } catch(e) { console.log("[Client Detail] Jobs error:", e.message); }
+
+    // 4. Placements at this client
+    var placements = [];
+    try {
+      const placData = await bhFetchAll("search/Placement", {
+        query: `jobOrder.clientCorporation.id:${id}`,
+        fields: "id,candidate(id,firstName,lastName),jobOrder(id,title),status,dateBegin,dateEnd,payRate,clientBillRate,employmentType,fee,salary",
+        sort: "-dateBegin"
+      });
+      placements = (placData.data || []).map(p => {
+        try {
+          var isDH = p.employmentType === "Direct Hire" || p.employmentType === "Permanent";
+          var payRate = p.payRate || 0;
+          var billRate = p.clientBillRate || 0;
+          return {
+            id: p.id,
+            candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+            candidateId: p.candidate ? p.candidate.id : null,
+            job: p.jobOrder ? p.jobOrder.title : "",
+            status: p.status || "",
+            startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString() : "",
+            endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : null,
+            type: isDH ? "Direct Hire" : "Consultant",
+            payRate: payRate ? "$" + payRate + "/hr" : "—",
+            billRate: billRate ? "$" + billRate + "/hr" : "—",
+            margin: billRate > 0 ? Math.round(((billRate - payRate) / billRate) * 100) + "%" : null,
+            fee: isDH && p.fee ? "$" + Number(p.fee).toLocaleString() : null,
+          };
+        } catch(e2) { return null; }
+      }).filter(Boolean);
+    } catch(e) { console.log("[Client Detail] Placements error:", e.message); }
+
+    // 5. Revenue summary
+    var activePlacements = placements.filter(p => p.status === "Approved" || p.status === "Actively On Contract" || (p.status || "").toLowerCase().indexOf("active") >= 0);
+    var totalBillRate = 0, totalPayRate = 0, totalFees = 0;
+    placements.forEach(p => {
+      var br = parseFloat((p.billRate || "").replace(/[^0-9.]/g, "")) || 0;
+      var pr = parseFloat((p.payRate || "").replace(/[^0-9.]/g, "")) || 0;
+      var fe = parseFloat((p.fee || "").replace(/[^0-9.]/g, "")) || 0;
+      totalBillRate += br;
+      totalPayRate += pr;
+      totalFees += fe;
+    });
+
+    res.json({
+      id: corp.id,
+      name: corp.name || "",
+      address: corp.address || {},
+      location: corp.address ? [corp.address.city, corp.address.state].filter(Boolean).join(", ") : "",
+      phone: corp.phone || "",
+      fax: corp.fax || "",
+      website: corp.companyURL || "",
+      status: corp.status || "",
+      industry: corp.industryList || "",
+      numEmployees: corp.numEmployees || null,
+      annualRevenue: corp.annualRevenue || null,
+      owner: corp.owner ? ((corp.owner.firstName || "") + " " + (corp.owner.lastName || "")).trim() : "",
+      ownerId: corp.owner ? corp.owner.id : null,
+      dateAdded: corp.dateAdded ? new Date(corp.dateAdded).toLocaleDateString() : "",
+      notes: corp.notes || "",
+      contacts: contacts,
+      jobs: jobs,
+      placements: placements,
+      revenue: {
+        activePlacements: activePlacements.length,
+        totalPlacements: placements.length,
+        totalFees: totalFees,
+        avgBillRate: activePlacements.length > 0 ? Math.round(totalBillRate / activePlacements.length * 100) / 100 : 0,
+      }
+    });
+  } catch (e) {
+    console.error("[Client Detail]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Job Detail ─────────────────────────────────
+app.get("/api/jobs/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const jobData = await bhFetch(`entity/JobOrder/${id}`, {
+      fields: "id,title,clientCorporation,address,employmentType,salary,status,numOpenings,submissions,startDate,dateAdded,dateEnd,type,description,publicDescription,owner,customText1,customText2,customText3,customText4,customText5,customText6,benefits,willRelocate,travelRequirements,yearsRequired,degreeList,certificationList,skillList,bonusPackage"
+    });
+    const j = jobData.data || jobData;
+    var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
+
+    // Get submissions for this job
+    var submissions = [];
+    try {
+      var subData = await bhFetchAll("search/JobSubmission", {
+        query: `jobOrder.id:${id} AND isDeleted:0`,
+        fields: "id,candidate(id,firstName,lastName),status,dateAdded,sendingUser(firstName,lastName),source",
+        sort: "-dateAdded"
+      });
+      submissions = (subData.data || []).map(s => ({
+        id: s.id,
+        candidateId: s.candidate ? s.candidate.id : null,
+        candidate: s.candidate ? ((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim() : "",
+        status: s.status || "",
+        date: s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "",
+        submittedBy: s.sendingUser ? ((s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "")).trim() : "",
+      }));
+    } catch(e) { console.log("[Job Detail] Submissions error:", e.message); }
+
+    // Get placements for this job
+    var placements = [];
+    try {
+      var placData = await bhFetchAll("search/Placement", {
+        query: `jobOrder.id:${id}`,
+        fields: "id,candidate(id,firstName,lastName),status,dateBegin,dateEnd,payRate,clientBillRate,employmentType",
+        sort: "-dateBegin"
+      });
+      placements = (placData.data || []).map(p => {
+        try {
+          return {
+            id: p.id,
+            candidateId: p.candidate ? p.candidate.id : null,
+            candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+            status: p.status || "",
+            startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString() : "",
+            endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : null,
+            payRate: p.payRate ? "$" + p.payRate + "/hr" : "—",
+            billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
+          };
+        } catch(e2) { return null; }
+      }).filter(Boolean);
+    } catch(e) { console.log("[Job Detail] Placements error:", e.message); }
+
+    var descText = (j.description || j.publicDescription || "").replace(/<[^>]*>/g, " ").trim();
+
+    res.json({
+      id: j.id,
+      title: j.title || "",
+      client: j.clientCorporation ? j.clientCorporation.name : "",
+      clientId: j.clientCorporation ? j.clientCorporation.id : null,
+      location: j.address ? [j.address.city, j.address.state].filter(Boolean).join(", ") : "",
+      type: j.employmentType || "",
+      salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
+      status: j.status || "",
+      priority: PRIORITY_LABELS[j.type] || "",
+      openings: j.numOpenings || 0,
+      submissionCount: j.submissions ? j.submissions.total : 0,
+      dateAdded: j.dateAdded ? new Date(j.dateAdded).toLocaleDateString() : "",
+      startDate: j.startDate ? new Date(j.startDate).toLocaleDateString() : "",
+      dateEnd: j.dateEnd ? new Date(j.dateEnd).toLocaleDateString() : null,
+      owner: j.owner ? ((j.owner.firstName || "") + " " + (j.owner.lastName || "")).trim() : "",
+      description: j.description || j.publicDescription || "",
+      descriptionText: descText,
+      certs: j.customText1 || "",
+      epicRole: j.customText5 || "",
+      benefits: j.benefits || "",
+      yearsRequired: j.yearsRequired || null,
+      travelRequirements: j.travelRequirements || null,
+      submissions: submissions,
+      placements: placements,
+      daysOpen: j.dateAdded && (j.status === "Accepting Candidates" || j.status === "Open") ? Math.floor((Date.now() - j.dateAdded) / 86400000) : null,
+    });
+  } catch (e) {
+    console.error("[Job Detail]", e.message);
     res.status(500).json({ error: e.message });
   }
 });

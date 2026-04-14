@@ -59,7 +59,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;padding:10px 14px;color:#64748b;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;border-bottom:2px solid #f1f5f9;position:relative;min-width:60px}
 th .col-resize{position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;background:transparent;z-index:2}
 th .col-resize:hover,th .col-resize.active{background:#176087;opacity:.3;border-radius:2px}
-td{padding:12px 14px;color:#334155;white-space:nowrap;border-bottom:1px solid #f8fafc;overflow:hidden;text-overflow:ellipsis;max-width:300px}
+td{padding:12px 14px;color:#334155;border-bottom:1px solid #f8fafc;overflow:hidden;text-overflow:ellipsis;max-width:400px;white-space:nowrap}
 tbody tr{cursor:pointer;transition:background .1s}
 tbody tr:hover{background:#eff6ff}
 .badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600}
@@ -224,7 +224,187 @@ tbody tr:hover{background:#eff6ff}
 .urgency-high{background:#ef4444}
 .urgency-med{background:#f59e0b}
 .urgency-low{background:#10b981}
-@media(max-width:900px){.chart-grid{grid-template-columns:1fr} aside{width:200px} .detail-panel{width:100%}}
+/* Client & Job detail panels */
+.cd-header{padding:24px;border-bottom:1px solid #f1f5f9}
+.cd-header h2{font-size:22px;font-weight:700;color:#0f172a;margin:0}
+.cd-header .cd-sub{font-size:14px;color:#64748b;margin-top:2px}
+.cd-tabs{display:flex;gap:0;border-bottom:2px solid #f1f5f9;padding:0 24px}
+.cd-tab{padding:12px 18px;font-size:13px;font-weight:600;color:#94a3b8;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;font-family:inherit;background:none;border-top:none;border-left:none;border-right:none}
+.cd-tab:hover{color:#176087}
+.cd-tab.active{color:#176087;border-bottom-color:#176087}
+.cd-section{padding:20px 24px}
+.cd-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:20px}
+.cd-kpi{text-align:center;padding:12px 8px;border-radius:10px;background:#f8fafc;border:1px solid #e2e8f0}
+.cd-kpi .kv{font-size:22px;font-weight:800;line-height:1}
+.cd-kpi .kl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:#64748b;margin-top:3px}
+.contact-card{display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;border:1px solid #e2e8f0;margin-bottom:8px;transition:box-shadow .15s}
+.contact-card:hover{box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.contact-avatar{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0}
+.contact-info{flex:1;min-width:0}
+.contact-name{font-size:14px;font-weight:600;color:#0f172a}
+.contact-title{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.contact-meta{display:flex;gap:12px;font-size:11px;color:#94a3b8;margin-top:2px}
+.touch-alert{padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;white-space:nowrap;flex-shrink:0}
+.touch-alert.urgent{background:#fef2f2;color:#dc2626;border:1px solid #fecaca}
+.touch-alert.warning{background:#fffbeb;color:#d97706;border:1px solid #fde68a}
+.touch-alert.good{background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0}
+.jd-desc{font-size:13px;color:#334155;line-height:1.7;max-height:200px;overflow-y:auto;padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0}
+.sub-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9}
+.sub-row:last-child{border-bottom:none}
+/* ═══ MOBILE HAMBURGER BUTTON ═══ */
+.mobile-menu-btn{display:none;background:none;border:none;font-size:24px;cursor:pointer;color:#0f172a;padding:4px 8px;line-height:1}
+.mobile-sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:49}
+
+/* ═══ TABLET (≤1024px) ═══ */
+@media(max-width:1024px){
+  .chart-grid{grid-template-columns:1fr}
+  aside{width:200px}
+  .detail-panel{width:100%}
+  .content{padding:20px}
+  header.top-bar{padding:16px 20px}
+  .stats-row{grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+  .stats-row-5{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+  .sl-grid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+  .ts-sheet{max-width:95%;padding:32px}
+}
+
+/* ═══ MOBILE (≤768px) ═══ */
+@media(max-width:768px){
+  body{flex-direction:column;height:100vh;overflow:hidden}
+
+  /* Sidebar hidden by default on mobile, slides in when toggled */
+  aside{display:none;position:fixed;left:0;top:0;bottom:0;width:280px;z-index:50;flex-shrink:unset;overflow-y:auto;background:#0E2E47}
+  aside.mobile-open{display:flex;flex-direction:column;animation:slideIn .25s ease forwards}
+  @keyframes slideIn{from{transform:translateX(-100%)}to{transform:translateX(0)}}
+  @keyframes slideOut{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+  .mobile-sidebar-overlay.open{display:block}
+
+  /* Show hamburger */
+  .mobile-menu-btn{display:flex;align-items:center}
+
+  /* Main takes full width */
+  main{width:100%;height:100vh;overflow:auto}
+
+  /* Top bar */
+  header.top-bar{padding:12px 16px;gap:8px;flex-wrap:wrap}
+  header.top-bar h1{font-size:18px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .top-btns{gap:4px;flex-wrap:wrap}
+  .top-btns .btn-outline,.top-btns .btn-primary{padding:6px 10px;font-size:12px}
+  #api-status{display:none !important}
+
+  /* Content area */
+  .content{padding:16px;overflow-x:hidden}
+
+  /* Stat cards */
+  .stats-row{grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+  .stat-card{padding:14px 16px;gap:10px}
+  .stat-icon{width:40px;height:40px;font-size:18px}
+  .stat-value{font-size:20px}
+  .stat-label{font-size:12px}
+  .stats-row-5{grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+
+  /* Toolbar / search / filters */
+  .toolbar{flex-direction:column;align-items:stretch;gap:8px}
+  .search-wrap{max-width:100%}
+  .chips{flex-wrap:wrap;gap:4px}
+  .chip{padding:5px 10px;font-size:12px}
+  .sep{display:none}
+  .filter-toggle{width:100%;text-align:center}
+
+  /* Advanced filters */
+  .adv-filters{padding:12px 14px}
+  .adv-filters .row{flex-direction:column;gap:10px}
+  .adv-filters input,.adv-filters select{min-width:0;width:100%}
+
+  /* Tables: horizontal scroll + touch friendly */
+  .table-wrap{border-radius:8px;-webkit-overflow-scrolling:touch}
+  table{min-width:auto}
+  th{padding:8px 10px;font-size:11px}
+  td{padding:10px;font-size:13px;max-width:200px}
+
+  /* Count line */
+  .count-line{flex-direction:column;gap:6px;align-items:flex-start}
+
+  /* Detail panel full screen on mobile */
+  .detail-panel{width:100%;box-shadow:none}
+  .detail-header{padding:16px;flex-wrap:wrap;gap:8px}
+  .detail-name{font-size:18px}
+  .detail-section{padding:16px}
+  .detail-grid{grid-template-columns:1fr;gap:8px}
+  .pipeline-grid{grid-template-columns:repeat(3,1fr);gap:6px}
+
+  /* Edit form */
+  .edit-form-grid{grid-template-columns:1fr;gap:8px}
+  .edit-save-bar{padding:12px 16px}
+
+  /* Tearsheet */
+  .ts-overlay{padding:16px}
+  .ts-sheet{max-width:100%;padding:24px;border-radius:12px}
+  .ts-name{font-size:22px}
+  .ts-row{grid-template-columns:1fr;gap:4px 0}
+  .ts-actions{flex-wrap:wrap}
+  .ts-actions button{flex:1;min-width:120px;text-align:center}
+
+  /* Charts */
+  .chart-grid{grid-template-columns:1fr;gap:12px}
+  .chart-card{padding:16px}
+  .chart-card h3{font-size:14px;margin-bottom:12px}
+  .bar-label{width:70px;font-size:12px}
+  .legend{flex-wrap:wrap;gap:8px}
+
+  /* Smart Lists */
+  .sl-grid{grid-template-columns:1fr}
+  .sl-toolbar{flex-direction:column;align-items:stretch;gap:8px}
+  .sl-search{width:100%}
+  .sl-group-toggle{margin-left:0}
+  .sl-filters{gap:6px}
+
+  /* Ask Anura */
+  .ask-container{max-width:100%}
+  .ask-messages{max-height:400px}
+  .ask-input-row{flex-direction:column;gap:8px}
+  .ask-input-row button{width:100%}
+  .ask-suggestions{gap:6px}
+  .ask-sug{padding:6px 10px;font-size:11px}
+
+  /* Touch report */
+  .touch-tabs{flex-wrap:wrap;gap:4px}
+  .touch-tab{padding:8px 14px;font-size:13px}
+
+  /* Pipeline */
+  .pipe-funnel{flex-wrap:wrap;gap:6px}
+  .pipe-stage{min-width:calc(33% - 4px);padding:12px 6px}
+  .pipe-stage .ps-num{font-size:22px}
+  .pipe-toolbar{flex-direction:column;align-items:stretch;gap:8px}
+
+  /* Client/Job detail */
+  .cd-header{padding:16px}
+  .cd-header h2{font-size:18px}
+  .cd-tabs{padding:0 16px;overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
+  .cd-tab{white-space:nowrap;padding:10px 14px;font-size:12px}
+  .cd-section{padding:16px}
+  .cd-kpi-row{grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px}
+  .contact-card{flex-wrap:wrap}
+
+  /* Misc */
+  .empty-state{padding:32px 16px}
+  .badge{font-size:11px;padding:2px 8px}
+}
+
+/* ═══ SMALL MOBILE (≤480px) ═══ */
+@media(max-width:480px){
+  .stats-row{grid-template-columns:1fr}
+  .stats-row-5{grid-template-columns:1fr}
+  .pipe-stage{min-width:calc(50% - 3px)}
+  .pipeline-grid{grid-template-columns:1fr 1fr}
+  header.top-bar h1{font-size:16px}
+  .ts-sheet{padding:16px}
+  .ts-name{font-size:18px}
+  .ts-brand .ts-logo{font-size:18px}
+}
+
+/* ═══ PRINT ═══ */
+@media print{aside,.mobile-menu-btn,.top-btns{display:none !important} main{width:100%;overflow:visible} .content{padding:0}}
 </style>
 </head>
 <body>
@@ -245,8 +425,11 @@ tbody tr:hover{background:#eff6ff}
   </div>
 </aside>
 <!-- Main -->
+<!-- Mobile sidebar overlay -->
+<div class="mobile-sidebar-overlay" id="mobile-overlay" onclick="closeMobileMenu()"></div>
 <main>
   <header class="top-bar">
+    <button class="mobile-menu-btn" id="mobile-menu-btn" onclick="toggleMobileMenu()" aria-label="Open menu">&#9776;</button>
     <h1 id="page-title">Candidates</h1>
     <div class="top-btns">
       <span id="api-status" style="font-size:12px;padding:6px 12px;border-radius:8px;margin-right:4px"></span>
@@ -495,27 +678,37 @@ var _savedColWidths={};
 function initColResize(tableId){
   var tbl=document.getElementById(tableId);
   if(!tbl)return;
-  tbl.style.tableLayout='fixed';
+  // Capture natural column widths BEFORE switching to fixed layout
   var ths=tbl.querySelectorAll('thead th');
-  // Restore saved widths or use auto sizing
   var saved=_savedColWidths[tableId];
+  // First pass: measure natural widths while layout is auto
+  tbl.style.tableLayout='auto';
+  tbl.style.width='auto';
+  tbl.style.minWidth='100%';
+  var naturalWidths=[];
   ths.forEach(function(th,i){
-    if(saved&&saved[i]){th.style.width=saved[i]+'px';}
-    else{th.style.width=th.offsetWidth+'px';}
+    if(saved&&saved[i]){naturalWidths.push(saved[i]);}
+    else{naturalWidths.push(Math.max(80,th.offsetWidth));}
   });
-  tbl.style.width='100%';
+  // Switch to fixed layout with measured widths
+  tbl.style.tableLayout='fixed';
+  var totalW=0;
+  ths.forEach(function(th,i){th.style.width=naturalWidths[i]+'px';totalW+=naturalWidths[i];});
+  tbl.style.width=totalW+'px';
+  tbl.style.minWidth='100%';
   ths.forEach(function(th,colIdx){
     var handle=th.querySelector('.col-resize');
     if(!handle)return;
-    var startX,startW;
+    var startX,startW,startTblW;
     handle.addEventListener('mousedown',function(e){
       e.preventDefault();e.stopPropagation();
-      startX=e.pageX;startW=th.offsetWidth;
+      startX=e.pageX;startW=th.offsetWidth;startTblW=tbl.offsetWidth;
       handle.classList.add('active');
       function onMove(ev){
-        var newW=Math.max(40,startW+(ev.pageX-startX));
+        var diff=ev.pageX-startX;
+        var newW=Math.max(60,startW+diff);
         th.style.width=newW+'px';
-        // Save width so it persists across re-renders
+        tbl.style.width=Math.max(startTblW+diff, tbl.parentElement.offsetWidth)+'px';
         if(!_savedColWidths[tableId])_savedColWidths[tableId]={};
         _savedColWidths[tableId][colIdx]=newW;
       }
@@ -523,6 +716,24 @@ function initColResize(tableId){
       document.addEventListener('mousemove',onMove);
       document.addEventListener('mouseup',onUp);
     });
+    // Touch support for mobile
+    handle.addEventListener('touchstart',function(e){
+      e.preventDefault();e.stopPropagation();
+      var touch=e.touches[0];
+      startX=touch.pageX;startW=th.offsetWidth;startTblW=tbl.offsetWidth;
+      handle.classList.add('active');
+      function onTouchMove(ev){
+        var t=ev.touches[0];var diff=t.pageX-startX;
+        var newW=Math.max(60,startW+diff);
+        th.style.width=newW+'px';
+        tbl.style.width=Math.max(startTblW+diff, tbl.parentElement.offsetWidth)+'px';
+        if(!_savedColWidths[tableId])_savedColWidths[tableId]={};
+        _savedColWidths[tableId][colIdx]=newW;
+      }
+      function onTouchEnd(){handle.classList.remove('active');document.removeEventListener('touchmove',onTouchMove);document.removeEventListener('touchend',onTouchEnd);}
+      document.addEventListener('touchmove',onTouchMove,{passive:false});
+      document.addEventListener('touchend',onTouchEnd);
+    },{passive:false});
   });
 }
 function statCard(emoji,label,value,sub,color){
@@ -706,6 +917,291 @@ function loadCandidateRefs(candidateId) {
 function closeDetail() {
   document.getElementById("detail-panel").classList.remove("open");
   document.getElementById("detail-overlay").classList.remove("open");
+}
+
+/* ═══ CLIENT DETAIL PANEL ═══ */
+function openClientDetail(clientId) {
+  var p = document.getElementById("detail-panel");
+  var o = document.getElementById("detail-overlay");
+  var dc = document.getElementById("detail-content");
+  dc.innerHTML = '<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading client details...</div>';
+  p.classList.add("open");
+  o.classList.add("open");
+  apiFetch("clients/" + clientId).then(function(d) {
+    window._lastClientDetail = d;
+    dc.innerHTML = renderClientDetail(d);
+  }).catch(function(e) {
+    dc.innerHTML = '<div style="padding:48px;text-align:center;color:#dc2626">Could not load client: ' + esc(e.message) + '</div>';
+  });
+}
+
+function renderClientDetail(d) {
+  var h = '<div class="cd-header" style="display:flex;align-items:start;justify-content:space-between">';
+  h += '<div><h2>🏢 ' + esc(d.name) + '</h2>';
+  h += '<div class="cd-sub">' + esc(d.location) + (d.industry ? ' • ' + esc(d.industry) : '') + ' • ' + badge(d.status) + '</div></div>';
+  h += '<button class="detail-close" onclick="closeDetail()">✕</button></div>';
+
+  // KPI row
+  h += '<div class="cd-section" style="padding-bottom:0"><div class="cd-kpi-row">';
+  h += '<div class="cd-kpi"><div class="kv" style="color:#176087">' + d.contacts.length + '</div><div class="kl">Contacts</div></div>';
+  h += '<div class="cd-kpi"><div class="kv" style="color:#f59e0b">' + d.jobs.length + '</div><div class="kl">Jobs</div></div>';
+  h += '<div class="cd-kpi"><div class="kv" style="color:#10b981">' + d.revenue.activePlacements + '</div><div class="kl">Active</div></div>';
+  h += '<div class="cd-kpi"><div class="kv" style="color:#7c3aed">' + d.revenue.totalPlacements + '</div><div class="kl">All Placements</div></div>';
+  if (d.revenue.avgBillRate > 0) {
+    h += '<div class="cd-kpi"><div class="kv" style="color:#0891b2">$' + d.revenue.avgBillRate + '</div><div class="kl">Avg Bill Rate</div></div>';
+  }
+  h += '</div></div>';
+
+  // Tabs
+  h += '<div class="cd-tabs" id="cd-tabs">';
+  h += '<button class="cd-tab active" onclick="switchClientTab(\'contacts\')">Contacts (' + d.contacts.length + ')</button>';
+  h += '<button class="cd-tab" onclick="switchClientTab(\'jobs\')">Jobs (' + d.jobs.length + ')</button>';
+  h += '<button class="cd-tab" onclick="switchClientTab(\'placements\')">Placements (' + d.placements.length + ')</button>';
+  h += '<button class="cd-tab" onclick="switchClientTab(\'info\')">Info</button>';
+  h += '</div>';
+
+  h += '<div id="cd-tab-content">';
+  h += renderClientContacts(d.contacts);
+  h += '</div>';
+  return h;
+}
+
+function switchClientTab(tab) {
+  var d = window._lastClientDetail;
+  if (!d) return;
+  // Update tab active states
+  var tabs = document.querySelectorAll("#cd-tabs .cd-tab");
+  tabs.forEach(function(t) { t.classList.remove("active"); });
+  var labels = { contacts: "Contacts", jobs: "Jobs", placements: "Placements", info: "Info" };
+  tabs.forEach(function(t) { if (t.textContent.indexOf(labels[tab]) >= 0) t.classList.add("active"); });
+  var el = document.getElementById("cd-tab-content");
+  if (!el) return;
+  if (tab === "contacts") el.innerHTML = renderClientContacts(d.contacts);
+  else if (tab === "jobs") el.innerHTML = renderClientJobs(d.jobs);
+  else if (tab === "placements") el.innerHTML = renderClientPlacements(d.placements);
+  else if (tab === "info") el.innerHTML = renderClientInfo(d);
+}
+
+function renderClientContacts(contacts) {
+  if (contacts.length === 0) return '<div class="cd-section"><div class="empty-state"><div class="big">👤</div><div class="title">No contacts found</div><div class="sub">Add contacts in Bullhorn to see them here</div></div></div>';
+  var h = '<div class="cd-section">';
+  contacts.forEach(function(c) {
+    var initials = (c.name || "?").split(" ").map(function(w) { return w[0] || ""; }).join("").toUpperCase().substring(0, 2);
+    var bgColor = c.daysSince > 30 ? "#dc2626" : c.daysSince > 14 ? "#f59e0b" : "#176087";
+    var alertClass = c.daysSince > 30 ? "urgent" : c.daysSince > 14 ? "warning" : "good";
+    var alertText = c.daysSince >= 999 ? "Never touched" : c.daysSince + "d ago";
+    if (c.lastTouchAction && c.daysSince < 999) alertText = c.lastTouchAction + " " + alertText;
+    h += '<div class="contact-card">';
+    h += '<div class="contact-avatar" style="background:' + bgColor + '">' + esc(initials) + '</div>';
+    h += '<div class="contact-info">';
+    h += '<div class="contact-name">' + esc(c.name) + '</div>';
+    h += '<div class="contact-title">' + esc(c.title) + '</div>';
+    h += '<div class="contact-meta">';
+    if (c.email) h += '<span>📧 ' + esc(c.email) + '</span>';
+    if (c.phone) h += '<span>📞 ' + esc(c.phone) + '</span>';
+    h += '</div></div>';
+    h += '<div class="touch-alert ' + alertClass + '">' + esc(alertText) + '</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+function renderClientJobs(jobs) {
+  if (jobs.length === 0) return '<div class="cd-section"><div class="empty-state"><div class="big">💼</div><div class="title">No jobs found</div></div></div>';
+  var open = jobs.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
+  var closed = jobs.filter(function(j) { return j.status !== "Accepting Candidates" && j.status !== "Open"; });
+  var h = '<div class="cd-section">';
+  if (open.length > 0) {
+    h += '<h4 style="font-size:12px;font-weight:600;color:#16a34a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Open Jobs (' + open.length + ')</h4>';
+    open.forEach(function(j) { h += jobRow(j); });
+  }
+  if (closed.length > 0) {
+    h += '<h4 style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 10px">Other Jobs (' + closed.length + ')</h4>';
+    closed.forEach(function(j) { h += jobRow(j); });
+  }
+  h += '</div>';
+  return h;
+}
+
+function jobRow(j) {
+  var pColor = { "Urgent": "#dc2626", "Hot": "#f59e0b", "Warm": "#53A2BE", "Cold": "#94a3b8" }[j.priority] || "#94a3b8";
+  var h = '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="openJobDetail(' + j.id + ')">';
+  if (j.priority) h += '<div style="width:8px;height:8px;border-radius:50%;background:' + pColor + ';flex-shrink:0" title="' + esc(j.priority) + '"></div>';
+  h += '<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#176087">' + esc(j.title) + '</div>';
+  h += '<div style="font-size:11px;color:#94a3b8">' + esc(j.type) + ' • ' + esc(j.location) + ' • ' + esc(j.salary) + '</div></div>';
+  h += '<div style="text-align:right;flex-shrink:0">' + badge(j.status) + '</div>';
+  h += '</div>';
+  return h;
+}
+
+function renderClientPlacements(placements) {
+  if (placements.length === 0) return '<div class="cd-section"><div class="empty-state"><div class="big">📋</div><div class="title">No placements yet</div></div></div>';
+  var h = '<div class="cd-section">';
+  placements.forEach(function(p) {
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600;font-size:13px;color:#176087;cursor:pointer" onclick="openDetail(' + p.candidateId + ',{})">' + esc(p.candidate) + '</div>';
+    h += '<div style="font-size:11px;color:#94a3b8">' + esc(p.job) + ' • ' + esc(p.type) + '</div>';
+    h += '<div style="font-size:11px;color:#94a3b8">' + esc(p.startDate) + (p.endDate ? ' → ' + esc(p.endDate) : ' → Present') + '</div>';
+    h += '</div>';
+    h += '<div style="text-align:right;flex-shrink:0">';
+    h += badge(p.status);
+    if (p.billRate && p.billRate !== "—") h += '<div style="font-size:12px;font-weight:600;color:#10b981;margin-top:2px">' + esc(p.billRate) + '</div>';
+    if (p.margin) h += '<div style="font-size:11px;color:#94a3b8">' + esc(p.margin) + ' margin</div>';
+    h += '</div></div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+function renderClientInfo(d) {
+  var h = '<div class="cd-section"><div class="detail-grid">';
+  h += dField("Account Owner", d.owner || "—");
+  h += dField("Phone", d.phone || "—");
+  h += dField("Website", d.website ? '<a href="' + esc(d.website) + '" target="_blank" style="color:#176087">' + esc(d.website) + '</a>' : "—", true);
+  h += dField("Industry", d.industry || "—");
+  h += dField("Employees", d.numEmployees || "—");
+  h += dField("Annual Revenue", d.annualRevenue ? "$" + Number(d.annualRevenue).toLocaleString() : "—");
+  h += dField("Date Added", d.dateAdded || "—");
+  h += dField("Fax", d.fax || "—");
+  h += '</div>';
+  if (d.notes) {
+    h += '<h4 style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 8px">Notes</h4>';
+    h += '<div style="font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;border:1px solid #e2e8f0">' + esc(d.notes) + '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+/* ═══ JOB DETAIL PANEL ═══ */
+function openJobDetail(jobId) {
+  var p = document.getElementById("detail-panel");
+  var o = document.getElementById("detail-overlay");
+  var dc = document.getElementById("detail-content");
+  dc.innerHTML = '<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading job details...</div>';
+  p.classList.add("open");
+  o.classList.add("open");
+  apiFetch("jobs/" + jobId).then(function(d) {
+    window._lastJobDetail = d;
+    dc.innerHTML = renderJobDetail(d);
+  }).catch(function(e) {
+    dc.innerHTML = '<div style="padding:48px;text-align:center;color:#dc2626">Could not load job: ' + esc(e.message) + '</div>';
+  });
+}
+
+function renderJobDetail(d) {
+  var pColor = { "Urgent": "#dc2626", "Hot": "#f59e0b", "Warm": "#53A2BE", "Cold": "#94a3b8" }[d.priority] || "";
+  var h = '<div class="cd-header" style="display:flex;align-items:start;justify-content:space-between">';
+  h += '<div><h2>' + esc(d.title) + '</h2>';
+  h += '<div class="cd-sub">';
+  if (d.client) h += '<span style="cursor:pointer;color:#176087;font-weight:600" onclick="openClientDetail(' + d.clientId + ')">🏢 ' + esc(d.client) + '</span> • ';
+  h += esc(d.location) + ' • ' + badge(d.status);
+  if (d.priority && pColor) h += ' <span class="badge" style="background:' + pColor + '18;color:' + pColor + ';border:1px solid ' + pColor + '40;font-weight:700">' + esc(d.priority) + '</span>';
+  h += '</div></div>';
+  h += '<button class="detail-close" onclick="closeDetail()">✕</button></div>';
+
+  // KPI row
+  h += '<div class="cd-section" style="padding-bottom:0"><div class="cd-kpi-row">';
+  h += '<div class="cd-kpi"><div class="kv" style="color:#176087">' + d.openings + '</div><div class="kl">Openings</div></div>';
+  h += '<div class="cd-kpi"><div class="kv" style="color:#f59e0b">' + d.submissions.length + '</div><div class="kl">Submissions</div></div>';
+  h += '<div class="cd-kpi"><div class="kv" style="color:#10b981">' + d.placements.length + '</div><div class="kl">Placements</div></div>';
+  if (d.daysOpen !== null) {
+    var dc2 = d.daysOpen > 60 ? "#dc2626" : d.daysOpen > 30 ? "#f59e0b" : "#10b981";
+    h += '<div class="cd-kpi"><div class="kv" style="color:' + dc2 + '">' + d.daysOpen + 'd</div><div class="kl">Days Open</div></div>';
+  }
+  h += '</div></div>';
+
+  // Smart Match button
+  h += '<div class="cd-section" style="padding-top:0;padding-bottom:12px">';
+  h += '<button class="btn-primary" onclick="closeDetail();currentPage=\'smartmatch\';loadPage();setTimeout(function(){var sel=document.getElementById(\'sm-job-select\');if(sel){sel.value=\'' + d.id + '\';sel.dispatchEvent(new Event(\'change\'));}},800)">🧠 Find Matching Candidates</button>';
+  h += '</div>';
+
+  // Tabs
+  h += '<div class="cd-tabs" id="jd-tabs">';
+  h += '<button class="cd-tab active" onclick="switchJobTab(\'details\')">Details</button>';
+  h += '<button class="cd-tab" onclick="switchJobTab(\'submissions\')">Submissions (' + d.submissions.length + ')</button>';
+  h += '<button class="cd-tab" onclick="switchJobTab(\'placements\')">Placements (' + d.placements.length + ')</button>';
+  h += '</div>';
+
+  h += '<div id="jd-tab-content">';
+  h += renderJobDetails(d);
+  h += '</div>';
+  return h;
+}
+
+function switchJobTab(tab) {
+  var d = window._lastJobDetail;
+  if (!d) return;
+  var tabs = document.querySelectorAll("#jd-tabs .cd-tab");
+  tabs.forEach(function(t) { t.classList.remove("active"); });
+  var labels = { details: "Details", submissions: "Submissions", placements: "Placements" };
+  tabs.forEach(function(t) { if (t.textContent.indexOf(labels[tab]) >= 0) t.classList.add("active"); });
+  var el = document.getElementById("jd-tab-content");
+  if (!el) return;
+  if (tab === "details") el.innerHTML = renderJobDetails(d);
+  else if (tab === "submissions") el.innerHTML = renderJobSubmissions(d.submissions);
+  else if (tab === "placements") el.innerHTML = renderJobPlacements(d.placements);
+}
+
+function renderJobDetails(d) {
+  var h = '<div class="cd-section">';
+  // Description
+  if (d.description) {
+    h += '<h4 style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Description</h4>';
+    h += '<div class="jd-desc">' + d.description + '</div>';
+  }
+  // Key fields
+  h += '<div class="detail-grid" style="margin-top:16px">';
+  h += dField("Type", d.type || "—");
+  h += dField("Bill Rate", d.salary || "—");
+  h += dField("Start Date", d.startDate || "—");
+  h += dField("End Date", d.dateEnd || "Open-ended");
+  h += dField("Owner", d.owner || "—");
+  h += dField("Date Added", d.dateAdded || "—");
+  if (d.certs) h += dField("Certifications", d.certs);
+  if (d.epicRole) h += dField("Epic Role", d.epicRole);
+  if (d.yearsRequired) h += dField("Experience Required", d.yearsRequired + " years");
+  if (d.travelRequirements) h += dField("Travel", d.travelRequirements);
+  h += '</div>';
+  if (d.benefits) {
+    h += '<h4 style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 8px">Benefits</h4>';
+    h += '<div style="font-size:13px;color:#334155;line-height:1.6">' + d.benefits + '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderJobSubmissions(subs) {
+  if (subs.length === 0) return '<div class="cd-section"><div class="empty-state"><div class="big">📬</div><div class="title">No submissions yet</div><div class="sub">Use Smart Match to find candidates for this job</div></div></div>';
+  var h = '<div class="cd-section">';
+  subs.forEach(function(s) {
+    h += '<div class="sub-row">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600;font-size:13px;color:#176087;cursor:pointer" onclick="openDetail(' + s.candidateId + ',{})">' + esc(s.candidate) + '</div>';
+    h += '<div style="font-size:11px;color:#94a3b8">' + esc(s.date) + (s.submittedBy ? ' by ' + esc(s.submittedBy) : '') + '</div>';
+    h += '</div>';
+    h += badge(s.status);
+    h += '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+function renderJobPlacements(placements) {
+  if (placements.length === 0) return '<div class="cd-section"><div class="empty-state"><div class="big">✅</div><div class="title">No placements yet</div></div></div>';
+  var h = '<div class="cd-section">';
+  placements.forEach(function(p) {
+    h += '<div class="sub-row">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600;font-size:13px;color:#176087;cursor:pointer" onclick="openDetail(' + p.candidateId + ',{})">' + esc(p.candidate) + '</div>';
+    h += '<div style="font-size:11px;color:#94a3b8">' + esc(p.startDate) + (p.endDate ? ' → ' + esc(p.endDate) : ' → Present') + ' • ' + esc(p.billRate) + '</div>';
+    h += '</div>';
+    h += badge(p.status);
+    h += '</div>';
+  });
+  h += '</div>';
+  return h;
 }
 
 function openTearsheet() {
@@ -1378,8 +1874,35 @@ function getNav(){
 function renderNav(){
   var nav = getNav();
   var h="";
-  nav.forEach(function(n){h+='<button class="'+(currentPage===n.key?"active":"")+'" onclick="setPage(\''+n.key+'\')"><span style="font-size:16px">'+n.emoji+'</span> '+n.label+'</button>';});
+  nav.forEach(function(n){h+='<button class="'+(currentPage===n.key?"active":"")+'" onclick="closeMobileMenu();setPage(\''+n.key+'\')"><span style="font-size:16px">'+n.emoji+'</span> '+n.label+'</button>';});
   document.getElementById("nav").innerHTML=h;
+}
+
+/* ═══ MOBILE MENU ═══ */
+function toggleMobileMenu(){
+  var aside = document.querySelector("aside");
+  var overlay = document.getElementById("mobile-overlay");
+  if(aside.classList.contains("mobile-open")){
+    closeMobileMenu();
+  } else {
+    aside.classList.add("mobile-open");
+    overlay.classList.add("open");
+  }
+}
+function closeMobileMenu(){
+  var aside = document.querySelector("aside");
+  var overlay = document.getElementById("mobile-overlay");
+  if(aside.classList.contains("mobile-open")){
+    aside.style.animation="slideOut .2s ease forwards";
+    setTimeout(function(){ aside.classList.remove("mobile-open"); aside.style.animation=""; }, 200);
+  }
+  overlay.classList.remove("open");
+}
+// Close mobile menu when a nav item is tapped
+var _origSetPage = typeof setPage === "function" ? setPage : null;
+function _mobileSetPage(key){
+  closeMobileMenu();
+  if(_origSetPage) _origSetPage(key);
 }
 
 /* ═══ PAGE RENDERERS ═══ */
@@ -1514,9 +2037,15 @@ function renderJobs(data,bhTotal){
   html+='</div></div>';
   html+='<div class="count-line"><span>'+displayTotal+' job'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
   html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'jobs.csv\',jobCols,_lastData.jobs)">\uD83D\uDCE5 Export CSV</button></div>';
-  html+='<div class="table-wrap">'+makeTable(cols,f)+'</div>';
+  _lastData.filteredJobs=f;
+  html+='<div class="table-wrap">'+makeTable(cols,f,"_jobRowClick")+'</div>';
   window.jobCols=cols;
   return html;
+}
+function _jobRowClick(idx){
+  var f=_lastData.filteredJobs||_lastData.jobs||[];
+  var r=f[idx];
+  if(r&&r.id) openJobDetail(r.id);
 }
 
 function renderPlacements(data,bhTotal){
@@ -1611,9 +2140,14 @@ function renderClients(data,bhTotal){
   html+='<div class="count-line"><span>'+showCount+' client'+(showCount!==1?'s':'')+' shown'+(sf!=="All"?' ('+sf+')':'')+'</span>';
   html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'clients.csv\',clientCols,_lastData.filteredClients||_lastData.clients)">\uD83D\uDCE5 Export CSV</button></div>';
   _lastData.filteredClients=filtered;
-  html+='<div class="table-wrap">'+makeTable(cols,filtered)+'</div>';
+  html+='<div class="table-wrap">'+makeTable(cols,filtered,"_clientRowClick")+'</div>';
   window.clientCols=cols;
   return html;
+}
+function _clientRowClick(idx){
+  var f=_lastData.filteredClients||_lastData.clients||[];
+  var r=f[idx];
+  if(r&&r.id) openClientDetail(r.id);
 }
 
 /* ═══ MY PERSONAL DASHBOARD ═══ */
