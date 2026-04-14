@@ -3014,7 +3014,7 @@ function slApplyDrillFilters(candidates) {
   var filtered = candidates;
   if (_slFilterGrade) { filtered = filtered.filter(function(c){ return c.grade === _slFilterGrade; }); }
   if (_slFilterStatus) { filtered = filtered.filter(function(c){ return c.status === _slFilterStatus; }); }
-  if (_slFilterRole) { filtered = filtered.filter(function(c){ var r = (c.preferredRole||"").toLowerCase(); return r.indexOf(_slFilterRole.toLowerCase()) !== -1; }); }
+  if (_slFilterRole) { filtered = filtered.filter(function(c){ var allText = ((c.preferredRole||"")+" "+(c.epicRole||"")+" "+(c.title||"")).toLowerCase(); return allText.indexOf(_slFilterRole.toLowerCase()) !== -1; }); }
   return filtered;
 }
 
@@ -3089,7 +3089,11 @@ function renderSmartLists(data) {
         if (c.grade) grades[c.grade] = (grades[c.grade]||0)+1;
         if (c.status) statuses[c.status] = (statuses[c.status]||0)+1;
         var rParts = (c.preferredRole||"").split(",").map(function(s){return s.trim();}).filter(Boolean);
+        // Also check epicRole and title for role keywords like "Analyst"
+        var allText = ((c.preferredRole||"")+" "+(c.epicRole||"")+" "+(c.title||"")).toLowerCase();
+        var hasAnalyst = allText.indexOf("analyst") !== -1;
         rParts.forEach(function(r){ roles[r] = (roles[r]||0)+1; });
+        if (hasAnalyst && rParts.indexOf("Analyst") === -1) { roles["Analyst"] = (roles["Analyst"]||0)+1; }
       });
       html += '<div class="sl-filters">';
       ["A","B","C"].forEach(function(g) {
@@ -3103,7 +3107,7 @@ function renderSmartLists(data) {
         html += '<span class="sl-filter-chip'+active+'" onclick="slSetFilter(\'status\',\''+esc(s).replace(/'/g,"\\'")+'\')">'+esc(s)+' ('+statuses[s]+')</span>';
       });
       if (!isRoleMode) {
-        ["Executive","Director","PM","Manager"].forEach(function(r) {
+        ["Executive","Director","PM","Manager","Analyst"].forEach(function(r) {
           if (roles[r]) {
             var active = _slFilterRole===r?" active":"";
             html += '<span class="sl-filter-chip'+active+'" onclick="slSetFilter(\'role\',\''+r+'\')">'+r+' ('+roles[r]+')</span>';
