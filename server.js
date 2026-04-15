@@ -5325,8 +5325,13 @@ app.get("/api/outlook/emails", async (req, res) => {
     var skip = parseInt(req.query.skip) || 0;
     var q = req.query.q || "";
 
-    var endpoint = "/me/mailFolders/" + folder + "/messages?$top=" + top + "&$skip=" + skip + "&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,importance";
-    if (q) endpoint += "&$search=\"" + encodeURIComponent(q) + "\"";
+    var endpoint;
+    if (q) {
+      // $search cannot be combined with $skip or $orderby in Graph API
+      endpoint = "/me/mailFolders/" + folder + "/messages?$top=" + top + "&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,importance&$search=\"" + encodeURIComponent(q) + "\"";
+    } else {
+      endpoint = "/me/mailFolders/" + folder + "/messages?$top=" + top + "&$skip=" + skip + "&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,importance";
+    }
 
     var data = await graphFetch(userEmail, endpoint);
     var emails = (data.value || []).map(function(m) {
@@ -5680,7 +5685,7 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
             var outlookEmails = [];
             for (var i = 0; i < searchTerms.length; i++) {
               try {
-                var searchEndpoint = "/me/messages?$search=\"" + encodeURIComponent(searchTerms[i]) + "\"&$top=50&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview";
+                var searchEndpoint = "/me/messages?$search=\"" + encodeURIComponent(searchTerms[i]) + "\"&$top=50&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview";
                 var searchData = await graphFetch(userEmail, searchEndpoint);
                 (searchData.value || []).forEach(function(msg) {
                   outlookEmails.push({
