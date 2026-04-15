@@ -4975,11 +4975,11 @@ app.get("/api/candidates/:id/references", async (req, res) => {
   try {
     const id = req.params.id;
     await authenticate();
-    const data = await bhFetch("query/CandidateReference", {
-      where: `candidate.id=${id} AND isDeleted=false`,
-      fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,employmentType,relationship,yearsKnown,comments,dateAdded,candidateTitle,isDeleted,customText1,customText2,customText3",
-      orderBy: "-dateAdded",
+    // Use entity sub-resource endpoint (query/CandidateReference often returns empty)
+    const data = await bhFetch("entity/Candidate/" + id + "/references", {
+      fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,customTextBlock1,dateAdded,status,relationship,yearsKnown,candidateTitle",
       count: 50,
+      orderBy: "-dateAdded",
     });
     const refs = (data.data || []).map(function(r) {
       return {
@@ -4994,8 +4994,9 @@ app.get("/api/candidates/:id/references", async (req, res) => {
         relationship: r.relationship || "",
         yearsKnown: r.yearsKnown || "",
         candidateTitle: r.candidateTitle || "",
-        comments: r.comments || "",
+        comments: r.customTextBlock1 || "",
         dateAdded: r.dateAdded ? new Date(r.dateAdded).toLocaleDateString() : "",
+        status: r.status || "",
       };
     });
     res.json({ data: refs, total: refs.length });

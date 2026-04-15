@@ -1119,6 +1119,8 @@ function loadCandidateRefs(candidateId, inlineRefs) {
     var el = document.getElementById("detail-references");
     if (!el) return;
     var refs = r.data || [];
+    // Fall back to inline references from candidate detail if API returned empty
+    if (refs.length === 0 && inlineRefs && inlineRefs.length > 0) refs = inlineRefs;
     var h = '<h4>References (' + refs.length + ')</h4>';
     if (refs.length === 0) {
       h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No references on file</div>';
