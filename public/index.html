@@ -887,49 +887,21 @@ function loadEmailHistory(candidateId, inlineEmails) {
       renderInlineEmails(el, inlineEmails);
       return;
     }
-    var h = '<h4>Email Correspondence (' + total + ')</h4>';
-    if (total === 0) {
-      h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No email correspondence found for this candidate</div>';
-      el.innerHTML = h;
-      return;
-    }
     // Merge and sort by date (newest first)
     var all = [];
     emails.forEach(function(e) {
-      all.push({ type: "email", subject: e.subject, from: e.from_name || e.from_email, to: e.to_emails, date: e.received_at, preview: e.body_preview, logged: e.logged_to_bullhorn, user: e.outlook_user });
+      all.push({ type: "email", messageId: e.message_id || "", subject: e.subject, from: e.from_name || e.from_email, to: e.to_emails, date: e.received_at, preview: e.body_preview, logged: e.logged_to_bullhorn, user: e.outlook_user });
     });
     notes.forEach(function(n) {
       if (n.action === "Email") {
-        all.push({ type: "note", subject: "", from: n.commenting_person_name, to: "", date: n.date_added ? new Date(Number(n.date_added)).toISOString() : "", preview: (n.comments_text || "").substring(0, 200), logged: true, user: n.commenting_person_name });
+        all.push({ type: "note", messageId: "", subject: "", from: n.commenting_person_name, to: "", date: n.date_added ? new Date(Number(n.date_added)).toISOString() : "", preview: (n.comments_text || "").substring(0, 200), fullText: n.comments_text || "", logged: true, user: n.commenting_person_name });
       }
     });
     all.sort(function(a, b) { return (b.date || "").localeCompare(a.date || ""); });
 
-    h += '<div style="max-height:400px;overflow-y:auto">';
-    all.forEach(function(e) {
-      var d = e.date ? new Date(e.date) : null;
-      var dateStr = d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
-      var isSent = e.type === "email" && e.user && e.from && e.from.toLowerCase().indexOf("anura") >= 0;
-      var arrow = isSent ? "→ Sent" : "← Received";
-      var arrowColor = isSent ? "#16a34a" : "#176087";
-      h += '<div style="padding:10px 0;border-bottom:1px solid #f1f5f9">';
-      h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">';
-      h += '<div style="flex:1;min-width:0">';
-      h += '<div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.subject || "(no subject)") + '</div>';
-      h += '<div style="font-size:12px;color:#64748b;margin-top:2px">';
-      h += '<span style="color:' + arrowColor + ';font-weight:600">' + arrow + '</span> ';
-      h += esc(e.from || "") + (e.to ? " → " + esc(e.to) : "");
-      h += '</div>';
-      if (e.preview) h += '<div style="font-size:12px;color:#94a3b8;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.preview.substring(0, 120)) + '</div>';
-      h += '</div>';
-      h += '<div style="flex-shrink:0;text-align:right">';
-      h += '<div style="font-size:11px;color:#94a3b8">' + dateStr + '</div>';
-      if (e.user && e.type === "email") h += '<div style="font-size:10px;color:#64748b;margin-top:2px">via ' + esc(e.user) + '</div>';
-      if (e.logged) h += '<div style="font-size:10px;color:#16a34a;margin-top:2px">✓ In Bullhorn</div>';
-      h += '</div></div></div>';
-    });
-    h += '</div>';
-    el.innerHTML = h;
+    // Store for search filtering
+    window._emailCorrespondence = all;
+    renderEmailList(el, all, total);
   }).catch(function(e) {
     // Outlook failed — use inline Bullhorn email notes
     var el = document.getElementById("detail-email-history");
@@ -940,6 +912,128 @@ function loadEmailHistory(candidateId, inlineEmails) {
       el.innerHTML = '<h4>Email Correspondence</h4><div style="color:#94a3b8;font-size:12px">No email correspondence found</div>';
     }
   });
+}
+
+function renderEmailList(el, all, total) {
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<h4 style="margin:0">Email Correspondence (' + total + ')</h4>';
+  h += '</div>';
+  if (total === 0) {
+    h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No email correspondence found for this candidate</div>';
+    el.innerHTML = h;
+    return;
+  }
+  // Search bar
+  h += '<div style="margin-bottom:8px"><input type="text" id="email-search-input" placeholder="Search emails by keyword..." style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;outline:none" oninput="filterEmails()" /></div>';
+  h += '<div id="email-list-container" style="max-height:400px;overflow-y:auto">';
+  h += buildEmailRows(all);
+  h += '</div>';
+  el.innerHTML = h;
+}
+
+function buildEmailRows(items) {
+  var h = '';
+  items.forEach(function(e, idx) {
+    var d = e.date ? new Date(e.date) : null;
+    var dateStr = d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+    var isSent = e.type === "email" && e.user && e.from && e.from.toLowerCase().indexOf("anura") >= 0;
+    var arrow = isSent ? "\u2192 Sent" : "\u2190 Received";
+    var arrowColor = isSent ? "#16a34a" : "#176087";
+    var clickable = e.messageId || e.type === "note";
+    h += '<div class="email-row" data-idx="' + idx + '" style="padding:10px 0;border-bottom:1px solid #f1f5f9;' + (clickable ? 'cursor:pointer' : '') + '" ' + (clickable ? 'onclick="expandEmail(this,' + idx + ')"' : '') + '>';
+    h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.subject || "(no subject)");
+    if (clickable) h += ' <span style="font-size:10px;color:#94a3b8;font-weight:400">click to read</span>';
+    h += '</div>';
+    h += '<div style="font-size:12px;color:#64748b;margin-top:2px">';
+    h += '<span style="color:' + arrowColor + ';font-weight:600">' + arrow + '</span> ';
+    h += esc(e.from || "") + (e.to ? " \u2192 " + esc(e.to) : "");
+    h += '</div>';
+    if (e.preview) h += '<div style="font-size:12px;color:#94a3b8;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.preview.substring(0, 120)) + '</div>';
+    h += '</div>';
+    h += '<div style="flex-shrink:0;text-align:right">';
+    h += '<div style="font-size:11px;color:#94a3b8">' + dateStr + '</div>';
+    if (e.user && e.type === "email") h += '<div style="font-size:10px;color:#64748b;margin-top:2px">via ' + esc(e.user) + '</div>';
+    if (e.logged) h += '<div style="font-size:10px;color:#16a34a;margin-top:2px">\u2713 In Bullhorn</div>';
+    h += '</div></div>';
+    // Expansion area (hidden by default)
+    h += '<div class="email-body-expand" style="display:none;margin-top:8px;padding:10px;background:#f8fafc;border-radius:6px;font-size:13px;line-height:1.6;color:#334155;max-height:300px;overflow-y:auto"></div>';
+    h += '</div>';
+  });
+  return h;
+}
+
+function expandEmail(rowEl, idx) {
+  var bodyDiv = rowEl.querySelector(".email-body-expand");
+  if (!bodyDiv) return;
+  // Toggle closed
+  if (bodyDiv.style.display !== "none") {
+    bodyDiv.style.display = "none";
+    return;
+  }
+  var all = window._emailCorrespondenceFiltered || window._emailCorrespondence || [];
+  var e = all[idx];
+  if (!e) return;
+
+  // For Bullhorn notes, show fullText directly
+  if (e.type === "note") {
+    bodyDiv.innerHTML = '<div style="white-space:pre-wrap">' + esc(e.fullText || e.preview || "") + '</div>';
+    bodyDiv.style.display = "block";
+    return;
+  }
+
+  // For Outlook emails, fetch the full body
+  if (e.messageId) {
+    bodyDiv.innerHTML = '<div style="color:#94a3b8">Loading...</div>';
+    bodyDiv.style.display = "block";
+    apiFetch("outlook/emails/" + encodeURIComponent(e.messageId)).then(function(r) {
+      var msg = r.data || {};
+      var bodyContent = "";
+      if (msg.body && msg.body.content) {
+        if (msg.body.contentType === "html") {
+          // Sanitize: strip scripts and render HTML
+          bodyContent = msg.body.content.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
+          bodyDiv.innerHTML = '<div style="font-size:13px;line-height:1.6;overflow-wrap:break-word">' + bodyContent + '</div>';
+        } else {
+          bodyDiv.innerHTML = '<div style="white-space:pre-wrap">' + esc(msg.body.content) + '</div>';
+        }
+      } else {
+        bodyDiv.innerHTML = '<div style="color:#94a3b8">No body content available</div>';
+      }
+    }).catch(function(err) {
+      bodyDiv.innerHTML = '<div style="color:#ef4444">Failed to load email: ' + esc(err.message || "Unknown error") + '</div>';
+    });
+  }
+}
+
+function filterEmails() {
+  var input = document.getElementById("email-search-input");
+  if (!input) return;
+  var q = input.value.toLowerCase().trim();
+  var all = window._emailCorrespondence || [];
+  var container = document.getElementById("email-list-container");
+  if (!container) return;
+
+  if (!q) {
+    window._emailCorrespondenceFiltered = all;
+    container.innerHTML = buildEmailRows(all);
+    return;
+  }
+
+  var filtered = all.filter(function(e) {
+    return (e.subject || "").toLowerCase().indexOf(q) >= 0 ||
+           (e.from || "").toLowerCase().indexOf(q) >= 0 ||
+           (e.to || "").toLowerCase().indexOf(q) >= 0 ||
+           (e.preview || "").toLowerCase().indexOf(q) >= 0 ||
+           (e.fullText || "").toLowerCase().indexOf(q) >= 0;
+  });
+  window._emailCorrespondenceFiltered = filtered;
+  if (filtered.length === 0) {
+    container.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:12px 0">No emails matching "' + esc(q) + '"</div>';
+  } else {
+    container.innerHTML = buildEmailRows(filtered);
+  }
 }
 
 function renderInlineEmails(el, emails) {
@@ -2007,6 +2101,7 @@ function openTearsheet() {
   // Actions
   h += '<div class="ts-actions">';
   h += '<button style="background:#176087;color:#fff;border:none" onclick="printTearsheet()">Print / Save PDF</button>';
+  h += '<button style="background:#10b981;color:#fff;border:none" onclick="shareTearsheet()">Share Link</button>';
   h += '<button style="background:#fff;color:#176087;border:1px solid #176087" onclick="closeTearsheet()">Close</button>';
   h += '</div>';
 
@@ -2020,6 +2115,27 @@ function printTearsheet() {
   w.document.write('<html><head><title>Tearsheet - Anura Connect</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px;max-width:700px;margin:0 auto;color:#0f172a}.ts-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:16px;border-bottom:3px solid #176087}.ts-logo{font-size:24px;font-weight:800;color:#176087}.ts-sub{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em}.ts-name{font-size:28px;font-weight:700;color:#0E2E47;margin-bottom:4px}.ts-title{font-size:16px;color:#64748b;margin-bottom:16px}.ts-section{margin-bottom:24px}.ts-section h4{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#176087;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}.ts-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:14px}.ts-label{color:#94a3b8;font-size:12px}.ts-val{color:#0f172a;font-weight:500;margin-bottom:8px}.ts-notes{font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap}.ts-close,.ts-actions{display:none}.badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600;background:#e2e8f0;color:#475569}@media print{body{padding:20px}}</style></head><body>' + content + '</body></html>');
   w.document.close();
   w.print();
+}
+
+function shareTearsheet() {
+  var c = window._lastDetailCandidate;
+  if (!c) return;
+  var url = window.location.origin + "/tearsheet/" + c.id;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(function() {
+      var btns = document.querySelectorAll(".ts-actions button");
+      for (var i = 0; i < btns.length; i++) {
+        if (btns[i].textContent === "Share Link") {
+          btns[i].textContent = "Link Copied!";
+          btns[i].style.background = "#16a34a";
+          setTimeout(function() { btns[i].textContent = "Share Link"; btns[i].style.background = "#10b981"; }, 2000);
+          break;
+        }
+      }
+    });
+  } else {
+    prompt("Copy this link:", url);
+  }
 }
 
 function renderDetailContent(c) {

@@ -7146,6 +7146,89 @@ app.get("/portal", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "portal.html"));
 });
 
+// ═══ PUBLIC TEARSHEET ═══════════════════════════════════════════
+app.get("/tearsheet/:id", async (req, res) => {
+  try {
+    var id = req.params.id;
+    await authenticate();
+    var data = await bhFetch("entity/Candidate/" + id, {
+      fields: "id,firstName,lastName,nickName,occupation,status,address,salary,email,phone,mobile,dateAvailable,source,owner,customText1,customText2,customText3,customText5,customText6,description"
+    });
+    var c = data.data || data;
+    if (!c || !c.id) return res.status(404).send("<h1>Candidate not found</h1>");
+    var addr = c.address || {};
+    var location = [addr.city, addr.state].filter(Boolean).join(", ");
+    var primaryCert = Array.isArray(c.customText1) ? c.customText1.join(", ") : (c.customText1 || "");
+    var secondaryCert = Array.isArray(c.customText2) ? c.customText2.join(", ") : (c.customText2 || "");
+    var epicRole = Array.isArray(c.customText5) ? c.customText5.join(", ") : (c.customText5 || "");
+    var grade = c.customText6 || "";
+    var preferredRole = Array.isArray(c.customText3) ? c.customText3.join(", ") : (c.customText3 || "");
+    var gradeColors = { A: "#16a34a", B: "#f59e0b", C: "#ef4444" };
+    var gradeColor = gradeColors[grade] || "#64748b";
+
+    function esc(s) { return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+
+    var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">';
+    html += '<title>Tearsheet - ' + esc(c.firstName + " " + c.lastName) + ' - Anura Connect</title>';
+    html += '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px 20px;max-width:700px;margin:0 auto;color:#0f172a;background:#f8fafc}';
+    html += '.ts-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:16px;border-bottom:3px solid #176087}';
+    html += '.ts-logo{font-size:24px;font-weight:800;color:#176087}.ts-sub{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em}';
+    html += '.ts-name{font-size:28px;font-weight:700;color:#0E2E47;margin-bottom:4px}';
+    html += '.ts-title{font-size:16px;color:#64748b;margin-bottom:16px}';
+    html += '.ts-section{margin-bottom:24px;background:#fff;border-radius:8px;padding:16px;border:1px solid #e2e8f0}';
+    html += '.ts-section h4{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#176087;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}';
+    html += '.ts-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:14px}';
+    html += '.ts-label{color:#94a3b8;font-size:12px}.ts-val{color:#0f172a;font-weight:500;margin-bottom:8px}';
+    html += '.ts-notes{font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap}';
+    html += '.badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600;background:#e2e8f0;color:#475569}';
+    html += '.footer{margin-top:32px;text-align:center;font-size:11px;color:#94a3b8;padding-top:16px;border-top:1px solid #e2e8f0}';
+    html += '@media print{body{padding:20px;background:#fff}.ts-section{border:none;padding:12px 0}}</style></head><body>';
+
+    html += '<div class="ts-brand"><div><div class="ts-logo">Anura Connect</div><div class="ts-sub">Candidate Tearsheet</div></div></div>';
+    html += '<div class="ts-name">' + esc(c.firstName + " " + c.lastName) + '</div>';
+    html += '<div class="ts-title">' + esc(c.occupation || "") + '  &bull;  <span class="badge">' + esc(c.status || "Unknown") + '</span></div>';
+
+    // Contact Info
+    html += '<div class="ts-section"><h4>Contact Information</h4><div class="ts-row">';
+    html += '<div><div class="ts-label">Email</div><div class="ts-val">' + esc(c.email || "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Phone</div><div class="ts-val">' + esc(c.phone || "\u2014") + '</div></div>';
+    if (c.mobile) html += '<div><div class="ts-label">Mobile</div><div class="ts-val">' + esc(c.mobile) + '</div></div>';
+    html += '<div><div class="ts-label">Location</div><div class="ts-val">' + esc(location || "\u2014") + '</div></div>';
+    html += '</div></div>';
+
+    // Certifications & Grade
+    html += '<div class="ts-section"><h4>Certifications &amp; Grade</h4><div class="ts-row">';
+    html += '<div><div class="ts-label">Primary Certifications</div><div class="ts-val" style="color:#176087;font-weight:700">' + esc(primaryCert || "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Secondary Certifications</div><div class="ts-val">' + esc(secondaryCert || "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Epic Role</div><div class="ts-val">' + esc(epicRole || "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Grade</div><div class="ts-val" style="font-weight:700;color:' + gradeColor + '">' + esc(grade || "\u2014") + '</div></div>';
+    if (preferredRole) html += '<div><div class="ts-label">Preferred Roles</div><div class="ts-val">' + esc(preferredRole) + '</div></div>';
+    html += '</div></div>';
+
+    // Availability & Compensation
+    html += '<div class="ts-section"><h4>Availability &amp; Compensation</h4><div class="ts-row">';
+    html += '<div><div class="ts-label">Pay Rate</div><div class="ts-val" style="font-weight:700;color:#10b981">' + (c.salary ? "$" + Number(c.salary).toLocaleString() : "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Available</div><div class="ts-val">' + (c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "\u2014") + '</div></div>';
+    if (c.source) html += '<div><div class="ts-label">Source</div><div class="ts-val">' + esc(c.source) + '</div></div>';
+    if (c.owner) html += '<div><div class="ts-label">Owner</div><div class="ts-val">' + esc(c.owner.firstName + " " + c.owner.lastName) + '</div></div>';
+    html += '</div></div>';
+
+    // Description
+    if (c.description) {
+      html += '<div class="ts-section"><h4>Notes &amp; Background</h4>';
+      html += '<div class="ts-notes">' + c.description.replace(/<[^>]*>/g, "") + '</div>';
+      html += '</div>';
+    }
+
+    html += '<div class="footer">Generated by Anura Connect &bull; ' + new Date().toLocaleDateString() + '</div>';
+    html += '</body></html>';
+    res.send(html);
+  } catch (e) {
+    console.error("[Tearsheet]", e.message);
+    res.status(500).send("<h1>Error loading tearsheet</h1><p>" + e.message + "</p>");
+  }
+});
+
 // Serve the dashboard
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
