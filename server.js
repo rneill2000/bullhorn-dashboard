@@ -3971,6 +3971,8 @@ app.post("/api/outreach/send", express.json(), async (req, res) => {
     var { to, subject, body, recipientName, recipientType, recipientId } = req.body;
     if (!to || !subject || !body) return res.status(400).json({ error: "Missing required fields: to, subject, body" });
 
+    var sendMethod = "mailto";
+
     // If SendGrid is configured, send via API
     if (process.env.SENDGRID_API_KEY) {
       var sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
@@ -3990,26 +3992,28 @@ app.post("/api/outreach/send", express.json(), async (req, res) => {
         var errText = await sgResp.text();
         throw new Error("SendGrid error: " + errText);
       }
-      // Log as a note in Bullhorn if we have a candidate/contact ID
-      if (recipientId && recipientType) {
-        try {
-          await authenticate();
-          var noteEntity = recipientType === "candidate" ? "Candidate" : "ClientContact";
-          // Create a Bullhorn note for the outreach
-          await bhWrite("entity/Note", {
-              action: "Email",
-              comments: "Outreach: " + subject + "\n\n" + body,
-              personReference: { id: parseInt(recipientId) }
-          });
-        } catch (noteErr) {
-          console.log("[Outreach] Note creation failed:", noteErr.message);
-        }
+      sendMethod = "sendgrid";
+    }
+
+    // Always log as a note in Bullhorn if we have a recipient
+    if (recipientId && recipientType) {
+      try {
+        await authenticate();
+        await bhWrite("entity/Note", {
+            action: "Email",
+            comments: "Outreach: " + subject + "\n\nTo: " + to + "\n\n" + body,
+            personReference: { id: parseInt(recipientId) }
+        });
+      } catch (noteErr) {
+        console.log("[Outreach] Note creation failed:", noteErr.message);
       }
-      res.json({ success: true, method: "sendgrid" });
-    } else {
-      // No SendGrid — return mailto link as fallback
+    }
+
+    if (sendMethod === "mailto") {
       var mailto = "mailto:" + encodeURIComponent(to) + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
       res.json({ success: true, method: "mailto", mailtoUrl: mailto });
+    } else {
+      res.json({ success: true, method: "sendgrid" });
     }
   } catch (e) {
     console.error("[Outreach] Send error:", e.message);
@@ -5591,7 +5595,7 @@ async function syncOutlookEmails() {
                 } else {
                   noteData.clientContactReferences = { total: 1, data: [{ id: matchedRecord.id }] };
                 }
-                var noteResult = await bhFetch("entity/Note", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(noteData) });
+                var noteResult = await bhWrite("entity/Note", noteData);
                 var noteId = noteResult.changedEntityId || null;
                 await db.query("UPDATE email_log SET logged_to_bullhorn = true, bullhorn_note_id = $1 WHERE message_id = $2", [noteId, msg.id]);
                 totalSynced++;
