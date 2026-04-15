@@ -4593,16 +4593,16 @@ app.get("/api/bizdev", async (req, res) => {
     const days30 = 30 * 86400000;
     const days7 = 7 * 86400000;
 
-    // 1. Active Opportunities — Open/Accepting Candidates jobs
-    var activeJobs = [];
+    // 1. All Jobs — Open, Accepting Candidates, Closed, Filled
+    var allJobs = [];
     try {
       var jobData = await bhFetchAll("search/JobOrder", {
-        query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")',
-        fields: "id,title,clientCorporation,status,employmentType,salary,numOpenings,submissions,dateAdded,type,address",
+        query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open" OR status:"Closed" OR status:"Filled" OR status:"Placed")',
+        fields: "id,title,clientCorporation,status,employmentType,salary,numOpenings,submissions,dateAdded,type,address,owner",
         sort: "-dateAdded",
       });
       var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
-      activeJobs = (jobData.data || []).map(function(j) {
+      allJobs = (jobData.data || []).map(function(j) {
         var daysOpen = j.dateAdded ? Math.floor((now - j.dateAdded) / 86400000) : null;
         return {
           id: j.id, title: j.title || "", client: j.clientCorporation ? j.clientCorporation.name : "",
@@ -4613,16 +4613,20 @@ app.get("/api/bizdev", async (req, res) => {
           location: j.address ? [j.address.city, j.address.state].filter(Boolean).join(", ") : "",
           daysOpen: daysOpen, dateAdded: j.dateAdded ? new Date(j.dateAdded).toLocaleDateString() : "",
           status: j.status || "",
+          owner: j.owner ? ((j.owner.firstName || "") + " " + (j.owner.lastName || "")).trim() : "",
+          ownerId: j.owner ? j.owner.id : null,
         };
       });
     } catch(e) { console.log("[BizDev] Jobs error:", e.message); }
+    var activeJobs = allJobs.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
+    var closedJobs = allJobs.filter(function(j) { return j.status === "Closed" || j.status === "Filled" || j.status === "Placed"; });
 
     // 2. Top Consultants — Available/Active candidates, grade A or B
     var topConsultants = [];
     try {
       var candData = await bhFetchAll("search/Candidate", {
         query: 'isDeleted:0 AND (status:"Active" OR status:"Available" OR status:"Active-Reviewed") AND (customText6:"A" OR customText6:"B")',
-        fields: "id,firstName,lastName,occupation,status,customText1,customText2,customText5,customText6,customText7,dateAvailable,address,email,phone",
+        fields: "id,firstName,lastName,occupation,status,customText1,customText2,customText5,customText6,customText7,dateAvailable,address,email,phone,owner",
         sort: "-dateLastModified",
       });
       topConsultants = (candData.data || []).map(function(c) {
@@ -4636,6 +4640,8 @@ app.get("/api/bizdev", async (req, res) => {
           available: avail ? avail.toLocaleDateString() : "—", availSoon: availSoon,
           location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
           email: c.email || "", phone: c.phone || "",
+          owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
+          ownerId: c.owner ? c.owner.id : null,
         };
       });
     } catch(e) { console.log("[BizDev] Top consultants error:", e.message); }
@@ -4723,15 +4729,39 @@ app.get("/api/bizdev", async (req, res) => {
       }
     } catch(e) { console.log("[BizDev] Upcoming starts error:", e.message); }
 
+    // Build unique owners and clients for filter dropdowns
+    var ownerSet = {};
+    var clientSet = {};
+    var certSet = {};
+    allJobs.forEach(function(j) {
+      if (j.owner) ownerSet[j.owner] = true;
+      if (j.client) clientSet[j.client] = true;
+    });
+    topConsultants.forEach(function(c) {
+      if (c.owner) ownerSet[c.owner] = true;
+      if (c.primaryCert) {
+        c.primaryCert.split(",").forEach(function(cert) { var t = cert.trim(); if (t) certSet[t] = true; });
+      }
+    });
+    expiringPlacements.forEach(function(p) { if (p.client) clientSet[p.client] = true; });
+    upcomingStarts.forEach(function(p) { if (p.client) clientSet[p.client] = true; });
+
     res.json({
       generatedAt: new Date().toLocaleString(),
       activeOpportunities: activeJobs,
+      closedOpportunities: closedJobs,
       newOpportunities: newOpportunities,
       topConsultants: topConsultants,
       expiringPlacements: expiringPlacements,
       upcomingStarts: upcomingStarts,
+      filters: {
+        owners: Object.keys(ownerSet).sort(),
+        clients: Object.keys(clientSet).sort(),
+        certs: Object.keys(certSet).sort(),
+      },
       summary: {
         totalActiveJobs: activeJobs.length,
+        closedJobs: closedJobs.length,
         urgentJobs: activeJobs.filter(function(j) { return j.priority === "Urgent" || j.priority === "Hot"; }).length,
         topConsultantCount: topConsultants.length,
         expiringCount: expiringPlacements.length,

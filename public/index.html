@@ -3258,84 +3258,212 @@ function renderHome(d){
 }
 
 /* ═══ BIZDEV WEEKLY MEETING ═══ */
+var _bizDevData = null;
+
 function renderBizDev(d){
   if(!d) return showConnectionError();
+  _bizDevData = d;
   var s=d.summary||{};
+  var f=d.filters||{};
   var html='<div style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">';
   html+='<div><h2 style="margin:0;font-size:20px;font-weight:700;color:#0f172a">BizDev Weekly Meeting</h2>';
   html+='<div style="font-size:12px;color:#94a3b8;margin-top:2px">Generated '+esc(d.generatedAt)+'</div></div>';
-  html+='<button class="btn-outline" onclick="window.print()">🖨 Print</button>';
+  html+='<button class="btn-outline" onclick="window.print()">\uD83D\uDDA8 Print</button>';
   html+='</div>';
 
-  // KPI cards
-  html+='<div class="stats-row">';
-  html+=statCard("\uD83D\uDCBC","Active Jobs",s.totalActiveJobs||0,"Open opportunities","#176087");
-  html+=statCard("\uD83D\uDD25","Urgent/Hot",s.urgentJobs||0,"Need attention","#dc2626");
-  html+=statCard("\uD83C\uDD95","New This Week",s.newThisWeek||0,"Jobs added","#10b981");
-  html+=statCard("\u2B50","Top Consultants",s.topConsultantCount||0,"Grade A & B","#f59e0b");
-  html+=statCard("\u26A0\uFE0F","Coming Off Contract",s.expiringCount||0,(s.criticalExpiring||0)+" within 14 days","#ef4444");
-  html+=statCard("\uD83D\uDE80","Upcoming Starts",s.upcomingStartCount||0,"Next 30 days","#8b5cf6");
+  // ── Filter Bar ──
+  html+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:end">';
+  // Owner
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Owner';
+  html+='<select id="bd-filter-owner" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:140px">';
+  html+='<option value="">All Owners</option>';
+  (f.owners||[]).forEach(function(o){ html+='<option value="'+esc(o)+'">'+esc(o)+'</option>'; });
+  html+='</select></label>';
+  // Client
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Client';
+  html+='<select id="bd-filter-client" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:140px">';
+  html+='<option value="">All Clients</option>';
+  (f.clients||[]).forEach(function(c){ html+='<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
+  html+='</select></label>';
+  // Certification
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Certification';
+  html+='<select id="bd-filter-cert" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:140px">';
+  html+='<option value="">All Certs</option>';
+  (f.certs||[]).forEach(function(c){ html+='<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
+  html+='</select></label>';
+  // Job Status
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Job Status';
+  html+='<select id="bd-filter-status" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:120px">';
+  html+='<option value="">All Statuses</option>';
+  html+='<option value="open">Open / Accepting</option>';
+  html+='<option value="closed">Closed / Filled</option>';
+  html+='</select></label>';
+  // Date Range
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Date Range';
+  html+='<select id="bd-filter-date" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:120px">';
+  html+='<option value="">All Time</option>';
+  html+='<option value="7">Last 7 Days</option>';
+  html+='<option value="14">Last 14 Days</option>';
+  html+='<option value="30" selected>Last 30 Days</option>';
+  html+='<option value="60">Last 60 Days</option>';
+  html+='<option value="90">Last 90 Days</option>';
+  html+='</select></label>';
+  // Reset
+  html+='<button onclick="resetBizDevFilters()" style="padding:6px 14px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;font-size:12px;font-family:inherit;cursor:pointer;color:#64748b;align-self:end">Reset</button>';
   html+='</div>';
+
+  // KPI cards (clickable)
+  html+='<div class="stats-row">';
+  html+=bdKpi("\uD83D\uDCBC","Active Jobs",s.totalActiveJobs||0,"Open opportunities","#176087","activeJobs");
+  html+=bdKpi("\uD83D\uDD25","Urgent/Hot",s.urgentJobs||0,"Need attention","#dc2626","urgentJobs");
+  html+=bdKpi("\uD83C\uDD95","New This Week",s.newThisWeek||0,"Jobs added","#10b981","newJobs");
+  html+=bdKpi("\u2B50","Top Consultants",s.topConsultantCount||0,"Grade A & B","#f59e0b","topConsultants");
+  html+=bdKpi("\u26A0\uFE0F","Coming Off",s.expiringCount||0,(s.criticalExpiring||0)+" within 14 days","#ef4444","expiring");
+  html+=bdKpi("\uD83D\uDE80","Upcoming Starts",s.upcomingStartCount||0,"Next 30 days","#8b5cf6","starts");
+  html+=bdKpi("\u2705","Closed/Filled",s.closedJobs||0,"Completed jobs","#64748b","closedJobs");
+  html+='</div>';
+
+  // Tables container (re-rendered by filters)
+  html+='<div id="bd-tables">';
+  html+=renderBizDevTables(d, {});
+  html+='</div>';
+
+  return html;
+}
+
+function bdKpi(emoji,label,value,sub,color,key){
+  color=color||"#176087";
+  return '<div class="stat-card" style="cursor:pointer" onclick="openBdModal(\''+key+'\')">'
+    +'<div class="stat-icon" style="background:'+color+'14">'+emoji+'</div>'
+    +'<div><div class="stat-label">'+label+'</div><div class="stat-value">'+value+'</div>'
+    +(sub?'<div class="stat-sub">'+sub+'</div>':'')
+    +'</div></div>';
+}
+
+function getBizDevFilters() {
+  return {
+    owner: (document.getElementById("bd-filter-owner")||{}).value || "",
+    client: (document.getElementById("bd-filter-client")||{}).value || "",
+    cert: (document.getElementById("bd-filter-cert")||{}).value || "",
+    status: (document.getElementById("bd-filter-status")||{}).value || "",
+    days: (document.getElementById("bd-filter-date")||{}).value || "",
+  };
+}
+
+function applyBizDevFilters() {
+  var el = document.getElementById("bd-tables");
+  if (!el || !_bizDevData) return;
+  el.innerHTML = renderBizDevTables(_bizDevData, getBizDevFilters());
+}
+
+function resetBizDevFilters() {
+  ["bd-filter-owner","bd-filter-client","bd-filter-cert","bd-filter-status"].forEach(function(id){
+    var el=document.getElementById(id); if(el) el.value="";
+  });
+  var dateEl=document.getElementById("bd-filter-date"); if(dateEl) dateEl.value="30";
+  applyBizDevFilters();
+}
+
+function bdFilterJobs(jobs, flt) {
+  return jobs.filter(function(j) {
+    if (flt.owner && j.owner !== flt.owner) return false;
+    if (flt.client && j.client !== flt.client) return false;
+    if (flt.days && j.daysOpen !== null && j.daysOpen > parseInt(flt.days)) return false;
+    if (flt.status === "open" && j.status !== "Accepting Candidates" && j.status !== "Open") return false;
+    if (flt.status === "closed" && j.status !== "Closed" && j.status !== "Filled" && j.status !== "Placed") return false;
+    return true;
+  });
+}
+
+function bdFilterConsultants(list, flt) {
+  return list.filter(function(c) {
+    if (flt.owner && c.owner !== flt.owner) return false;
+    if (flt.cert && (c.primaryCert || "").indexOf(flt.cert) < 0) return false;
+    return true;
+  });
+}
+
+function bdFilterPlacements(list, flt) {
+  return list.filter(function(p) {
+    if (flt.client && p.client !== flt.client) return false;
+    return true;
+  });
+}
+
+function renderBizDevTables(d, flt) {
+  var html = '';
+  var activeFiltered = bdFilterJobs(d.activeOpportunities || [], flt);
+  var closedFiltered = bdFilterJobs(d.closedOpportunities || [], flt);
+  var newFiltered = (d.newOpportunities || []).filter(function(j) {
+    if (flt.owner && j.owner !== flt.owner) return false;
+    if (flt.client && j.client !== flt.client) return false;
+    return true;
+  });
+  var topFiltered = bdFilterConsultants(d.topConsultants || [], flt);
+  var expFiltered = bdFilterPlacements(d.expiringPlacements || [], flt);
+  var startsFiltered = bdFilterPlacements(d.upcomingStarts || [], flt);
+
+  // Show closed or active based on status filter
+  var showClosed = flt.status === "closed";
+  var showActive = flt.status !== "closed";
 
   // ── Active Opportunities ──
-  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83D\uDCBC Active Opportunities <span style="font-size:12px;font-weight:400;color:#94a3b8">'+((d.activeOpportunities||[]).length)+' jobs</span></h3>';
-  if((d.activeOpportunities||[]).length===0){
-    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No active opportunities</div>';
-  } else {
-    html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
-    html+='<th>Job Title</th><th>Client</th><th>Priority</th><th>Type</th><th>Salary</th><th>Location</th><th>Openings</th><th>Submissions</th><th>Days Open</th>';
-    html+='</tr></thead><tbody>';
-    (d.activeOpportunities||[]).forEach(function(j){
-      var prioColor=j.priority==="Urgent"?"#dc2626":j.priority==="Hot"?"#f59e0b":j.priority==="Warm"?"#f97316":"#64748b";
-      html+='<tr style="cursor:pointer" onclick="setPage(\'jobs\')">';
-      html+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
-      html+='<td>'+esc(j.client)+'</td>';
-      html+='<td>'+(j.priority?'<span class="badge" style="background:'+prioColor+'14;color:'+prioColor+';border:1px solid '+prioColor+'40;font-weight:600">'+esc(j.priority)+'</span>':'—')+'</td>';
-      html+='<td>'+esc(j.type||"—")+'</td>';
-      html+='<td>'+esc(j.salary)+'</td>';
-      html+='<td>'+esc(j.location||"—")+'</td>';
-      html+='<td style="text-align:center">'+j.openings+'</td>';
-      html+='<td style="text-align:center">'+j.submissions+'</td>';
-      var doColor=j.daysOpen>30?"#dc2626":j.daysOpen>14?"#f59e0b":"#64748b";
-      html+='<td style="text-align:center;color:'+doColor+';font-weight:600">'+(j.daysOpen!==null?j.daysOpen:"—")+'</td>';
-      html+='</tr>';
-    });
-    html+='</tbody></table></div>';
+  if (showActive) {
+    html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83D\uDCBC Active Opportunities <span style="font-size:12px;font-weight:400;color:#94a3b8">'+activeFiltered.length+' jobs</span></h3>';
+    if(activeFiltered.length===0){
+      html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No active opportunities match filters</div>';
+    } else {
+      html+=renderJobTable(activeFiltered, true);
+    }
+    html+='</div>';
   }
-  html+='</div>';
 
-  // ── New Opportunities (last 7 days) ──
-  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83C\uDD95 New Opportunities <span style="font-size:12px;font-weight:400;color:#94a3b8">Added in last 7 days</span></h3>';
-  if((d.newOpportunities||[]).length===0){
-    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No new jobs this week</div>';
-  } else {
-    html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
-    html+='<th>Job Title</th><th>Client</th><th>Type</th><th>Salary</th><th>Location</th><th>Added</th>';
-    html+='</tr></thead><tbody>';
-    (d.newOpportunities||[]).forEach(function(j){
-      html+='<tr style="cursor:pointer" onclick="setPage(\'jobs\')">';
-      html+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
-      html+='<td>'+esc(j.client)+'</td>';
-      html+='<td>'+esc(j.type||"—")+'</td>';
-      html+='<td>'+esc(j.salary)+'</td>';
-      html+='<td>'+esc(j.location||"—")+'</td>';
-      html+='<td>'+esc(j.dateAdded)+'</td>';
-      html+='</tr>';
-    });
-    html+='</tbody></table></div>';
+  // ── Closed/Filled Jobs ──
+  if (showClosed || !flt.status) {
+    html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u2705 Closed / Filled Jobs <span style="font-size:12px;font-weight:400;color:#94a3b8">'+closedFiltered.length+' jobs</span></h3>';
+    if(closedFiltered.length===0){
+      html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No closed jobs match filters</div>';
+    } else {
+      html+=renderJobTable(closedFiltered.slice(0, 50), false);
+    }
+    html+='</div>';
   }
-  html+='</div>';
 
-  // Two-column grid for consultants
+  // ── New Opportunities ──
+  if (showActive) {
+    html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83C\uDD95 New Opportunities <span style="font-size:12px;font-weight:400;color:#94a3b8">Added in last 7 days</span></h3>';
+    if(newFiltered.length===0){
+      html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No new jobs this week</div>';
+    } else {
+      html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
+      html+='<th>Job Title</th><th>Client</th><th>Owner</th><th>Type</th><th>Salary</th><th>Location</th><th>Added</th>';
+      html+='</tr></thead><tbody>';
+      newFiltered.forEach(function(j){
+        html+='<tr style="cursor:pointer" onclick="setPage(\'jobs\')">';
+        html+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
+        html+='<td>'+esc(j.client)+'</td>';
+        html+='<td>'+esc(j.owner||"\u2014")+'</td>';
+        html+='<td>'+esc(j.type||"\u2014")+'</td>';
+        html+='<td>'+esc(j.salary)+'</td>';
+        html+='<td>'+esc(j.location||"\u2014")+'</td>';
+        html+='<td>'+esc(j.dateAdded)+'</td>';
+        html+='</tr>';
+      });
+      html+='</tbody></table></div>';
+    }
+    html+='</div>';
+  }
+
+  // Two-column grid
   html+='<div class="chart-grid">';
 
   // ── Top Consultants ──
-  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u2B50 Top Consultants <span style="font-size:12px;font-weight:400;color:#94a3b8">Grade A & B</span></h3>';
-  if((d.topConsultants||[]).length===0){
-    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No top-grade consultants found</div>';
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u2B50 Top Consultants <span style="font-size:12px;font-weight:400;color:#94a3b8">Grade A & B ('+topFiltered.length+')</span></h3>';
+  if(topFiltered.length===0){
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No top-grade consultants match filters</div>';
   } else {
     var gradeColors={"A":"#16a34a","B":"#f59e0b"};
-    (d.topConsultants||[]).slice(0,25).forEach(function(c){
+    topFiltered.slice(0,25).forEach(function(c){
       var gc=gradeColors[c.grade]||"#64748b";
       html+='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="openDetail('+c.id+',{})">';
       html+='<div style="width:32px;height:32px;border-radius:8px;background:'+gc+'14;display:flex;align-items:center;justify-content:center;font-weight:700;color:'+gc+';font-size:13px;flex-shrink:0">'+esc(c.grade)+'</div>';
@@ -3352,18 +3480,18 @@ function renderBizDev(d){
       html+='</div>';
       html+='</div>';
     });
-    if((d.topConsultants||[]).length>25){
-      html+='<div style="padding:8px 0;text-align:center;font-size:12px;color:#94a3b8">+'+(d.topConsultants.length-25)+' more</div>';
+    if(topFiltered.length>25){
+      html+='<div style="padding:8px 0;text-align:center;font-size:12px;color:#94a3b8">+'+(topFiltered.length-25)+' more</div>';
     }
   }
   html+='</div>';
 
-  // ── Consultants Coming Off Contract ──
-  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u26A0\uFE0F Coming Off Contract <span style="font-size:12px;font-weight:400;color:#94a3b8">Next 30 days</span></h3>';
-  if((d.expiringPlacements||[]).length===0){
-    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">\u2705 No contracts expiring in the next 30 days</div>';
+  // ── Coming Off Contract ──
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u26A0\uFE0F Coming Off Contract <span style="font-size:12px;font-weight:400;color:#94a3b8">'+expFiltered.length+' placements</span></h3>';
+  if(expFiltered.length===0){
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">\u2705 No contracts expiring</div>';
   } else {
-    (d.expiringPlacements||[]).forEach(function(p){
+    expFiltered.forEach(function(p){
       var urgColors={"critical":"#dc2626","warning":"#f59e0b","info":"#94a3b8"};
       var uc=urgColors[p.urgency]||"#94a3b8";
       html+='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9'+(p.urgency==="critical"?";background:#fef2f210":"")+'">';
@@ -3382,23 +3510,23 @@ function renderBizDev(d){
 
   html+='</div>'; // close chart-grid
 
-  // ── Upcoming Placement Starts ──
-  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83D\uDE80 Upcoming Placement Starts <span style="font-size:12px;font-weight:400;color:#94a3b8">Next 30 days</span></h3>';
-  if((d.upcomingStarts||[]).length===0){
+  // ── Upcoming Starts ──
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83D\uDE80 Upcoming Placement Starts <span style="font-size:12px;font-weight:400;color:#94a3b8">'+startsFiltered.length+' placements</span></h3>';
+  if(startsFiltered.length===0){
     html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No upcoming placement starts</div>';
   } else {
     html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
     html+='<th>Consultant</th><th>Job</th><th>Client</th><th>Start Date</th><th>Days Until</th><th>Type</th>';
     html+='</tr></thead><tbody>';
-    (d.upcomingStarts||[]).forEach(function(p){
+    startsFiltered.forEach(function(p){
       var started=p.daysUntil!==null&&p.daysUntil<=0;
       html+='<tr>';
       html+='<td style="font-weight:600;'+(p.candidateId?"cursor:pointer;color:#176087":"")+'"'+(p.candidateId?' onclick="openDetail('+p.candidateId+',{})"':'')+'>'+esc(p.candidate)+'</td>';
       html+='<td>'+esc(p.job)+'</td>';
-      html+='<td>'+esc(p.client||"—")+'</td>';
+      html+='<td>'+esc(p.client||"\u2014")+'</td>';
       html+='<td>'+esc(p.startDate)+'</td>';
-      html+='<td style="text-align:center;font-weight:600;color:'+(started?"#16a34a":"#176087")+'">'+(started?"\u2705 Started":(p.daysUntil!==null?p.daysUntil+"d":"—"))+'</td>';
-      html+='<td>'+esc(p.type||"—")+'</td>';
+      html+='<td style="text-align:center;font-weight:600;color:'+(started?"#16a34a":"#176087")+'">'+(started?"\u2705 Started":(p.daysUntil!==null?p.daysUntil+"d":"\u2014"))+'</td>';
+      html+='<td>'+esc(p.type||"\u2014")+'</td>';
       html+='</tr>';
     });
     html+='</tbody></table></div>';
@@ -3406,6 +3534,135 @@ function renderBizDev(d){
   html+='</div>';
 
   return html;
+}
+
+function renderJobTable(jobs, showDaysOpen) {
+  var h = '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
+  h+='<th>Job Title</th><th>Client</th><th>Owner</th><th>Priority</th><th>Status</th><th>Type</th><th>Salary</th><th>Location</th><th>Openings</th><th>Subs</th>';
+  if (showDaysOpen) h+='<th>Days Open</th>';
+  h+='</tr></thead><tbody>';
+  jobs.forEach(function(j){
+    var prioColor=j.priority==="Urgent"?"#dc2626":j.priority==="Hot"?"#f59e0b":j.priority==="Warm"?"#f97316":"#64748b";
+    var statusColor=j.status==="Closed"||j.status==="Filled"?"#64748b":j.status==="Accepting Candidates"?"#16a34a":"#176087";
+    h+='<tr style="cursor:pointer" onclick="setPage(\'jobs\')">';
+    h+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
+    h+='<td>'+esc(j.client)+'</td>';
+    h+='<td>'+esc(j.owner||"\u2014")+'</td>';
+    h+='<td>'+(j.priority?'<span class="badge" style="background:'+prioColor+'14;color:'+prioColor+';border:1px solid '+prioColor+'40;font-weight:600">'+esc(j.priority)+'</span>':'\u2014')+'</td>';
+    h+='<td><span class="badge" style="color:'+statusColor+'">'+esc(j.status)+'</span></td>';
+    h+='<td>'+esc(j.type||"\u2014")+'</td>';
+    h+='<td>'+esc(j.salary)+'</td>';
+    h+='<td>'+esc(j.location||"\u2014")+'</td>';
+    h+='<td style="text-align:center">'+j.openings+'</td>';
+    h+='<td style="text-align:center">'+j.submissions+'</td>';
+    if (showDaysOpen) {
+      var doColor=j.daysOpen>30?"#dc2626":j.daysOpen>14?"#f59e0b":"#64748b";
+      h+='<td style="text-align:center;color:'+doColor+';font-weight:600">'+(j.daysOpen!==null?j.daysOpen:"\u2014")+'</td>';
+    }
+    h+='</tr>';
+  });
+  h+='</tbody></table></div>';
+  return h;
+}
+
+// ── BizDev KPI Drill-Down Modal ──
+function openBdModal(key) {
+  if (!_bizDevData) return;
+  var d = _bizDevData;
+  var title = "";
+  var bodyHtml = "";
+
+  if (key === "activeJobs") {
+    title = "\uD83D\uDCBC Active Jobs (" + (d.activeOpportunities||[]).length + ")";
+    bodyHtml = renderJobTable(d.activeOpportunities || [], true);
+  } else if (key === "urgentJobs") {
+    var urgent = (d.activeOpportunities||[]).filter(function(j){ return j.priority==="Urgent"||j.priority==="Hot"; });
+    title = "\uD83D\uDD25 Urgent & Hot Jobs (" + urgent.length + ")";
+    bodyHtml = renderJobTable(urgent, true);
+  } else if (key === "newJobs") {
+    title = "\uD83C\uDD95 New This Week (" + (d.newOpportunities||[]).length + ")";
+    bodyHtml = renderJobTable(d.newOpportunities || [], true);
+  } else if (key === "closedJobs") {
+    title = "\u2705 Closed / Filled Jobs (" + (d.closedOpportunities||[]).length + ")";
+    bodyHtml = renderJobTable((d.closedOpportunities||[]).slice(0,100), false);
+  } else if (key === "topConsultants") {
+    var tc = d.topConsultants || [];
+    title = "\u2B50 Top Consultants (" + tc.length + ")";
+    bodyHtml = '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
+    bodyHtml += '<th>Name</th><th>Grade</th><th>Primary Cert</th><th>Epic Role</th><th>Available</th><th>Location</th><th>Owner</th>';
+    bodyHtml += '</tr></thead><tbody>';
+    tc.forEach(function(c) {
+      var gc = {"A":"#16a34a","B":"#f59e0b"}[c.grade] || "#64748b";
+      bodyHtml += '<tr style="cursor:pointer" onclick="openDetail('+c.id+',{})">';
+      bodyHtml += '<td style="font-weight:600;color:#176087">'+esc(c.name)+'</td>';
+      bodyHtml += '<td><span style="font-weight:700;color:'+gc+'">'+esc(c.grade)+'</span></td>';
+      bodyHtml += '<td>'+esc(c.primaryCert||"\u2014")+'</td>';
+      bodyHtml += '<td>'+esc(c.epicRole||"\u2014")+'</td>';
+      bodyHtml += '<td style="color:'+(c.availSoon?"#16a34a":"#94a3b8")+'">'+esc(c.available)+'</td>';
+      bodyHtml += '<td>'+esc(c.location||"\u2014")+'</td>';
+      bodyHtml += '<td>'+esc(c.owner||"\u2014")+'</td>';
+      bodyHtml += '</tr>';
+    });
+    bodyHtml += '</tbody></table></div>';
+  } else if (key === "expiring") {
+    var exp = d.expiringPlacements || [];
+    title = "\u26A0\uFE0F Coming Off Contract (" + exp.length + ")";
+    bodyHtml = '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
+    bodyHtml += '<th>Consultant</th><th>Job</th><th>Client</th><th>End Date</th><th>Days Left</th>';
+    bodyHtml += '</tr></thead><tbody>';
+    exp.forEach(function(p) {
+      var uc = p.urgency==="critical"?"#dc2626":p.urgency==="warning"?"#f59e0b":"#94a3b8";
+      bodyHtml += '<tr>';
+      bodyHtml += '<td style="font-weight:600;'+(p.candidateId?"cursor:pointer;color:#176087":"")+'"'+(p.candidateId?' onclick="closeBdModal();openDetail('+p.candidateId+',{})"':'')+'>'+esc(p.candidate)+'</td>';
+      bodyHtml += '<td>'+esc(p.job)+'</td>';
+      bodyHtml += '<td>'+esc(p.client||"\u2014")+'</td>';
+      bodyHtml += '<td>'+esc(p.endDate)+'</td>';
+      bodyHtml += '<td style="font-weight:700;color:'+uc+'">'+p.daysLeft+'d</td>';
+      bodyHtml += '</tr>';
+    });
+    bodyHtml += '</tbody></table></div>';
+  } else if (key === "starts") {
+    var st = d.upcomingStarts || [];
+    title = "\uD83D\uDE80 Upcoming Starts (" + st.length + ")";
+    bodyHtml = '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
+    bodyHtml += '<th>Consultant</th><th>Job</th><th>Client</th><th>Start Date</th><th>Days Until</th><th>Type</th>';
+    bodyHtml += '</tr></thead><tbody>';
+    st.forEach(function(p) {
+      var started = p.daysUntil!==null&&p.daysUntil<=0;
+      bodyHtml += '<tr>';
+      bodyHtml += '<td style="font-weight:600;'+(p.candidateId?"cursor:pointer;color:#176087":"")+'"'+(p.candidateId?' onclick="closeBdModal();openDetail('+p.candidateId+',{})"':'')+'>'+esc(p.candidate)+'</td>';
+      bodyHtml += '<td>'+esc(p.job)+'</td>';
+      bodyHtml += '<td>'+esc(p.client||"\u2014")+'</td>';
+      bodyHtml += '<td>'+esc(p.startDate)+'</td>';
+      bodyHtml += '<td style="font-weight:600;color:'+(started?"#16a34a":"#176087")+'">'+(started?"\u2705 Started":(p.daysUntil!==null?p.daysUntil+"d":"\u2014"))+'</td>';
+      bodyHtml += '<td>'+esc(p.type||"\u2014")+'</td>';
+      bodyHtml += '</tr>';
+    });
+    bodyHtml += '</tbody></table></div>';
+  }
+
+  // Build and show modal
+  var overlay = document.getElementById("bd-modal-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "bd-modal-overlay";
+    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px";
+    overlay.onclick = function(e) { if (e.target === overlay) closeBdModal(); };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:900px;width:100%;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">'
+    + '<div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between">'
+    + '<h3 style="margin:0;font-size:16px;color:#0f172a">' + title + '</h3>'
+    + '<button onclick="closeBdModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8;padding:4px 8px">\u2715</button>'
+    + '</div>'
+    + '<div style="padding:16px 20px;overflow-y:auto;flex:1">' + bodyHtml + '</div>'
+    + '</div>';
+  overlay.style.display = "flex";
+}
+
+function closeBdModal() {
+  var overlay = document.getElementById("bd-modal-overlay");
+  if (overlay) overlay.style.display = "none";
 }
 
 /* ═══ SMART MATCH ═══ */
