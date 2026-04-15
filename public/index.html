@@ -2567,6 +2567,7 @@ function candClick(idx){ var c=_lastData.candidates[idx]; if(c) openDetail(c.id,
 var NAV_GROUPS=[
   {section:null, items:[
     {key:"home",label:"Home",emoji:"\uD83C\uDFE0"},
+    {key:"bizdev",label:"BizDev",emoji:"\uD83D\uDCC5"},
   ]},
   {section:null, items:[
     {key:"candidates",label:"Candidates",emoji:"\uD83D\uDC65"},
@@ -3134,6 +3135,159 @@ function renderHome(d){
     });
     html+='</div></div>';
   }
+
+  return html;
+}
+
+/* ═══ BIZDEV WEEKLY MEETING ═══ */
+function renderBizDev(d){
+  if(!d) return showConnectionError();
+  var s=d.summary||{};
+  var html='<div style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">';
+  html+='<div><h2 style="margin:0;font-size:20px;font-weight:700;color:#0f172a">BizDev Weekly Meeting</h2>';
+  html+='<div style="font-size:12px;color:#94a3b8;margin-top:2px">Generated '+esc(d.generatedAt)+'</div></div>';
+  html+='<button class="btn-outline" onclick="window.print()">🖨 Print</button>';
+  html+='</div>';
+
+  // KPI cards
+  html+='<div class="stats-row">';
+  html+=statCard("\uD83D\uDCBC","Active Jobs",s.totalActiveJobs||0,"Open opportunities","#176087");
+  html+=statCard("\uD83D\uDD25","Urgent/Hot",s.urgentJobs||0,"Need attention","#dc2626");
+  html+=statCard("\uD83C\uDD95","New This Week",s.newThisWeek||0,"Jobs added","#10b981");
+  html+=statCard("\u2B50","Top Consultants",s.topConsultantCount||0,"Grade A & B","#f59e0b");
+  html+=statCard("\u26A0\uFE0F","Coming Off Contract",s.expiringCount||0,(s.criticalExpiring||0)+" within 14 days","#ef4444");
+  html+=statCard("\uD83D\uDE80","Upcoming Starts",s.upcomingStartCount||0,"Next 30 days","#8b5cf6");
+  html+='</div>';
+
+  // ── Active Opportunities ──
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83D\uDCBC Active Opportunities <span style="font-size:12px;font-weight:400;color:#94a3b8">'+((d.activeOpportunities||[]).length)+' jobs</span></h3>';
+  if((d.activeOpportunities||[]).length===0){
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No active opportunities</div>';
+  } else {
+    html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
+    html+='<th>Job Title</th><th>Client</th><th>Priority</th><th>Type</th><th>Salary</th><th>Location</th><th>Openings</th><th>Submissions</th><th>Days Open</th>';
+    html+='</tr></thead><tbody>';
+    (d.activeOpportunities||[]).forEach(function(j){
+      var prioColor=j.priority==="Urgent"?"#dc2626":j.priority==="Hot"?"#f59e0b":j.priority==="Warm"?"#f97316":"#64748b";
+      html+='<tr style="cursor:pointer" onclick="setPage(\'jobs\')">';
+      html+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
+      html+='<td>'+esc(j.client)+'</td>';
+      html+='<td>'+(j.priority?'<span class="badge" style="background:'+prioColor+'14;color:'+prioColor+';border:1px solid '+prioColor+'40;font-weight:600">'+esc(j.priority)+'</span>':'—')+'</td>';
+      html+='<td>'+esc(j.type||"—")+'</td>';
+      html+='<td>'+esc(j.salary)+'</td>';
+      html+='<td>'+esc(j.location||"—")+'</td>';
+      html+='<td style="text-align:center">'+j.openings+'</td>';
+      html+='<td style="text-align:center">'+j.submissions+'</td>';
+      var doColor=j.daysOpen>30?"#dc2626":j.daysOpen>14?"#f59e0b":"#64748b";
+      html+='<td style="text-align:center;color:'+doColor+';font-weight:600">'+(j.daysOpen!==null?j.daysOpen:"—")+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+
+  // ── New Opportunities (last 7 days) ──
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83C\uDD95 New Opportunities <span style="font-size:12px;font-weight:400;color:#94a3b8">Added in last 7 days</span></h3>';
+  if((d.newOpportunities||[]).length===0){
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No new jobs this week</div>';
+  } else {
+    html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
+    html+='<th>Job Title</th><th>Client</th><th>Type</th><th>Salary</th><th>Location</th><th>Added</th>';
+    html+='</tr></thead><tbody>';
+    (d.newOpportunities||[]).forEach(function(j){
+      html+='<tr style="cursor:pointer" onclick="setPage(\'jobs\')">';
+      html+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
+      html+='<td>'+esc(j.client)+'</td>';
+      html+='<td>'+esc(j.type||"—")+'</td>';
+      html+='<td>'+esc(j.salary)+'</td>';
+      html+='<td>'+esc(j.location||"—")+'</td>';
+      html+='<td>'+esc(j.dateAdded)+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+
+  // Two-column grid for consultants
+  html+='<div class="chart-grid">';
+
+  // ── Top Consultants ──
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u2B50 Top Consultants <span style="font-size:12px;font-weight:400;color:#94a3b8">Grade A & B</span></h3>';
+  if((d.topConsultants||[]).length===0){
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No top-grade consultants found</div>';
+  } else {
+    var gradeColors={"A":"#16a34a","B":"#f59e0b"};
+    (d.topConsultants||[]).slice(0,25).forEach(function(c){
+      var gc=gradeColors[c.grade]||"#64748b";
+      html+='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="openDetail('+c.id+',{})">';
+      html+='<div style="width:32px;height:32px;border-radius:8px;background:'+gc+'14;display:flex;align-items:center;justify-content:center;font-weight:700;color:'+gc+';font-size:13px;flex-shrink:0">'+esc(c.grade)+'</div>';
+      html+='<div style="flex:1;min-width:0">';
+      html+='<div style="font-weight:600;font-size:13px;color:#176087;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.name)+'</div>';
+      html+='<div style="font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">';
+      if(c.primaryCert) html+=esc(c.primaryCert);
+      if(c.epicRole) html+=' \u2022 '+esc(c.epicRole);
+      html+='</div>';
+      html+='</div>';
+      html+='<div style="text-align:right;flex-shrink:0;font-size:12px">';
+      html+='<div style="color:'+(c.availSoon?"#16a34a":"#94a3b8")+'">'+esc(c.available)+'</div>';
+      if(c.location) html+='<div style="color:#94a3b8">'+esc(c.location)+'</div>';
+      html+='</div>';
+      html+='</div>';
+    });
+    if((d.topConsultants||[]).length>25){
+      html+='<div style="padding:8px 0;text-align:center;font-size:12px;color:#94a3b8">+'+(d.topConsultants.length-25)+' more</div>';
+    }
+  }
+  html+='</div>';
+
+  // ── Consultants Coming Off Contract ──
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u26A0\uFE0F Coming Off Contract <span style="font-size:12px;font-weight:400;color:#94a3b8">Next 30 days</span></h3>';
+  if((d.expiringPlacements||[]).length===0){
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">\u2705 No contracts expiring in the next 30 days</div>';
+  } else {
+    (d.expiringPlacements||[]).forEach(function(p){
+      var urgColors={"critical":"#dc2626","warning":"#f59e0b","info":"#94a3b8"};
+      var uc=urgColors[p.urgency]||"#94a3b8";
+      html+='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9'+(p.urgency==="critical"?";background:#fef2f210":"")+'">';
+      html+='<div style="width:40px;height:40px;border-radius:10px;background:'+uc+'14;display:flex;align-items:center;justify-content:center;font-weight:700;color:'+uc+';font-size:13px;flex-shrink:0">'+p.daysLeft+'d</div>';
+      html+='<div style="flex:1;min-width:0">';
+      html+='<div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'+(p.candidateId?";cursor:pointer;color:#176087":"")+'"'+(p.candidateId?' onclick="openDetail('+p.candidateId+',{})"':'')+'>'+esc(p.candidate)+'</div>';
+      html+='<div style="font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(p.job)+' \u2022 '+esc(p.client||"")+'</div>';
+      html+='</div>';
+      html+='<div style="text-align:right;flex-shrink:0;font-size:12px">';
+      html+='<div style="color:'+uc+';font-weight:600">Ends '+esc(p.endDate)+'</div>';
+      html+='<div style="color:#94a3b8">'+esc(p.billRate)+'</div>';
+      html+='</div>';
+      html+='</div>';
+    });
+  }
+  html+='</div>';
+
+  html+='</div>'; // close chart-grid
+
+  // ── Upcoming Placement Starts ──
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83D\uDE80 Upcoming Placement Starts <span style="font-size:12px;font-weight:400;color:#94a3b8">Next 30 days</span></h3>';
+  if((d.upcomingStarts||[]).length===0){
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No upcoming placement starts</div>';
+  } else {
+    html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
+    html+='<th>Consultant</th><th>Job</th><th>Client</th><th>Start Date</th><th>Days Until</th><th>Bill Rate</th><th>Type</th>';
+    html+='</tr></thead><tbody>';
+    (d.upcomingStarts||[]).forEach(function(p){
+      var started=p.daysUntil!==null&&p.daysUntil<=0;
+      html+='<tr>';
+      html+='<td style="font-weight:600;'+(p.candidateId?"cursor:pointer;color:#176087":"")+'"'+(p.candidateId?' onclick="openDetail('+p.candidateId+',{})"':'')+'>'+esc(p.candidate)+'</td>';
+      html+='<td>'+esc(p.job)+'</td>';
+      html+='<td>'+esc(p.client||"—")+'</td>';
+      html+='<td>'+esc(p.startDate)+'</td>';
+      html+='<td style="text-align:center;font-weight:600;color:'+(started?"#16a34a":"#176087")+'">'+(started?"\u2705 Started":(p.daysUntil!==null?p.daysUntil+"d":"—"))+'</td>';
+      html+='<td>'+esc(p.billRate)+'</td>';
+      html+='<td>'+esc(p.type||"—")+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
 
   return html;
 }
@@ -6251,6 +6405,9 @@ async function loadPage(){
       case "home":
         var dash=await apiFetch("dashboard");
         h=renderHome(dash);break;
+      case "bizdev":
+        var bdData=await apiFetch("bizdev");
+        h=renderBizDev(bdData);break;
       case "mydash":
         var myD=await apiFetch("my-dashboard");
         h=renderMyDash(myD);break;

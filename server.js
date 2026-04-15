@@ -4585,6 +4585,166 @@ function startIntelScan(intervalMs) {
   console.log("[Intel] Feed scanner started (every " + Math.round((intervalMs || 1800000) / 60000) + " min)");
 }
 
+// ── BizDev Meeting Report ─────────────────────
+app.get("/api/bizdev", async (req, res) => {
+  try {
+    const now = Date.now();
+    const days30 = 30 * 86400000;
+    const days7 = 7 * 86400000;
+
+    // 1. Active Opportunities — Open/Accepting Candidates jobs
+    var activeJobs = [];
+    try {
+      var jobData = await bhFetchAll("search/JobOrder", {
+        query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")',
+        fields: "id,title,clientCorporation,status,employmentType,salary,numOpenings,submissions,dateAdded,type,address",
+        sort: "-dateAdded",
+      });
+      var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
+      activeJobs = (jobData.data || []).map(function(j) {
+        var daysOpen = j.dateAdded ? Math.floor((now - j.dateAdded) / 86400000) : null;
+        return {
+          id: j.id, title: j.title || "", client: j.clientCorporation ? j.clientCorporation.name : "",
+          clientId: j.clientCorporation ? j.clientCorporation.id : null,
+          priority: PRIORITY_LABELS[j.type] || "", type: j.employmentType || "",
+          salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
+          openings: j.numOpenings || 0, submissions: j.submissions ? j.submissions.total : 0,
+          location: j.address ? [j.address.city, j.address.state].filter(Boolean).join(", ") : "",
+          daysOpen: daysOpen, dateAdded: j.dateAdded ? new Date(j.dateAdded).toLocaleDateString() : "",
+          status: j.status || "",
+        };
+      });
+    } catch(e) { console.log("[BizDev] Jobs error:", e.message); }
+
+    // 2. Top Consultants — Available/Active candidates, grade A or B
+    var topConsultants = [];
+    try {
+      var candData = await bhFetchAll("search/Candidate", {
+        query: 'isDeleted:0 AND (status:"Active" OR status:"Available" OR status:"Active-Reviewed") AND (customText6:"A" OR customText6:"B")',
+        fields: "id,firstName,lastName,occupation,status,customText1,customText2,customText5,customText6,customText7,dateAvailable,address,email,phone",
+        sort: "-dateLastModified",
+      });
+      topConsultants = (candData.data || []).map(function(c) {
+        var avail = c.dateAvailable ? new Date(c.dateAvailable) : null;
+        var availSoon = avail && avail.getTime() <= now + days30;
+        return {
+          id: c.id, name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+          title: c.occupation || "", grade: c.customText6 || "", urgency: c.customText7 || "",
+          primaryCert: c.customText1 || "", secondaryCert: c.customText2 || "",
+          epicRole: c.customText5 || "", status: c.status || "",
+          available: avail ? avail.toLocaleDateString() : "—", availSoon: availSoon,
+          location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
+          email: c.email || "", phone: c.phone || "",
+        };
+      });
+    } catch(e) { console.log("[BizDev] Top consultants error:", e.message); }
+
+    // 3. New Opportunities — Jobs added in the last 7 days
+    var newOpportunities = activeJobs.filter(function(j) { return j.daysOpen !== null && j.daysOpen <= 7; });
+
+    // 4. Consultants Coming Off Contract — Placements ending within 30 days
+    var expiringPlacements = [];
+    try {
+      if (db.ready) {
+        var expRows = await db.getAll(
+          "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) AND (employment_type IS NULL OR (employment_type NOT ILIKE '%direct%' AND employment_type NOT ILIKE '%permanent%')) ORDER BY date_end ASC",
+          [now, now + days30]
+        );
+        expiringPlacements = expRows.map(function(p) {
+          var daysLeft = p.date_end ? Math.ceil((p.date_end - now) / 86400000) : null;
+          return {
+            id: p.id, candidate: p.candidate_name || "", candidateId: p.candidate_id || null,
+            job: p.job_title || "", client: p.client_name || "", status: p.status || "",
+            endDate: p.date_end ? new Date(p.date_end).toLocaleDateString() : "",
+            daysLeft: daysLeft, billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : "—",
+            payRate: p.pay_rate ? "$" + p.pay_rate + "/hr" : "—",
+            urgency: daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
+          };
+        });
+      } else {
+        var expData = await bhFetchAll("query/Placement", {
+          where: "dateEnd IS NOT NULL AND dateEnd >= " + now + " AND dateEnd <= " + (now + days30) + " AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))",
+          fields: "id,candidate,jobOrder,status,dateBegin,dateEnd,payRate,clientBillRate,employmentType",
+          orderBy: "dateEnd",
+        });
+        expiringPlacements = (expData.data || []).map(function(p) {
+          var daysLeft = p.dateEnd ? Math.ceil((p.dateEnd - now) / 86400000) : null;
+          return {
+            id: p.id,
+            candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+            candidateId: p.candidate ? p.candidate.id : null,
+            job: p.jobOrder ? p.jobOrder.title : "", status: p.status || "",
+            endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : "",
+            daysLeft: daysLeft, billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
+            payRate: p.payRate ? "$" + p.payRate + "/hr" : "—",
+            urgency: daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
+          };
+        });
+      }
+    } catch(e) { console.log("[BizDev] Expiring placements error:", e.message); }
+
+    // 5. Upcoming Placement Starts — Placements starting within 30 days
+    var upcomingStarts = [];
+    try {
+      if (db.ready) {
+        var startRows = await db.getAll(
+          "SELECT * FROM placements WHERE date_begin IS NOT NULL AND date_begin >= $1 AND date_begin <= $2 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_begin ASC",
+          [now - days7, now + days30]
+        );
+        upcomingStarts = startRows.map(function(p) {
+          var daysUntil = p.date_begin ? Math.ceil((p.date_begin - now) / 86400000) : null;
+          return {
+            id: p.id, candidate: p.candidate_name || "", candidateId: p.candidate_id || null,
+            job: p.job_title || "", client: p.client_name || "", status: p.status || "",
+            startDate: p.date_begin ? new Date(p.date_begin).toLocaleDateString() : "",
+            daysUntil: daysUntil, billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : "—",
+            type: p.employment_type || "",
+          };
+        });
+      } else {
+        var startData = await bhFetchAll("query/Placement", {
+          where: "dateBegin IS NOT NULL AND dateBegin >= " + (now - days7) + " AND dateBegin <= " + (now + days30),
+          fields: "id,candidate,jobOrder,status,dateBegin,payRate,clientBillRate,employmentType",
+          orderBy: "dateBegin",
+        });
+        upcomingStarts = (startData.data || []).map(function(p) {
+          var daysUntil = p.dateBegin ? Math.ceil((p.dateBegin - now) / 86400000) : null;
+          return {
+            id: p.id,
+            candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+            candidateId: p.candidate ? p.candidate.id : null,
+            job: p.jobOrder ? p.jobOrder.title : "", status: p.status || "",
+            startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString() : "",
+            daysUntil: daysUntil, billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
+            type: p.employmentType || "",
+          };
+        });
+      }
+    } catch(e) { console.log("[BizDev] Upcoming starts error:", e.message); }
+
+    res.json({
+      generatedAt: new Date().toLocaleString(),
+      activeOpportunities: activeJobs,
+      newOpportunities: newOpportunities,
+      topConsultants: topConsultants,
+      expiringPlacements: expiringPlacements,
+      upcomingStarts: upcomingStarts,
+      summary: {
+        totalActiveJobs: activeJobs.length,
+        urgentJobs: activeJobs.filter(function(j) { return j.priority === "Urgent" || j.priority === "Hot"; }).length,
+        topConsultantCount: topConsultants.length,
+        expiringCount: expiringPlacements.length,
+        criticalExpiring: expiringPlacements.filter(function(p) { return p.urgency === "critical"; }).length,
+        upcomingStartCount: upcomingStarts.length,
+        newThisWeek: newOpportunities.length,
+      }
+    });
+  } catch(e) {
+    console.error("[BizDev]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Dashboard Summary (for landing page) ──────
 app.get("/api/dashboard", async (req, res) => {
   try {
