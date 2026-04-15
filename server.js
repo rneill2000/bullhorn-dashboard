@@ -4892,10 +4892,11 @@ app.get("/api/candidates/:id/submissions", async (req, res) => {
         if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
       } catch (dbErr) { console.log("[Submissions] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
-    const data = await bhFetchAll("query/JobSubmission", {
+    const data = await bhFetch("query/JobSubmission", {
       where: `candidate.id=${id} AND isDeleted=false`,
       fields: "id,jobOrder,status,dateAdded,sendingUser,source",
       orderBy: "-dateAdded",
+      count: 100,
     });
     const submissions = (data.data || []).map(s => ({
       id: s.id,
@@ -4971,10 +4972,11 @@ app.get("/api/candidates/:id/references", async (req, res) => {
   try {
     const id = req.params.id;
     await authenticate();
-    const data = await bhFetchAll("query/CandidateReference", {
+    const data = await bhFetch("query/CandidateReference", {
       where: `candidate.id=${id} AND isDeleted=false`,
       fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,employmentType,relationship,yearsKnown,comments,dateAdded,candidateTitle,isDeleted,customText1,customText2,customText3",
       orderBy: "-dateAdded",
+      count: 50,
     });
     const refs = (data.data || []).map(function(r) {
       return {
@@ -5006,11 +5008,19 @@ app.get("/api/candidates/:id/pipeline", async (req, res) => {
     const id = req.params.id;
     await authenticate();
 
-    // Fetch all submissions for this candidate
-    const subData = await bhFetchAll("query/JobSubmission", {
-      where: `candidate.id=${id} AND isDeleted=false`,
-      fields: "id,status",
-    });
+    // Fetch submissions and placements in parallel, capped at 500 each
+    const [subData, placData] = await Promise.all([
+      bhFetch("query/JobSubmission", {
+        where: `candidate.id=${id} AND isDeleted=false`,
+        fields: "id,status",
+        count: 500,
+      }),
+      bhFetch("query/Placement", {
+        where: `candidate.id=${id}`,
+        fields: "id,status",
+        count: 100,
+      }).catch(function() { return { data: [] }; }),
+    ]);
     const subs = subData.data || [];
 
     // Count by normalized status category
@@ -5026,17 +5036,7 @@ app.get("/api/candidates/:id/pipeline", async (req, res) => {
       else { stats.other++; }
     });
     stats.total = subs.length;
-
-    // Also count placements
-    try {
-      const placData = await bhFetchAll("query/Placement", {
-        where: `candidate.id=${id}`,
-        fields: "id,status",
-      });
-      stats.placements = (placData.data || []).length;
-    } catch (pe) {
-      stats.placements = 0;
-    }
+    stats.placements = (placData.data || []).length;
 
     res.json(stats);
   } catch (e) {
