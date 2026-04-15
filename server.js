@@ -3995,14 +3995,10 @@ app.post("/api/outreach/send", express.json(), async (req, res) => {
           await authenticate();
           var noteEntity = recipientType === "candidate" ? "Candidate" : "ClientContact";
           // Create a Bullhorn note for the outreach
-          await bhFetch("entity/Note", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+          await bhWrite("entity/Note", {
               action: "Email",
               comments: "Outreach: " + subject + "\n\n" + body,
               personReference: { id: parseInt(recipientId) }
-            })
           });
         } catch (noteErr) {
           console.log("[Outreach] Note creation failed:", noteErr.message);
@@ -5302,6 +5298,11 @@ async function graphFetch(userEmail, endpoint, options) {
     var errText = await resp.text();
     throw new Error("Graph API error (" + resp.status + "): " + errText.substring(0, 200));
   }
+  // Some Graph endpoints (e.g. sendMail) return 202/204 with no body
+  var contentType = resp.headers.get("content-type") || "";
+  if (resp.status === 204 || resp.status === 202 || !contentType.includes("application/json")) {
+    return { success: true };
+  }
   return resp.json();
 }
 
@@ -5444,11 +5445,7 @@ app.post("/api/outlook/log-to-bullhorn", express.json(), async (req, res) => {
       noteData.clientContactReferences = { total: 1, data: [{ id: parseInt(entityId) }] };
     }
 
-    await bhFetch("entity/Note", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(noteData),
-    });
+    await bhWrite("entity/Note", noteData);
 
     res.json({ success: true });
   } catch (e) {

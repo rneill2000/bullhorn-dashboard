@@ -3256,7 +3256,6 @@ function renderBizDev(d){
       html+='</div>';
       html+='<div style="text-align:right;flex-shrink:0;font-size:12px">';
       html+='<div style="color:'+uc+';font-weight:600">Ends '+esc(p.endDate)+'</div>';
-      html+='<div style="color:#94a3b8">'+esc(p.billRate)+'</div>';
       html+='</div>';
       html+='</div>';
     });
@@ -3271,7 +3270,7 @@ function renderBizDev(d){
     html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No upcoming placement starts</div>';
   } else {
     html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
-    html+='<th>Consultant</th><th>Job</th><th>Client</th><th>Start Date</th><th>Days Until</th><th>Bill Rate</th><th>Type</th>';
+    html+='<th>Consultant</th><th>Job</th><th>Client</th><th>Start Date</th><th>Days Until</th><th>Type</th>';
     html+='</tr></thead><tbody>';
     (d.upcomingStarts||[]).forEach(function(p){
       var started=p.daysUntil!==null&&p.daysUntil<=0;
@@ -3281,7 +3280,6 @@ function renderBizDev(d){
       html+='<td>'+esc(p.client||"—")+'</td>';
       html+='<td>'+esc(p.startDate)+'</td>';
       html+='<td style="text-align:center;font-weight:600;color:'+(started?"#16a34a":"#176087")+'">'+(started?"\u2705 Started":(p.daysUntil!==null?p.daysUntil+"d":"—"))+'</td>';
-      html+='<td>'+esc(p.billRate)+'</td>';
       html+='<td>'+esc(p.type||"—")+'</td>';
       html+='</tr>';
     });
@@ -5795,7 +5793,16 @@ async function renderOutreach(){
   h+='</div>';
 
   if(_outreachTab==="sequences") return h + renderOutreachSequences();
-  if(_outreachTab==="inbox") return h + await renderInbox();
+  if(_outreachTab==="inbox") {
+    if(!currentUser) {
+      return h + '<div class="empty-state"><div class="big">\uD83D\uDD12</div><div class="title">Sign in to access your inbox</div><div class="sub">Your email inbox is tied to your Bullhorn account. Please <a href="/auth/login" style="color:#176087;font-weight:600">sign in</a> to view and send emails.</div></div>';
+    }
+    return h + await renderInbox();
+  }
+
+  if(!currentUser) {
+    return h + '<div class="empty-state"><div class="big">\uD83D\uDD12</div><div class="title">Sign in to use Outreach</div><div class="sub">Outreach emails are sent from your Bullhorn account. Please <a href="/auth/login" style="color:#176087;font-weight:600">sign in</a> to compose and send emails.</div></div>';
+  }
 
   h+='<p style="color:#64748b;font-size:14px;margin-bottom:20px">Compose and send emails using templates. Emails are logged as touches in Bullhorn automatically.</p>';
 
