@@ -5632,16 +5632,18 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
     var entityId = parseInt(req.params.entityId);
     if (!entityId || !entityType) return res.status(400).json({ error: "Missing entityType or entityId" });
 
-    // Get emails from the log that matched this entity
+    // 1. Try DB email_log first
     var loggedEmails = [];
     if (db.ready) {
-      loggedEmails = await db.getAll(
-        "SELECT * FROM email_log WHERE matched_entity_type = $1 AND matched_entity_id = $2 ORDER BY received_at DESC LIMIT 100",
-        [entityType, entityId]
-      );
+      try {
+        loggedEmails = await db.getAll(
+          "SELECT * FROM email_log WHERE matched_entity_type = $1 AND matched_entity_id = $2 ORDER BY received_at DESC LIMIT 100",
+          [entityType, entityId]
+        );
+      } catch (e) { console.log("[Email History] DB email_log query failed:", e.message); }
     }
 
-    // Also get Bullhorn Notes with action=Email for this entity
+    // 2. Try DB notes
     var bhNotes = [];
     if (db.ready) {
       try {
@@ -5650,6 +5652,64 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
           [entityId]
         );
       } catch (e) {}
+    }
+
+    // 3. If DB returned nothing, search Outlook directly by candidate email
+    if (loggedEmails.length === 0 && bhNotes.length === 0) {
+      try {
+        // Look up the candidate/contact email from Bullhorn
+        var entityEmail = null;
+        var entityEmail2 = null;
+        await authenticate();
+        if (entityType === "candidate") {
+          var candData = await bhFetch("entity/Candidate/" + entityId, { fields: "id,email,email2" });
+          var cand = candData.data || candData;
+          entityEmail = cand.email || null;
+          entityEmail2 = cand.email2 || null;
+        }
+
+        if (entityEmail || entityEmail2) {
+          var connectedUsers = Object.keys(_outlookUsers);
+          if (connectedUsers.length > 0) {
+            var userEmail = connectedUsers[0];
+            var searchTerms = [];
+            if (entityEmail) searchTerms.push(entityEmail);
+            if (entityEmail2 && entityEmail2 !== entityEmail) searchTerms.push(entityEmail2);
+
+            // Search Outlook for emails matching this person's email address
+            var outlookEmails = [];
+            for (var i = 0; i < searchTerms.length; i++) {
+              try {
+                var searchEndpoint = "/me/messages?$search=\"" + encodeURIComponent(searchTerms[i]) + "\"&$top=50&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview";
+                var searchData = await graphFetch(userEmail, searchEndpoint);
+                (searchData.value || []).forEach(function(msg) {
+                  outlookEmails.push({
+                    message_id: msg.id,
+                    outlook_user: userEmail,
+                    subject: msg.subject || "(no subject)",
+                    from_email: msg.from && msg.from.emailAddress ? msg.from.emailAddress.address : "",
+                    from_name: msg.from && msg.from.emailAddress ? msg.from.emailAddress.name : "",
+                    to_emails: (msg.toRecipients || []).map(function(r) { return r.emailAddress ? r.emailAddress.address : ""; }).join(", "),
+                    body_preview: msg.bodyPreview || "",
+                    received_at: msg.receivedDateTime || "",
+                    matched_entity_type: entityType,
+                    matched_entity_id: entityId,
+                    logged_to_bullhorn: false,
+                  });
+                });
+              } catch (searchErr) { console.log("[Email History] Outlook search failed for " + searchTerms[i] + ":", searchErr.message); }
+            }
+
+            // Dedupe by message_id
+            var seen = {};
+            loggedEmails = outlookEmails.filter(function(e) {
+              if (seen[e.message_id]) return false;
+              seen[e.message_id] = true;
+              return true;
+            });
+          }
+        }
+      } catch (outlookErr) { console.log("[Email History] Outlook direct search failed:", outlookErr.message); }
     }
 
     res.json({ emails: loggedEmails, notes: bhNotes, total: loggedEmails.length + bhNotes.length });
