@@ -489,7 +489,7 @@ app.get("/api/candidates/:id", async (req, res) => {
     // Run all three Bullhorn calls in parallel for speed
     const [data, notesResult, refsResult] = await Promise.all([
       bhFetch(`entity/Candidate/${id}`, {
-        fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,salaryLow,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,skillList,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
+        fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,salaryLow,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
       }),
       // Cap notes at 200 most recent instead of fetching all
       bhFetch("search/Note", {
@@ -543,7 +543,6 @@ app.get("/api/candidates/:id", async (req, res) => {
       willRelocate: c.willRelocate,
       travelLimit: c.travelLimit || "",
       salaryLow: c.salaryLow || null,
-      skillList: c.skillList || "",
       description: c.description || "",
       // Epic-specific fields
       primaryCert: Array.isArray(c.customText1) ? c.customText1.join(", ") : (c.customText1 || ""),
