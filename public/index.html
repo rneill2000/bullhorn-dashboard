@@ -2686,37 +2686,38 @@ var NAV_GROUPS=[
   {section:null, items:[
     {key:"home",label:"Home",emoji:"\uD83C\uDFE0"},
     {key:"bizdev",label:"BizDev",emoji:"\uD83D\uDCC5"},
-  ]},
-  {section:null, items:[
-    {key:"candidates",label:"Candidates",emoji:"\uD83D\uDC65"},
-    {key:"clients",label:"Clients",emoji:"\uD83C\uDFE2"},
-    {key:"placements",label:"Placements",emoji:"\uD83D\uDCCB"},
     {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
   ]},
-  {section:"Recruiting", items:[
-    {key:"jobs",label:"Jobs",emoji:"\uD83D\uDCBC"},
-    {key:"consultants",label:"Consultants",emoji:"\uD83D\uDC54"},
+  {section:"Candidates", items:[
+    {key:"candidates",label:"Candidates",emoji:"\uD83D\uDC65"},
+    {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
     {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
-
+    {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
+  ]},
+  {section:"Consultants", items:[
+    {key:"consultants",label:"Consultants",emoji:"\uD83D\uDC54"},
+    {key:"placements",label:"Placements",emoji:"\uD83D\uDCCB"},
     {key:"pipeline",label:"Pipeline",emoji:"\uD83D\uDD04"},
   ]},
-  {section:"Intelligence", items:[
-    {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
-    {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
-    {key:"relationships",label:"Relationships",emoji:"\u2764\uFE0F"},
-    {key:"trends",label:"Trends",emoji:"\uD83D\uDCC8"},
-    {key:"revenue",label:"Revenue",emoji:"\uD83D\uDCB0"},
+  {section:"Clients", items:[
+    {key:"clients",label:"Clients",emoji:"\uD83C\uDFE2"},
+    {key:"jobs",label:"Jobs",emoji:"\uD83D\uDCBC"},
     {key:"golives",label:"Go-Lives",emoji:"\uD83C\uDFE5"},
+  ]},
+  {section:"Reporting", items:[
+    {key:"revenue",label:"Revenue",emoji:"\uD83D\uDCB0"},
+    {key:"trends",label:"Trends",emoji:"\uD83D\uDCC8"},
+    {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"},
     {key:"intel",label:"Market Intel",emoji:"\uD83D\uDCF0"},
+    {key:"relationships",label:"Relationships",emoji:"\u2764\uFE0F"},
   ]},
   {section:"Admin", items:[
     {key:"outreach",label:"Outreach",emoji:"\uD83D\uDCE7"},
     {key:"dataquality",label:"Data Quality",emoji:"\uD83D\uDEE0\uFE0F"},
-    {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"},
     {key:"portal",label:"Portal",emoji:"\uD83D\uDCE8"},
   ]}
 ];
-var _navCollapsed = { "Admin": true }; // Admin collapsed by default
+var _navCollapsed = { "Reporting": true, "Admin": true }; // Reporting + Admin collapsed by default
 function getNavGroups(){
   var groups = JSON.parse(JSON.stringify(NAV_GROUPS));
   if(currentUser){
