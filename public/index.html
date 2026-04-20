@@ -2697,7 +2697,7 @@ var NAV_GROUPS=[
     {key:"jobs",label:"Jobs",emoji:"\uD83D\uDCBC"},
     {key:"consultants",label:"Consultants",emoji:"\uD83D\uDC54"},
     {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
-    {key:"aimatch",label:"AI Match",emoji:"\uD83E\uDDE0"},
+
     {key:"pipeline",label:"Pipeline",emoji:"\uD83D\uDD04"},
   ]},
   {section:"Intelligence", items:[
@@ -5468,125 +5468,6 @@ async function deleteCustomTemplate(id){
   }
 }
 
-/* ═══ AI MATCH PAGE ═══ */
-var _aiMatchJobId=null;
-var _aiMatchResult=null;
-function renderAIMatch(){
-  var h='<div style="margin-bottom:20px">';
-  h+='<p style="color:#64748b;font-size:14px;margin-bottom:16px">Select a job to find the best-fit candidates using AI-powered analysis. Claude analyzes certifications, availability, location, grade, and experience to rank and explain each match.</p>';
-  h+='<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">';
-  h+='<select id="ai-job-select" style="padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;font-size:14px;min-width:350px;font-family:inherit"><option value="">Select a job...</option></select>';
-  h+='<button class="btn-primary" onclick="runAIMatch()" style="padding:10px 20px">\uD83E\uDDE0 Run AI Match</button>';
-  h+='</div></div>';
-  h+='<div id="ai-match-results">';
-  if(_aiMatchResult){
-    h+=renderAIMatchResults(_aiMatchResult);
-  } else {
-    h+='<div class="empty-state"><div class="big">\uD83E\uDDE0</div><div class="title">AI-Powered Candidate Matching</div><div class="sub">Select a job above to find your best candidates with AI-generated insights</div></div>';
-  }
-  h+='</div>';
-  return h;
-}
-async function populateAIJobDropdown(){
-  try{
-    var sel=document.getElementById("ai-job-select");
-    if(!sel)return;
-    // Try Accepting Candidates first, then also grab Open jobs
-    var allJobs=[];
-    var seen={};
-    var statuses=["Accepting Candidates","Open"];
-    for(var si=0;si<statuses.length;si++){
-      try{
-        var jr=await apiFetch("jobs",{status:statuses[si]});
-        (jr.data||[]).forEach(function(j){
-          if(!seen[j.id]){seen[j.id]=true;allJobs.push(j);}
-        });
-      }catch(e){}
-    }
-    // If still empty, try fetching ALL jobs (no status filter)
-    if(allJobs.length===0){
-      try{
-        var jr2=await apiFetch("jobs",{status:"All"});
-        (jr2.data||[]).forEach(function(j){
-          if(!seen[j.id]){seen[j.id]=true;allJobs.push(j);}
-        });
-      }catch(e){}
-    }
-    var PRIO={"Urgent":"\uD83D\uDCA5","Hot":"\uD83D\uDD25","Warm":"\u2600\uFE0F","Cold":"\u2744\uFE0F"};
-    allJobs.forEach(function(j){
-      var opt=document.createElement("option");
-      opt.value=j.id;
-      opt.textContent=(PRIO[j.priority]||"")+" "+j.title+(j.client?" \u2014 "+j.client:"")+(j.status?" ["+j.status+"]":"");
-      sel.appendChild(opt);
-    });
-    if(allJobs.length===0){
-      var opt=document.createElement("option");
-      opt.value="";opt.textContent="No jobs found — check Bullhorn sync";opt.disabled=true;
-      sel.appendChild(opt);
-    }
-    if(_aiMatchJobId) sel.value=_aiMatchJobId;
-  }catch(e){console.error("AI dropdown error:",e);}
-}
-async function runAIMatch(){
-  var sel=document.getElementById("ai-job-select");
-  if(!sel||!sel.value){alert("Please select a job first");return;}
-  _aiMatchJobId=sel.value;
-  var resultsDiv=document.getElementById("ai-match-results");
-  resultsDiv.innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> AI is analyzing candidates\u2026 this may take a few seconds</div>';
-  try{
-    _aiMatchResult=await apiFetch("ai-match/"+_aiMatchJobId);
-    resultsDiv.innerHTML=renderAIMatchResults(_aiMatchResult);
-  }catch(e){
-    resultsDiv.innerHTML='<div style="color:#dc2626;padding:20px">Error: '+esc(e.message)+'</div>';
-  }
-}
-function renderAIMatchResults(r){
-  var h='';
-  // AI Insights panel
-  if(r.ai){
-    h+='<div style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1px solid #bfdbfe;border-radius:12px;padding:20px 24px;margin-bottom:20px">';
-    h+='<div style="font-size:15px;font-weight:700;color:#0f172a;margin-bottom:8px">\uD83E\uDDE0 AI Analysis</div>';
-    if(r.ai.insights) h+='<div style="font-size:14px;color:#334155;margin-bottom:12px">'+esc(r.ai.insights)+'</div>';
-    if(r.ai.topPick&&r.ai.topPick.reason){
-      h+='<div style="background:#fff;border-radius:8px;padding:12px 16px;margin-bottom:10px;border:1px solid #d1fae5">';
-      h+='<span style="font-weight:600;color:#059669">\u2B50 Top Pick:</span> '+esc(r.ai.topPick.reason)+'</div>';
-    }
-    if(r.ai.recommendations&&r.ai.recommendations.length>0){
-      h+='<div style="font-size:13px;font-weight:600;color:#475569;margin-bottom:4px">Recommendations:</div>';
-      r.ai.recommendations.forEach(function(rec){h+='<div style="font-size:13px;color:#475569;padding:2px 0">\u2022 '+esc(rec)+'</div>';});
-    }
-    h+='</div>';
-  }
-  // Job info bar
-  h+='<div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap">';
-  h+='<div class="stat-card" style="flex:1;min-width:150px"><div class="stat-label">Job</div><div style="font-size:15px;font-weight:600">'+esc(r.job.title)+'</div></div>';
-  h+='<div class="stat-card" style="flex:1;min-width:120px"><div class="stat-label">Client</div><div style="font-size:15px;font-weight:600">'+esc(r.job.client||"—")+'</div></div>';
-  h+='<div class="stat-card" style="flex:1;min-width:100px"><div class="stat-label">Location</div><div style="font-size:15px;font-weight:600">'+esc(r.job.location||"—")+'</div></div>';
-  h+='<div class="stat-card" style="flex:1;min-width:100px"><div class="stat-label">Matches</div><div style="font-size:15px;font-weight:600">'+r.totalScored+' scored</div></div>';
-  h+='</div>';
-  // Candidate table
-  h+='<div class="table-wrap"><table><thead><tr><th>Rank</th><th>Name</th><th>Certs</th><th>Grade</th><th>Availability</th><th>Location</th><th>Score</th><th>Why</th></tr></thead><tbody>';
-  var aiNotes={};
-  if(r.ai&&r.ai.candidateNotes){r.ai.candidateNotes.forEach(function(n){aiNotes[n.index]=n.note;});}
-  (r.candidates||[]).forEach(function(c,i){
-    var scoreColor=c.score>=70?"#059669":c.score>=50?"#d97706":c.score>=30?"#dc2626":"#94a3b8";
-    h+='<tr onclick="openDetail('+c.id+')">';
-    h+='<td style="font-weight:700;color:#176087">#'+(i+1)+'</td>';
-    h+='<td><span class="name-link">'+esc(c.firstName+" "+c.lastName)+'</span><br><span class="muted" style="font-size:12px">'+esc(c.title)+'</span></td>';
-    h+='<td style="font-size:12px">'+esc(c.primaryCert||"—")+'</td>';
-    h+='<td>'+esc(c.grade||"—")+'</td>';
-    h+='<td>'+esc(c.available)+'</td>';
-    h+='<td>'+esc(c.location||"—")+'</td>';
-    h+='<td><span style="font-weight:700;color:'+scoreColor+'">'+c.score+'</span></td>';
-    h+='<td style="font-size:12px;max-width:200px;white-space:normal">';
-    if(c.factors&&c.factors.length>0) h+=c.factors.map(function(f){return esc(f);}).join(", ");
-    if(aiNotes[i+1]) h+='<br><span style="color:#176087;font-style:italic">\uD83E\uDDE0 '+esc(aiNotes[i+1])+'</span>';
-    h+='</td></tr>';
-  });
-  h+='</tbody></table></div>';
-  return h;
-}
-
 /* ═══ RELATIONSHIPS PAGE ═══ */
 var _relTab="candidates";
 var _relSort="risk";
@@ -6835,8 +6716,6 @@ async function loadPage(){
         h=renderSmartLists(slr);break;
       case "portal":
         h=await renderPortal();break;
-      case "aimatch":
-        h=renderAIMatch();break;
       case "certtracker":
         var ctData=await apiFetch("cert-tracker");
         h=renderCertTracker(ctData);break;
@@ -6865,7 +6744,7 @@ async function loadPage(){
   document.getElementById("content").innerHTML=h;
   // Post-render hooks
   if(currentPage==="smartmatch") populateJobDropdown();
-  if(currentPage==="aimatch") populateAIJobDropdown();
+
   if(currentPage==="dataquality") renderDQTable();
   if(currentPage==="portal"&&_portalTab==="generate"&&_portalSelectedClient){
     var genTmpl=document.querySelector('input[name="gen-template"]:checked');

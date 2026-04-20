@@ -2262,7 +2262,8 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
     });
 
     // 5b. Detect job employment type for filtering
-    var jobEmploymentType = (job.employmentType || "").toLowerCase().trim();
+    var rawJobEmpType = job.employmentType;
+    var jobEmploymentType = (typeof rawJobEmpType === "string" ? rawJobEmpType : (rawJobEmpType && rawJobEmpType.name ? rawJobEmpType.name : "")).toLowerCase().trim();
     var isDirectHire = jobEmploymentType === "direct hire" || jobEmploymentType === "permanent";
 
     // 6. Score candidates — multi-factor scoring
@@ -2395,7 +2396,8 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
 
       // ── Employment Type Compatibility (penalty for mismatch) ──
       var empTypeScore = 0;
-      var candEmployeeType = (c.employeeType || "").toLowerCase().trim();
+      var rawCandEmpType = c.employeeType;
+      var candEmployeeType = (typeof rawCandEmpType === "string" ? rawCandEmpType : (rawCandEmpType && rawCandEmpType.name ? rawCandEmpType.name : "")).toLowerCase().trim();
       if (isDirectHire && candEmployeeType) {
         // Candidate is W2-only → not a fit for Direct Hire
         var isW2Only = (candEmployeeType === "w2" || candEmployeeType === "w-2") &&
@@ -2418,7 +2420,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
         secondaryCert: secondaryCerts,
         preferredRole: preferredRole,
         epicRole: (Array.isArray(c.customText5) ? c.customText5.join(", ") : c.customText5) || "",
-        employeeType: c.employeeType || "",
+        employeeType: (typeof c.employeeType === "string" ? c.employeeType : (c.employeeType && c.employeeType.name ? c.employeeType.name : "")) || "",
         grade,
         status: c.status || "",
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
@@ -2449,7 +2451,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       job: {
         id: job.id, title: job.title || "", matchedCerts, relatedCerts: smRelated,
         roleLevel: detectedRoleName || null, isLeadershipRole,
-        employmentType: job.employmentType || "", isDirectHire,
+        employmentType: jobEmploymentType || "", isDirectHire,
         experienceKeywords: EXPERIENCE_KEYWORDS,
       },
       candidates: filtered.slice(0, 50),
@@ -2457,329 +2459,6 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
     });
   } catch (e) {
     console.error("[Smart Match]", e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ═══ AI-POWERED MATCHING (Claude API) ═══════════════════════════
-app.get("/api/ai-match/:jobId", async (req, res) => {
-  try {
-    var jobId = parseInt(req.params.jobId);
-    var apiKey = process.env.ANTHROPIC_API_KEY || "";
-    // If no API key, we'll still do pre-scored matching — just skip the AI analysis
-
-    // Get job details from Postgres or Bullhorn
-    var job = null;
-    if (db.ready) {
-      job = await db.getOne("SELECT * FROM jobs WHERE id = $1", [jobId]);
-    }
-    if (!job) {
-      var bhJob = await bhFetch("entity/JobOrder/" + jobId, {
-        fields: "id,title,description,publicDescription,employmentType,status,clientCorporation,customText1,customText2,customText3,customText4,customText5,customText6,customText7,address,salary,payRate,clientBillRate,numOpenings,startDate,skillList,yearsRequired"
-      });
-      job = bhJob.data || bhJob;
-    }
-
-    // Get candidate pool from Postgres
-    var candidates = [];
-    if (db.ready) {
-      candidates = (await db.query(
-        "SELECT id, first_name, last_name, occupation, custom_text1, custom_text2, custom_text5, custom_text6, custom_text7, status, address_city, address_state, salary, hourly_rate, date_available, email, phone, skill_list, experience, description FROM candidates WHERE status NOT IN ('Placed', 'Inactive', 'Do Not Contact') ORDER BY date_last_modified DESC NULLS LAST"
-      )).rows;
-    } else {
-      var bhCands = await bhFetchAll("search/Candidate", {
-        query: 'isDeleted:0 AND (status:"Active" OR status:"Available")',
-        fields: "id,firstName,lastName,occupation,customText1,customText2,customText5,customText6,customText7,status,address,salary,hourlyRate,dateAvailable,email,phone,skillList,experience,description",
-        sort: "-dateLastModified"
-      });
-      candidates = (bhCands.data || []).map(function (c) {
-        return {
-          id: c.id, first_name: c.firstName, last_name: c.lastName,
-          occupation: c.occupation, custom_text1: Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1,
-          custom_text2: Array.isArray(c.customText2) ? c.customText2.join(", ") : c.customText2,
-          custom_text5: c.customText5, custom_text6: c.customText6, custom_text7: c.customText7,
-          status: c.status, address_city: c.address ? c.address.city : "",
-          address_state: c.address ? c.address.state : "",
-          salary: c.salary, hourly_rate: c.hourlyRate,
-          date_available: c.dateAvailable, email: c.email, phone: c.phone,
-          skill_list: c.skillList, experience: c.experience, description: c.description
-        };
-      });
-    }
-
-    // Build job profile for Claude
-    var jobTitle = job.title || job.job_title || "";
-    var jobDesc = job.description || job.public_description || job.publicDescription || "";
-    var jobCertsRaw = job.custom_text1 || (job.customText1 ? (Array.isArray(job.customText1) ? job.customText1.join(", ") : job.customText1) : "");
-    var jobLocation = job.address_city ? (job.address_city + ", " + job.address_state) : (job.address ? [job.address.city, job.address.state].filter(Boolean).join(", ") : "");
-    var jobClient = job.client_name || (job.clientCorporation ? job.clientCorporation.name : "");
-    var jobRate = job.client_bill_rate || job.clientBillRate || job.salary || "";
-    var jobType = job.employment_type || job.employmentType || "";
-
-    // ── Cert alias + relationship mapping ──
-    var MATCH_CERT_ALIASES = {
-      "pb": "Professional Billing", "professional billing": "Professional Billing",
-      "hb": "Hospital Billing", "hospital billing": "Hospital Billing",
-      "cadence": "Cadence", "willow": "Willow", "beaker": "Beaker",
-      "cupid": "Cupid", "tapestry": "Tapestry", "cogito": "Cogito",
-      "bridges": "Bridges", "radiant": "Radiant", "prelude": "Prelude",
-      "phoenix": "Phoenix", "resolute": "Resolute", "rover": "Rover",
-      "clarity": "Clarity", "ambulatory": "Ambulatory", "epiccare ambulatory": "Ambulatory",
-      "inpatient": "Inpatient", "epiccare inpatient": "Inpatient",
-      "epiccare": "EpicCare", "optime": "OpTime", "grand central": "Grand Central",
-      "hyperspace": "Hyperspace", "mychart": "MyChart", "my chart": "MyChart",
-      "beacon": "Beacon", "clindoc": "ClinDoc", "clinical documentation": "ClinDoc",
-      "clin doc": "ClinDoc", "adt": "ADT", "him": "HIM", "orders": "Orders",
-      "order entry": "Orders", "healthy planet": "Healthy Planet",
-      "claims": "Claims", "rte": "RTE", "referrals": "Referrals",
-      "patient access": "Patient Access",
-    };
-    // Related certs that should also match (e.g. PB roles often want Resolute PB)
-    var CERT_RELATIONSHIPS = {
-      "Professional Billing": ["Resolute", "Resolute Professional Billing", "Claims", "RTE"],
-      "Hospital Billing": ["Resolute", "Resolute Hospital Billing", "Claims"],
-      "Resolute": ["Professional Billing", "Hospital Billing"],
-      "Patient Access": ["Prelude", "ADT", "Grand Central", "Cadence"],
-      "Prelude": ["Patient Access", "ADT", "Grand Central"],
-      "ADT": ["Patient Access", "Prelude", "Grand Central"],
-      "Grand Central": ["Patient Access", "ADT", "Prelude"],
-      "ClinDoc": ["Inpatient", "EpicCare"],
-      "Ambulatory": ["EpicCare"],
-      "Cadence": ["Referrals", "Prelude"],
-    };
-
-    // Extract required certs from job custom fields AND title/description
-    var extractedCerts = [];
-    // From custom_text1 (explicit cert field)
-    if (jobCertsRaw) {
-      jobCertsRaw.split(",").map(function(s){return s.trim();}).filter(Boolean).forEach(function(c) {
-        var norm = MATCH_CERT_ALIASES[c.toLowerCase()] || c;
-        if (extractedCerts.indexOf(norm) < 0) extractedCerts.push(norm);
-      });
-    }
-    // From job title — scan for known cert keywords
-    var titleAndDesc = (jobTitle + " " + (job.custom_text2 || job.customText2 || "") + " " + (job.custom_text3 || job.customText3 || "")).toLowerCase();
-    Object.keys(MATCH_CERT_ALIASES).forEach(function(alias) {
-      if (titleAndDesc.indexOf(alias) >= 0) {
-        var norm = MATCH_CERT_ALIASES[alias];
-        if (extractedCerts.indexOf(norm) < 0) extractedCerts.push(norm);
-      }
-    });
-    // Expand with related certs (lower priority but still relevant)
-    var relatedCerts = [];
-    extractedCerts.forEach(function(c) {
-      if (CERT_RELATIONSHIPS[c]) {
-        CERT_RELATIONSHIPS[c].forEach(function(r) {
-          if (extractedCerts.indexOf(r) < 0 && relatedCerts.indexOf(r) < 0) relatedCerts.push(r);
-        });
-      }
-    });
-    var jobCerts = extractedCerts.join(", ");
-    console.log("[AI Match] Job:", jobTitle, "| Extracted certs:", extractedCerts.join(", "), "| Related:", relatedCerts.join(", "));
-
-    // ── Extract role level from job title ──
-    var ROLE_LEVELS = {
-      "analyst": ["analyst", "application analyst", "app analyst"],
-      "senior analyst": ["senior analyst", "sr analyst", "sr. analyst", "lead analyst"],
-      "consultant": ["consultant"],
-      "trainer": ["trainer"],
-      "project manager": ["project manager", "pm", "program manager"],
-      "director": ["director"],
-      "manager": ["manager"],
-      "advisor": ["advisor"],
-      "lead": ["lead"],
-    };
-    var jobTitleLower = jobTitle.toLowerCase();
-    var jobRoleLevel = null;
-    // Match most specific first (senior analyst before analyst)
-    var rolePriority = ["senior analyst", "project manager", "lead", "advisor", "director", "manager", "analyst", "consultant", "trainer"];
-    for (var ri = 0; ri < rolePriority.length; ri++) {
-      var aliases = ROLE_LEVELS[rolePriority[ri]];
-      for (var ai = 0; ai < aliases.length; ai++) {
-        if (jobTitleLower.indexOf(aliases[ai]) >= 0) { jobRoleLevel = rolePriority[ri]; break; }
-      }
-      if (jobRoleLevel) break;
-    }
-    // Group roles into tiers for compatibility scoring
-    var ROLE_TIERS = {
-      "analyst": 1, "consultant": 1, "trainer": 1,
-      "senior analyst": 2, "lead": 2, "advisor": 2,
-      "manager": 3, "project manager": 3,
-      "director": 4,
-    };
-    var jobRoleTier = jobRoleLevel ? (ROLE_TIERS[jobRoleLevel] || 1) : null;
-    console.log("[AI Match] Job role level:", jobRoleLevel, "| Tier:", jobRoleTier);
-
-    // Pre-score candidates with weighted factors
-    var now = Date.now();
-    var scored = candidates.map(function (c) {
-      var score = 0;
-      var factors = [];
-      var primaryCerts = (c.custom_text1 || "").toLowerCase();
-      var secondaryCerts = (c.custom_text2 || "").toLowerCase();
-      var allCerts = primaryCerts + ", " + secondaryCerts;
-
-      // ══════════════════════════════════════════════════════════
-      // SCORING: Certs (40pts) + Availability (35pts) + Role (10pts) + Grade (8pts) + Location (5pts) + Status (2pts) = 100
-      // ══════════════════════════════════════════════════════════
-
-      // ── 1. Cert matching (40 points max) ──
-      if (extractedCerts.length > 0) {
-        var primaryMatched = 0;
-        var secondaryMatched = 0;
-        var relatedMatched = 0;
-        extractedCerts.forEach(function (rc) {
-          if (primaryCerts.indexOf(rc.toLowerCase()) >= 0) primaryMatched++;
-          else if (secondaryCerts.indexOf(rc.toLowerCase()) >= 0) secondaryMatched++;
-        });
-        relatedCerts.forEach(function (rc) {
-          if (allCerts.indexOf(rc.toLowerCase()) >= 0) relatedMatched++;
-        });
-        var certScore = 0;
-        if (extractedCerts.length > 0) {
-          certScore = ((primaryMatched * 1.0 + secondaryMatched * 0.6) / extractedCerts.length) * 40;
-        }
-        if (relatedCerts.length > 0) {
-          certScore += Math.min(8, (relatedMatched / relatedCerts.length) * 8);
-        }
-        score += Math.round(certScore);
-        if (primaryMatched > 0) factors.push(primaryMatched + "/" + extractedCerts.length + " primary cert match");
-        if (secondaryMatched > 0) factors.push(secondaryMatched + " secondary cert match");
-        if (relatedMatched > 0) factors.push(relatedMatched + " related cert match");
-        if (primaryMatched === 0 && secondaryMatched === 0 && relatedMatched === 0) {
-          score -= 30;
-          factors.push("No cert match");
-        }
-      }
-
-      // ── 2. Availability (35 points max — co-dominant with certs) ──
-      var rawAvail = c.date_available ? Number(c.date_available) : 0;
-      var availDate = rawAvail > 946684800000 ? rawAvail : null;
-      if (availDate) {
-        var daysUntil = (availDate - now) / 86400000;
-        if (daysUntil <= 0) { score += 35; factors.push("\u2705 Available now"); }
-        else if (daysUntil <= 7) { score += 32; factors.push("\u2705 Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 14) { score += 28; factors.push("\uD83D\uDD52 Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 30) { score += 22; factors.push("\uD83D\uDD52 Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 60) { score += 12; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 90) { score += 5; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else { score -= 5; factors.push("\u26A0\uFE0F Available in " + Math.ceil(daysUntil) + " days"); }
-      } else {
-        score -= 20; // No availability date = big red flag for staffing
-        factors.push("\uD83D\uDED1 No availability date");
-      }
-
-      // ── 3. Role level matching (10 points max) ──
-      if (jobRoleTier) {
-        var candTitle = (c.occupation || "").toLowerCase();
-        var candRole = (c.custom_text5 || "").toLowerCase();
-        var candText = candTitle + " " + candRole;
-        var candRoleTier = null;
-        for (var ri2 = 0; ri2 < rolePriority.length; ri2++) {
-          var aliases2 = ROLE_LEVELS[rolePriority[ri2]];
-          for (var ai2 = 0; ai2 < aliases2.length; ai2++) {
-            if (candText.indexOf(aliases2[ai2]) >= 0) { candRoleTier = ROLE_TIERS[rolePriority[ri2]] || 1; break; }
-          }
-          if (candRoleTier !== null) break;
-        }
-        if (candRoleTier !== null) {
-          var tierDiff = Math.abs(jobRoleTier - candRoleTier);
-          if (tierDiff === 0) { score += 10; factors.push("Role match"); }
-          else if (tierDiff === 1) { score += 5; factors.push("Similar role level"); }
-          else { score -= 15; factors.push("Role mismatch"); }
-        }
-      }
-
-      // ── 4. Grade (8 points max) ──
-      var grade = (c.custom_text6 || "").toUpperCase();
-      if (grade === "A") { score += 8; factors.push("Grade A"); }
-      else if (grade === "B") { score += 5; factors.push("Grade B"); }
-      else if (grade === "C") { score += 2; }
-
-      // ── 5. Location (5 points max) ──
-      if (jobLocation && c.address_state) {
-        var jobState = (jobLocation.split(",").pop() || "").trim().toLowerCase();
-        if (c.address_state.toLowerCase() === jobState) { score += 5; factors.push("Same state"); }
-      }
-
-      // ── 6. Status (2 points max) ──
-      if (c.status === "Active" || c.status === "Available") { score += 2; }
-
-      return {
-        id: c.id, firstName: c.first_name || "", lastName: c.last_name || "",
-        title: c.occupation || "",
-        primaryCert: c.custom_text1 || "", secondaryCert: c.custom_text2 || "",
-        epicRole: c.custom_text5 || "", grade: c.custom_text6 || "",
-        status: c.status || "",
-        location: [c.address_city, c.address_state].filter(Boolean).join(", "),
-        available: availDate ? new Date(availDate).toLocaleDateString() : "—",
-        email: c.email || "", phone: c.phone || "",
-        score: Math.round(score),
-        factors: factors,
-        _forAI: {
-          name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
-          certs: c.custom_text1 || "", secondaryCerts: c.custom_text2 || "",
-          role: c.occupation || "", grade: c.custom_text6 || "",
-          experience: c.experience || "", skills: c.skill_list || "",
-        }
-      };
-    });
-
-    // Sort by pre-score and take top 30 for AI analysis
-    scored.sort(function (a, b) { return b.score - a.score; });
-    var topCandidates = scored.slice(0, 30);
-
-    // Call Claude API for deep analysis (only if API key is configured)
-    var aiInsights = null;
-    if (apiKey) { try {
-      var candidateSummaries = topCandidates.slice(0, 15).map(function (c, i) {
-        return (i + 1) + ". " + c._forAI.name + " — Certs: " + (c._forAI.certs || "none") + " | Secondary: " + (c._forAI.secondaryCerts || "none") + " | Role: " + c._forAI.role + " | Grade: " + (c._forAI.grade || "?") + " | Exp: " + (c._forAI.experience || "?") + " yrs | Score: " + c.score;
-      }).join("\n");
-
-      var aiPrompt = "You are an expert Epic healthcare IT staffing advisor for Anura Connect. Analyze this job and candidate matches.\n\n"
-        + "JOB: " + jobTitle + "\nClient: " + jobClient + "\nLocation: " + jobLocation + "\nType: " + jobType + "\nRate: " + jobRate + "\nRequired Certs: " + jobCerts + "\nDescription: " + (jobDesc || "Not provided").substring(0, 500) + "\n\n"
-        + "TOP CANDIDATES (pre-scored):\n" + candidateSummaries + "\n\n"
-        + "Respond in JSON format ONLY (no markdown, no code fences):\n"
-        + '{"topPick":{"candidateIndex":1,"reason":"..."},"insights":"2-3 sentence market insight about this role/cert demand","recommendations":["action item 1","action item 2"],"candidateNotes":[{"index":1,"note":"..."},{"index":2,"note":"..."},{"index":3,"note":"..."}]}';
-
-      var aiRes = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1024,
-          messages: [{ role: "user", content: aiPrompt }]
-        })
-      });
-
-      if (aiRes.ok) {
-        var aiData = await aiRes.json();
-        var aiText = aiData.content && aiData.content[0] ? aiData.content[0].text : "";
-        try { aiInsights = JSON.parse(aiText); } catch (pe) {
-          // Try to extract JSON from response
-          var jsonMatch = aiText.match(/\{[\s\S]*\}/);
-          if (jsonMatch) { try { aiInsights = JSON.parse(jsonMatch[0]); } catch (e2) {} }
-        }
-      }
-    } catch (aiErr) {
-      console.log("[AI Match] Claude API error (non-blocking):", aiErr.message);
-    } } // end if (apiKey)
-
-    // Clean up _forAI from response
-    topCandidates.forEach(function (c) { delete c._forAI; });
-
-    res.json({
-      job: { id: jobId, title: jobTitle, client: jobClient, location: jobLocation, type: jobType, certs: jobCerts },
-      candidates: topCandidates,
-      totalScored: scored.length,
-      ai: aiInsights,
-    });
-  } catch (e) {
-    console.error("[AI Match]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -6079,7 +5758,7 @@ app.get("/api/touch-report", async (req, res) => {
     // Fetch stale client contacts (active, assigned to health system, with owner)
     const clientData = await bhFetchAll("search/ClientContact", {
       query: `isDeleted:0 AND status:"Active" AND clientCorporation.id:[1 TO *] AND owner.id:[1 TO *]`,
-      fields: "id,firstName,lastName,title,status,dateLastModified,email,phone,owner,clientCorporation",
+      fields: "id,firstName,lastName,occupation,status,dateLastModified,email,phone,owner,clientCorporation",
       sort: "dateLastModified",
     });
 
@@ -6124,7 +5803,7 @@ app.get("/api/touch-report", async (req, res) => {
         id: c.id,
         type: "ClientContact",
         name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
-        title: c.title || "",
+        title: c.occupation || c.title || "",
         status: c.status || "",
         email: c.email || "",
         phone: c.phone || "",
