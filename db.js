@@ -798,7 +798,7 @@ var PLACEMENT_FIELDS = [
   "dateBegin","dateEnd","dateAdded","dateLastModified",
   "payRate","clientBillRate","salary","salaryUnit",
   "fee","overtimeRate","clientOvertimeRate",
-  "hoursPerDay","daysPerWeek","daysGuaranteed",
+  "hoursPerDay","daysGuaranteed",
   "housingManager","referringUser",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
@@ -818,7 +818,7 @@ var CLIENT_FIELDS = [
   "id","name","status","companyURL","phone",
   "industryList","numEmployees","revenue","notes",
   "address","billingAddress","billingPhone","billingContact",
-  "owner",
+  "owner(id,firstName,lastName,email)",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
   "customTextBlock1","customTextBlock2","customTextBlock3",
@@ -843,21 +843,21 @@ var SUBMISSION_FIELDS = [
   "customInt1","customInt2","customInt3",
   "customFloat1","customFloat2","customFloat3",
   "customDate1","customDate2",
-  "externalID","milesRadius"
+  "milesRadius"
 ].join(",");
 
 var NOTE_FIELDS = [
-  "id","personReference","clientCorporation","jobOrder","placement",
+  "id","personReference","jobOrder","placement",
   "action","comments","dateAdded","dateLastModified",
   "commentingPerson","isDeleted",
-  "externalID","minutesSpent"
+  "minutesSpent"
 ].join(",");
 
 var OPPORTUNITY_FIELDS = [
   "id","title","type","status","clientCorporation","owner",
   "estimatedStartDate","estimatedEndDate","estimatedHoursPerWeek",
   "salary",
-  "numOpenings","winProbabilityPercent","weightedDealValue","dealValue","commission",
+  "numOpenings","winProbabilityPercent","weightedDealValue","dealValue",
   "dateAdded","dateLastModified","description","lead","source","reasonClosed",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
@@ -887,12 +887,12 @@ var CORPORATE_USER_FIELDS = [
   "id","firstName","lastName","name","email","email2",
   "phone","mobile","username","occupation","status",
   "isDeleted","dateLastModified",
-  "primaryDepartment","externalID"
+  "primaryDepartment"
 ].join(",");
 
 var SENDOUT_FIELDS = [
   "id","candidate","jobOrder","clientCorporation","clientContact",
-  "dateAdded","dateLastModified",
+  "dateAdded",
   "sendingUser","isRead"
 ].join(",");
 
@@ -905,7 +905,7 @@ var APPOINTMENT_FIELDS = [
 
 var TASK_FIELDS = [
   "id","subject","type","description",
-  "candidateReference","clientContactReference","jobOrder","placement",
+  "candidate","clientContact","jobOrder","placement",
   "owner","dateBegin","dateEnd","dateAdded","dateLastModified",
   "dateCompleted","isDeleted","isCompleted"
 ].join(",");
@@ -1446,7 +1446,8 @@ var SYNC_ENTITIES = {
     queryField: "where",
     baseQuery: "id IS NOT NULL",
     fields: SENDOUT_FIELDS,
-    sortField: "-dateLastModified",
+    sortField: "-dateAdded",
+    incrementalField: "dateAdded",
     transform: function (r) {
       var cand = r.candidate || {};
       var jo = r.jobOrder || {};
@@ -1517,8 +1518,8 @@ var SYNC_ENTITIES = {
     fields: TASK_FIELDS,
     sortField: "-dateLastModified",
     transform: function (r) {
-      var cand = r.candidateReference || {};
-      var contact = r.clientContactReference || {};
+      var cand = r.candidate || r.candidateReference || {};
+      var contact = r.clientContact || r.clientContactReference || {};
       var jo = r.jobOrder || {};
       var pl = r.placement || {};
       return {
@@ -1599,12 +1600,13 @@ async function syncEntity(entityType, syncType) {
       var state = await getOne("SELECT * FROM sync_state WHERE entity_type=$1", [entityType]);
       if (state && state.last_incremental_sync) {
         var sinceMs = new Date(state.last_incremental_sync).getTime() - 60000; // 1 min overlap for safety
+        var incField = config.incrementalField || "dateLastModified";
         if (config.queryField === "query") {
           // search/ endpoint uses Lucene syntax
-          queryOrWhere += " AND dateLastModified:[" + sinceMs + " TO *]";
+          queryOrWhere += " AND " + incField + ":[" + sinceMs + " TO *]";
         } else {
           // query/ endpoint uses SQL-like syntax
-          queryOrWhere += " AND dateLastModified >= " + sinceMs;
+          queryOrWhere += " AND " + incField + " >= " + sinceMs;
         }
       }
     }

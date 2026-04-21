@@ -18,7 +18,7 @@ aside nav button{display:flex;align-items:center;gap:10px;width:100%;padding:9px
 aside nav button.active{background:#176087;color:#fff;font-weight:600}
 aside nav button:not(.active){background:transparent;color:#94a3b8;font-weight:400}
 aside nav button:not(.active):hover{background:#163a56}
-aside .nav-section{padding:10px 14px 4px;font-size:10px;font-weight:700;color:#4a6a80;text-transform:uppercase;letter-spacing:.08em;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none}
+aside .nav-section{padding:10px 14px 4px;font-size:10px;font-weight:700;color:#4a6a80;letter-spacing:.08em;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none}
 aside .nav-section:first-child{padding-top:4px}
 aside .nav-section .nav-arrow{font-size:8px;transition:transform .2s;color:#4a6a80}
 aside .nav-section .nav-arrow.collapsed{transform:rotate(-90deg)}
@@ -62,7 +62,7 @@ header.top-bar h1{font-size:18px;font-weight:700;color:#0f172a}
 .count-line{font-size:13px;color:#94a3b8;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
 .table-wrap{background:#fff;border-radius:10px;border:1px solid #e9eef4;overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;padding:8px 12px;color:#64748b;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;border-bottom:2px solid #e9eef4;position:relative;min-width:60px}
+th{text-align:left;padding:8px 12px;color:#64748b;font-weight:600;font-size:11px;letter-spacing:.05em;white-space:nowrap;border-bottom:2px solid #e9eef4;position:relative;min-width:60px}
 th .col-resize{position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;background:transparent;z-index:2}
 th .col-resize:hover,th .col-resize.active{background:#176087;opacity:.3;border-radius:2px}
 td{padding:10px 12px;color:#334155;border-bottom:1px solid #f1f5f9;overflow:hidden;text-overflow:ellipsis;max-width:400px;white-space:nowrap}
@@ -82,7 +82,7 @@ tbody tr:hover{background:#eff6ff}
 .adv-filters{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;margin-bottom:16px;display:none}
 .adv-filters.open{display:block}
 .adv-filters .row{display:flex;gap:16px;flex-wrap:wrap;align-items:end}
-.adv-filters label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em}
+.adv-filters label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:#64748b;letter-spacing:.03em}
 .adv-filters input,.adv-filters select{padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit;color:#334155;min-width:140px}
 .adv-filters input:focus,.adv-filters select:focus{border-color:#176087;outline:none}
 .filter-toggle{padding:6px 12px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;font-size:12px;font-weight:500;color:#475569;cursor:pointer;font-family:inherit}
@@ -101,7 +101,7 @@ tbody tr:hover{background:#eff6ff}
 .pipeline-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
 .pipeline-stat{text-align:center;padding:10px 6px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0}
 .pipeline-stat .ps-num{font-size:22px;font-weight:800;line-height:1}
-.pipeline-stat .ps-lbl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-top:4px}
+.pipeline-stat .ps-lbl{font-size:10px;font-weight:600;letter-spacing:.04em;color:#64748b;margin-top:4px}
 .file-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9}
 .file-item:last-child{border-bottom:none}
 .file-icon{width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
@@ -114,11 +114,11 @@ tbody tr:hover{background:#eff6ff}
 .edit-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
 .edit-field{display:flex;flex-direction:column;gap:3px}
 .edit-field.full-width{grid-column:1/-1}
-.edit-field label{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em}
+.edit-field label{font-size:11px;font-weight:600;color:#64748b;letter-spacing:.03em}
 .edit-field input,.edit-field select,.edit-field textarea{padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:inherit;color:#334155;background:#fff}
 .edit-field input:focus,.edit-field select:focus,.edit-field textarea:focus{border-color:#176087;outline:none;box-shadow:0 0 0 2px rgba(23,96,135,.1)}
 .edit-field textarea{resize:vertical;min-height:60px}
-.edit-section-title{font-size:13px;font-weight:700;color:#176087;text-transform:uppercase;letter-spacing:.04em;padding:12px 0 6px;border-bottom:1px solid #e2e8f0;margin-bottom:8px;grid-column:1/-1}
+.edit-section-title{font-size:13px;font-weight:700;color:#176087;letter-spacing:.04em;padding:12px 0 6px;border-bottom:1px solid #e2e8f0;margin-bottom:8px;grid-column:1/-1}
 .edit-save-bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:16px 24px;display:flex;gap:10px;justify-content:flex-end;z-index:5}
 .edit-save-bar .btn-save{padding:8px 24px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
 .edit-save-bar .btn-save:hover{background:#15803d}
@@ -130,7 +130,7 @@ tbody tr:hover{background:#eff6ff}
 .pipe-stage:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
 .pipe-stage.active{border-color:currentColor;box-shadow:0 4px 16px rgba(0,0,0,.12)}
 .pipe-stage .ps-num{font-size:28px;font-weight:800;line-height:1}
-.pipe-stage .ps-lbl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-top:4px;opacity:.8}
+.pipe-stage .ps-lbl{font-size:11px;font-weight:600;letter-spacing:.04em;margin-top:4px;opacity:.8}
 .pipe-stage .ps-pct{font-size:10px;margin-top:2px;opacity:.6}
 .pipe-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px}
 .pipe-toggle{display:flex;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
@@ -138,7 +138,7 @@ tbody tr:hover{background:#eff6ff}
 .pipe-toggle button.active{background:#176087;color:#fff}
 .pipe-toggle button:hover:not(.active){background:#f1f5f9}
 .pipe-time-select{padding:6px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:12px;font-family:inherit;color:#334155}
-.detail-section h4{font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px}
+.detail-section h4{font-size:12px;font-weight:600;color:#64748b;letter-spacing:.05em;margin-bottom:12px}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .detail-field{font-size:13px}
 .detail-field .lbl{color:#94a3b8;font-size:11px;margin-bottom:2px}
@@ -170,11 +170,11 @@ tbody tr:hover{background:#eff6ff}
 .ts-sheet .ts-close:hover{color:#0f172a}
 .ts-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:16px;border-bottom:3px solid #176087}
 .ts-brand .ts-logo{font-size:24px;font-weight:800;color:#176087}
-.ts-brand .ts-sub{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em}
+.ts-brand .ts-sub{font-size:12px;color:#94a3b8;letter-spacing:.08em}
 .ts-name{font-size:28px;font-weight:700;color:#0E2E47;margin-bottom:4px}
 .ts-title{font-size:16px;color:#64748b;margin-bottom:16px}
 .ts-section{margin-bottom:24px}
-.ts-section h4{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#176087;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}
+.ts-section h4{font-size:13px;letter-spacing:.06em;color:#176087;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}
 .ts-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:14px}
 .ts-row .ts-label{color:#94a3b8;font-size:12px}
 .ts-row .ts-val{color:#0f172a;font-weight:500;margin-bottom:8px}
@@ -220,7 +220,7 @@ tbody tr:hover{background:#eff6ff}
 .ask-sug{padding:8px 14px;border-radius:20px;border:1px solid #e2e8f0;background:#fff;font-size:12px;color:#475569;cursor:pointer;font-family:inherit;transition:all .15s}
 .ask-sug:hover{border-color:#176087;background:#eff6ff;color:#176087}
 .ask-data-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
-.ask-data-table th{text-align:left;padding:8px 10px;background:#f8fafc;color:#64748b;font-weight:600;font-size:11px;text-transform:uppercase;border-bottom:2px solid #e2e8f0}
+.ask-data-table th{text-align:left;padding:8px 10px;background:#f8fafc;color:#64748b;font-weight:600;font-size:11px;border-bottom:2px solid #e2e8f0}
 .ask-data-table td{padding:8px 10px;border-bottom:1px solid #f1f5f9}
 /* Touch report */
 .touch-tabs{display:flex;gap:4px;margin-bottom:20px}
@@ -242,7 +242,7 @@ tbody tr:hover{background:#eff6ff}
 .cd-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:20px}
 .cd-kpi{text-align:center;padding:12px 8px;border-radius:10px;background:#f8fafc;border:1px solid #e2e8f0}
 .cd-kpi .kv{font-size:22px;font-weight:800;line-height:1}
-.cd-kpi .kl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:#64748b;margin-top:3px}
+.cd-kpi .kl{font-size:10px;font-weight:600;letter-spacing:.03em;color:#64748b;margin-top:3px}
 .contact-card{display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;border:1px solid #e2e8f0;margin-bottom:8px;transition:box-shadow .15s}
 .contact-card:hover{box-shadow:0 2px 8px rgba(0,0,0,.06)}
 .contact-avatar{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0}
@@ -447,7 +447,7 @@ tbody tr:hover{background:#eff6ff}
 </head>
 <body>
 <!-- Environment banner (shown only on non-prod, e.g. staging) -->
-<div id="env-banner" style="display:none;position:sticky;top:0;z-index:9999;width:100%;padding:8px 16px;text-align:center;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:#fde047;color:#78350f;border-bottom:2px solid #ca8a04;box-shadow:0 2px 4px rgba(0,0,0,0.05)"></div>
+<div id="env-banner" style="display:none;position:sticky;top:0;z-index:9999;width:100%;padding:8px 16px;text-align:center;font-size:13px;font-weight:700;letter-spacing:.04em;background:#fde047;color:#78350f;border-bottom:2px solid #ca8a04;box-shadow:0 2px 4px rgba(0,0,0,0.05)"></div>
 <!-- Sidebar -->
 <aside>
   <div class="logo">
@@ -581,19 +581,19 @@ function updateEnvBanner() {
     el.style.background = "#fde047";
     el.style.color = "#78350f";
     el.style.borderBottom = "2px solid #ca8a04";
-    el.textContent = "\u26A0 STAGING ENVIRONMENT \u2014 Pre-production testing. Changes here do NOT affect the live dashboard.";
+    el.textContent = "\u26A0 Staging Environment \u2014 Pre-production testing. Changes here do not affect the live dashboard.";
     document.title = "[STAGING] Anura Connect — Bullhorn Dashboard";
   } else if (env === "development" || env === "dev" || env === "local") {
     el.style.background = "#bfdbfe";
     el.style.color = "#1e3a8a";
     el.style.borderBottom = "2px solid #2563eb";
-    el.textContent = "\uD83D\uDEE0 DEVELOPMENT \u2014 Local dev environment.";
+    el.textContent = "\uD83D\uDEE0 Development \u2014 Local dev environment.";
     document.title = "[DEV] Anura Connect — Bullhorn Dashboard";
   } else {
     el.style.background = "#fecaca";
     el.style.color = "#7f1d1d";
     el.style.borderBottom = "2px solid #dc2626";
-    el.textContent = "\u26A0 " + env.toUpperCase() + " ENVIRONMENT";
+    el.textContent = "\u26A0 " + env.charAt(0).toUpperCase() + env.slice(1) + " Environment";
     document.title = "[" + env.toUpperCase() + "] Anura Connect — Bullhorn Dashboard";
   }
 }
@@ -1271,11 +1271,11 @@ function renderClientJobs(jobs) {
   var open = jobs.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
   var closed = jobs.filter(function(j) { return j.status !== "Accepting Candidates" && j.status !== "Open"; });
   if (open.length > 0) {
-    h += '<h4 style="font-size:12px;font-weight:600;color:#16a34a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Open Jobs (' + open.length + ')</h4>';
+    h += '<h4 style="font-size:12px;font-weight:600;color:#16a34a;letter-spacing:.05em;margin-bottom:10px">Open Jobs (' + open.length + ')</h4>';
     open.forEach(function(j) { h += jobRow(j); });
   }
   if (closed.length > 0) {
-    h += '<h4 style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 10px">Other Jobs (' + closed.length + ')</h4>';
+    h += '<h4 style="font-size:12px;font-weight:600;color:#94a3b8;letter-spacing:.05em;margin:16px 0 10px">Other Jobs (' + closed.length + ')</h4>';
     closed.forEach(function(j) { h += jobRow(j); });
   }
   h += '</div>';
@@ -1325,7 +1325,7 @@ function renderClientInfo(d) {
   h += dField("Fax", d.fax || "—");
   h += '</div>';
   if (d.notes) {
-    h += '<h4 style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 8px">Notes</h4>';
+    h += '<h4 style="font-size:12px;font-weight:600;color:#64748b;letter-spacing:.05em;margin:16px 0 8px">Notes</h4>';
     h += '<div style="font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;border:1px solid #e2e8f0">' + esc(d.notes) + '</div>';
   }
   h += '</div>';
@@ -1686,7 +1686,7 @@ function renderJobDetails(d) {
   var h = '<div class="cd-section">';
   // Description
   if (d.description) {
-    h += '<h4 style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Description</h4>';
+    h += '<h4 style="font-size:12px;font-weight:600;color:#64748b;letter-spacing:.05em;margin-bottom:8px">Description</h4>';
     h += '<div class="jd-desc">' + d.description + '</div>';
   }
   // Key fields
@@ -1703,7 +1703,7 @@ function renderJobDetails(d) {
   if (d.travelRequirements) h += dField("Travel", d.travelRequirements);
   h += '</div>';
   if (d.benefits) {
-    h += '<h4 style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 8px">Benefits</h4>';
+    h += '<h4 style="font-size:12px;font-weight:600;color:#64748b;letter-spacing:.05em;margin:16px 0 8px">Benefits</h4>';
     h += '<div style="font-size:13px;color:#334155;line-height:1.6">' + d.benefits + '</div>';
   }
   h += '</div>';
@@ -2114,7 +2114,7 @@ function closeTearsheet() { document.getElementById("ts-overlay").classList.remo
 function printTearsheet() {
   var content = document.getElementById("ts-content").innerHTML;
   var w = window.open("", "_blank");
-  w.document.write('<html><head><title>Tearsheet - Anura Connect</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px;max-width:700px;margin:0 auto;color:#0f172a}.ts-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:16px;border-bottom:3px solid #176087}.ts-logo{font-size:24px;font-weight:800;color:#176087}.ts-sub{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em}.ts-name{font-size:28px;font-weight:700;color:#0E2E47;margin-bottom:4px}.ts-title{font-size:16px;color:#64748b;margin-bottom:16px}.ts-section{margin-bottom:24px}.ts-section h4{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#176087;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}.ts-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:14px}.ts-label{color:#94a3b8;font-size:12px}.ts-val{color:#0f172a;font-weight:500;margin-bottom:8px}.ts-notes{font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap}.ts-close,.ts-actions{display:none}.badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600;background:#e2e8f0;color:#475569}@media print{body{padding:20px}}</style></head><body>' + content + '</body></html>');
+  w.document.write('<html><head><title>Tearsheet - Anura Connect</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px;max-width:700px;margin:0 auto;color:#0f172a}.ts-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:16px;border-bottom:3px solid #176087}.ts-logo{font-size:24px;font-weight:800;color:#176087}.ts-sub{font-size:12px;color:#94a3b8;letter-spacing:.08em}.ts-name{font-size:28px;font-weight:700;color:#0E2E47;margin-bottom:4px}.ts-title{font-size:16px;color:#64748b;margin-bottom:16px}.ts-section{margin-bottom:24px}.ts-section h4{font-size:13px;letter-spacing:.06em;color:#176087;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}.ts-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:14px}.ts-label{color:#94a3b8;font-size:12px}.ts-val{color:#0f172a;font-weight:500;margin-bottom:8px}.ts-notes{font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap}.ts-close,.ts-actions{display:none}.badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600;background:#e2e8f0;color:#475569}@media print{body{padding:20px}}</style></head><body>' + content + '</body></html>');
   w.document.close();
   w.print();
 }
@@ -3131,7 +3131,7 @@ function showContractEndMatches(){
         h+='<div style="padding:8px 12px;color:#94a3b8;font-size:13px;font-style:italic">No matching open jobs found based on certifications</div>';
       } else {
         h+='<div class="cem-matches" style="margin-left:48px">';
-        h+='<div style="font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;margin-bottom:6px">Suggested Next Roles</div>';
+        h+='<div style="font-size:11px;font-weight:600;color:#94a3b8;margin-bottom:6px">Suggested Next Roles</div>';
         c.matches.forEach(function(m){
           h+='<div class="cem-match-row" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f8fafc;flex-wrap:wrap">';
           h+='<div style="flex:1;min-width:0"><span style="font-weight:600;font-size:13px;color:#176087;cursor:pointer" onclick="event.stopPropagation()">'+esc(m.title)+'</span>';
@@ -3277,32 +3277,32 @@ function renderBizDev(d){
   // ── Filter Bar ──
   html+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:end">';
   // Owner
-  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Owner';
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;letter-spacing:.03em">Owner';
   html+='<select id="bd-filter-owner" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:140px">';
   html+='<option value="">All Owners</option>';
   (f.owners||[]).forEach(function(o){ html+='<option value="'+esc(o)+'">'+esc(o)+'</option>'; });
   html+='</select></label>';
   // Client
-  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Client';
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;letter-spacing:.03em">Client';
   html+='<select id="bd-filter-client" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:140px">';
   html+='<option value="">All Clients</option>';
   (f.clients||[]).forEach(function(c){ html+='<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
   html+='</select></label>';
   // Certification
-  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Certification';
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;letter-spacing:.03em">Certification';
   html+='<select id="bd-filter-cert" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:140px">';
   html+='<option value="">All Certs</option>';
   (f.certs||[]).forEach(function(c){ html+='<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
   html+='</select></label>';
   // Job Status
-  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Job Status';
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;letter-spacing:.03em">Job Status';
   html+='<select id="bd-filter-status" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:120px">';
   html+='<option value="">All Statuses</option>';
   html+='<option value="open">Open / Accepting</option>';
   html+='<option value="closed">Closed / Filled</option>';
   html+='</select></label>';
   // Date Range
-  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Date Range';
+  html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;letter-spacing:.03em">Date Range';
   html+='<select id="bd-filter-date" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:120px">';
   html+='<option value="">All Time</option>';
   html+='<option value="7">Last 7 Days</option>';
@@ -3673,7 +3673,7 @@ var _smResults = null;
 function renderSmartMatch(){
   var html='<div style="margin-bottom:20px">';
   html+='<div style="display:flex;align-items:end;gap:12px;flex-wrap:wrap">';
-  html+='<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.03em">Select a Job';
+  html+='<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:#64748b;letter-spacing:.03em">Select a Job';
   html+='<select id="sm-job-select" style="padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;font-family:inherit;min-width:280px;max-width:100%;width:100%;color:#334155" onchange="runSmartMatch(this.value)">';
   html+='<option value="">Choose a job to match candidates\u2026</option>';
   // Jobs will be populated after loading
@@ -4138,7 +4138,7 @@ function renderCertTracker(data) {
 
   // Table
   var urgColors = { expired: "#dc2626", critical: "#f59e0b", warning: "#3b82f6", ok: "#10b981", unknown: "#94a3b8" };
-  var urgLabels = { expired: "EXPIRED", critical: "< 30 days", warning: "< 90 days", ok: "OK", unknown: "No date" };
+  var urgLabels = { expired: "Expired", critical: "< 30 days", warning: "< 90 days", ok: "Ok", unknown: "No date" };
   html += '<div class="count-line"><span>' + filtered.length + ' consultant' + (filtered.length !== 1 ? 's' : '') + '</span></div>';
   html += '<div class="table-wrap"><table class="data-table"><thead><tr>';
   html += '<th>Name</th><th>Primary Cert</th><th>Grade</th><th>Status</th><th>Cert Expiration</th><th>Days Left</th><th>Alert</th><th>Owner</th>';
@@ -4815,7 +4815,7 @@ function renderPortalConfig(){
 
   // Template selector
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Default Template</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:4px">Default Template</div>';
   html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Choose which template to use by default when generating links for this client.</p>';
   var savedTmpl=(_portalClientConfig&&_portalClientConfig.templateId)||"";
   for(var j=0;j<_portalTemplates.length;j++){
@@ -4831,7 +4831,7 @@ function renderPortalConfig(){
 
   // Sections to include
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Required Sections</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:4px">Required Sections</div>';
   html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Toggle which sections this client requires. This overrides the template defaults.</p>';
   var enabledSections=(_portalClientConfig&&_portalClientConfig.sections)||[];
   for(var k=0;k<_portalSections.length;k++){
@@ -4847,7 +4847,7 @@ function renderPortalConfig(){
 
   // Reference count
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Reference Requirements</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:4px">Reference Requirements</div>';
   html+='<p style="font-size:13px;color:#64748b;margin-bottom:12px">How many professional references does this client require?</p>';
   var refCount=(_portalClientConfig&&_portalClientConfig.referenceCount)||3;
   html+='<select id="config-ref-count" style="padding:8px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;font-family:inherit">';
@@ -4858,7 +4858,7 @@ function renderPortalConfig(){
 
   // Default pre-fill values (locked fields)
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Default Locked Values</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:4px">Default Locked Values</div>';
   html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Set default values for fields that are always the same for this client (e.g., VMS provider). These will auto-fill when generating links.</p>';
   var defaults=(_portalClientConfig&&_portalClientConfig.defaults)||{};
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
@@ -4874,7 +4874,7 @@ function renderPortalConfig(){
 
   // Notes
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Internal Notes</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:4px">Internal Notes</div>';
   html+='<p style="font-size:13px;color:#64748b;margin-bottom:12px">Any notes about this client\'s submission process (only visible to the team, not consultants).</p>';
   html+='<textarea id="config-notes" rows="3" style="width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:inherit;resize:vertical" placeholder="e.g., Client requires 48hr turnaround, contact Jane for VMS access...">'+esc((_portalClientConfig&&_portalClientConfig.notes)||"")+'</textarea>';
   html+='</div>';
@@ -4956,7 +4956,7 @@ function renderPortalGenerate(){
 
   // Template (auto-selected from config, or manual choice)
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">1. Template</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:16px">1. Template</div>';
   var defaultTmpl=(_portalClientConfig&&_portalClientConfig.templateId)||"";
   for(var j=0;j<_portalTemplates.length;j++){
     var t=_portalTemplates[j];
@@ -4971,14 +4971,14 @@ function renderPortalGenerate(){
 
   // Pre-fill section
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">2. Pre-fill Fields</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:4px">2. Pre-fill Fields</div>';
   html+='<p style="font-size:13px;color:#64748b;margin-bottom:16px">Fields marked &#128274; are locked (read-only for consultant). Client defaults are pre-loaded.</p>';
   html+='<div id="portal-prefill-fields"><p style="font-size:13px;color:#94a3b8;font-style:italic">Loading...</p></div>';
   html+='</div>';
 
   // Extra notification emails
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">3. Additional Notification Recipients</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:4px">3. Additional Notification Recipients</div>';
   html+='<p style="font-size:13px;color:#64748b;margin-bottom:12px">Account Owner + Suzie are always notified. Add others below.</p>';
   html+='<div id="portal-extra-emails">';
   html+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px" class="extra-email-row">';
@@ -4988,7 +4988,7 @@ function renderPortalGenerate(){
 
   // Generate
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">4. Generate & Share Link</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:16px">4. Generate & Share Link</div>';
   html+='<button class="btn-primary" style="padding:12px 28px;font-size:14px;border-radius:10px" onclick="generatePortalLink()">&#128279; Generate Portal Link</button>';
   html+='<div id="portal-link-output" style="margin-top:16px"></div>';
   html+='</div>';
@@ -5033,7 +5033,7 @@ async function loadPrefillFields(templateId){
       var f=_portalPrefillFields[i];
       if(f.section!==currentSection){
         if(currentSection) html+='</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
-        html+='<div style="grid-column:1/-1;font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-top:'+(currentSection?'8':'0')+'px;padding-bottom:4px;border-bottom:1px solid #f1f5f9">'+esc(f.section)+'</div>';
+        html+='<div style="grid-column:1/-1;font-size:11px;font-weight:600;color:#94a3b8;letter-spacing:.05em;margin-top:'+(currentSection?'8':'0')+'px;padding-bottom:4px;border-bottom:1px solid #f1f5f9">'+esc(f.section)+'</div>';
         currentSection=f.section;
       }
       var defVal=defaults[f.name]||"";
@@ -5141,7 +5141,7 @@ function renderPortalTemplates(){
   // Header
   html+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:24px;margin-bottom:20px">';
   html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">';
-  html+='<div><div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em">Template Manager</div>';
+  html+='<div><div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em">Template Manager</div>';
   html+='<p style="font-size:13px;color:#64748b;margin-top:4px">Edit built-in templates, create custom ones, or save client-specific versions.</p></div>';
   html+='<button class="btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px" onclick="startNewTemplate()">+ New Template</button>';
   html+='</div>';
@@ -5180,7 +5180,7 @@ function renderTemplateEditor(){
   var html='<div style="background:#fff;border:2px solid #176087;border-radius:12px;padding:24px;margin-bottom:20px" id="template-editor">';
 
   // Name & description
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">Template Editor'+(t.builtIn?' (Editing copy — original unchanged)':'')+'</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:16px">Template Editor'+(t.builtIn?' (Editing copy — original unchanged)':'')+'</div>';
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">';
   html+='<div><label style="font-size:12px;font-weight:600;color:#475569;display:block;margin-bottom:4px">Template Name</label>';
   html+='<input type="text" id="tmpl-name" value="'+esc(t.name||"")+'" style="width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;font-family:inherit"></div>';
@@ -5208,7 +5208,7 @@ function renderTemplateEditor(){
   html+='</select></div>';
 
   // Sections with field-level control
-  html+='<div style="font-size:13px;font-weight:600;color:#176087;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px">Sections & Fields</div>';
+  html+='<div style="font-size:13px;font-weight:600;color:#176087;letter-spacing:.05em;margin-bottom:12px">Sections & Fields</div>';
   html+='<p style="font-size:12px;color:#64748b;margin-bottom:16px">Toggle sections on/off, then expand to control individual fields within each section. You can toggle fields on/off and set each as required or optional.</p>';
 
   // Get all available sections
@@ -6125,10 +6125,10 @@ function renderNewCandidates(d){
 
   h+='<div class="table-wrap"><table><thead><tr>';
   cols.forEach(function(c){
-    h+='<th style="cursor:pointer" onclick="sortTable(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
+    h+='<th style="cursor:pointer" onclick="applySorting(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
   });
   h+='</tr></thead><tbody>';
-  var sorted=applySorting(cands,cols);
+  var sorted=sortTable(cands);
   sorted.forEach(function(r){
     h+='<tr style="cursor:pointer" onclick="showCandidateDetail('+r.id+')">';
     cols.forEach(function(c){ h+='<td>'+c.render(r)+'</td>'; });
@@ -6170,29 +6170,23 @@ function renderMSAPipeline(d){
   opps.forEach(function(o){if(o.owner)owners[o.owner]=1;});
   var ownerList=Object.keys(owners).sort();
 
-  // KPI summary — dynamically count by stage
-  var totalValue=0;
-  var stageCounts={};
-  stages.forEach(function(s){stageCounts[s]=0;});
+  // KPI summary
+  var totalValue=0,prospectCount=0,negotiationCount=0,signedCount=0,lostCount=0;
   opps.forEach(function(o){
     totalValue+=o.dealValue||0;
-    if(stageCounts[o.status]!==undefined) stageCounts[o.status]++;
-    else stageCounts[o.status]=1;
+    if(o.status==="Prospect") prospectCount++;
+    else if(o.status==="In Negotiation") negotiationCount++;
+    else if(o.status==="Signed") signedCount++;
+    else if(o.status==="Lost") lostCount++;
   });
-
-  var stageColors={"Identified":"#64748b","Qualifying":"#f59e0b","Active":"#0ea5e9","Negotiating":"#8b5cf6","Legal Review":"#d97706","Signed":"#16a34a","Lost":"#ef4444"};
 
   var h='<div style="margin-bottom:20px">';
   // KPI Cards
-  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px">';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">';
   h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #176087"><div style="font-size:24px;font-weight:700;color:#176087">'+opps.length+'</div><div style="font-size:12px;color:#64748b">Total MSAs</div></div>';
-  // Show cards for stages that have at least 1 opp
-  stages.forEach(function(s){
-    if(stageCounts[s]>0){
-      var sc=stageColors[s]||"#64748b";
-      h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid '+sc+'"><div style="font-size:24px;font-weight:700;color:'+sc+'">'+stageCounts[s]+'</div><div style="font-size:12px;color:#64748b">'+s+'</div></div>';
-    }
-  });
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #f59e0b"><div style="font-size:24px;font-weight:700;color:#f59e0b">'+prospectCount+'</div><div style="font-size:12px;color:#64748b">Prospect</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #8b5cf6"><div style="font-size:24px;font-weight:700;color:#8b5cf6">'+negotiationCount+'</div><div style="font-size:12px;color:#64748b">In Negotiation</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #16a34a"><div style="font-size:24px;font-weight:700;color:#16a34a">'+signedCount+'</div><div style="font-size:12px;color:#64748b">Signed</div></div>';
   if(totalValue>0) h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #0ea5e9"><div style="font-size:24px;font-weight:700;color:#0ea5e9">$'+totalValue.toLocaleString()+'</div><div style="font-size:12px;color:#64748b">Pipeline Value</div></div>';
   h+='</div>';
 
@@ -6231,7 +6225,7 @@ function renderMSAPipeline(d){
 }
 
 function renderMSABoard(opps,stages){
-  var stageColors={"Identified":"#64748b","Qualifying":"#f59e0b","Active":"#0ea5e9","Negotiating":"#8b5cf6","Legal Review":"#d97706","Signed":"#16a34a","Lost":"#ef4444"};
+  var stageColors={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
   var h='<div style="display:grid;grid-template-columns:repeat('+stages.length+',1fr);gap:16px;overflow-x:auto;min-width:0">';
   stages.forEach(function(stage){
     var color=stageColors[stage]||"#64748b";
@@ -6267,7 +6261,7 @@ function renderMSATable(opps){
     {key:"title",label:"Title",render:function(r){return '<span class="name-link" onclick="showMSADetail('+r.id+')">'+esc(r.title)+'</span>';}},
     {key:"client",label:"Client",render:function(r){return esc(r.client||"\u2014");}},
     {key:"status",label:"Stage",render:function(r){
-      var sc={"Identified":"#64748b","Qualifying":"#f59e0b","Active":"#0ea5e9","Negotiating":"#8b5cf6","Legal Review":"#d97706","Signed":"#16a34a","Lost":"#ef4444"};
+      var sc={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
       var c=sc[r.status]||"#64748b";
       return '<span style="padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;background:'+c+'18;color:'+c+'">'+esc(r.status)+'</span>';
     }},
@@ -6280,11 +6274,11 @@ function renderMSATable(opps){
 
   var h='<div class="table-wrap"><table><thead><tr>';
   cols.forEach(function(c){
-    h+='<th style="cursor:pointer" onclick="sortTable(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
+    h+='<th style="cursor:pointer" onclick="applySorting(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
   });
   h+='</tr></thead><tbody>';
 
-  var sorted=applySorting(opps,cols);
+  var sorted=sortTable(opps);
   sorted.forEach(function(r){
     h+='<tr style="cursor:pointer" onclick="showMSADetail('+r.id+')">';
     cols.forEach(function(c){ h+='<td>'+c.render(r)+'</td>'; });
@@ -6304,7 +6298,7 @@ function showMSADetail(id){
   panel.style.display="block";
   panel.innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading MSA details\u2026</div>';
   apiFetch("opportunities/"+id).then(function(d){
-    var stageColors={"Identified":"#64748b","Qualifying":"#f59e0b","Active":"#0ea5e9","Negotiating":"#8b5cf6","Legal Review":"#d97706","Signed":"#16a34a","Lost":"#ef4444"};
+    var stageColors={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
     var color=stageColors[d.status]||"#64748b";
     var h='<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:20px">';
     h+='<div><h2 style="margin:0 0 4px;font-size:20px;color:#1e293b">'+esc(d.title)+'</h2>';
@@ -6315,10 +6309,10 @@ function showMSADetail(id){
 
     // Key info grid
     h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">';
-    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">Client</div><div style="font-weight:600;color:#1e293b">\uD83C\uDFE2 '+esc(d.client||"\u2014")+'</div></div>';
-    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">Owner</div><div style="font-weight:600;color:#1e293b">\uD83D\uDC64 '+esc(d.owner||"\u2014")+'</div></div>';
-    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">Deal Value</div><div style="font-weight:700;font-size:18px;color:#16a34a">'+(d.dealValue?'$'+d.dealValue.toLocaleString():'\u2014')+'</div></div>';
-    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">Win Probability</div><div style="font-weight:700;font-size:18px;color:#176087">'+(d.winProbability?d.winProbability+'%':'\u2014')+'</div></div>';
+    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Client</div><div style="font-weight:600;color:#1e293b">\uD83C\uDFE2 '+esc(d.client||"\u2014")+'</div></div>';
+    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Owner</div><div style="font-weight:600;color:#1e293b">\uD83D\uDC64 '+esc(d.owner||"\u2014")+'</div></div>';
+    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Deal Value</div><div style="font-weight:700;font-size:18px;color:#16a34a">'+(d.dealValue?'$'+d.dealValue.toLocaleString():'\u2014')+'</div></div>';
+    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Win Probability</div><div style="font-weight:700;font-size:18px;color:#176087">'+(d.winProbability?d.winProbability+'%':'\u2014')+'</div></div>';
     h+='</div>';
 
     // Dates
