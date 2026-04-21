@@ -6125,10 +6125,10 @@ function renderNewCandidates(d){
 
   h+='<div class="table-wrap"><table><thead><tr>';
   cols.forEach(function(c){
-    h+='<th style="cursor:pointer" onclick="applySorting(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
+    h+='<th style="cursor:pointer" onclick="sortTable(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
   });
   h+='</tr></thead><tbody>';
-  var sorted=sortTable(cands);
+  var sorted=applySorting(cands,cols);
   sorted.forEach(function(r){
     h+='<tr style="cursor:pointer" onclick="showCandidateDetail('+r.id+')">';
     cols.forEach(function(c){ h+='<td>'+c.render(r)+'</td>'; });
@@ -6274,11 +6274,11 @@ function renderMSATable(opps){
 
   var h='<div class="table-wrap"><table><thead><tr>';
   cols.forEach(function(c){
-    h+='<th style="cursor:pointer" onclick="applySorting(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
+    h+='<th style="cursor:pointer" onclick="sortTable(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
   });
   h+='</tr></thead><tbody>';
 
-  var sorted=sortTable(opps);
+  var sorted=applySorting(opps,cols);
   sorted.forEach(function(r){
     h+='<tr style="cursor:pointer" onclick="showMSADetail('+r.id+')">';
     cols.forEach(function(c){ h+='<td>'+c.render(r)+'</td>'; });
