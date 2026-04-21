@@ -319,6 +319,16 @@ app.get("/api/status", async (req, res) => {
   }
 });
 
+// Temp: Opportunity entity metadata (remove after field discovery)
+app.get("/api/meta/Opportunity", async (req, res) => {
+  try {
+    const data = await bhFetch("meta/Opportunity", { fields: "*" });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Sync status — detailed view of database sync state
 app.get("/api/sync-status", async (req, res) => {
   try {
@@ -580,11 +590,11 @@ app.get("/api/candidates/:id", async (req, res) => {
     }));
     detail.notes = allNotes.filter(n => {
       var a = (n.action || "").toLowerCase();
-      return a !== "email" && a !== "sent email" && a !== "received email";
+      return a.indexOf("email") === -1 && a.indexOf("e-mail") === -1;
     });
     detail.emails = allNotes.filter(n => {
       var a = (n.action || "").toLowerCase();
-      return a === "email" || a === "sent email" || a === "received email";
+      return a.indexOf("email") !== -1 || a.indexOf("e-mail") !== -1;
     });
 
     // Process references (already fetched in parallel above)
@@ -1665,6 +1675,235 @@ app.get("/api/jobs/:id", async (req, res) => {
     });
   } catch (e) {
     console.error("[Job Detail]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── MSA Pipeline (Opportunities) ──────────────────────────
+const MSA_STAGES = ["Prospect", "In Negotiation", "Signed", "Lost"];
+
+app.get("/api/opportunities", async (req, res) => {
+  try {
+    const { q, status, owner } = req.query;
+    // Build query — Opportunity supports search/ endpoint
+    let queryParts = ["isDeleted:0"];
+    if (status && status !== "all") {
+      queryParts.push(`status:"${status}"`);
+    }
+    if (q) {
+      queryParts.push(`(title:${q}* OR description:${q}*)`);
+    }
+    const query = queryParts.join(" AND ");
+    const r = await bhFetchAll("search/Opportunity", {
+      query: query,
+      fields: "id,title,status,type,dealValue,weightedDealValue,winProbabilityPercent,estimatedStartDate,estimatedEndDate,effectiveDate,dateAdded,dateLastModified,owner,clientCorporation,description,customText1,customText2,customText3,customText4,customText5,customText6,customDate1,customDate2,customFloat1,customFloat2",
+      sort: "-dateLastModified",
+    });
+    var opps = (r.data || []).map(function(o) {
+      return {
+        id: o.id,
+        title: o.title || "",
+        status: o.status || "",
+        type: o.type || "",
+        dealValue: o.dealValue || 0,
+        weightedDealValue: o.weightedDealValue || 0,
+        winProbability: o.winProbabilityPercent || 0,
+        estimatedStart: o.estimatedStartDate || null,
+        estimatedEnd: o.estimatedEndDate || null,
+        effectiveDate: o.effectiveDate || null,
+        dateAdded: o.dateAdded || null,
+        dateLastModified: o.dateLastModified || null,
+        owner: o.owner ? (o.owner.firstName + " " + o.owner.lastName) : "",
+        ownerId: o.owner ? o.owner.id : null,
+        client: o.clientCorporation ? o.clientCorporation.name : "",
+        clientId: o.clientCorporation ? o.clientCorporation.id : null,
+        description: o.description || "",
+        customText1: o.customText1 || "",
+        customText2: o.customText2 || "",
+        customText3: o.customText3 || "",
+        customText4: o.customText4 || "",
+        customText5: o.customText5 || "",
+        customText6: o.customText6 || "",
+        customDate1: o.customDate1 || null,
+        customDate2: o.customDate2 || null,
+        customFloat1: o.customFloat1 || 0,
+        customFloat2: o.customFloat2 || 0,
+      };
+    });
+    // Filter by owner name if provided
+    if (owner) {
+      var ownerLower = owner.toLowerCase();
+      opps = opps.filter(function(o) { return o.owner.toLowerCase().includes(ownerLower); });
+    }
+    res.json({ data: opps, total: opps.length, stages: MSA_STAGES });
+  } catch (e) {
+    console.error("[Opportunities]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/opportunities/:id", async (req, res) => {
+  try {
+    const data = await bhFetch("entity/Opportunity/" + req.params.id, {
+      fields: "id,title,status,type,dealValue,weightedDealValue,winProbabilityPercent,estimatedStartDate,estimatedEndDate,effectiveDate,dateAdded,dateLastModified,owner,clientCorporation,description,notes,customText1,customText2,customText3,customText4,customText5,customText6,customDate1,customDate2,customFloat1,customFloat2",
+    });
+    var o = data.data || data;
+    res.json({
+      id: o.id,
+      title: o.title || "",
+      status: o.status || "",
+      type: o.type || "",
+      dealValue: o.dealValue || 0,
+      weightedDealValue: o.weightedDealValue || 0,
+      winProbability: o.winProbabilityPercent || 0,
+      estimatedStart: o.estimatedStartDate || null,
+      estimatedEnd: o.estimatedEndDate || null,
+      effectiveDate: o.effectiveDate || null,
+      dateAdded: o.dateAdded || null,
+      dateLastModified: o.dateLastModified || null,
+      owner: o.owner ? (o.owner.firstName + " " + o.owner.lastName) : "",
+      ownerId: o.owner ? o.owner.id : null,
+      client: o.clientCorporation ? o.clientCorporation.name : "",
+      clientId: o.clientCorporation ? o.clientCorporation.id : null,
+      description: o.description || "",
+      notes: o.notes || "",
+      customText1: o.customText1 || "",
+      customText2: o.customText2 || "",
+      customText3: o.customText3 || "",
+      customText4: o.customText4 || "",
+      customText5: o.customText5 || "",
+      customText6: o.customText6 || "",
+      customDate1: o.customDate1 || null,
+      customDate2: o.customDate2 || null,
+      customFloat1: o.customFloat1 || 0,
+      customFloat2: o.customFloat2 || 0,
+      stages: MSA_STAGES,
+    });
+  } catch (e) {
+    console.error("[Opportunity Detail]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── New Candidates (date-range intake tracking) ──────────────────────────
+app.get("/api/new-candidates", async (req, res) => {
+  try {
+    const { range, from, to } = req.query;
+    const nowMs = Date.now();
+    let startMs, endMs = nowMs;
+
+    // Determine date range
+    if (from && to) {
+      startMs = new Date(from).getTime();
+      endMs = new Date(to).getTime() + 86400000 - 1; // end of day
+    } else {
+      switch (range) {
+        case "week":   startMs = nowMs - 7 * 86400000; break;
+        case "month":  startMs = nowMs - 30 * 86400000; break;
+        case "quarter": startMs = nowMs - 90 * 86400000; break;
+        case "year":   startMs = nowMs - 365 * 86400000; break;
+        case "ytd":
+          var jan1 = new Date(new Date().getFullYear(), 0, 1);
+          startMs = jan1.getTime(); break;
+        default:       startMs = nowMs - 30 * 86400000; break;
+      }
+    }
+
+    // Format dates for Bullhorn Lucene search (yyyyMMdd)
+    const fmt = d => new Date(d).toISOString().split("T")[0].replace(/-/g, "");
+    const startStr = fmt(startMs);
+    const endStr = fmt(endMs);
+
+    const r = await bhFetchAll("search/Candidate", {
+      query: `isDeleted:0 AND dateAdded:[${startStr} TO ${endStr}]`,
+      fields: "id,firstName,lastName,occupation,customText1,customText2,customText5,customText6,status,dateAdded,dateAvailable,address,email,owner",
+      sort: "-dateAdded",
+    });
+
+    // Build weekly/daily breakdown for chart
+    const buckets = {};
+    const dayMs = 86400000;
+    const totalDays = Math.ceil((endMs - startMs) / dayMs);
+    // Decide bucket size: daily if <= 31 days, weekly if <= 180, monthly otherwise
+    let bucketType = "day";
+    if (totalDays > 180) bucketType = "month";
+    else if (totalDays > 31) bucketType = "week";
+
+    (r.data || []).forEach(function(c) {
+      if (!c.dateAdded) return;
+      var d = new Date(c.dateAdded);
+      var key;
+      if (bucketType === "day") {
+        key = d.toISOString().split("T")[0];
+      } else if (bucketType === "week") {
+        // Week starting Monday
+        var day = d.getDay();
+        var diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        var monday = new Date(d.getFullYear(), d.getMonth(), diff);
+        key = "W/O " + monday.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      } else {
+        key = d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+      }
+      buckets[key] = (buckets[key] || 0) + 1;
+    });
+
+    // Convert to sorted array
+    var chartData = Object.entries(buckets).map(function(e) { return { label: e[0], count: e[1] }; });
+    // Sort chronologically
+    if (bucketType === "day") {
+      chartData.sort(function(a, b) { return new Date(a.label) - new Date(b.label); });
+    }
+
+    // Source breakdown
+    var byStatus = {};
+    var byOwner = {};
+    (r.data || []).forEach(function(c) {
+      var st = c.status || "Unknown";
+      byStatus[st] = (byStatus[st] || 0) + 1;
+      var own = c.owner ? (c.owner.firstName + " " + c.owner.lastName) : "Unassigned";
+      byOwner[own] = (byOwner[own] || 0) + 1;
+    });
+
+    const candidates = (r.data || []).map(function(c) {
+      return {
+        id: c.id,
+        firstName: c.firstName || "",
+        lastName: c.lastName || "",
+        name: (c.firstName || "") + " " + (c.lastName || ""),
+        title: c.occupation || "",
+        primaryCert: c.customText1 || "",
+        secondaryCert: c.customText2 || "",
+        epicRole: c.customText5 || "",
+        grade: c.customText6 || "",
+        status: c.status || "",
+        email: c.email || "",
+        dateAdded: c.dateAdded || null,
+        available: c.dateAvailable || null,
+        location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
+        owner: c.owner ? (c.owner.firstName + " " + c.owner.lastName) : "",
+      };
+    });
+
+    // KPIs
+    const totalWeeks = Math.max(1, totalDays / 7);
+    const avgPerWeek = (r.total / totalWeeks).toFixed(1);
+
+    res.json({
+      data: candidates,
+      total: r.total,
+      chart: chartData,
+      bucketType: bucketType,
+      byStatus: byStatus,
+      byOwner: byOwner,
+      kpi: {
+        total: r.total,
+        avgPerWeek: parseFloat(avgPerWeek),
+        dateRange: { from: new Date(startMs).toISOString().split("T")[0], to: new Date(endMs).toISOString().split("T")[0] },
+        totalDays: totalDays,
+      }
+    });
+  } catch (e) {
+    console.error("[New Candidates]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -4684,13 +4923,51 @@ app.get("/api/candidates/:id/references", async (req, res) => {
   try {
     const id = req.params.id;
     await authenticate();
-    // Use entity sub-resource endpoint (query/CandidateReference often returns empty)
-    const data = await bhFetch("entity/Candidate/" + id + "/references", {
-      fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,customTextBlock1,dateAdded,status,relationship,yearsKnown,candidateTitle",
-      count: 50,
-      orderBy: "-dateAdded",
-    });
-    const refs = (data.data || []).map(function(r) {
+
+    const refFields = "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,customTextBlock1,dateAdded,status,relationship,yearsKnown,candidateTitle";
+
+    // Try entity sub-resource first, fall back to query if it fails or returns empty
+    let rawRefs = [];
+    try {
+      const data = await bhFetch("entity/Candidate/" + id + "/references", {
+        fields: refFields,
+        count: 50,
+        orderBy: "-dateAdded",
+      });
+      rawRefs = data.data || [];
+    } catch (subErr) {
+      console.log("[References] Sub-resource failed for candidate " + id + ":", subErr.message);
+    }
+
+    // Fallback: query/CandidateReference
+    if (rawRefs.length === 0) {
+      try {
+        const qResult = await bhFetchAll("query/CandidateReference", {
+          where: "candidate.id=" + id + " AND isDeleted=false",
+          fields: refFields,
+          orderBy: "-dateAdded",
+        });
+        rawRefs = qResult.data || [];
+      } catch (qErr) {
+        console.log("[References] Query fallback also failed for candidate " + id + ":", qErr.message);
+      }
+    }
+
+    // Second fallback: search/CandidateReference
+    if (rawRefs.length === 0) {
+      try {
+        const sResult = await bhFetchAll("search/CandidateReference", {
+          query: "candidate.id:" + id + " AND isDeleted:0",
+          fields: refFields,
+          sort: "-dateAdded",
+        });
+        rawRefs = sResult.data || [];
+      } catch (sErr) {
+        console.log("[References] Search fallback also failed for candidate " + id + ":", sErr.message);
+      }
+    }
+
+    const refs = rawRefs.map(function(r) {
       return {
         id: r.id,
         firstName: r.referenceFirstName || "",
@@ -5363,7 +5640,7 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
     if (db.ready) {
       try {
         bhNotes = await db.getAll(
-          "SELECT id, action, comments_text, date_added, commenting_person_name FROM notes WHERE person_id = $1 AND action = 'Email' ORDER BY date_added DESC LIMIT 50",
+          "SELECT id, action, comments_text, date_added, commenting_person_name FROM notes WHERE person_id = $1 AND (LOWER(action) LIKE '%email%' OR LOWER(action) LIKE '%e-mail%') ORDER BY date_added DESC LIMIT 50",
           [entityId]
         );
       } catch (e) {}
@@ -5425,6 +5702,28 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
           }
         }
       } catch (outlookErr) { console.log("[Email History] Outlook direct search failed:", outlookErr.message); }
+    }
+
+    // 4. If still nothing, search Bullhorn notes directly for email-type actions
+    if (loggedEmails.length === 0 && bhNotes.length === 0 && entityType === "candidate") {
+      try {
+        await authenticate();
+        var noteSearch = await bhFetch("search/Note", {
+          query: "personReference.id:" + entityId + " AND isDeleted:0 AND (action:Email OR action:\"Sent Email\" OR action:\"Received Email\" OR action:\"e-mail\")",
+          fields: "id,action,comments,dateAdded,commentingPerson",
+          sort: "-dateAdded",
+          count: 50,
+        });
+        bhNotes = (noteSearch.data || []).map(function(n) {
+          return {
+            id: n.id,
+            action: n.action || "Email",
+            comments_text: n.comments || "",
+            date_added: n.dateAdded || null,
+            commenting_person_name: n.commentingPerson ? (n.commentingPerson.firstName + " " + n.commentingPerson.lastName) : "",
+          };
+        });
+      } catch (bhNoteErr) { console.log("[Email History] Bullhorn note search fallback failed:", bhNoteErr.message); }
     }
 
     res.json({ emails: loggedEmails, notes: bhNotes, total: loggedEmails.length + bhNotes.length });
@@ -6014,6 +6313,38 @@ app.get("/api/ask", async (req, res) => {
       }));
       answer = `**${r.total}** candidates available now or soon:`;
       data = cands;
+
+    } else if (question.match(/msa|opportunit(?:y|ies)|pipeline|deal/) && !question.match(/placement|candidate|job/)) {
+      // MSA Pipeline queries
+      var statusFilter = null;
+      if (question.match(/prospect/)) statusFilter = "Prospect";
+      else if (question.match(/negotiat/)) statusFilter = "In Negotiation";
+      else if (question.match(/signed|won|closed\s*won/)) statusFilter = "Signed";
+      else if (question.match(/lost|closed\s*lost/)) statusFilter = "Lost";
+
+      var queryParts = ["isDeleted:0"];
+      if (statusFilter) queryParts.push('status:"' + statusFilter + '"');
+      var r = await bhFetchAll("search/Opportunity", {
+        query: queryParts.join(" AND "),
+        fields: "id,title,status,dealValue,winProbabilityPercent,estimatedStartDate,owner,clientCorporation,dateLastModified",
+        sort: "-dateLastModified",
+      });
+      data = (r.data || []).map(function(o) { return {
+        id: o.id,
+        title: o.title || "",
+        status: o.status || "",
+        dealValue: o.dealValue || 0,
+        winProbability: o.winProbabilityPercent || 0,
+        estimatedStart: o.estimatedStartDate ? new Date(o.estimatedStartDate).toLocaleDateString() : "",
+        owner: o.owner ? (o.owner.firstName + " " + o.owner.lastName) : "",
+        client: o.clientCorporation ? o.clientCorporation.name : "",
+      }; });
+      var totalValue = data.reduce(function(sum, o) { return sum + o.dealValue; }, 0);
+      if (statusFilter) {
+        answer = "Found **" + r.total + "** MSAs in **" + statusFilter + "** stage" + (totalValue ? " (total value: **$" + totalValue.toLocaleString() + "**):" : ":");
+      } else {
+        answer = "**" + r.total + "** MSAs/Opportunities in your pipeline" + (totalValue ? " (total pipeline value: **$" + totalValue.toLocaleString() + "**):" : ":");
+      }
 
     } else if (primaryCertMatch || listCertMatch || certBeforeNounMatch || certMatch) {
       const match = primaryCertMatch || listCertMatch || certBeforeNounMatch || certMatch;

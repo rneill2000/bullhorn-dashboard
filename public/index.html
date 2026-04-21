@@ -2690,6 +2690,7 @@ var NAV_GROUPS=[
   ]},
   {section:"Candidates", items:[
     {key:"candidates",label:"Candidates",emoji:"\uD83D\uDC65"},
+    {key:"newcandidates",label:"New Candidates",emoji:"\uD83C\uDD95"},
     {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
     {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
     {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
@@ -2702,6 +2703,7 @@ var NAV_GROUPS=[
   {section:"Clients", items:[
     {key:"clients",label:"Clients",emoji:"\uD83C\uDFE2"},
     {key:"jobs",label:"Jobs",emoji:"\uD83D\uDCBC"},
+    {key:"msapipeline",label:"MSA Pipeline",emoji:"\uD83D\uDCDD"},
     {key:"golives",label:"Go-Lives",emoji:"\uD83C\uDFE5"},
   ]},
   {section:"Reporting", items:[
@@ -6024,6 +6026,346 @@ async function saveClip(){
 var _outreachTemplates=[];
 var _outreachSelectedTemplate="";
 var _outreachRecipients=[];
+/* ═══ NEW CANDIDATES ═══ */
+var _ncRange="month";
+var _ncFrom="";
+var _ncTo="";
+var _ncData=null;
+
+function renderNewCandidates(d){
+  _ncData=d;
+  var cands=d.data||[];
+  var kpi=d.kpi||{};
+  var chart=d.chart||[];
+  var byStatus=d.byStatus||{};
+  var byOwner=d.byOwner||{};
+
+  var h='<div style="margin-bottom:20px">';
+
+  // Date range presets
+  h+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:16px">';
+  var presets=[["week","This Week"],["month","Last 30 Days"],["quarter","Last 90 Days"],["ytd","Year to Date"],["year","Last 12 Months"],["custom","Custom Range"]];
+  presets.forEach(function(p){
+    h+='<button class="chip'+(_ncRange===p[0]?" on":"")+'" onclick="_ncRange=\''+p[0]+'\';if(_ncRange!==\'custom\'){_ncFrom=\'\';_ncTo=\'\';}loadPage()">'+p[1]+'</button>';
+  });
+  if(_ncRange==="custom"){
+    h+='<input type="date" id="nc-from" value="'+(_ncFrom||"")+'" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:inherit" onchange="_ncFrom=this.value;if(_ncFrom&&_ncTo)loadPage()">';
+    h+='<span style="color:#94a3b8">to</span>';
+    h+='<input type="date" id="nc-to" value="'+(_ncTo||"")+'" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:inherit" onchange="_ncTo=this.value;if(_ncFrom&&_ncTo)loadPage()">';
+  }
+  h+='</div>';
+
+  // KPI Cards
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #176087"><div style="font-size:28px;font-weight:700;color:#176087">'+kpi.total+'</div><div style="font-size:12px;color:#64748b">New Candidates</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #16a34a"><div style="font-size:28px;font-weight:700;color:#16a34a">'+kpi.avgPerWeek+'</div><div style="font-size:12px;color:#64748b">Avg / Week</div></div>';
+  // Top status breakdown
+  var statusEntries=Object.entries(byStatus).sort(function(a,b){return b[1]-a[1];});
+  if(statusEntries.length>0){
+    h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #8b5cf6"><div style="font-size:28px;font-weight:700;color:#8b5cf6">'+statusEntries[0][1]+'</div><div style="font-size:12px;color:#64748b">'+esc(statusEntries[0][0])+'</div></div>';
+  }
+  // Top recruiter
+  var ownerEntries=Object.entries(byOwner).sort(function(a,b){return b[1]-a[1];});
+  if(ownerEntries.length>0){
+    h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #f59e0b"><div style="font-size:28px;font-weight:700;color:#f59e0b">'+ownerEntries[0][1]+'</div><div style="font-size:12px;color:#64748b">by '+esc(ownerEntries[0][0])+'</div></div>';
+  }
+  h+='</div>';
+  h+='</div>';
+
+  if(cands.length===0){
+    h+='<div class="card" style="padding:48px;text-align:center;color:#94a3b8">';
+    h+='<div style="font-size:48px;margin-bottom:12px">\uD83C\uDD95</div>';
+    h+='<div style="font-size:16px;font-weight:600;margin-bottom:8px">No new candidates in this period</div>';
+    h+='<div style="font-size:13px">Try expanding the date range.</div>';
+    h+='</div>';
+    return h;
+  }
+
+  // Bar Chart
+  if(chart.length>1){
+    h+='<div class="card" style="padding:16px;margin-bottom:20px">';
+    h+='<div style="font-weight:600;margin-bottom:12px;font-size:14px">\uD83D\uDCC8 New Candidates Over Time</div>';
+    var maxVal=Math.max.apply(null,chart.map(function(c){return c.count;}))||1;
+    h+='<div style="display:flex;align-items:flex-end;gap:2px;height:180px;padding:0 4px">';
+    chart.forEach(function(c){
+      var pct=Math.max(4,(c.count/maxVal)*100);
+      var barW=Math.max(16,Math.floor(100/chart.length))-1;
+      h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:'+barW+'px">';
+      h+='<div style="font-size:11px;font-weight:600;color:#176087;margin-bottom:2px">'+c.count+'</div>';
+      h+='<div style="width:100%;max-width:48px;background:linear-gradient(180deg,#176087,#1e88c7);border-radius:4px 4px 0 0;height:'+pct+'%;min-height:4px;transition:height .3s"></div>';
+      h+='<div style="font-size:10px;color:#94a3b8;margin-top:4px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px" title="'+esc(c.label)+'">'+esc(c.label)+'</div>';
+      h+='</div>';
+    });
+    h+='</div></div>';
+  }
+
+  // By-owner breakdown if multiple owners
+  if(ownerEntries.length>1){
+    h+='<div class="card" style="padding:16px;margin-bottom:20px">';
+    h+='<div style="font-weight:600;margin-bottom:10px;font-size:14px">\uD83D\uDC64 By Recruiter</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:8px">';
+    ownerEntries.forEach(function(e){
+      var pct=Math.round(e[1]/kpi.total*100);
+      h+='<div style="padding:8px 14px;background:#f1f5f9;border-radius:8px;font-size:13px"><span style="font-weight:600">'+esc(e[0])+'</span> <span style="color:#64748b">'+e[1]+' ('+pct+'%)</span></div>';
+    });
+    h+='</div></div>';
+  }
+
+  // Candidate Table
+  var cols=[
+    {key:"name",label:"Name",render:function(r){return '<span class="name-link" onclick="showCandidateDetail('+r.id+')">'+esc(r.name)+'</span>';}},
+    {key:"title",label:"Title",render:function(r){return esc(r.title||"\u2014");}},
+    {key:"primaryCert",label:"Primary Cert",render:function(r){return r.primaryCert?'<span style="font-size:12px;color:#176087">'+esc(r.primaryCert)+'</span>':'<span class="muted">\u2014</span>';}},
+    {key:"grade",label:"Grade",render:function(r){var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};return r.grade?'<span class="fw600" style="color:'+(gc[r.grade]||"#64748b")+'">'+esc(r.grade)+'</span>':'<span class="muted">\u2014</span>';}},
+    {key:"status",label:"Status",render:function(r){return badge(r.status);}},
+    {key:"dateAdded",label:"Date Added",render:function(r){return r.dateAdded?new Date(r.dateAdded).toLocaleDateString():'<span class="muted">\u2014</span>';}},
+    {key:"location",label:"Location",render:function(r){return r.location?'\uD83D\uDCCD '+esc(r.location):'<span class="muted">\u2014</span>';}},
+    {key:"owner",label:"Owner",render:function(r){return esc(r.owner||"\u2014");}}
+  ];
+
+  h+='<div class="table-wrap"><table><thead><tr>';
+  cols.forEach(function(c){
+    h+='<th style="cursor:pointer" onclick="applySorting(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
+  });
+  h+='</tr></thead><tbody>';
+  var sorted=sortTable(cands);
+  sorted.forEach(function(r){
+    h+='<tr style="cursor:pointer" onclick="showCandidateDetail('+r.id+')">';
+    cols.forEach(function(c){ h+='<td>'+c.render(r)+'</td>'; });
+    h+='</tr>';
+  });
+  h+='</tbody></table></div>';
+
+  // Export
+  h+='<div style="margin-top:12px;text-align:right">';
+  h+='<button class="btn-outline" onclick="exportNewCandCSV()" style="font-size:13px">\uD83D\uDCE5 Export CSV</button>';
+  h+='</div>';
+  return h;
+}
+
+function exportNewCandCSV(){
+  if(!_ncData||!_ncData.data) return;
+  var rows=[["Name","Title","Primary Cert","Grade","Status","Date Added","Location","Owner","Email"]];
+  _ncData.data.forEach(function(c){
+    rows.push([c.name,c.title,c.primaryCert,c.grade,c.status,c.dateAdded?new Date(c.dateAdded).toLocaleDateString():"",c.location,c.owner,c.email]);
+  });
+  var csv=rows.map(function(r){return r.map(function(c){return '"'+(c+"").replace(/"/g,'""')+'"';}).join(",");}).join("\n");
+  var blob=new Blob([csv],{type:"text/csv"});
+  var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="new-candidates.csv";a.click();
+}
+
+/* ═══ MSA PIPELINE ═══ */
+var _msaView="board"; // "board" or "table"
+var _msaData=null;
+
+function renderMSAPipeline(d){
+  _msaData=d;
+  var opps=d.data||[];
+  var stages=d.stages||["Prospect","In Negotiation","Signed","Lost"];
+  var sf=filters.status||"all";
+  var ownerFilter=filters.owner||"";
+
+  // Gather unique owners for filter
+  var owners={};
+  opps.forEach(function(o){if(o.owner)owners[o.owner]=1;});
+  var ownerList=Object.keys(owners).sort();
+
+  // KPI summary
+  var totalValue=0,prospectCount=0,negotiationCount=0,signedCount=0,lostCount=0;
+  opps.forEach(function(o){
+    totalValue+=o.dealValue||0;
+    if(o.status==="Prospect") prospectCount++;
+    else if(o.status==="In Negotiation") negotiationCount++;
+    else if(o.status==="Signed") signedCount++;
+    else if(o.status==="Lost") lostCount++;
+  });
+
+  var h='<div style="margin-bottom:20px">';
+  // KPI Cards
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #176087"><div style="font-size:24px;font-weight:700;color:#176087">'+opps.length+'</div><div style="font-size:12px;color:#64748b">Total MSAs</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #f59e0b"><div style="font-size:24px;font-weight:700;color:#f59e0b">'+prospectCount+'</div><div style="font-size:12px;color:#64748b">Prospect</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #8b5cf6"><div style="font-size:24px;font-weight:700;color:#8b5cf6">'+negotiationCount+'</div><div style="font-size:12px;color:#64748b">In Negotiation</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #16a34a"><div style="font-size:24px;font-weight:700;color:#16a34a">'+signedCount+'</div><div style="font-size:12px;color:#64748b">Signed</div></div>';
+  if(totalValue>0) h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #0ea5e9"><div style="font-size:24px;font-weight:700;color:#0ea5e9">$'+totalValue.toLocaleString()+'</div><div style="font-size:12px;color:#64748b">Pipeline Value</div></div>';
+  h+='</div>';
+
+  // Filters + View Toggle
+  h+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px">';
+  h+='<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:13px;font-family:inherit" onchange="filters.status=this.value;loadPage()">';
+  h+='<option value="all"'+(sf==="all"?" selected":"")+'>All Stages</option>';
+  stages.forEach(function(s){ h+='<option value="'+s+'"'+(sf===s?" selected":"")+'>'+s+'</option>'; });
+  h+='</select>';
+  h+='<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:13px;font-family:inherit" onchange="filters.owner=this.value;loadPage()">';
+  h+='<option value="">All Owners</option>';
+  ownerList.forEach(function(o){ h+='<option value="'+esc(o)+'"'+(ownerFilter===o?" selected":"")+'>'+esc(o)+'</option>'; });
+  h+='</select>';
+  h+='<div style="margin-left:auto;display:flex;gap:4px">';
+  h+='<button class="chip'+(_msaView==="board"?" on":"")+'" onclick="_msaView=\'board\';loadPage()" title="Board View">&#9638; Board</button>';
+  h+='<button class="chip'+(_msaView==="table"?" on":"")+'" onclick="_msaView=\'table\';loadPage()" title="Table View">&#9776; Table</button>';
+  h+='</div>';
+  h+='</div>';
+  h+='</div>';
+
+  if(opps.length===0){
+    h+='<div class="card" style="padding:48px;text-align:center;color:#94a3b8">';
+    h+='<div style="font-size:48px;margin-bottom:12px">\uD83D\uDCDD</div>';
+    h+='<div style="font-size:16px;font-weight:600;margin-bottom:8px">No MSAs found</div>';
+    h+='<div style="font-size:13px">Opportunities in Bullhorn will appear here as they\'re created.</div>';
+    h+='</div>';
+    return h;
+  }
+
+  if(_msaView==="board"){
+    h+=renderMSABoard(opps,stages);
+  } else {
+    h+=renderMSATable(opps);
+  }
+  return h;
+}
+
+function renderMSABoard(opps,stages){
+  var stageColors={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
+  var h='<div style="display:grid;grid-template-columns:repeat('+stages.length+',1fr);gap:16px;overflow-x:auto;min-width:0">';
+  stages.forEach(function(stage){
+    var color=stageColors[stage]||"#64748b";
+    var stageOpps=opps.filter(function(o){return o.status===stage;});
+    h+='<div style="min-width:220px">';
+    h+='<div style="padding:10px 14px;background:'+color+'15;border-radius:10px 10px 0 0;border-bottom:3px solid '+color+';display:flex;justify-content:space-between;align-items:center">';
+    h+='<span style="font-weight:700;font-size:14px;color:'+color+'">'+stage+'</span>';
+    h+='<span style="background:'+color+';color:#fff;font-size:12px;font-weight:600;padding:2px 8px;border-radius:10px">'+stageOpps.length+'</span>';
+    h+='</div>';
+    h+='<div style="display:flex;flex-direction:column;gap:8px;padding:8px 0;min-height:100px">';
+    if(stageOpps.length===0){
+      h+='<div style="padding:20px;text-align:center;color:#cbd5e1;font-size:13px;font-style:italic">No MSAs</div>';
+    }
+    stageOpps.forEach(function(o){
+      var valueStr=o.dealValue?'<div style="font-size:13px;font-weight:600;color:#16a34a">$'+o.dealValue.toLocaleString()+'</div>':'';
+      var probStr=o.winProbability?'<span style="font-size:11px;color:#64748b">'+o.winProbability+'% prob</span>':'';
+      var dateStr=o.estimatedStart?'<span style="font-size:11px;color:#64748b">\uD83D\uDCC5 '+new Date(o.estimatedStart).toLocaleDateString()+'</span>':'';
+      h+='<div class="card" style="padding:12px;cursor:pointer;transition:box-shadow .15s;border-left:3px solid '+color+'" onclick="showMSADetail('+o.id+')" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.boxShadow=\'\'">';
+      h+='<div style="font-weight:600;font-size:13px;margin-bottom:4px;color:#1e293b">'+esc(o.title)+'</div>';
+      h+='<div style="font-size:12px;color:#64748b;margin-bottom:6px">\uD83C\uDFE2 '+esc(o.client||"No client")+'</div>';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">'+valueStr+'<div>'+probStr+(probStr&&dateStr?' \u00B7 ':'')+dateStr+'</div></div>';
+      if(o.owner) h+='<div style="font-size:11px;color:#94a3b8;margin-top:4px">\uD83D\uDC64 '+esc(o.owner)+'</div>';
+      h+='</div>';
+    });
+    h+='</div></div>';
+  });
+  h+='</div>';
+  return h;
+}
+
+function renderMSATable(opps){
+  var cols=[
+    {key:"title",label:"Title",render:function(r){return '<span class="name-link" onclick="showMSADetail('+r.id+')">'+esc(r.title)+'</span>';}},
+    {key:"client",label:"Client",render:function(r){return esc(r.client||"\u2014");}},
+    {key:"status",label:"Stage",render:function(r){
+      var sc={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
+      var c=sc[r.status]||"#64748b";
+      return '<span style="padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;background:'+c+'18;color:'+c+'">'+esc(r.status)+'</span>';
+    }},
+    {key:"dealValue",label:"Value",render:function(r){return r.dealValue?'<span style="font-weight:600;color:#16a34a">$'+r.dealValue.toLocaleString()+'</span>':'<span class="muted">\u2014</span>';}},
+    {key:"winProbability",label:"Prob %",render:function(r){return r.winProbability?r.winProbability+'%':'<span class="muted">\u2014</span>';}},
+    {key:"owner",label:"Owner",render:function(r){return esc(r.owner||"\u2014");}},
+    {key:"estimatedStart",label:"Est. Start",render:function(r){return r.estimatedStart?new Date(r.estimatedStart).toLocaleDateString():'<span class="muted">\u2014</span>';}},
+    {key:"dateLastModified",label:"Last Updated",render:function(r){return r.dateLastModified?new Date(r.dateLastModified).toLocaleDateString():'<span class="muted">\u2014</span>';}}
+  ];
+
+  var h='<div class="table-wrap"><table><thead><tr>';
+  cols.forEach(function(c){
+    h+='<th style="cursor:pointer" onclick="applySorting(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
+  });
+  h+='</tr></thead><tbody>';
+
+  var sorted=sortTable(opps);
+  sorted.forEach(function(r){
+    h+='<tr style="cursor:pointer" onclick="showMSADetail('+r.id+')">';
+    cols.forEach(function(c){ h+='<td>'+c.render(r)+'</td>'; });
+    h+='</tr>';
+  });
+  h+='</tbody></table></div>';
+
+  // Export CSV button
+  h+='<div style="margin-top:12px;text-align:right">';
+  h+='<button class="btn-outline" onclick="exportMSACSV()" style="font-size:13px">\uD83D\uDCE5 Export CSV</button>';
+  h+='</div>';
+  return h;
+}
+
+function showMSADetail(id){
+  var panel=document.getElementById("detail");
+  panel.style.display="block";
+  panel.innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading MSA details\u2026</div>';
+  apiFetch("opportunities/"+id).then(function(d){
+    var stageColors={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
+    var color=stageColors[d.status]||"#64748b";
+    var h='<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:20px">';
+    h+='<div><h2 style="margin:0 0 4px;font-size:20px;color:#1e293b">'+esc(d.title)+'</h2>';
+    h+='<span style="padding:4px 12px;border-radius:12px;font-size:13px;font-weight:600;background:'+color+'18;color:'+color+'">'+esc(d.status)+'</span>';
+    h+='</div>';
+    h+='<button onclick="closeDetail()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8">\u2715</button>';
+    h+='</div>';
+
+    // Key info grid
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">';
+    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">Client</div><div style="font-weight:600;color:#1e293b">\uD83C\uDFE2 '+esc(d.client||"\u2014")+'</div></div>';
+    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">Owner</div><div style="font-weight:600;color:#1e293b">\uD83D\uDC64 '+esc(d.owner||"\u2014")+'</div></div>';
+    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">Deal Value</div><div style="font-weight:700;font-size:18px;color:#16a34a">'+(d.dealValue?'$'+d.dealValue.toLocaleString():'\u2014')+'</div></div>';
+    h+='<div class="card" style="padding:12px"><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">Win Probability</div><div style="font-weight:700;font-size:18px;color:#176087">'+(d.winProbability?d.winProbability+'%':'\u2014')+'</div></div>';
+    h+='</div>';
+
+    // Dates
+    h+='<div class="card" style="padding:14px;margin-bottom:16px"><div style="font-weight:600;margin-bottom:8px;font-size:14px">\uD83D\uDCC5 Timeline</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:13px">';
+    h+='<div><span style="color:#94a3b8">Created:</span> '+(d.dateAdded?new Date(d.dateAdded).toLocaleDateString():'\u2014')+'</div>';
+    h+='<div><span style="color:#94a3b8">Est. Start:</span> '+(d.estimatedStart?new Date(d.estimatedStart).toLocaleDateString():'\u2014')+'</div>';
+    h+='<div><span style="color:#94a3b8">Est. End:</span> '+(d.estimatedEnd?new Date(d.estimatedEnd).toLocaleDateString():'\u2014')+'</div>';
+    h+='</div></div>';
+
+    // Description
+    if(d.description){
+      h+='<div class="card" style="padding:14px;margin-bottom:16px"><div style="font-weight:600;margin-bottom:8px;font-size:14px">Description</div>';
+      h+='<div style="font-size:13px;color:#475569;white-space:pre-wrap">'+esc(d.description)+'</div></div>';
+    }
+
+    // Custom fields (show any that have values)
+    var customs=[];
+    for(var i=1;i<=6;i++){if(d["customText"+i]) customs.push({label:"Custom Text "+i, val:d["customText"+i]});}
+    if(d.customDate1) customs.push({label:"Custom Date 1", val:new Date(d.customDate1).toLocaleDateString()});
+    if(d.customDate2) customs.push({label:"Custom Date 2", val:new Date(d.customDate2).toLocaleDateString()});
+    if(d.customFloat1) customs.push({label:"Custom Float 1", val:d.customFloat1.toLocaleString()});
+    if(d.customFloat2) customs.push({label:"Custom Float 2", val:d.customFloat2.toLocaleString()});
+    if(customs.length){
+      h+='<div class="card" style="padding:14px;margin-bottom:16px"><div style="font-weight:600;margin-bottom:8px;font-size:14px">\uD83D\uDD27 Custom Fields</div>';
+      h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">';
+      customs.forEach(function(cf){ h+='<div><span style="color:#94a3b8">'+esc(cf.label)+':</span> '+esc(cf.val)+'</div>'; });
+      h+='</div></div>';
+    }
+
+    // Notes
+    if(d.notes){
+      h+='<div class="card" style="padding:14px"><div style="font-weight:600;margin-bottom:8px;font-size:14px">\uD83D\uDCDD Notes</div>';
+      h+='<div style="font-size:13px;color:#475569;white-space:pre-wrap">'+esc(d.notes)+'</div></div>';
+    }
+
+    panel.innerHTML=h;
+  }).catch(function(e){
+    panel.innerHTML='<div style="padding:24px;color:#ef4444">Error loading MSA: '+esc(e.message)+'<br><button class="btn-outline" onclick="closeDetail()" style="margin-top:12px">Close</button></div>';
+  });
+}
+
+function exportMSACSV(){
+  if(!_msaData||!_msaData.data) return;
+  var rows=[["Title","Client","Stage","Deal Value","Win Probability","Owner","Est. Start","Last Updated"]];
+  _msaData.data.forEach(function(o){
+    rows.push([o.title,o.client,o.status,o.dealValue||"",o.winProbability||"",o.owner,o.estimatedStart?new Date(o.estimatedStart).toLocaleDateString():"",o.dateLastModified?new Date(o.dateLastModified).toLocaleDateString():""]);
+  });
+  var csv=rows.map(function(r){return r.map(function(c){return '"'+(c+"").replace(/"/g,'""')+'"';}).join(",");}).join("\n");
+  var blob=new Blob([csv],{type:"text/csv"});
+  var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="msa-pipeline.csv";a.click();
+}
+
 var _outreachTab="compose";
 var _outreachSequences=[];
 var _outreachEnrollments=[];
@@ -6737,6 +7079,14 @@ async function loadPage(){
         h=renderIntel(intelData);break;
       case "outreach":
         h=await renderOutreach();break;
+      case "newcandidates":
+        var ncParams={range:_ncRange||"month"};
+        if(_ncRange==="custom"&&_ncFrom&&_ncTo){ncParams.from=_ncFrom;ncParams.to=_ncTo;delete ncParams.range;}
+        var ncData=await apiFetch("new-candidates",ncParams);
+        h=renderNewCandidates(ncData);break;
+      case "msapipeline":
+        var msaData=await apiFetch("opportunities",{status:filters.status||"all",q:getQ(),owner:filters.owner||""});
+        h=renderMSAPipeline(msaData);break;
     }
   }catch(e){
     console.error(e);
