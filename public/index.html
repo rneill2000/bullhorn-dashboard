@@ -6170,23 +6170,29 @@ function renderMSAPipeline(d){
   opps.forEach(function(o){if(o.owner)owners[o.owner]=1;});
   var ownerList=Object.keys(owners).sort();
 
-  // KPI summary
-  var totalValue=0,prospectCount=0,negotiationCount=0,signedCount=0,lostCount=0;
+  // KPI summary — dynamically count by stage
+  var totalValue=0;
+  var stageCounts={};
+  stages.forEach(function(s){stageCounts[s]=0;});
   opps.forEach(function(o){
     totalValue+=o.dealValue||0;
-    if(o.status==="Prospect") prospectCount++;
-    else if(o.status==="In Negotiation") negotiationCount++;
-    else if(o.status==="Signed") signedCount++;
-    else if(o.status==="Lost") lostCount++;
+    if(stageCounts[o.status]!==undefined) stageCounts[o.status]++;
+    else stageCounts[o.status]=1;
   });
+
+  var stageColors={"Identified":"#64748b","Qualifying":"#f59e0b","Active":"#0ea5e9","Negotiating":"#8b5cf6","Legal Review":"#d97706","Signed":"#16a34a","Lost":"#ef4444"};
 
   var h='<div style="margin-bottom:20px">';
   // KPI Cards
-  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px">';
   h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #176087"><div style="font-size:24px;font-weight:700;color:#176087">'+opps.length+'</div><div style="font-size:12px;color:#64748b">Total MSAs</div></div>';
-  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #f59e0b"><div style="font-size:24px;font-weight:700;color:#f59e0b">'+prospectCount+'</div><div style="font-size:12px;color:#64748b">Prospect</div></div>';
-  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #8b5cf6"><div style="font-size:24px;font-weight:700;color:#8b5cf6">'+negotiationCount+'</div><div style="font-size:12px;color:#64748b">In Negotiation</div></div>';
-  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #16a34a"><div style="font-size:24px;font-weight:700;color:#16a34a">'+signedCount+'</div><div style="font-size:12px;color:#64748b">Signed</div></div>';
+  // Show cards for stages that have at least 1 opp
+  stages.forEach(function(s){
+    if(stageCounts[s]>0){
+      var sc=stageColors[s]||"#64748b";
+      h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid '+sc+'"><div style="font-size:24px;font-weight:700;color:'+sc+'">'+stageCounts[s]+'</div><div style="font-size:12px;color:#64748b">'+s+'</div></div>';
+    }
+  });
   if(totalValue>0) h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #0ea5e9"><div style="font-size:24px;font-weight:700;color:#0ea5e9">$'+totalValue.toLocaleString()+'</div><div style="font-size:12px;color:#64748b">Pipeline Value</div></div>';
   h+='</div>';
 
@@ -6225,7 +6231,7 @@ function renderMSAPipeline(d){
 }
 
 function renderMSABoard(opps,stages){
-  var stageColors={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
+  var stageColors={"Identified":"#64748b","Qualifying":"#f59e0b","Active":"#0ea5e9","Negotiating":"#8b5cf6","Legal Review":"#d97706","Signed":"#16a34a","Lost":"#ef4444"};
   var h='<div style="display:grid;grid-template-columns:repeat('+stages.length+',1fr);gap:16px;overflow-x:auto;min-width:0">';
   stages.forEach(function(stage){
     var color=stageColors[stage]||"#64748b";
@@ -6261,7 +6267,7 @@ function renderMSATable(opps){
     {key:"title",label:"Title",render:function(r){return '<span class="name-link" onclick="showMSADetail('+r.id+')">'+esc(r.title)+'</span>';}},
     {key:"client",label:"Client",render:function(r){return esc(r.client||"\u2014");}},
     {key:"status",label:"Stage",render:function(r){
-      var sc={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
+      var sc={"Identified":"#64748b","Qualifying":"#f59e0b","Active":"#0ea5e9","Negotiating":"#8b5cf6","Legal Review":"#d97706","Signed":"#16a34a","Lost":"#ef4444"};
       var c=sc[r.status]||"#64748b";
       return '<span style="padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;background:'+c+'18;color:'+c+'">'+esc(r.status)+'</span>';
     }},
@@ -6298,7 +6304,7 @@ function showMSADetail(id){
   panel.style.display="block";
   panel.innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading MSA details\u2026</div>';
   apiFetch("opportunities/"+id).then(function(d){
-    var stageColors={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
+    var stageColors={"Identified":"#64748b","Qualifying":"#f59e0b","Active":"#0ea5e9","Negotiating":"#8b5cf6","Legal Review":"#d97706","Signed":"#16a34a","Lost":"#ef4444"};
     var color=stageColors[d.status]||"#64748b";
     var h='<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:20px">';
     h+='<div><h2 style="margin:0 0 4px;font-size:20px;color:#1e293b">'+esc(d.title)+'</h2>';

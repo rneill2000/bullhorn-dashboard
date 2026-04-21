@@ -1680,7 +1680,7 @@ app.get("/api/jobs/:id", async (req, res) => {
 });
 
 // ── MSA Pipeline (Opportunities) ──────────────────────────
-const MSA_STAGES = ["Prospect", "In Negotiation", "Signed", "Lost"];
+const MSA_STAGES = ["Identified", "Qualifying", "Active", "Negotiating", "Legal Review", "Signed", "Lost"];
 
 app.get("/api/opportunities", async (req, res) => {
   try {
@@ -6317,8 +6317,11 @@ app.get("/api/ask", async (req, res) => {
     } else if (question.match(/msa|opportunit(?:y|ies)|pipeline|deal/) && !question.match(/placement|candidate|job/)) {
       // MSA Pipeline queries
       var statusFilter = null;
-      if (question.match(/prospect/)) statusFilter = "Prospect";
-      else if (question.match(/negotiat/)) statusFilter = "In Negotiation";
+      if (question.match(/identif/)) statusFilter = "Identified";
+      else if (question.match(/qualif/)) statusFilter = "Qualifying";
+      else if (question.match(/active/)) statusFilter = "Active";
+      else if (question.match(/negotiat/)) statusFilter = "Negotiating";
+      else if (question.match(/legal|review/)) statusFilter = "Legal Review";
       else if (question.match(/signed|won|closed\s*won/)) statusFilter = "Signed";
       else if (question.match(/lost|closed\s*lost/)) statusFilter = "Lost";
 
