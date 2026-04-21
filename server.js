@@ -5911,12 +5911,40 @@ app.get("/api/ask", async (req, res) => {
     const listCertMatch = question.match(/(?:list|show|give|find|get|all)\s+.*(?:candidates?|consultants?|people)\s+.*(?:with|who have|certified|certification)\s+.*?(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i);
     // Catch "<cert> candidates" pattern — e.g. "give me all the professional billing candidates"
     const certBeforeNounMatch = question.match(/(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)\s+(?:candidates?|consultants?|people|resources?)/i);
+    // Catch "how many <cert> candidates" or "how many candidates have <cert>" BEFORE generic count
+    const howManyCertMatch = question.match(/how many\s+(?:candidates?|consultants?|people)?\s*(?:have|with|are certified in|hold)?\s*(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i)
+      || question.match(/how many\s+(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)\s+(?:candidates?|consultants?|people|resources?)/i);
     const gradeMatch = question.match(/(?:grade|tier)\s+(a|b|c)/i);
     const roleMatch = question.match(/(?:who is|show me)\s+(ts|is|dev|analyst|trainer)/i);
     const daysMatch = question.match(/(\d+)\s*days?/);
     const daysCutoff = daysMatch ? parseInt(daysMatch[1]) : 30;
 
-    if (question.match(/how many\s+(active\s+)?candidates/)) {
+    if (howManyCertMatch) {
+      // "How many candidates have professional billing" — cert-specific count
+      const rawCert = howManyCertMatch[1].trim().toLowerCase();
+      const certLabel = CERT_ALIASES[rawCert] || rawCert;
+      const searchTerm = certLabel.split(" ")[0];
+      const certQuery = `isDeleted:0 AND (customText1:${searchTerm}* OR customText2:${searchTerm}*)`;
+      const r = await bhFetchAll("search/Candidate", {
+        query: certQuery,
+        fields: "id,firstName,lastName,occupation,customText1,customText2,customText6,status,dateAvailable,address",
+        sort: "-dateLastModified",
+      });
+      var cands = (r.data || []).map(function(c) { return {
+        id: c.id,
+        name: (c.firstName || "") + " " + (c.lastName || ""),
+        title: c.occupation || "",
+        primaryCert: c.customText1 || "",
+        secondaryCert: c.customText2 || "",
+        grade: c.customText6 || "",
+        status: c.status || "",
+        location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
+        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
+      }; });
+      answer = `Found **${r.total}** candidates with **${certLabel}** certification:`;
+      data = cands;
+
+    } else if (question.match(/how many\s+(active\s+)?candidates/)) {
       const r = await bhFetchAll("search/Candidate", { query: 'isDeleted:0 AND status:"Active"', fields: "id", });
       answer = `You have **${r.total}** active candidates in Bullhorn.`;
 
