@@ -3317,7 +3317,7 @@ function renderSubTracker(data) {
   h += '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px">';
   h += '<h4 style="margin:0 0 12px;font-size:14px;color:#0E2E47">Avg. Days in Stage</h4>';
   var stages = data.avgStageTimes || {};
-  var stageOrder = ["Internal Submission", "Client Submission", "Interview - Round 1", "Interview - Round 2", "Interview - Round 3", "Offer", "Placed"];
+  var stageOrder = ["Internal Submission", "Client Submission", "Interview - Round 1", "Interview - Round 2", "Interview - Round 3", "Offer"];
   var hasStageData = stageOrder.some(function(s) { return stages[s] !== undefined; });
   if (!hasStageData) {
     h += '<div style="color:#94a3b8;font-size:13px;padding:16px 0;text-align:center">Not enough data yet</div>';
