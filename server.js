@@ -319,6 +319,16 @@ app.get("/api/status", async (req, res) => {
   }
 });
 
+// Temp: Opportunity entity metadata (remove after field discovery)
+app.get("/api/meta/Opportunity", async (req, res) => {
+  try {
+    const data = await bhFetch("meta/Opportunity", { fields: "*" });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Sync status — detailed view of database sync state
 app.get("/api/sync-status", async (req, res) => {
   try {
@@ -358,6 +368,12 @@ app.get("/api/meta/:entity", async (req, res) => {
   }
 });
 
+// ── Name normalization helper ────────────────────
+function titleCase(str) {
+  if (!str) return "";
+  return String(str).toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+}
+
 // ── Candidates ──────────────────────────────────
 app.get("/api/candidates", async (req, res) => {
   try {
@@ -380,8 +396,19 @@ app.get("/api/candidates", async (req, res) => {
     // Build Lucene query
     let query = "isDeleted:0";
     if (q) {
-      const escaped = q.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
-      query += ` AND (firstName:${escaped}* OR lastName:${escaped}* OR occupation:${escaped}* OR customText1:${escaped}* OR customText2:${escaped}*)`;
+      // Split query into words so "Juan Felipe Hernandez" matches firstName:Juan* AND lastName:Hernandez* etc.
+      var words = q.trim().split(/\s+/);
+      if (words.length === 1) {
+        var escaped = words[0].replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
+        query += ` AND (firstName:${escaped}* OR lastName:${escaped}* OR occupation:${escaped}* OR customText1:${escaped}* OR customText2:${escaped}*)`;
+      } else {
+        // Multi-word: each word must match at least one field
+        var wordClauses = words.map(function(w) {
+          var ew = w.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
+          return `(firstName:${ew}* OR lastName:${ew}* OR occupation:${ew}* OR customText1:${ew}* OR customText2:${ew}*)`;
+        });
+        query += " AND " + wordClauses.join(" AND ");
+      }
     }
     if (status && status !== "All") {
       query += ` AND status:"${status}"`;
@@ -435,8 +462,8 @@ app.get("/api/candidates", async (req, res) => {
 
       return {
         id: c.id,
-        firstName: c.firstName || "",
-        lastName: c.lastName || "",
+        firstName: titleCase(c.firstName),
+        lastName: titleCase(c.lastName),
         title: c.occupation || "",
         primaryCert: parseCerts(c.customText1),
         secondaryCert: parseCerts(c.customText2),
@@ -475,17 +502,33 @@ app.get("/api/candidates", async (req, res) => {
 app.get("/api/candidates/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    const data = await bhFetch(`entity/Candidate/${id}`, {
-      fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
-    });
+    // Run all three Bullhorn calls in parallel for speed
+    const [data, notesResult, refsResult] = await Promise.all([
+      bhFetch(`entity/Candidate/${id}`, {
+        fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,salaryLow,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
+      }),
+      // Cap notes at 200 most recent instead of fetching all
+      bhFetch("search/Note", {
+        query: `personReference.id:${id} AND isDeleted:0`,
+        fields: "id,action,comments,dateAdded,commentingPerson",
+        sort: "-dateAdded",
+        count: 200,
+      }).catch(function(e) { return { data: [] }; }),
+      bhFetch(`entity/Candidate/${id}/references`, {
+        fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,customTextBlock1,dateAdded,status",
+        count: 50,
+        orderBy: "-dateAdded",
+      }).catch(function(e) { console.log("[Candidate Detail] References error:", e.message); return { data: [] }; }),
+    ]);
+
     const c = data.data || data;
     const addr = c.address || {};
     const detail = {
       id: c.id,
-      firstName: c.firstName || "",
-      lastName: c.lastName || "",
-      middleName: c.middleName || "",
-      nickName: c.nickName || "",
+      firstName: titleCase(c.firstName),
+      lastName: titleCase(c.lastName),
+      middleName: titleCase(c.middleName),
+      nickName: titleCase(c.nickName),
       title: c.occupation || "",
       status: c.status || "Unknown",
       location: [addr.city, addr.state].filter(Boolean).join(", "),
@@ -515,6 +558,7 @@ app.get("/api/candidates/:id", async (req, res) => {
       employeeType: c.employeeType || "",
       willRelocate: c.willRelocate,
       travelLimit: c.travelLimit || "",
+      salaryLow: c.salaryLow || null,
       description: c.description || "",
       // Epic-specific fields
       primaryCert: Array.isArray(c.customText1) ? c.customText1.join(", ") : (c.customText1 || ""),
@@ -542,21 +586,35 @@ app.get("/api/candidates/:id", async (req, res) => {
       customInt3: c.customInt3,
     };
 
-    // Also fetch notes
-    try {
-      const notes = await bhFetch(`entity/Candidate/${id}/notes`, {
-        fields: "id,action,comments,dateAdded,commentingPerson",
-        count: 20,
-        orderBy: "-dateAdded",
-      });
-      detail.notes = (notes.data || []).map(n => ({
-        id: n.id,
-        action: n.action || "",
-        comments: n.comments || "",
-        date: n.dateAdded ? new Date(n.dateAdded).toLocaleDateString() : "",
-        by: n.commentingPerson ? (n.commentingPerson.firstName + " " + n.commentingPerson.lastName) : "",
-      }));
-    } catch(e) { detail.notes = []; }
+    // Process notes (already fetched in parallel above)
+    var allNotes = (notesResult.data || []).map(n => ({
+      id: n.id,
+      action: n.action || "",
+      comments: n.comments || "",
+      date: n.dateAdded ? new Date(n.dateAdded).toLocaleDateString() : "",
+      by: n.commentingPerson ? (n.commentingPerson.firstName + " " + n.commentingPerson.lastName) : "",
+    }));
+    detail.notes = allNotes.filter(n => {
+      var a = (n.action || "").toLowerCase();
+      return a.indexOf("email") === -1 && a.indexOf("e-mail") === -1;
+    });
+    detail.emails = allNotes.filter(n => {
+      var a = (n.action || "").toLowerCase();
+      return a.indexOf("email") !== -1 || a.indexOf("e-mail") !== -1;
+    });
+
+    // Process references (already fetched in parallel above)
+    detail.references = (refsResult.data || []).map(r => ({
+      id: r.id,
+      name: ((r.referenceFirstName || "") + " " + (r.referenceLastName || "")).trim(),
+      title: r.referenceTitle || "",
+      phone: r.referencePhone || "",
+      email: r.referenceEmail || "",
+      company: r.companyName || "",
+      comments: r.customTextBlock1 || "",
+      date: r.dateAdded ? new Date(r.dateAdded).toLocaleDateString() : "",
+      status: r.status || "",
+    }));
 
     res.json(detail);
   } catch (e) {
@@ -605,7 +663,7 @@ app.post("/api/candidates/:id/notes", async (req, res) => {
 // ── Submit Candidate to Job ────────────────────
 app.post("/api/submissions", async (req, res) => {
   try {
-    const { candidateId, jobId, comments } = req.body;
+    const { candidateId, jobId, comments, notifyUsers } = req.body;
     if (!candidateId || !jobId) {
       return res.status(400).json({ error: "candidateId and jobId are required" });
     }
@@ -614,12 +672,12 @@ app.post("/api/submissions", async (req, res) => {
     const subBody = {
       candidate: { id: parseInt(candidateId) },
       jobOrder: { id: parseInt(jobId) },
-      status: "Submitted",
+      status: "Internal Submission",
       dateWebResponse: Date.now(),
       comments: comments || "",
     };
     const result = await bhWrite("entity/JobSubmission", subBody, "PUT");
-    console.log("[Submission] Created submission", candidateId, "→ Job", jobId, "→", result);
+    console.log("[Submission] Created internal submission", candidateId, "→ Job", jobId, "→", result);
 
     // Also log a note about the submission
     try {
@@ -632,7 +690,96 @@ app.post("/api/submissions", async (req, res) => {
       await bhWrite("entity/Note", noteBody, "PUT");
     } catch (noteErr) { console.log("[Submission] Note logging failed:", noteErr.message); }
 
-    res.json({ success: true, submissionId: result.changedEntityId, message: "Candidate submitted successfully" });
+    // ── Send email notifications to tagged colleagues ──
+    var emailResults = [];
+    if (notifyUsers && Array.isArray(notifyUsers) && notifyUsers.length > 0) {
+      // Fetch candidate and job details for the notification email
+      let candName = "Candidate #" + candidateId;
+      let jobTitle = "Job #" + jobId;
+      try {
+        const cand = await bhFetch(`entity/Candidate/${candidateId}`, { fields: "id,firstName,lastName" });
+        if (cand && cand.data) candName = ((cand.data.firstName || "") + " " + (cand.data.lastName || "")).trim();
+      } catch (e) {}
+      try {
+        const job = await bhFetch(`entity/JobOrder/${jobId}`, { fields: "id,title,clientCorporation(name)" });
+        if (job && job.data) {
+          jobTitle = job.data.title || jobTitle;
+          if (job.data.clientCorporation && job.data.clientCorporation.name) jobTitle += " — " + job.data.clientCorporation.name;
+        }
+      } catch (e) {}
+
+      const dashUrl = process.env.BULLHORN_REDIRECT_URI ? process.env.BULLHORN_REDIRECT_URI.replace("/auth/callback", "") : "https://bullhorn-dashboard-production.up.railway.app";
+      const emailSubject = `New Submission: ${candName} → ${jobTitle}`;
+      const emailHtml = `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:#176087;padding:20px 24px;border-radius:8px 8px 0 0">
+            <h2 style="margin:0;color:#fff;font-size:18px">New Candidate Submission</h2>
+          </div>
+          <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px">
+            <table style="width:100%;border-collapse:collapse;font-size:14px;color:#334155">
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b;width:120px">Candidate</td><td style="padding:8px 0">${candName}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b">Job</td><td style="padding:8px 0">${jobTitle}</td></tr>
+              ${comments ? `<tr><td style="padding:8px 0;font-weight:600;color:#64748b;vertical-align:top">Notes</td><td style="padding:8px 0;white-space:pre-wrap">${comments.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</td></tr>` : ""}
+            </table>
+            <div style="margin-top:20px;text-align:center">
+              <a href="${dashUrl}" style="display:inline-block;padding:10px 24px;background:#176087;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px">View in Dashboard</a>
+            </div>
+            <div style="margin-top:16px;font-size:12px;color:#94a3b8;text-align:center">Sent from Anura Connect Dashboard</div>
+          </div>
+        </div>`;
+
+      // Try Outlook first, then SendGrid, then log as fallback
+      for (const user of notifyUsers) {
+        if (!user.email) continue;
+        try {
+          let sent = false;
+          // Try Outlook (if any user is connected)
+          const outlookUser = Object.keys(_outlookUsers)[0];
+          if (outlookUser && _outlookUsers[outlookUser]) {
+            try {
+              const message = {
+                subject: emailSubject,
+                body: { contentType: "HTML", content: emailHtml },
+                toRecipients: [{ emailAddress: { address: user.email } }],
+              };
+              await graphFetch(outlookUser, "/me/sendMail", {
+                method: "POST",
+                body: JSON.stringify({ message, saveToSentItems: true }),
+              });
+              sent = true;
+              emailResults.push({ user: user.name, email: user.email, method: "outlook", success: true });
+              console.log("[Submission Notify] Sent via Outlook to", user.email);
+            } catch (outlookErr) {
+              console.log("[Submission Notify] Outlook failed for", user.email, ":", outlookErr.message);
+            }
+          }
+          // Fallback to SendGrid
+          if (!sent && process.env.SENDGRID_API_KEY) {
+            const sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+              method: "POST",
+              headers: { "Authorization": "Bearer " + process.env.SENDGRID_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                personalizations: [{ to: [{ email: user.email, name: user.name }] }],
+                from: { email: process.env.SENDGRID_FROM_EMAIL || "team@anuraconnect.com", name: "Anura Connect" },
+                subject: emailSubject,
+                content: [{ type: "text/html", value: emailHtml }],
+              }),
+            });
+            sent = sgResp.ok || sgResp.status === 202;
+            emailResults.push({ user: user.name, email: user.email, method: "sendgrid", success: sent });
+            console.log("[Submission Notify] SendGrid", sent ? "sent" : "failed", "to", user.email);
+          }
+          if (!sent) {
+            emailResults.push({ user: user.name, email: user.email, method: "none", success: false, reason: "No email service available" });
+          }
+        } catch (emailErr) {
+          emailResults.push({ user: user.name, email: user.email, success: false, reason: emailErr.message });
+          console.error("[Submission Notify] Error for", user.email, ":", emailErr.message);
+        }
+      }
+    }
+
+    res.json({ success: true, submissionId: result.changedEntityId, message: "Candidate submitted successfully", notifications: emailResults });
   } catch (e) {
     console.error("[Submission]", e.message);
     res.status(500).json({ error: e.message });
@@ -669,6 +816,13 @@ app.post("/api/candidates/:id/update", async (req, res) => {
       }
     }
 
+    // Handle owner as an association: { id: userId }
+    if (updates.owner && typeof updates.owner === "object" && updates.owner.id) {
+      safeUpdates.owner = { id: parseInt(updates.owner.id) };
+    } else if (updates.ownerId) {
+      safeUpdates.owner = { id: parseInt(updates.ownerId) };
+    }
+
     // Handle address sub-fields: flatten address.city → address: { city: ... }
     const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
     const addrUpdates = {};
@@ -695,6 +849,524 @@ app.post("/api/candidates/:id/update", async (req, res) => {
   } catch (e) {
     console.error("[Update Candidate]", e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Submission Pipeline Statuses ──────────────────
+const SUBMISSION_STATUSES = [
+  "Internally Submitted",
+  "Client Submission",
+  "First Interview",
+  "Second Interview",
+  "Third Interview",
+  "Offer Extended",
+  "Offer Accepted",
+  "Placed",
+  "Client Rejected",
+  "Sales Rejected",
+  "Consultant Rejected",
+  "Offer Rejected",
+  "Withdrew",
+  "Candidate Withdrew",
+  "On Hold",
+];
+
+// Get all submissions for pipeline view
+app.get("/api/submission-pipeline", async (req, res) => {
+  try {
+    const { status, q, owner } = req.query;
+    let where = "isDeleted=false";
+    if (status && status !== "All") {
+      where += ` AND status='${status.replace(/'/g, "''")}'`;
+    }
+
+    const data = await bhFetchAll("query/JobSubmission", {
+      where,
+      fields: "id,candidate(id,firstName,lastName),jobOrder(id,title,clientCorporation(id,name)),status,dateAdded,dateLastModified,sendingUser(id,firstName,lastName),comments,source",
+      orderBy: "-dateLastModified",
+    });
+
+    let submissions = (data.data || []).map(s => {
+      const candName = s.candidate ? ((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim() : "";
+      const jobTitle = s.jobOrder ? (s.jobOrder.title || "") : "";
+      const client = s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name || "" : "";
+      const submittedBy = s.sendingUser ? ((s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "")).trim() : "";
+      return {
+        id: s.id,
+        candidateId: s.candidate ? s.candidate.id : null,
+        candidateName: candName,
+        jobId: s.jobOrder ? s.jobOrder.id : null,
+        jobTitle,
+        client,
+        status: s.status || "Submitted",
+        dateAdded: s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "",
+        dateAddedRaw: s.dateAdded || 0,
+        dateModified: s.dateLastModified ? new Date(s.dateLastModified).toLocaleDateString() : "",
+        dateModifiedRaw: s.dateLastModified || 0,
+        submittedBy,
+        comments: s.comments || "",
+      };
+    });
+
+    // Filter by search query
+    if (q) {
+      const ql = q.toLowerCase();
+      submissions = submissions.filter(s =>
+        s.candidateName.toLowerCase().includes(ql) ||
+        s.jobTitle.toLowerCase().includes(ql) ||
+        s.client.toLowerCase().includes(ql) ||
+        s.submittedBy.toLowerCase().includes(ql)
+      );
+    }
+
+    // Filter by owner/submitter
+    if (owner) {
+      const ol = owner.toLowerCase();
+      submissions = submissions.filter(s => s.submittedBy.toLowerCase().includes(ol));
+    }
+
+    res.json({
+      data: submissions,
+      total: submissions.length,
+      statuses: SUBMISSION_STATUSES,
+    });
+  } catch (e) {
+    console.error("[Submission Pipeline]", e.message);
+    res.status(500).json({ error: e.message, data: [], statuses: SUBMISSION_STATUSES });
+  }
+});
+
+// Update submission status
+app.post("/api/submissions/:id/status", async (req, res) => {
+  try {
+    const subId = parseInt(req.params.id);
+    const { status, comments, notifyUsers } = req.body;
+    if (!status) return res.status(400).json({ error: "status is required" });
+
+    // Update the JobSubmission status in Bullhorn
+    const result = await bhWrite(`entity/JobSubmission/${subId}`, { status }, "POST");
+    console.log("[Submission Status] Updated", subId, "→", status);
+
+    // Log a note about the status change
+    try {
+      // Get the submission to find the candidate
+      const sub = await bhFetch(`entity/JobSubmission/${subId}`, { fields: "id,candidate,jobOrder" });
+      const candId = sub.data && sub.data.candidate ? sub.data.candidate.id : null;
+      if (candId) {
+        const noteBody = {
+          personReference: { id: candId },
+          action: "Status Change",
+          comments: `Submission #${subId} status changed to: ${status}` + (comments ? "\n" + comments : ""),
+          dateAdded: Date.now(),
+        };
+        await bhWrite("entity/Note", noteBody, "PUT");
+      }
+    } catch (noteErr) {
+      console.log("[Submission Status] Note logging failed:", noteErr.message);
+    }
+
+    // Send email notifications if colleagues were tagged
+    var emailResults = [];
+    if (notifyUsers && Array.isArray(notifyUsers) && notifyUsers.length > 0) {
+      let candName = "Candidate";
+      let jobTitle = "Job";
+      try {
+        const sub = await bhFetch(`entity/JobSubmission/${subId}`, { fields: "id,candidate,jobOrder" });
+        if (sub.data) {
+          if (sub.data.candidate) {
+            const cand = await bhFetch(`entity/Candidate/${sub.data.candidate.id}`, { fields: "id,firstName,lastName" });
+            if (cand.data) candName = ((cand.data.firstName || "") + " " + (cand.data.lastName || "")).trim();
+          }
+          if (sub.data.jobOrder) {
+            const job = await bhFetch(`entity/JobOrder/${sub.data.jobOrder.id}`, { fields: "id,title,clientCorporation(name)" });
+            if (job.data) {
+              jobTitle = job.data.title || jobTitle;
+              if (job.data.clientCorporation && job.data.clientCorporation.name) jobTitle += " — " + job.data.clientCorporation.name;
+            }
+          }
+        }
+      } catch (e) {}
+
+      const dashUrl = process.env.BULLHORN_REDIRECT_URI ? process.env.BULLHORN_REDIRECT_URI.replace("/auth/callback", "") : "https://bullhorn-dashboard-production.up.railway.app";
+      const emailSubject = `Submission Update: ${candName} → ${status}`;
+      const statusColors = {
+        "Offer": "#16a34a", "Placed": "#16a34a",
+        "Rejected - Not a Fit": "#ef4444", "Client Declined": "#ef4444", "Candidate Declined Offer": "#ef4444", "Withdrawn": "#ef4444",
+      };
+      const statusColor = statusColors[status] || "#176087";
+      const emailHtml = `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:${statusColor};padding:20px 24px;border-radius:8px 8px 0 0">
+            <h2 style="margin:0;color:#fff;font-size:18px">Submission Status Update</h2>
+          </div>
+          <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px">
+            <div style="text-align:center;margin-bottom:16px">
+              <span style="display:inline-block;padding:6px 16px;border-radius:20px;background:${statusColor}22;color:${statusColor};font-weight:700;font-size:14px">${status}</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:14px;color:#334155">
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b;width:120px">Candidate</td><td style="padding:8px 0">${candName}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b">Job</td><td style="padding:8px 0">${jobTitle}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b">New Status</td><td style="padding:8px 0;font-weight:700;color:${statusColor}">${status}</td></tr>
+              ${comments ? `<tr><td style="padding:8px 0;font-weight:600;color:#64748b;vertical-align:top">Notes</td><td style="padding:8px 0">${comments.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</td></tr>` : ""}
+            </table>
+            <div style="margin-top:20px;text-align:center">
+              <a href="${dashUrl}" style="display:inline-block;padding:10px 24px;background:${statusColor};color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px">View in Dashboard</a>
+            </div>
+            <div style="margin-top:16px;font-size:12px;color:#94a3b8;text-align:center">Sent from Anura Connect Dashboard</div>
+          </div>
+        </div>`;
+
+      for (const user of notifyUsers) {
+        if (!user.email) continue;
+        try {
+          let sent = false;
+          const outlookUser = Object.keys(_outlookUsers)[0];
+          if (outlookUser && _outlookUsers[outlookUser]) {
+            try {
+              await graphFetch(outlookUser, "/me/sendMail", {
+                method: "POST",
+                body: JSON.stringify({
+                  message: {
+                    subject: emailSubject,
+                    body: { contentType: "HTML", content: emailHtml },
+                    toRecipients: [{ emailAddress: { address: user.email } }],
+                  },
+                  saveToSentItems: true,
+                }),
+              });
+              sent = true;
+              emailResults.push({ user: user.name, success: true, method: "outlook" });
+            } catch (outlookErr) {
+              console.log("[Status Notify] Outlook failed:", outlookErr.message);
+            }
+          }
+          if (!sent && process.env.SENDGRID_API_KEY) {
+            const sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+              method: "POST",
+              headers: { "Authorization": "Bearer " + process.env.SENDGRID_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                personalizations: [{ to: [{ email: user.email, name: user.name }] }],
+                from: { email: process.env.SENDGRID_FROM_EMAIL || "team@anuraconnect.com", name: "Anura Connect" },
+                subject: emailSubject,
+                content: [{ type: "text/html", value: emailHtml }],
+              }),
+            });
+            sent = sgResp.ok || sgResp.status === 202;
+            emailResults.push({ user: user.name, success: sent, method: "sendgrid" });
+          }
+          if (!sent) emailResults.push({ user: user.name, success: false, reason: "No email service" });
+        } catch (emailErr) {
+          emailResults.push({ user: user.name, success: false, reason: emailErr.message });
+        }
+      }
+    }
+
+    res.json({ success: true, status, notifications: emailResults });
+  } catch (e) {
+    console.error("[Submission Status]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get available submission statuses
+app.get("/api/submission-statuses", (req, res) => {
+  res.json({ statuses: SUBMISSION_STATUSES });
+});
+
+// ── Submission Analytics ─────────────────────────
+app.get("/api/submission-analytics", async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    let where = "isDeleted=false";
+    if (from) where += ` AND dateAdded>=${new Date(from).getTime()}`;
+    if (to) where += ` AND dateAdded<=${new Date(to + "T23:59:59").getTime()}`;
+
+    const data = await bhFetchAll("query/JobSubmission", {
+      where,
+      fields: "id,candidate(id,firstName,lastName),jobOrder(id,title,clientCorporation(id,name)),status,dateAdded,dateLastModified,sendingUser(id,firstName,lastName)",
+      orderBy: "-dateAdded",
+    });
+    const subs = data.data || [];
+
+    // ── Win/Loss ratios ──
+    // Matches both Bullhorn native statuses AND our custom pipeline statuses
+    const winStatuses = ["Placed", "Offer Accepted", "Approved"];
+    const lossStatuses = [
+      "Client Rejected", "Sales Rejected", "Sales Rep Rejected", "Consultant Rejected",
+      "Withdrew", "Candidate Withdrew", "Offer Rejected",
+      // Custom pipeline statuses
+      "Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn"
+    ];
+    const interviewStatuses = [
+      "First Interview", "Second Interview", "Third Interview",
+      "Interview - Round 1", "Interview - Round 2", "Interview - Round 3"
+    ];
+    const holdStatuses = ["On Hold", "Hold"];
+    let totalSubs = subs.length;
+    let wins = 0, losses = 0, active = 0, interviews = 0;
+    subs.forEach(s => {
+      if (winStatuses.includes(s.status)) wins++;
+      else if (lossStatuses.includes(s.status)) losses++;
+      else if (interviewStatuses.includes(s.status)) interviews++;
+      else active++;
+    });
+    const decided = wins + losses;
+    const winRate = decided > 0 ? Math.round((wins / decided) * 100) : 0;
+
+    // ── Client acceptance rates ──
+    const byClient = {};
+    subs.forEach(s => {
+      const client = s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name || "Unknown" : "Unknown";
+      if (!byClient[client]) byClient[client] = { total: 0, wins: 0, losses: 0, interviews: 0, active: 0 };
+      byClient[client].total++;
+      if (winStatuses.includes(s.status)) byClient[client].wins++;
+      else if (lossStatuses.includes(s.status)) byClient[client].losses++;
+      else if (interviewStatuses.includes(s.status)) byClient[client].interviews++;
+      else byClient[client].active++;
+    });
+    const clientRates = Object.keys(byClient).map(name => {
+      const c = byClient[name];
+      const decided = c.wins + c.losses;
+      return {
+        client: name,
+        total: c.total,
+        wins: c.wins,
+        losses: c.losses,
+        interviews: c.interviews,
+        active: c.active,
+        acceptRate: decided > 0 ? Math.round((c.wins / decided) * 100) : null,
+      };
+    }).sort((a, b) => b.total - a.total);
+
+    // ── Time-to-fill stages (average days between dateAdded and dateLastModified by status) ──
+    const stageTimes = {};
+    subs.forEach(s => {
+      if (!s.dateAdded || !s.dateLastModified) return;
+      const days = Math.max(0, Math.round((s.dateLastModified - s.dateAdded) / 86400000));
+      if (!stageTimes[s.status]) stageTimes[s.status] = [];
+      stageTimes[s.status].push(days);
+    });
+    const avgStageTimes = {};
+    Object.keys(stageTimes).forEach(st => {
+      const arr = stageTimes[st];
+      avgStageTimes[st] = Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+    });
+
+    // ── By recruiter ──
+    const byRecruiter = {};
+    subs.forEach(s => {
+      const name = s.sendingUser ? ((s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "")).trim() : "Unknown";
+      if (!byRecruiter[name]) byRecruiter[name] = { total: 0, wins: 0, losses: 0 };
+      byRecruiter[name].total++;
+      if (winStatuses.includes(s.status)) byRecruiter[name].wins++;
+      else if (lossStatuses.includes(s.status)) byRecruiter[name].losses++;
+    });
+
+    // ── Status breakdown ──
+    const statusCounts = {};
+    subs.forEach(s => { statusCounts[s.status] = (statusCounts[s.status] || 0) + 1; });
+
+    // ── Submissions list for table ──
+    const submissions = subs.map(s => ({
+      id: s.id,
+      candidateId: s.candidate ? s.candidate.id : null,
+      candidateName: s.candidate ? titleCase(((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim()) : "",
+      jobId: s.jobOrder ? s.jobOrder.id : null,
+      jobTitle: s.jobOrder ? s.jobOrder.title || "" : "",
+      client: s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name || "" : "",
+      status: s.status || "",
+      dateAdded: s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "",
+      dateAddedRaw: s.dateAdded || 0,
+      dateModified: s.dateLastModified ? new Date(s.dateLastModified).toLocaleDateString() : "",
+      dateModifiedRaw: s.dateLastModified || 0,
+      submittedBy: s.sendingUser ? ((s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "")).trim() : "",
+    }));
+
+    res.json({
+      total: totalSubs,
+      wins, losses, active, interviews, winRate,
+      clientRates,
+      avgStageTimes,
+      byRecruiter,
+      statusCounts,
+      statuses: SUBMISSION_STATUSES,
+      submissions,
+    });
+  } catch (e) {
+    console.error("[Submission Analytics]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Send Submission Report Email ─────────────────
+app.post("/api/submission-report", async (req, res) => {
+  try {
+    const { recipients, from, to } = req.body;
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ error: "At least one recipient is required" });
+    }
+
+    // Fetch analytics data
+    let where = "isDeleted=false";
+    if (from) where += ` AND dateAdded>=${new Date(from).getTime()}`;
+    if (to) where += ` AND dateAdded<=${new Date(to + "T23:59:59").getTime()}`;
+
+    const data = await bhFetchAll("query/JobSubmission", {
+      where,
+      fields: "id,candidate,jobOrder,status,dateAdded,sendingUser",
+      orderBy: "-dateAdded",
+    });
+    const subs = data.data || [];
+
+    const winStatuses = ["Placed", "Offer Accepted", "Approved"];
+    const lossStatuses = [
+      "Client Rejected", "Sales Rejected", "Sales Rep Rejected", "Consultant Rejected",
+      "Withdrew", "Candidate Withdrew", "Offer Rejected",
+      "Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn"
+    ];
+    let wins = 0, losses = 0;
+    subs.forEach(s => {
+      if (winStatuses.includes(s.status)) wins++;
+      else if (lossStatuses.includes(s.status)) losses++;
+    });
+    const decided = wins + losses;
+    const winRate = decided > 0 ? Math.round((wins / decided) * 100) : 0;
+
+    // Build active submissions table
+    const activeSubs = subs.filter(s => !winStatuses.includes(s.status) && !lossStatuses.includes(s.status));
+    let tableRows = "";
+    activeSubs.slice(0, 50).forEach(s => {
+      const candName = s.candidate ? ((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim() : "Unknown";
+      const jobTitle = s.jobOrder ? s.jobOrder.title || "" : "";
+      const client = s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name || "" : "";
+      const date = s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "";
+      tableRows += `<tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px">${candName}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px">${jobTitle}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px">${client}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px"><span style="padding:2px 8px;border-radius:10px;background:#e0f2fe;color:#176087;font-size:11px;font-weight:600">${s.status || "Submitted"}</span></td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px">${date}</td>
+      </tr>`;
+    });
+
+    const dateRange = from && to ? `${new Date(from).toLocaleDateString()} – ${new Date(to).toLocaleDateString()}` : "All Time";
+    const dashUrl = process.env.BULLHORN_REDIRECT_URI ? process.env.BULLHORN_REDIRECT_URI.replace("/auth/callback", "") : "https://bullhorn-dashboard-production.up.railway.app";
+
+    const emailHtml = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:700px;margin:0 auto">
+        <div style="background:#176087;padding:20px 24px;border-radius:8px 8px 0 0">
+          <h2 style="margin:0;color:#fff;font-size:18px">Submission Pipeline Report</h2>
+          <div style="color:#bae6fd;font-size:13px;margin-top:4px">${dateRange}</div>
+        </div>
+        <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:none">
+          <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap">
+            <div style="flex:1;min-width:100px;padding:12px;background:#f8fafc;border-radius:8px;text-align:center;border:1px solid #e2e8f0">
+              <div style="font-size:28px;font-weight:800;color:#176087">${subs.length}</div>
+              <div style="font-size:11px;color:#64748b;font-weight:600">Total Submissions</div>
+            </div>
+            <div style="flex:1;min-width:100px;padding:12px;background:#f0fdf4;border-radius:8px;text-align:center;border:1px solid #bbf7d0">
+              <div style="font-size:28px;font-weight:800;color:#16a34a">${activeSubs.length}</div>
+              <div style="font-size:11px;color:#64748b;font-weight:600">Active / In Process</div>
+            </div>
+            <div style="flex:1;min-width:100px;padding:12px;background:#ede9fe;border-radius:8px;text-align:center;border:1px solid #ddd6fe">
+              <div style="font-size:28px;font-weight:800;color:#7c3aed">${winRate}%</div>
+              <div style="font-size:11px;color:#64748b;font-weight:600">Win Rate</div>
+            </div>
+            <div style="flex:1;min-width:100px;padding:12px;background:#f0fdf4;border-radius:8px;text-align:center;border:1px solid #bbf7d0">
+              <div style="font-size:28px;font-weight:800;color:#16a34a">${wins}</div>
+              <div style="font-size:11px;color:#64748b;font-weight:600">Wins</div>
+            </div>
+          </div>
+          <h3 style="margin:0 0 12px;color:#0E2E47;font-size:15px">Active Submissions (${activeSubs.length})</h3>
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="background:#f8fafc">
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Candidate</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Job</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Client</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Status</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Submitted</th>
+            </tr></thead>
+            <tbody>${tableRows || '<tr><td colspan="5" style="padding:16px;text-align:center;color:#94a3b8">No active submissions</td></tr>'}</tbody>
+          </table>
+          ${activeSubs.length > 50 ? '<div style="margin-top:8px;font-size:12px;color:#94a3b8;text-align:center">Showing first 50 of ' + activeSubs.length + ' active submissions</div>' : ''}
+          <div style="margin-top:20px;text-align:center">
+            <a href="${dashUrl}" style="display:inline-block;padding:10px 24px;background:#176087;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px">View Full Dashboard</a>
+          </div>
+        </div>
+        <div style="padding:12px;text-align:center;font-size:11px;color:#94a3b8;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;background:#fafbfc">
+          Sent from Anura Connect Dashboard · ${new Date().toLocaleDateString()}
+        </div>
+      </div>`;
+
+    const emailSubject = `Submission Pipeline Report — ${dateRange} (${subs.length} submissions, ${winRate}% win rate)`;
+    const emailResults = [];
+
+    for (const user of recipients) {
+      if (!user.email) continue;
+      try {
+        let sent = false;
+        const outlookUser = Object.keys(_outlookUsers)[0];
+        if (outlookUser && _outlookUsers[outlookUser]) {
+          try {
+            await graphFetch(outlookUser, "/me/sendMail", {
+              method: "POST",
+              body: JSON.stringify({
+                message: {
+                  subject: emailSubject,
+                  body: { contentType: "HTML", content: emailHtml },
+                  toRecipients: [{ emailAddress: { address: user.email } }],
+                },
+                saveToSentItems: true,
+              }),
+            });
+            sent = true;
+            emailResults.push({ user: user.name, success: true, method: "outlook" });
+          } catch (oe) { console.log("[Report] Outlook failed:", oe.message); }
+        }
+        if (!sent && process.env.SENDGRID_API_KEY) {
+          const sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+            method: "POST",
+            headers: { "Authorization": "Bearer " + process.env.SENDGRID_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              personalizations: [{ to: [{ email: user.email, name: user.name }] }],
+              from: { email: process.env.SENDGRID_FROM_EMAIL || "team@anuraconnect.com", name: "Anura Connect" },
+              subject: emailSubject,
+              content: [{ type: "text/html", value: emailHtml }],
+            }),
+          });
+          sent = sgResp.ok || sgResp.status === 202;
+          emailResults.push({ user: user.name, success: sent, method: "sendgrid" });
+        }
+        if (!sent) emailResults.push({ user: user.name, success: false });
+      } catch (emailErr) {
+        emailResults.push({ user: user.name, success: false, reason: emailErr.message });
+      }
+    }
+
+    res.json({ success: true, sent: emailResults.filter(r => r.success).length, total: emailResults.length, results: emailResults });
+  } catch (e) {
+    console.error("[Submission Report]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Corporate Users (for owner dropdowns) ────────
+app.get("/api/users", async (req, res) => {
+  try {
+    const data = await bhFetchAll("query/CorporateUser", {
+      where: "isDeleted = false AND enabled = true",
+      fields: "id,firstName,lastName,email",
+      orderBy: "lastName",
+    });
+    const users = (data.data || []).map(u => ({
+      id: u.id,
+      name: ((u.firstName || "") + " " + (u.lastName || "")).trim(),
+      email: u.email || "",
+    }));
+    res.json({ data: users });
+  } catch (e) {
+    console.error("[Users]", e.message);
+    res.status(500).json({ error: e.message, data: [] });
   }
 });
 
@@ -1213,14 +1885,22 @@ app.get("/api/clients/:id", async (req, res) => {
       id: corp.id,
       name: corp.name || "",
       address: corp.address || {},
+      address1: corp.address ? corp.address.address1 || "" : "",
+      address2: corp.address ? corp.address.address2 || "" : "",
+      city: corp.address ? corp.address.city || "" : "",
+      state: corp.address ? corp.address.state || "" : "",
+      zip: corp.address ? corp.address.zip || "" : "",
       location: corp.address ? [corp.address.city, corp.address.state].filter(Boolean).join(", ") : "",
       phone: corp.phone || "",
       fax: corp.fax || "",
       website: corp.companyURL || "",
       status: corp.status || "",
       industry: corp.industryList || "",
+      numOffices: corp.numOffices || null,
       numEmployees: corp.numEmployees || null,
       annualRevenue: corp.annualRevenue || null,
+      billingPhone: corp.billingPhone || "",
+      billingContact: corp.billingContact || "",
       owner: corp.owner ? ((corp.owner.firstName || "") + " " + (corp.owner.lastName || "")).trim() : "",
       ownerId: corp.owner ? corp.owner.id : null,
       dateAdded: corp.dateAdded ? new Date(corp.dateAdded).toLocaleDateString() : "",
@@ -1237,6 +1917,253 @@ app.get("/api/clients/:id", async (req, res) => {
     });
   } catch (e) {
     console.error("[Client Detail]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Client Update ─────────────────────────────
+app.post("/api/clients/:id/update", async (req, res) => {
+  try {
+    const clientId = parseInt(req.params.id);
+    const updates = req.body;
+    const ALLOWED_FIELDS = [
+      "name", "status", "phone", "fax", "companyURL", "notes",
+      "industryList", "numOffices", "annualRevenue", "numEmployees",
+      "billingPhone", "billingContact",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+      "customText6", "customText7", "customText8", "customText9", "customText10",
+      "customTextBlock1", "customTextBlock2", "customTextBlock3",
+      "customFloat1", "customFloat2", "customFloat3",
+      "customInt1", "customInt2", "customInt3",
+    ];
+    const safeUpdates = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        safeUpdates[key] = updates[key];
+      }
+    }
+    // Handle owner as association
+    if (updates.owner && typeof updates.owner === "object" && updates.owner.id) {
+      safeUpdates.owner = { id: parseInt(updates.owner.id) };
+    } else if (updates.ownerId) {
+      safeUpdates.owner = { id: parseInt(updates.ownerId) };
+    }
+    // Handle address sub-fields
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(updates)) {
+      if (addressFields.includes(key)) {
+        addrUpdates[key] = updates[key];
+        hasAddr = true;
+      }
+    }
+    if (hasAddr) {
+      safeUpdates.address = addrUpdates;
+    }
+    if (Object.keys(safeUpdates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+    const result = await bhWrite(`entity/ClientCorporation/${clientId}`, safeUpdates, "POST");
+    console.log("[Update Client]", clientId, "→", Object.keys(safeUpdates), result);
+    res.json({ success: true, message: "Client updated", changedFields: Object.keys(safeUpdates) });
+  } catch (e) {
+    console.error("[Update Client]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Client Contact Create / Update ────────────
+app.post("/api/client-contacts/:id/update", async (req, res) => {
+  try {
+    const contactId = parseInt(req.params.id);
+    const updates = req.body;
+    const ALLOWED_FIELDS = [
+      "firstName", "lastName", "title", "email", "email2",
+      "phone", "phone2", "mobile", "fax",
+      "occupation", "status", "type", "comments", "description",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+    ];
+    const safeUpdates = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        safeUpdates[key] = updates[key];
+      }
+    }
+    // Handle address sub-fields
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(updates)) {
+      if (addressFields.includes(key)) {
+        addrUpdates[key] = updates[key];
+        hasAddr = true;
+      }
+    }
+    if (hasAddr) safeUpdates.address = addrUpdates;
+    if (Object.keys(safeUpdates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+    const result = await bhWrite(`entity/ClientContact/${contactId}`, safeUpdates, "POST");
+    console.log("[Update ClientContact]", contactId, "→", Object.keys(safeUpdates), result);
+    res.json({ success: true, message: "Contact updated", changedFields: Object.keys(safeUpdates) });
+  } catch (e) {
+    console.error("[Update ClientContact]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/client-contacts", async (req, res) => {
+  try {
+    const body = req.body;
+    if (!body.clientCorporation || !body.clientCorporation.id) {
+      return res.status(400).json({ error: "clientCorporation.id is required" });
+    }
+    if (!body.firstName || !body.lastName) {
+      return res.status(400).json({ error: "firstName and lastName are required" });
+    }
+    const ALLOWED_FIELDS = [
+      "firstName", "lastName", "title", "email", "email2",
+      "phone", "phone2", "mobile", "fax",
+      "occupation", "status", "type", "comments", "description",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+    ];
+    const newContact = {
+      clientCorporation: { id: parseInt(body.clientCorporation.id) },
+      status: body.status || "Active",
+    };
+    for (const key of Object.keys(body)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        newContact[key] = body[key];
+      }
+    }
+    // Handle address
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(body)) {
+      if (addressFields.includes(key)) { addrUpdates[key] = body[key]; hasAddr = true; }
+    }
+    if (hasAddr) newContact.address = addrUpdates;
+    const result = await bhWrite("entity/ClientContact", newContact, "PUT");
+    console.log("[Create ClientContact]", result);
+    res.json({ success: true, message: "Contact created", data: result });
+  } catch (e) {
+    console.error("[Create ClientContact]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Job Update ────────────────────────────────
+app.post("/api/jobs/:id/update", async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.id);
+    const updates = req.body;
+    const ALLOWED_FIELDS = [
+      "title", "status", "employmentType", "salary", "numOpenings",
+      "startDate", "dateEnd", "type", "description", "publicDescription",
+      "benefits", "willRelocate", "travelRequirements",
+      "yearsRequired", "degreeList", "certificationList", "skillList",
+      "bonusPackage", "educationDegree", "externalCategoryID",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+      "customText6", "customText7", "customText8", "customText9", "customText10",
+      "customTextBlock1", "customTextBlock2", "customTextBlock3",
+      "customFloat1", "customFloat2", "customFloat3",
+      "customInt1", "customInt2", "customInt3",
+      "customDate1", "customDate2", "customDate3",
+    ];
+    const safeUpdates = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        safeUpdates[key] = updates[key];
+      }
+    }
+    // Handle owner as association
+    if (updates.owner && typeof updates.owner === "object" && updates.owner.id) {
+      safeUpdates.owner = { id: parseInt(updates.owner.id) };
+    } else if (updates.ownerId) {
+      safeUpdates.owner = { id: parseInt(updates.ownerId) };
+    }
+    // Handle clientCorporation as association
+    if (updates.clientCorporation && typeof updates.clientCorporation === "object" && updates.clientCorporation.id) {
+      safeUpdates.clientCorporation = { id: parseInt(updates.clientCorporation.id) };
+    } else if (updates.clientCorporationId) {
+      safeUpdates.clientCorporation = { id: parseInt(updates.clientCorporationId) };
+    }
+    // Handle address sub-fields
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(updates)) {
+      if (addressFields.includes(key)) { addrUpdates[key] = updates[key]; hasAddr = true; }
+    }
+    if (hasAddr) safeUpdates.address = addrUpdates;
+    if (Object.keys(safeUpdates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+    const result = await bhWrite(`entity/JobOrder/${jobId}`, safeUpdates, "POST");
+    console.log("[Update Job]", jobId, "→", Object.keys(safeUpdates), result);
+    res.json({ success: true, message: "Job updated", changedFields: Object.keys(safeUpdates) });
+  } catch (e) {
+    console.error("[Update Job]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Job Create ────────────────────────────────
+app.put("/api/jobs", async (req, res) => {
+  try {
+    const body = req.body;
+    if (!body.title) {
+      return res.status(400).json({ error: "Job title is required" });
+    }
+    const ALLOWED_FIELDS = [
+      "title", "status", "employmentType", "salary", "numOpenings",
+      "startDate", "dateEnd", "type", "description", "publicDescription",
+      "benefits", "willRelocate", "travelRequirements",
+      "yearsRequired", "degreeList", "certificationList", "skillList",
+      "bonusPackage", "educationDegree", "externalCategoryID",
+      "customText1", "customText2", "customText3", "customText4", "customText5",
+      "customText6", "customText7", "customText8", "customText9", "customText10",
+      "customTextBlock1", "customTextBlock2", "customTextBlock3",
+      "customFloat1", "customFloat2", "customFloat3",
+      "customInt1", "customInt2", "customInt3",
+      "customDate1", "customDate2", "customDate3",
+    ];
+    const newJob = {
+      status: body.status || "Accepting Candidates",
+      isDeleted: false,
+    };
+    for (const key of Object.keys(body)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        newJob[key] = body[key];
+      }
+    }
+    // Handle owner
+    if (body.owner && typeof body.owner === "object" && body.owner.id) {
+      newJob.owner = { id: parseInt(body.owner.id) };
+    } else if (body.ownerId) {
+      newJob.owner = { id: parseInt(body.ownerId) };
+    }
+    // Handle clientCorporation
+    if (body.clientCorporation && typeof body.clientCorporation === "object" && body.clientCorporation.id) {
+      newJob.clientCorporation = { id: parseInt(body.clientCorporation.id) };
+    } else if (body.clientCorporationId) {
+      newJob.clientCorporation = { id: parseInt(body.clientCorporationId) };
+    }
+    // Handle address
+    const addressFields = ["address1", "address2", "city", "state", "zip", "countryID"];
+    const addrUpdates = {};
+    let hasAddr = false;
+    for (const key of Object.keys(body)) {
+      if (addressFields.includes(key)) { addrUpdates[key] = body[key]; hasAddr = true; }
+    }
+    if (hasAddr) newJob.address = addrUpdates;
+    const result = await bhWrite("entity/JobOrder", newJob, "PUT");
+    console.log("[Create Job]", result);
+    res.json({ success: true, message: "Job created", data: result });
+  } catch (e) {
+    console.error("[Create Job]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -1301,29 +2228,275 @@ app.get("/api/jobs/:id", async (req, res) => {
       client: j.clientCorporation ? j.clientCorporation.name : "",
       clientId: j.clientCorporation ? j.clientCorporation.id : null,
       location: j.address ? [j.address.city, j.address.state].filter(Boolean).join(", ") : "",
+      address1: j.address ? j.address.address1 || "" : "",
+      address2: j.address ? j.address.address2 || "" : "",
+      addressCity: j.address ? j.address.city || "" : "",
+      addressState: j.address ? j.address.state || "" : "",
+      addressZip: j.address ? j.address.zip || "" : "",
       type: j.employmentType || "",
+      rawSalary: j.salary || "",
       salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
       status: j.status || "",
       priority: PRIORITY_LABELS[j.type] || "",
+      priorityRaw: j.type || 0,
       openings: j.numOpenings || 0,
       submissionCount: j.submissions ? j.submissions.total : 0,
       dateAdded: j.dateAdded ? new Date(j.dateAdded).toLocaleDateString() : "",
       startDate: j.startDate ? new Date(j.startDate).toLocaleDateString() : "",
+      rawStartDate: j.startDate || null,
       dateEnd: j.dateEnd ? new Date(j.dateEnd).toLocaleDateString() : null,
+      rawDateEnd: j.dateEnd || null,
       owner: j.owner ? ((j.owner.firstName || "") + " " + (j.owner.lastName || "")).trim() : "",
+      ownerId: j.owner ? j.owner.id : null,
       description: j.description || j.publicDescription || "",
       descriptionText: descText,
       certs: j.customText1 || "",
+      customText2: j.customText2 || "",
+      customText3: j.customText3 || "",
+      customText4: j.customText4 || "",
       epicRole: j.customText5 || "",
+      customText6: j.customText6 || "",
       benefits: j.benefits || "",
       yearsRequired: j.yearsRequired || null,
       travelRequirements: j.travelRequirements || null,
+      willRelocate: j.willRelocate || false,
+      skillList: j.skillList || "",
+      degreeList: j.degreeList || "",
       submissions: submissions,
       placements: placements,
       daysOpen: j.dateAdded && (j.status === "Accepting Candidates" || j.status === "Open") ? Math.floor((Date.now() - j.dateAdded) / 86400000) : null,
     });
   } catch (e) {
     console.error("[Job Detail]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── MSA Pipeline (Opportunities) ──────────────────────────
+const MSA_STAGES = ["Prospect", "In Negotiation", "Signed", "Lost"];
+
+app.get("/api/opportunities", async (req, res) => {
+  try {
+    const { q, status, owner } = req.query;
+    // Build query — Opportunity supports search/ endpoint
+    let queryParts = ["isDeleted:0"];
+    if (status && status !== "all") {
+      queryParts.push(`status:"${status}"`);
+    }
+    if (q) {
+      queryParts.push(`(title:${q}* OR description:${q}*)`);
+    }
+    const query = queryParts.join(" AND ");
+    const r = await bhFetchAll("search/Opportunity", {
+      query: query,
+      fields: "id,title,status,type,dealValue,weightedDealValue,winProbabilityPercent,estimatedStartDate,estimatedEndDate,effectiveDate,dateAdded,dateLastModified,owner,clientCorporation,description,customText1,customText2,customText3,customText4,customText5,customText6,customDate1,customDate2,customFloat1,customFloat2",
+      sort: "-dateLastModified",
+    });
+    var opps = (r.data || []).map(function(o) {
+      return {
+        id: o.id,
+        title: o.title || "",
+        status: o.status || "",
+        type: o.type || "",
+        dealValue: o.dealValue || 0,
+        weightedDealValue: o.weightedDealValue || 0,
+        winProbability: o.winProbabilityPercent || 0,
+        estimatedStart: o.estimatedStartDate || null,
+        estimatedEnd: o.estimatedEndDate || null,
+        effectiveDate: o.effectiveDate || null,
+        dateAdded: o.dateAdded || null,
+        dateLastModified: o.dateLastModified || null,
+        owner: o.owner ? (o.owner.firstName + " " + o.owner.lastName) : "",
+        ownerId: o.owner ? o.owner.id : null,
+        client: o.clientCorporation ? o.clientCorporation.name : "",
+        clientId: o.clientCorporation ? o.clientCorporation.id : null,
+        description: o.description || "",
+        customText1: o.customText1 || "",
+        customText2: o.customText2 || "",
+        customText3: o.customText3 || "",
+        customText4: o.customText4 || "",
+        customText5: o.customText5 || "",
+        customText6: o.customText6 || "",
+        customDate1: o.customDate1 || null,
+        customDate2: o.customDate2 || null,
+        customFloat1: o.customFloat1 || 0,
+        customFloat2: o.customFloat2 || 0,
+      };
+    });
+    // Filter by owner name if provided
+    if (owner) {
+      var ownerLower = owner.toLowerCase();
+      opps = opps.filter(function(o) { return o.owner.toLowerCase().includes(ownerLower); });
+    }
+    res.json({ data: opps, total: opps.length, stages: MSA_STAGES });
+  } catch (e) {
+    console.error("[Opportunities]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/opportunities/:id", async (req, res) => {
+  try {
+    const data = await bhFetch("entity/Opportunity/" + req.params.id, {
+      fields: "id,title,status,type,dealValue,weightedDealValue,winProbabilityPercent,estimatedStartDate,estimatedEndDate,effectiveDate,dateAdded,dateLastModified,owner,clientCorporation,description,notes,customText1,customText2,customText3,customText4,customText5,customText6,customDate1,customDate2,customFloat1,customFloat2",
+    });
+    var o = data.data || data;
+    res.json({
+      id: o.id,
+      title: o.title || "",
+      status: o.status || "",
+      type: o.type || "",
+      dealValue: o.dealValue || 0,
+      weightedDealValue: o.weightedDealValue || 0,
+      winProbability: o.winProbabilityPercent || 0,
+      estimatedStart: o.estimatedStartDate || null,
+      estimatedEnd: o.estimatedEndDate || null,
+      effectiveDate: o.effectiveDate || null,
+      dateAdded: o.dateAdded || null,
+      dateLastModified: o.dateLastModified || null,
+      owner: o.owner ? (o.owner.firstName + " " + o.owner.lastName) : "",
+      ownerId: o.owner ? o.owner.id : null,
+      client: o.clientCorporation ? o.clientCorporation.name : "",
+      clientId: o.clientCorporation ? o.clientCorporation.id : null,
+      description: o.description || "",
+      notes: o.notes || "",
+      customText1: o.customText1 || "",
+      customText2: o.customText2 || "",
+      customText3: o.customText3 || "",
+      customText4: o.customText4 || "",
+      customText5: o.customText5 || "",
+      customText6: o.customText6 || "",
+      customDate1: o.customDate1 || null,
+      customDate2: o.customDate2 || null,
+      customFloat1: o.customFloat1 || 0,
+      customFloat2: o.customFloat2 || 0,
+      stages: MSA_STAGES,
+    });
+  } catch (e) {
+    console.error("[Opportunity Detail]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── New Candidates (date-range intake tracking) ──────────────────────────
+app.get("/api/new-candidates", async (req, res) => {
+  try {
+    const { range, from, to } = req.query;
+    const nowMs = Date.now();
+    let startMs, endMs = nowMs;
+
+    // Determine date range
+    if (from && to) {
+      startMs = new Date(from).getTime();
+      endMs = new Date(to).getTime() + 86400000 - 1; // end of day
+    } else {
+      switch (range) {
+        case "week":   startMs = nowMs - 7 * 86400000; break;
+        case "month":  startMs = nowMs - 30 * 86400000; break;
+        case "quarter": startMs = nowMs - 90 * 86400000; break;
+        case "year":   startMs = nowMs - 365 * 86400000; break;
+        case "ytd":
+          var jan1 = new Date(new Date().getFullYear(), 0, 1);
+          startMs = jan1.getTime(); break;
+        default:       startMs = nowMs - 30 * 86400000; break;
+      }
+    }
+
+    // Format dates for Bullhorn Lucene search (yyyyMMdd)
+    const fmt = d => new Date(d).toISOString().split("T")[0].replace(/-/g, "");
+    const startStr = fmt(startMs);
+    const endStr = fmt(endMs);
+
+    const r = await bhFetchAll("search/Candidate", {
+      query: `isDeleted:0 AND dateAdded:[${startStr} TO ${endStr}]`,
+      fields: "id,firstName,lastName,occupation,customText1,customText2,customText5,customText6,status,dateAdded,dateAvailable,address,email,owner",
+      sort: "-dateAdded",
+    });
+
+    // Build weekly/daily breakdown for chart
+    const buckets = {};
+    const dayMs = 86400000;
+    const totalDays = Math.ceil((endMs - startMs) / dayMs);
+    // Decide bucket size: daily if <= 31 days, weekly if <= 180, monthly otherwise
+    let bucketType = "day";
+    if (totalDays > 180) bucketType = "month";
+    else if (totalDays > 31) bucketType = "week";
+
+    (r.data || []).forEach(function(c) {
+      if (!c.dateAdded) return;
+      var d = new Date(c.dateAdded);
+      var key;
+      if (bucketType === "day") {
+        key = d.toISOString().split("T")[0];
+      } else if (bucketType === "week") {
+        // Week starting Monday
+        var day = d.getDay();
+        var diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        var monday = new Date(d.getFullYear(), d.getMonth(), diff);
+        key = "W/O " + monday.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      } else {
+        key = d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+      }
+      buckets[key] = (buckets[key] || 0) + 1;
+    });
+
+    // Convert to sorted array
+    var chartData = Object.entries(buckets).map(function(e) { return { label: e[0], count: e[1] }; });
+    // Sort chronologically
+    if (bucketType === "day") {
+      chartData.sort(function(a, b) { return new Date(a.label) - new Date(b.label); });
+    }
+
+    // Source breakdown
+    var byStatus = {};
+    var byOwner = {};
+    (r.data || []).forEach(function(c) {
+      var st = c.status || "Unknown";
+      byStatus[st] = (byStatus[st] || 0) + 1;
+      var own = c.owner ? (c.owner.firstName + " " + c.owner.lastName) : "Unassigned";
+      byOwner[own] = (byOwner[own] || 0) + 1;
+    });
+
+    const candidates = (r.data || []).map(function(c) {
+      return {
+        id: c.id,
+        firstName: titleCase(c.firstName),
+        lastName: titleCase(c.lastName),
+        name: titleCase((c.firstName || "") + " " + (c.lastName || "")),
+        title: c.occupation || "",
+        primaryCert: c.customText1 || "",
+        secondaryCert: c.customText2 || "",
+        epicRole: c.customText5 || "",
+        grade: c.customText6 || "",
+        status: c.status || "",
+        email: c.email || "",
+        dateAdded: c.dateAdded || null,
+        available: c.dateAvailable || null,
+        location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
+        owner: c.owner ? (c.owner.firstName + " " + c.owner.lastName) : "",
+      };
+    });
+
+    // KPIs
+    const totalWeeks = Math.max(1, totalDays / 7);
+    const avgPerWeek = (r.total / totalWeeks).toFixed(1);
+
+    res.json({
+      data: candidates,
+      total: r.total,
+      chart: chartData,
+      bucketType: bucketType,
+      byStatus: byStatus,
+      byOwner: byOwner,
+      kpi: {
+        total: r.total,
+        avgPerWeek: parseFloat(avgPerWeek),
+        dateRange: { from: new Date(startMs).toISOString().split("T")[0], to: new Date(endMs).toISOString().split("T")[0] },
+        totalDays: totalDays,
+      }
+    });
+  } catch (e) {
+    console.error("[New Candidates]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -1341,7 +2514,7 @@ app.get("/api/my-dashboard", async (req, res) => {
         const dbClients = (await db.query("SELECT * FROM clients WHERE owner_id = $1 ORDER BY date_last_modified DESC", [uid])).rows;
         const dbJobs = (await db.query("SELECT * FROM jobs WHERE owner_id = $1 AND is_deleted = false ORDER BY date_last_modified DESC", [uid])).rows;
         const dbPlacements = (await db.query(
-          "SELECT p.*, j.owner_id as job_owner_id FROM placements p LEFT JOIN jobs j ON p.job_id = j.id WHERE (p.owner_id = $1 OR j.owner_id = $1) AND (p.status ILIKE '%approved%' OR p.status ILIKE '%active%' OR p.status ILIKE '%contract%')", [uid]
+          "SELECT p.*, j.owner_id as job_owner_id FROM placements p LEFT JOIN jobs j ON p.job_id = j.id WHERE j.owner_id = $1 AND (p.status ILIKE '%approved%' OR p.status ILIKE '%active%' OR p.status ILIKE '%contract%')", [uid]
         )).rows;
 
         const DB_PRIORITY_LABELS = { "0": "", "1": "Urgent", "2": "Hot", "3": "Warm", "4": "Cold" };
@@ -1358,8 +2531,9 @@ app.get("/api/my-dashboard", async (req, res) => {
         });
         const dbPlacementsOut = dbPlacements.map(function(p) {
           return {
-            id: p.id, candidate: p.candidate_name || "", job: p.job_title || "",
-            client: p.client_name || "", status: p.status || "",
+            id: p.id, candidateId: p.candidate_id, candidate: p.candidate_name || "",
+            jobId: p.job_id, job: p.job_title || "",
+            clientId: p.client_id, client: p.client_name || "", status: p.status || "",
             startDate: p.date_begin ? new Date(Number(p.date_begin)).toLocaleDateString("en-US") : "",
             endDate: p.date_end ? new Date(Number(p.date_end)).toLocaleDateString("en-US") : null,
             billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : null,
@@ -1429,8 +2603,11 @@ app.get("/api/my-dashboard", async (req, res) => {
 
     const placements = (myPlacements.data || []).map(p => ({
       id: p.id,
+      candidateId: p.candidate ? p.candidate.id : null,
       candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+      jobId: p.jobOrder ? p.jobOrder.id : null,
       job: p.jobOrder ? p.jobOrder.title : "",
+      clientId: p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.id : null,
       client: p.jobOrder && p.jobOrder.clientCorporation ? p.jobOrder.clientCorporation.name : "",
       status: p.status || "",
       startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString("en-US") : "",
@@ -1585,6 +2762,198 @@ app.get("/api/expiring-placements", async (req, res) => {
   }
 });
 
+// ── Contract End Matching: Match expiring consultants to open jobs ──
+app.get("/api/contract-end-matches", async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 35;
+    const now = Date.now();
+    const futureMs = now + days * 86400000;
+
+    // 1. Get expiring placements with candidate details
+    const expData = await bhFetchAll("query/Placement", {
+      where: `dateEnd IS NOT NULL AND dateEnd >= ${now} AND dateEnd <= ${futureMs} AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))`,
+      fields: "id,candidate,jobOrder,dateEnd,payRate,clientBillRate",
+      orderBy: "dateEnd",
+    });
+    var placements = (expData.data || []).filter(function(p) {
+      var et = (p.employmentType || "").toLowerCase();
+      return et.indexOf("direct") < 0 && et.indexOf("permanent") < 0;
+    });
+    if (placements.length === 0) return res.json({ data: [], total: 0 });
+
+    // 2. Get candidate details (certs, role, grade, location)
+    var candidateIds = [...new Set(placements.map(p => p.candidate ? p.candidate.id : null).filter(Boolean))];
+    var candidateMap = {};
+    for (var i = 0; i < candidateIds.length; i += 20) {
+      var batch = candidateIds.slice(i, i + 20);
+      var details = await Promise.all(batch.map(id =>
+        bhFetch("entity/Candidate/" + id, { fields: "id,firstName,lastName,customText1,customText2,customText5,customText6,address(state)" }).catch(() => null)
+      ));
+      details.forEach(function(d) {
+        if (d && d.data) {
+          var c = d.data;
+          candidateMap[c.id] = {
+            name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+            primaryCert: (Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1) || "",
+            secondaryCert: (Array.isArray(c.customText2) ? c.customText2.join(", ") : c.customText2) || "",
+            epicRole: c.customText5 || "",
+            grade: c.customText6 || "",
+            state: c.address ? c.address.state : "",
+          };
+        }
+      });
+    }
+
+    // 3. Get all open jobs
+    var openJobs = await bhFetchAll("search/JobOrder", {
+      query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")',
+      fields: "id,title,clientCorporation,customText1,customText5,numOpenings,address,payRate,clientBillRate,type",
+      count: 200,
+    });
+    var jobs = (openJobs.data || []);
+    if (jobs.length === 0) return res.json({ data: placements.map(p => ({ placement: p, matches: [] })), total: placements.length });
+
+    // 4. Match each expiring consultant to open jobs by cert overlap
+    var results = placements.map(function(p) {
+      var candId = p.candidate ? p.candidate.id : null;
+      var cand = candidateMap[candId] || {};
+      var daysLeft = p.dateEnd ? Math.ceil((p.dateEnd - now) / 86400000) : null;
+      var candCerts = ((cand.primaryCert || "") + ", " + (cand.secondaryCert || "")).toLowerCase().split(/,\s*/).filter(Boolean);
+
+      // Score each job
+      var scored = jobs.map(function(j) {
+        var jobCerts = ((Array.isArray(j.customText1) ? j.customText1.join(", ") : j.customText1) || "").toLowerCase().split(/,\s*/).filter(Boolean);
+        var certOverlap = 0;
+        candCerts.forEach(function(cc) {
+          jobCerts.forEach(function(jc) {
+            if (cc && jc && (cc.indexOf(jc) >= 0 || jc.indexOf(cc) >= 0)) certOverlap++;
+          });
+        });
+        var roleMatch = cand.epicRole && j.customText5 && cand.epicRole.toLowerCase() === (j.customText5 || "").toLowerCase() ? 2 : 0;
+        var score = certOverlap * 3 + roleMatch;
+        return { job: j, score: score, certOverlap: certOverlap, roleMatch: roleMatch > 0 };
+      }).filter(function(s) { return s.score > 0; })
+        .sort(function(a, b) { return b.score - a.score; })
+        .slice(0, 5);
+
+      return {
+        candidateId: candId,
+        candidateName: titleCase(cand.name || (p.candidate ? (p.candidate.firstName + " " + p.candidate.lastName) : "")),
+        primaryCert: cand.primaryCert || "",
+        grade: cand.grade || "",
+        currentJob: p.jobOrder ? p.jobOrder.title : "",
+        endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : "",
+        daysLeft: daysLeft,
+        urgency: daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
+        matches: scored.map(function(s) {
+          return {
+            jobId: s.job.id,
+            title: s.job.title || "",
+            client: s.job.clientCorporation ? s.job.clientCorporation.name : "",
+            openings: s.job.numOpenings || 0,
+            certOverlap: s.certOverlap,
+            roleMatch: s.roleMatch,
+            score: s.score,
+          };
+        }),
+      };
+    });
+
+    res.json({ data: results, total: results.length });
+  } catch (e) {
+    console.error("[Contract End Matches]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Cert Expiration Tracker ──
+app.get("/api/cert-tracker", async (req, res) => {
+  try {
+    var now = Date.now();
+    var candidates = [];
+
+    if (db.ready) {
+      try {
+        var rows = await db.getAll(`
+          SELECT id, first_name, last_name, custom_text1, custom_text2, custom_text5, custom_text6,
+                 status, custom_date1, custom_date2, custom_date3, owner_name, email
+          FROM candidates
+          WHERE custom_text1 IS NOT NULL AND custom_text1 != ''
+            AND (status = 'Active' OR status = 'Placed' OR status = 'Available')
+            AND (is_deleted IS NULL OR is_deleted = false)
+          ORDER BY last_name ASC
+        `);
+        candidates = rows.map(function(c) {
+          var certExpDate = c.custom_date1 ? new Date(c.custom_date1).getTime() : null;
+          var daysUntilExpiry = certExpDate ? Math.ceil((certExpDate - now) / 86400000) : null;
+          return {
+            id: c.id,
+            name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
+            primaryCert: c.custom_text1 || "",
+            secondaryCert: c.custom_text2 || "",
+            epicRole: c.custom_text5 || "",
+            grade: c.custom_text6 || "",
+            status: c.status || "",
+            certExpirationDate: certExpDate ? new Date(certExpDate).toLocaleDateString() : null,
+            daysUntilExpiry: daysUntilExpiry,
+            urgency: daysUntilExpiry === null ? "unknown" : daysUntilExpiry <= 0 ? "expired" : daysUntilExpiry <= 30 ? "critical" : daysUntilExpiry <= 90 ? "warning" : "ok",
+            owner: c.owner_name || "",
+            email: c.email || "",
+          };
+        });
+      } catch (dbErr) { console.log("[Cert Tracker] DB error:", dbErr.message); }
+    }
+
+    if (candidates.length === 0) {
+      // Fallback to Bullhorn
+      var bhData = await bhFetchAll("search/Candidate", {
+        query: 'isDeleted:0 AND (status:"Active" OR status:"Placed" OR status:"Available") AND customText1:[* TO *]',
+        fields: "id,firstName,lastName,customText1,customText2,customText5,customText6,status,customDate1,customDate2,customDate3,owner,email",
+        sort: "lastName",
+      });
+      candidates = (bhData.data || []).map(function(c) {
+        var certExpDate = c.customDate1 ? new Date(c.customDate1).getTime() : null;
+        var daysUntilExpiry = certExpDate ? Math.ceil((certExpDate - now) / 86400000) : null;
+        return {
+          id: c.id,
+          name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+          primaryCert: (Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1) || "",
+          secondaryCert: (Array.isArray(c.customText2) ? c.customText2.join(", ") : c.customText2) || "",
+          epicRole: c.customText5 || "",
+          grade: c.customText6 || "",
+          status: c.status || "",
+          certExpirationDate: certExpDate ? new Date(certExpDate).toLocaleDateString() : null,
+          daysUntilExpiry: daysUntilExpiry,
+          urgency: daysUntilExpiry === null ? "unknown" : daysUntilExpiry <= 0 ? "expired" : daysUntilExpiry <= 30 ? "critical" : daysUntilExpiry <= 90 ? "warning" : "ok",
+          owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
+          email: c.email || "",
+        };
+      });
+    }
+
+    // Sort: expired first, then by days until expiry, then unknown at end
+    candidates.sort(function(a, b) {
+      var aSort = a.daysUntilExpiry === null ? 99999 : a.daysUntilExpiry;
+      var bSort = b.daysUntilExpiry === null ? 99999 : b.daysUntilExpiry;
+      return aSort - bSort;
+    });
+
+    var expired = candidates.filter(c => c.urgency === "expired").length;
+    var critical = candidates.filter(c => c.urgency === "critical").length;
+    var warning = candidates.filter(c => c.urgency === "warning").length;
+    var unknown = candidates.filter(c => c.urgency === "unknown").length;
+
+    res.json({
+      data: candidates,
+      total: candidates.length,
+      summary: { expired, critical, warning, unknown },
+    });
+  } catch (e) {
+    console.error("[Cert Tracker]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Smart Match: Given a job, find best-fit candidates ──
 app.get("/api/smart-match/:jobId", async (req, res) => {
   try {
@@ -1693,7 +3062,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
     // 5. Build candidate query — two strategies
     var hasCerts = matchedCerts.length > 0;
     var allSearchCerts = matchedCerts.concat(smRelated);
-    var candidateFields = "id,firstName,lastName,occupation,status,address,salary,dateAvailable,email,phone,customText1,customText2,customText3,customText5,customText6,customText7,dateLastModified,description,customTextBlock1";
+    var candidateFields = "id,firstName,lastName,occupation,status,address,salary,dateAvailable,email,phone,customText1,customText2,customText3,customText5,customText6,customText7,dateLastModified,description,customTextBlock1,employeeType";
 
     let query;
     if (hasCerts) {
@@ -1723,6 +3092,11 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       fields: candidateFields,
       sort: "-dateLastModified",
     });
+
+    // 5b. Detect job employment type for filtering
+    var rawJobEmpType = job.employmentType;
+    var jobEmploymentType = (typeof rawJobEmpType === "string" ? rawJobEmpType : (rawJobEmpType && rawJobEmpType.name ? rawJobEmpType.name : "")).toLowerCase().trim();
+    var isDirectHire = jobEmploymentType === "direct hire" || jobEmploymentType === "permanent";
 
     // 6. Score candidates — multi-factor scoring
     const now = Date.now();
@@ -1787,6 +3161,12 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
           matchFactors.push("❌ No leadership/PM experience indicated");
         }
 
+        // Overqualified penalty: Executive/Director (4-5) should NOT match Manager (3) roles
+        if (bestCandLevel >= 4 && detectedRoleLevel <= 3) {
+          roleScore = -25;
+          matchFactors.push("⬆️ Overqualified — " + (bestCandLevel >= 5 ? "Executive" : "Director") + " level for Manager role");
+        }
+
         // Additional penalty: if job needs Director (level 4+) and candidate is Analyst level (1)
         if (detectedRoleLevel >= 4 && bestCandLevel <= 1 && !hasLeadershipExp) {
           roleScore -= 15;
@@ -1846,17 +3226,33 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       else if (hasNotes) { profileScore = 5; matchFactors.push("📝 Notes on file"); }
       else { profileScore = -10; matchFactors.push("⚠️ No resume or notes"); }
 
-      var totalScore = certScore + roleScore + expScore + gradeScore + availScore + locScore + profileScore;
+      // ── Employment Type Compatibility (penalty for mismatch) ──
+      var empTypeScore = 0;
+      var rawCandEmpType = c.employeeType;
+      var candEmployeeType = (typeof rawCandEmpType === "string" ? rawCandEmpType : (rawCandEmpType && rawCandEmpType.name ? rawCandEmpType.name : "")).toLowerCase().trim();
+      if (isDirectHire && candEmployeeType) {
+        // Candidate is W2-only → not a fit for Direct Hire
+        var isW2Only = (candEmployeeType === "w2" || candEmployeeType === "w-2") &&
+          candEmployeeType.indexOf("direct") < 0 && candEmployeeType.indexOf("perm") < 0 &&
+          candEmployeeType.indexOf("hire") < 0;
+        if (isW2Only) {
+          empTypeScore = -40;
+          matchFactors.push("❌ W2 only — not open to Direct Hire");
+        }
+      }
+
+      var totalScore = certScore + roleScore + expScore + gradeScore + availScore + locScore + profileScore + empTypeScore;
 
       return {
         id: c.id,
-        firstName: c.firstName || "",
-        lastName: c.lastName || "",
+        firstName: titleCase(c.firstName),
+        lastName: titleCase(c.lastName),
         title: c.occupation || "",
         primaryCert: primaryCerts,
         secondaryCert: secondaryCerts,
         preferredRole: preferredRole,
         epicRole: (Array.isArray(c.customText5) ? c.customText5.join(", ") : c.customText5) || "",
+        employeeType: (typeof c.employeeType === "string" ? c.employeeType : (c.employeeType && c.employeeType.name ? c.employeeType.name : "")) || "",
         grade,
         status: c.status || "",
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
@@ -1871,6 +3267,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
         roleScore,
         expScore,
         profileScore,
+        empTypeScore,
         hasResume: hasDesc,
         hasNotes: hasNotes,
       };
@@ -1886,6 +3283,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       job: {
         id: job.id, title: job.title || "", matchedCerts, relatedCerts: smRelated,
         roleLevel: detectedRoleName || null, isLeadershipRole,
+        employmentType: jobEmploymentType || "", isDirectHire,
         experienceKeywords: EXPERIENCE_KEYWORDS,
       },
       candidates: filtered.slice(0, 50),
@@ -1893,329 +3291,6 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
     });
   } catch (e) {
     console.error("[Smart Match]", e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ═══ AI-POWERED MATCHING (Claude API) ═══════════════════════════
-app.get("/api/ai-match/:jobId", async (req, res) => {
-  try {
-    var jobId = parseInt(req.params.jobId);
-    var apiKey = process.env.ANTHROPIC_API_KEY || "";
-    // If no API key, we'll still do pre-scored matching — just skip the AI analysis
-
-    // Get job details from Postgres or Bullhorn
-    var job = null;
-    if (db.ready) {
-      job = await db.getOne("SELECT * FROM jobs WHERE id = $1", [jobId]);
-    }
-    if (!job) {
-      var bhJob = await bhFetch("entity/JobOrder/" + jobId, {
-        fields: "id,title,description,publicDescription,employmentType,status,clientCorporation,customText1,customText2,customText3,customText4,customText5,customText6,customText7,address,salary,payRate,clientBillRate,numOpenings,startDate,skillList,yearsRequired"
-      });
-      job = bhJob.data || bhJob;
-    }
-
-    // Get candidate pool from Postgres
-    var candidates = [];
-    if (db.ready) {
-      candidates = (await db.query(
-        "SELECT id, first_name, last_name, occupation, custom_text1, custom_text2, custom_text5, custom_text6, custom_text7, status, address_city, address_state, salary, hourly_rate, date_available, email, phone, skill_list, experience, description FROM candidates WHERE status NOT IN ('Placed', 'Inactive', 'Do Not Contact') ORDER BY date_last_modified DESC NULLS LAST"
-      )).rows;
-    } else {
-      var bhCands = await bhFetchAll("search/Candidate", {
-        query: 'isDeleted:0 AND (status:"Active" OR status:"Available")',
-        fields: "id,firstName,lastName,occupation,customText1,customText2,customText5,customText6,customText7,status,address,salary,hourlyRate,dateAvailable,email,phone,skillList,experience,description",
-        sort: "-dateLastModified"
-      });
-      candidates = (bhCands.data || []).map(function (c) {
-        return {
-          id: c.id, first_name: c.firstName, last_name: c.lastName,
-          occupation: c.occupation, custom_text1: Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1,
-          custom_text2: Array.isArray(c.customText2) ? c.customText2.join(", ") : c.customText2,
-          custom_text5: c.customText5, custom_text6: c.customText6, custom_text7: c.customText7,
-          status: c.status, address_city: c.address ? c.address.city : "",
-          address_state: c.address ? c.address.state : "",
-          salary: c.salary, hourly_rate: c.hourlyRate,
-          date_available: c.dateAvailable, email: c.email, phone: c.phone,
-          skill_list: c.skillList, experience: c.experience, description: c.description
-        };
-      });
-    }
-
-    // Build job profile for Claude
-    var jobTitle = job.title || job.job_title || "";
-    var jobDesc = job.description || job.public_description || job.publicDescription || "";
-    var jobCertsRaw = job.custom_text1 || (job.customText1 ? (Array.isArray(job.customText1) ? job.customText1.join(", ") : job.customText1) : "");
-    var jobLocation = job.address_city ? (job.address_city + ", " + job.address_state) : (job.address ? [job.address.city, job.address.state].filter(Boolean).join(", ") : "");
-    var jobClient = job.client_name || (job.clientCorporation ? job.clientCorporation.name : "");
-    var jobRate = job.client_bill_rate || job.clientBillRate || job.salary || "";
-    var jobType = job.employment_type || job.employmentType || "";
-
-    // ── Cert alias + relationship mapping ──
-    var MATCH_CERT_ALIASES = {
-      "pb": "Professional Billing", "professional billing": "Professional Billing",
-      "hb": "Hospital Billing", "hospital billing": "Hospital Billing",
-      "cadence": "Cadence", "willow": "Willow", "beaker": "Beaker",
-      "cupid": "Cupid", "tapestry": "Tapestry", "cogito": "Cogito",
-      "bridges": "Bridges", "radiant": "Radiant", "prelude": "Prelude",
-      "phoenix": "Phoenix", "resolute": "Resolute", "rover": "Rover",
-      "clarity": "Clarity", "ambulatory": "Ambulatory", "epiccare ambulatory": "Ambulatory",
-      "inpatient": "Inpatient", "epiccare inpatient": "Inpatient",
-      "epiccare": "EpicCare", "optime": "OpTime", "grand central": "Grand Central",
-      "hyperspace": "Hyperspace", "mychart": "MyChart", "my chart": "MyChart",
-      "beacon": "Beacon", "clindoc": "ClinDoc", "clinical documentation": "ClinDoc",
-      "clin doc": "ClinDoc", "adt": "ADT", "him": "HIM", "orders": "Orders",
-      "order entry": "Orders", "healthy planet": "Healthy Planet",
-      "claims": "Claims", "rte": "RTE", "referrals": "Referrals",
-      "patient access": "Patient Access",
-    };
-    // Related certs that should also match (e.g. PB roles often want Resolute PB)
-    var CERT_RELATIONSHIPS = {
-      "Professional Billing": ["Resolute", "Resolute Professional Billing", "Claims", "RTE"],
-      "Hospital Billing": ["Resolute", "Resolute Hospital Billing", "Claims"],
-      "Resolute": ["Professional Billing", "Hospital Billing"],
-      "Patient Access": ["Prelude", "ADT", "Grand Central", "Cadence"],
-      "Prelude": ["Patient Access", "ADT", "Grand Central"],
-      "ADT": ["Patient Access", "Prelude", "Grand Central"],
-      "Grand Central": ["Patient Access", "ADT", "Prelude"],
-      "ClinDoc": ["Inpatient", "EpicCare"],
-      "Ambulatory": ["EpicCare"],
-      "Cadence": ["Referrals", "Prelude"],
-    };
-
-    // Extract required certs from job custom fields AND title/description
-    var extractedCerts = [];
-    // From custom_text1 (explicit cert field)
-    if (jobCertsRaw) {
-      jobCertsRaw.split(",").map(function(s){return s.trim();}).filter(Boolean).forEach(function(c) {
-        var norm = MATCH_CERT_ALIASES[c.toLowerCase()] || c;
-        if (extractedCerts.indexOf(norm) < 0) extractedCerts.push(norm);
-      });
-    }
-    // From job title — scan for known cert keywords
-    var titleAndDesc = (jobTitle + " " + (job.custom_text2 || job.customText2 || "") + " " + (job.custom_text3 || job.customText3 || "")).toLowerCase();
-    Object.keys(MATCH_CERT_ALIASES).forEach(function(alias) {
-      if (titleAndDesc.indexOf(alias) >= 0) {
-        var norm = MATCH_CERT_ALIASES[alias];
-        if (extractedCerts.indexOf(norm) < 0) extractedCerts.push(norm);
-      }
-    });
-    // Expand with related certs (lower priority but still relevant)
-    var relatedCerts = [];
-    extractedCerts.forEach(function(c) {
-      if (CERT_RELATIONSHIPS[c]) {
-        CERT_RELATIONSHIPS[c].forEach(function(r) {
-          if (extractedCerts.indexOf(r) < 0 && relatedCerts.indexOf(r) < 0) relatedCerts.push(r);
-        });
-      }
-    });
-    var jobCerts = extractedCerts.join(", ");
-    console.log("[AI Match] Job:", jobTitle, "| Extracted certs:", extractedCerts.join(", "), "| Related:", relatedCerts.join(", "));
-
-    // ── Extract role level from job title ──
-    var ROLE_LEVELS = {
-      "analyst": ["analyst", "application analyst", "app analyst"],
-      "senior analyst": ["senior analyst", "sr analyst", "sr. analyst", "lead analyst"],
-      "consultant": ["consultant"],
-      "trainer": ["trainer"],
-      "project manager": ["project manager", "pm", "program manager"],
-      "director": ["director"],
-      "manager": ["manager"],
-      "advisor": ["advisor"],
-      "lead": ["lead"],
-    };
-    var jobTitleLower = jobTitle.toLowerCase();
-    var jobRoleLevel = null;
-    // Match most specific first (senior analyst before analyst)
-    var rolePriority = ["senior analyst", "project manager", "lead", "advisor", "director", "manager", "analyst", "consultant", "trainer"];
-    for (var ri = 0; ri < rolePriority.length; ri++) {
-      var aliases = ROLE_LEVELS[rolePriority[ri]];
-      for (var ai = 0; ai < aliases.length; ai++) {
-        if (jobTitleLower.indexOf(aliases[ai]) >= 0) { jobRoleLevel = rolePriority[ri]; break; }
-      }
-      if (jobRoleLevel) break;
-    }
-    // Group roles into tiers for compatibility scoring
-    var ROLE_TIERS = {
-      "analyst": 1, "consultant": 1, "trainer": 1,
-      "senior analyst": 2, "lead": 2, "advisor": 2,
-      "manager": 3, "project manager": 3,
-      "director": 4,
-    };
-    var jobRoleTier = jobRoleLevel ? (ROLE_TIERS[jobRoleLevel] || 1) : null;
-    console.log("[AI Match] Job role level:", jobRoleLevel, "| Tier:", jobRoleTier);
-
-    // Pre-score candidates with weighted factors
-    var now = Date.now();
-    var scored = candidates.map(function (c) {
-      var score = 0;
-      var factors = [];
-      var primaryCerts = (c.custom_text1 || "").toLowerCase();
-      var secondaryCerts = (c.custom_text2 || "").toLowerCase();
-      var allCerts = primaryCerts + ", " + secondaryCerts;
-
-      // ══════════════════════════════════════════════════════════
-      // SCORING: Certs (40pts) + Availability (35pts) + Role (10pts) + Grade (8pts) + Location (5pts) + Status (2pts) = 100
-      // ══════════════════════════════════════════════════════════
-
-      // ── 1. Cert matching (40 points max) ──
-      if (extractedCerts.length > 0) {
-        var primaryMatched = 0;
-        var secondaryMatched = 0;
-        var relatedMatched = 0;
-        extractedCerts.forEach(function (rc) {
-          if (primaryCerts.indexOf(rc.toLowerCase()) >= 0) primaryMatched++;
-          else if (secondaryCerts.indexOf(rc.toLowerCase()) >= 0) secondaryMatched++;
-        });
-        relatedCerts.forEach(function (rc) {
-          if (allCerts.indexOf(rc.toLowerCase()) >= 0) relatedMatched++;
-        });
-        var certScore = 0;
-        if (extractedCerts.length > 0) {
-          certScore = ((primaryMatched * 1.0 + secondaryMatched * 0.6) / extractedCerts.length) * 40;
-        }
-        if (relatedCerts.length > 0) {
-          certScore += Math.min(8, (relatedMatched / relatedCerts.length) * 8);
-        }
-        score += Math.round(certScore);
-        if (primaryMatched > 0) factors.push(primaryMatched + "/" + extractedCerts.length + " primary cert match");
-        if (secondaryMatched > 0) factors.push(secondaryMatched + " secondary cert match");
-        if (relatedMatched > 0) factors.push(relatedMatched + " related cert match");
-        if (primaryMatched === 0 && secondaryMatched === 0 && relatedMatched === 0) {
-          score -= 30;
-          factors.push("No cert match");
-        }
-      }
-
-      // ── 2. Availability (35 points max — co-dominant with certs) ──
-      var rawAvail = c.date_available ? Number(c.date_available) : 0;
-      var availDate = rawAvail > 946684800000 ? rawAvail : null;
-      if (availDate) {
-        var daysUntil = (availDate - now) / 86400000;
-        if (daysUntil <= 0) { score += 35; factors.push("\u2705 Available now"); }
-        else if (daysUntil <= 7) { score += 32; factors.push("\u2705 Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 14) { score += 28; factors.push("\uD83D\uDD52 Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 30) { score += 22; factors.push("\uD83D\uDD52 Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 60) { score += 12; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else if (daysUntil <= 90) { score += 5; factors.push("Available in " + Math.ceil(daysUntil) + " days"); }
-        else { score -= 5; factors.push("\u26A0\uFE0F Available in " + Math.ceil(daysUntil) + " days"); }
-      } else {
-        score -= 20; // No availability date = big red flag for staffing
-        factors.push("\uD83D\uDED1 No availability date");
-      }
-
-      // ── 3. Role level matching (10 points max) ──
-      if (jobRoleTier) {
-        var candTitle = (c.occupation || "").toLowerCase();
-        var candRole = (c.custom_text5 || "").toLowerCase();
-        var candText = candTitle + " " + candRole;
-        var candRoleTier = null;
-        for (var ri2 = 0; ri2 < rolePriority.length; ri2++) {
-          var aliases2 = ROLE_LEVELS[rolePriority[ri2]];
-          for (var ai2 = 0; ai2 < aliases2.length; ai2++) {
-            if (candText.indexOf(aliases2[ai2]) >= 0) { candRoleTier = ROLE_TIERS[rolePriority[ri2]] || 1; break; }
-          }
-          if (candRoleTier !== null) break;
-        }
-        if (candRoleTier !== null) {
-          var tierDiff = Math.abs(jobRoleTier - candRoleTier);
-          if (tierDiff === 0) { score += 10; factors.push("Role match"); }
-          else if (tierDiff === 1) { score += 5; factors.push("Similar role level"); }
-          else { score -= 15; factors.push("Role mismatch"); }
-        }
-      }
-
-      // ── 4. Grade (8 points max) ──
-      var grade = (c.custom_text6 || "").toUpperCase();
-      if (grade === "A") { score += 8; factors.push("Grade A"); }
-      else if (grade === "B") { score += 5; factors.push("Grade B"); }
-      else if (grade === "C") { score += 2; }
-
-      // ── 5. Location (5 points max) ──
-      if (jobLocation && c.address_state) {
-        var jobState = (jobLocation.split(",").pop() || "").trim().toLowerCase();
-        if (c.address_state.toLowerCase() === jobState) { score += 5; factors.push("Same state"); }
-      }
-
-      // ── 6. Status (2 points max) ──
-      if (c.status === "Active" || c.status === "Available") { score += 2; }
-
-      return {
-        id: c.id, firstName: c.first_name || "", lastName: c.last_name || "",
-        title: c.occupation || "",
-        primaryCert: c.custom_text1 || "", secondaryCert: c.custom_text2 || "",
-        epicRole: c.custom_text5 || "", grade: c.custom_text6 || "",
-        status: c.status || "",
-        location: [c.address_city, c.address_state].filter(Boolean).join(", "),
-        available: availDate ? new Date(availDate).toLocaleDateString() : "—",
-        email: c.email || "", phone: c.phone || "",
-        score: Math.round(score),
-        factors: factors,
-        _forAI: {
-          name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
-          certs: c.custom_text1 || "", secondaryCerts: c.custom_text2 || "",
-          role: c.occupation || "", grade: c.custom_text6 || "",
-          experience: c.experience || "", skills: c.skill_list || "",
-        }
-      };
-    });
-
-    // Sort by pre-score and take top 30 for AI analysis
-    scored.sort(function (a, b) { return b.score - a.score; });
-    var topCandidates = scored.slice(0, 30);
-
-    // Call Claude API for deep analysis (only if API key is configured)
-    var aiInsights = null;
-    if (apiKey) { try {
-      var candidateSummaries = topCandidates.slice(0, 15).map(function (c, i) {
-        return (i + 1) + ". " + c._forAI.name + " — Certs: " + (c._forAI.certs || "none") + " | Secondary: " + (c._forAI.secondaryCerts || "none") + " | Role: " + c._forAI.role + " | Grade: " + (c._forAI.grade || "?") + " | Exp: " + (c._forAI.experience || "?") + " yrs | Score: " + c.score;
-      }).join("\n");
-
-      var aiPrompt = "You are an expert Epic healthcare IT staffing advisor for Anura Connect. Analyze this job and candidate matches.\n\n"
-        + "JOB: " + jobTitle + "\nClient: " + jobClient + "\nLocation: " + jobLocation + "\nType: " + jobType + "\nRate: " + jobRate + "\nRequired Certs: " + jobCerts + "\nDescription: " + (jobDesc || "Not provided").substring(0, 500) + "\n\n"
-        + "TOP CANDIDATES (pre-scored):\n" + candidateSummaries + "\n\n"
-        + "Respond in JSON format ONLY (no markdown, no code fences):\n"
-        + '{"topPick":{"candidateIndex":1,"reason":"..."},"insights":"2-3 sentence market insight about this role/cert demand","recommendations":["action item 1","action item 2"],"candidateNotes":[{"index":1,"note":"..."},{"index":2,"note":"..."},{"index":3,"note":"..."}]}';
-
-      var aiRes = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1024,
-          messages: [{ role: "user", content: aiPrompt }]
-        })
-      });
-
-      if (aiRes.ok) {
-        var aiData = await aiRes.json();
-        var aiText = aiData.content && aiData.content[0] ? aiData.content[0].text : "";
-        try { aiInsights = JSON.parse(aiText); } catch (pe) {
-          // Try to extract JSON from response
-          var jsonMatch = aiText.match(/\{[\s\S]*\}/);
-          if (jsonMatch) { try { aiInsights = JSON.parse(jsonMatch[0]); } catch (e2) {} }
-        }
-      }
-    } catch (aiErr) {
-      console.log("[AI Match] Claude API error (non-blocking):", aiErr.message);
-    } } // end if (apiKey)
-
-    // Clean up _forAI from response
-    topCandidates.forEach(function (c) { delete c._forAI; });
-
-    res.json({
-      job: { id: jobId, title: jobTitle, client: jobClient, location: jobLocation, type: jobType, certs: jobCerts },
-      candidates: topCandidates,
-      totalScored: scored.length,
-      ai: aiInsights,
-    });
-  } catch (e) {
-    console.error("[AI Match]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -2394,25 +3469,44 @@ app.get("/api/trends", async (req, res) => {
     // Helper: try DB first, fall back to Bullhorn API
     var useDB = db.ready;
 
-    // 1. Certification Demand — which certs appear most in active jobs
+    // 1. Certification Demand — extract certs from job titles, customText1, and descriptions
+    var TREND_CERT_KEYWORDS = {
+      "professional billing": "Professional Billing", "pb ": "Professional Billing", "resolute pb": "Professional Billing",
+      "hospital billing": "Hospital Billing", "hb ": "Hospital Billing", "resolute hb": "Hospital Billing",
+      "cadence": "Cadence", "willow": "Willow", "beaker": "Beaker", "cupid": "Cupid",
+      "tapestry": "Tapestry", "cogito": "Cogito", "bridges": "Bridges", "radiant": "Radiant",
+      "prelude": "Prelude", "phoenix": "Phoenix", "resolute": "Resolute", "rover": "Rover",
+      "clarity": "Clarity", "ambulatory": "Ambulatory", "epiccare ambulatory": "Ambulatory",
+      "inpatient": "Inpatient", "epiccare inpatient": "Inpatient", "optime": "OpTime",
+      "grand central": "Grand Central", "mychart": "MyChart", "beacon": "Beacon",
+      "clindoc": "ClinDoc", "clinical documentation": "ClinDoc", "adt": "ADT",
+      "him": "HIM", "orders": "Orders", "healthy planet": "Healthy Planet",
+      "claims": "Claims", "referrals": "Referrals", "patient access": "Patient Access",
+      "anesthesia": "Anesthesia", "stork": "Stork", "bones": "Bones", "lumens": "Lumens",
+      "care everywhere": "Care Everywhere", "asap": "ASAP",
+    };
     try {
-      var jobCertRows = [];
+      var jobTextRows = [];
       if (useDB) {
-        var dbJobs = await db.query("SELECT custom_text1 FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND custom_text1 IS NOT NULL AND custom_text1 != ''");
-        jobCertRows = (dbJobs.rows || []).map(function(r) { return r.custom_text1; });
+        var dbJobs = await db.query("SELECT title, custom_text1, description FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND is_deleted = false");
+        jobTextRows = (dbJobs.rows || []).map(function(r) { return [r.title || "", r.custom_text1 || "", (r.description || "").replace(/<[^>]*>/g, " ")].join(" "); });
       }
-      if (jobCertRows.length === 0) {
-        // Fallback to Bullhorn
+      if (jobTextRows.length === 0) {
         var bhJobs = await bhFetchAll("search/JobOrder", {
           query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")',
-          fields: "id,customText1", sort: "-dateAdded"
+          fields: "id,title,customText1,description", sort: "-dateAdded"
         });
-        jobCertRows = (bhJobs.data || []).map(function(j) { return j.customText1 || ""; }).filter(Boolean);
+        jobTextRows = (bhJobs.data || []).map(function(j) { return [j.title || "", j.customText1 || "", (j.description || "").replace(/<[^>]*>/g, " ")].join(" "); });
       }
       var certCounts = {};
-      jobCertRows.forEach(function (ct1) {
-        var certs = (Array.isArray(ct1) ? ct1.join(", ") : ct1).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-        certs.forEach(function (c) { certCounts[c] = (certCounts[c] || 0) + 1; });
+      jobTextRows.forEach(function (text) {
+        var lower = text.toLowerCase();
+        var found = {};
+        Object.keys(TREND_CERT_KEYWORDS).forEach(function(kw) {
+          if (lower.indexOf(kw) >= 0) found[TREND_CERT_KEYWORDS[kw]] = true;
+        });
+        // Also parse customText1 comma-separated certs
+        Object.keys(found).forEach(function(c) { certCounts[c] = (certCounts[c] || 0) + 1; });
       });
       certDemand = Object.entries(certCounts).map(function (e) { return { cert: e[0], openJobs: e[1] }; })
         .sort(function (a, b) { return b.openJobs - a.openJobs; }).slice(0, 20);
@@ -2550,6 +3644,200 @@ app.get("/api/trends", async (req, res) => {
   } catch (e) {
     console.error("[Trends]", e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Shareable Market Intelligence Report ──────
+app.get("/report/market", async (req, res) => {
+  try {
+    // Fetch trend data internally
+    var trendRes = await new Promise(function(resolve, reject) {
+      var mockRes = { json: resolve, status: function() { return { json: reject }; } };
+      // Re-fetch trends inline
+      (async () => {
+        var certDemand = [], certSupply = [], supplyDemand = [], rateTrends = [], geoDemand = [];
+        var useDB = db.ready;
+        try {
+          var jobCertRows = [];
+          if (useDB) {
+            var dbJobs = await db.query("SELECT custom_text1 FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND custom_text1 IS NOT NULL AND custom_text1 != ''");
+            jobCertRows = (dbJobs.rows || []).map(r => r.custom_text1);
+          }
+          if (jobCertRows.length === 0) {
+            var bhJobs = await bhFetchAll("search/JobOrder", { query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open")', fields: "id,customText1", sort: "-dateAdded" });
+            jobCertRows = (bhJobs.data || []).map(j => j.customText1 || "").filter(Boolean);
+          }
+          var certCounts = {};
+          jobCertRows.forEach(ct1 => { (Array.isArray(ct1) ? ct1.join(", ") : ct1).split(",").map(s => s.trim()).filter(Boolean).forEach(c => { certCounts[c] = (certCounts[c] || 0) + 1; }); });
+          certDemand = Object.entries(certCounts).map(e => ({ cert: e[0], openJobs: e[1] })).sort((a, b) => b.openJobs - a.openJobs).slice(0, 15);
+        } catch (e) {}
+        try {
+          var candCertRows = [];
+          if (useDB) {
+            var dbCands = await db.query("SELECT custom_text1 FROM candidates WHERE status = 'Active' AND custom_text1 IS NOT NULL AND custom_text1 != ''");
+            candCertRows = (dbCands.rows || []).map(r => r.custom_text1);
+          }
+          if (candCertRows.length === 0) {
+            var bhCands = await bhFetchAll("search/Candidate", { query: 'isDeleted:0 AND status:Active', fields: "id,customText1", sort: "-dateLastModified" });
+            candCertRows = (bhCands.data || []).map(c => c.customText1 || "").filter(Boolean);
+          }
+          var supplyCounts = {};
+          candCertRows.forEach(ct1 => { (Array.isArray(ct1) ? ct1.join(", ") : ct1).split(",").map(s => s.trim()).filter(Boolean).forEach(c => { supplyCounts[c] = (supplyCounts[c] || 0) + 1; }); });
+          certSupply = Object.entries(supplyCounts).map(e => ({ cert: e[0], activeCandidates: e[1] })).sort((a, b) => b.activeCandidates - a.activeCandidates).slice(0, 15);
+        } catch (e) {}
+        var sdMap = {};
+        certDemand.forEach(d => { sdMap[d.cert] = { cert: d.cert, demand: d.openJobs, supply: 0 }; });
+        certSupply.forEach(s => { if (sdMap[s.cert]) sdMap[s.cert].supply = s.activeCandidates; else sdMap[s.cert] = { cert: s.cert, demand: 0, supply: s.activeCandidates }; });
+        supplyDemand = Object.values(sdMap).map(sd => { sd.ratio = sd.demand > 0 ? Math.round((sd.supply / sd.demand) * 10) / 10 : null; sd.status = sd.ratio === null ? "no demand" : sd.ratio < 1 ? "shortage" : sd.ratio < 3 ? "tight" : "available"; return sd; }).sort((a, b) => (a.ratio || 999) - (b.ratio || 999));
+        try {
+          var placRows = [];
+          if (useDB) {
+            var dbPlac = await db.query("SELECT date_begin, pay_rate, client_bill_rate, employment_type FROM placements WHERE pay_rate > 0 AND client_bill_rate > 0 AND date_begin IS NOT NULL ORDER BY date_begin ASC");
+            placRows = dbPlac.rows || [];
+          }
+          var monthBuckets = {};
+          placRows.forEach(p => {
+            if (p.employment_type === "Direct Hire" || p.employment_type === "Permanent") return;
+            var d = new Date(p.date_begin); var key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+            if (!monthBuckets[key]) monthBuckets[key] = { month: key, billRates: [], payRates: [] };
+            monthBuckets[key].billRates.push(Number(p.client_bill_rate)); monthBuckets[key].payRates.push(Number(p.pay_rate));
+          });
+          rateTrends = Object.values(monthBuckets).map(b => {
+            var avgBill = b.billRates.reduce((s, v) => s + v, 0) / b.billRates.length;
+            var avgPay = b.payRates.reduce((s, v) => s + v, 0) / b.payRates.length;
+            return { month: b.month, avgBillRate: Math.round(avgBill), avgPayRate: Math.round(avgPay), placements: b.billRates.length };
+          }).sort((a, b) => a.month.localeCompare(b.month)).slice(-12);
+        } catch (e) {}
+        try {
+          var geoRows = [];
+          if (useDB) {
+            var dbGeo = await db.query("SELECT address_state, COUNT(*) as cnt FROM jobs WHERE status IN ('Accepting Candidates', 'Open') AND address_state IS NOT NULL AND address_state != '' GROUP BY address_state ORDER BY cnt DESC LIMIT 10");
+            geoRows = dbGeo.rows || [];
+          }
+          geoDemand = geoRows.map(r => ({ state: r.address_state, openJobs: parseInt(r.cnt) }));
+        } catch (e) {}
+        resolve({ certDemand, certSupply, supplyDemand, rateTrends, geoDemand });
+      })();
+    });
+
+    var d = trendRes;
+    var now = new Date();
+    var dateStr = now.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    var qtr = "Q" + Math.ceil((now.getMonth() + 1) / 3) + " " + now.getFullYear();
+
+    // Build branded HTML report
+    var html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Epic Staffing Market Intelligence | Anura Connect</title>
+<style>
+@media print { .no-print { display:none !important; } body { font-size:11px; } .report-card { break-inside:avoid; } }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc;color:#0f172a;line-height:1.5}
+.report-wrap{max-width:900px;margin:0 auto;padding:32px 24px}
+.report-header{text-align:center;margin-bottom:32px;padding-bottom:24px;border-bottom:3px solid #176087}
+.report-header h1{font-size:28px;font-weight:800;color:#0E2E47;margin-bottom:4px}
+.report-header .subtitle{font-size:16px;color:#176087;font-weight:600;margin-bottom:8px}
+.report-header .date{font-size:13px;color:#94a3b8}
+.report-header .brand{font-size:13px;color:#64748b;margin-top:8px}
+.section{margin-bottom:28px}
+.section h2{font-size:18px;font-weight:700;color:#0E2E47;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid #e9eef4}
+.section p.insight{font-size:14px;color:#475569;margin-bottom:12px;line-height:1.6}
+.report-card{background:#fff;border:1px solid #e9eef4;border-radius:10px;padding:16px;margin-bottom:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 10px;background:#f1f5f9;color:#64748b;font-weight:600;font-size:12px;text-transform:uppercase}
+td{padding:8px 10px;border-bottom:1px solid #f1f5f9}
+.badge{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600}
+.badge-shortage{background:#fef2f2;color:#dc2626}
+.badge-tight{background:#fffbeb;color:#d97706}
+.badge-available{background:#f0fdf4;color:#16a34a}
+.stat-row{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.stat-box{flex:1;min-width:120px;background:#fff;border:1px solid #e9eef4;border-radius:10px;padding:14px;text-align:center}
+.stat-box .val{font-size:24px;font-weight:800;color:#176087}
+.stat-box .lbl{font-size:11px;color:#94a3b8;text-transform:uppercase;font-weight:600}
+.bar-wrap{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.bar-label{width:160px;font-size:12px;font-weight:600;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{height:20px;border-radius:4px;min-width:2px}
+.bar-val{font-size:12px;color:#64748b;width:30px;text-align:right}
+.footer{text-align:center;margin-top:32px;padding-top:16px;border-top:2px solid #e9eef4;font-size:12px;color:#94a3b8}
+.cta{display:inline-block;margin-top:12px;padding:10px 24px;background:#176087;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px}
+.print-btn{position:fixed;bottom:24px;right:24px;padding:12px 20px;background:#176087;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.15);font-size:14px}
+</style></head><body>
+<button class="print-btn no-print" onclick="window.print()">Download PDF</button>
+<div class="report-wrap">
+<div class="report-header">
+  <h1>Epic Staffing Market Intelligence</h1>
+  <div class="subtitle">${qtr} Report</div>
+  <div class="date">Generated ${dateStr}</div>
+  <div class="brand">Prepared by Anura Connect &bull; anuraconnect.com</div>
+</div>`;
+
+    // Stats summary
+    var totalDemand = d.certDemand.reduce((s, c) => s + c.openJobs, 0);
+    var totalSupply = d.certSupply.reduce((s, c) => s + c.activeCandidates, 0);
+    var shortages = d.supplyDemand.filter(s => s.status === "shortage").length;
+    html += `<div class="stat-row">
+  <div class="stat-box"><div class="val">${d.certDemand.length}</div><div class="lbl">Active Cert Categories</div></div>
+  <div class="stat-box"><div class="val">${totalDemand}</div><div class="lbl">Open Job Requisitions</div></div>
+  <div class="stat-box"><div class="val">${totalSupply}</div><div class="lbl">Available Consultants</div></div>
+  <div class="stat-box"><div class="val">${shortages}</div><div class="lbl">Talent Shortages</div></div>
+</div>`;
+
+    // Supply/Demand
+    html += `<div class="section"><h2>Certification Supply &amp; Demand</h2>
+<p class="insight">The table below shows the balance between open positions and available talent for each Epic certification. A ratio below 1.0 indicates a talent shortage — more jobs than qualified consultants.</p>
+<div class="report-card"><table><tr><th>Certification</th><th>Open Jobs</th><th>Available Talent</th><th>Ratio</th><th>Market Status</th></tr>`;
+    d.supplyDemand.slice(0, 12).forEach(sd => {
+      var badgeClass = sd.status === "shortage" ? "badge-shortage" : sd.status === "tight" ? "badge-tight" : "badge-available";
+      var ratioStr = sd.ratio !== null ? sd.ratio + ":1" : "—";
+      html += `<tr><td><strong>${sd.cert}</strong></td><td>${sd.demand}</td><td>${sd.supply}</td><td>${ratioStr}</td><td><span class="badge ${badgeClass}">${sd.status}</span></td></tr>`;
+    });
+    html += `</table></div></div>`;
+
+    // Top certs in demand (bar chart)
+    var maxDemand = d.certDemand.length > 0 ? d.certDemand[0].openJobs : 1;
+    html += `<div class="section"><h2>Most In-Demand Certifications</h2>
+<p class="insight">Current open positions by Epic certification, showing where hospitals are actively hiring.</p><div class="report-card">`;
+    d.certDemand.slice(0, 10).forEach(c => {
+      var pct = Math.round((c.openJobs / maxDemand) * 100);
+      html += `<div class="bar-wrap"><div class="bar-label">${c.cert}</div><div class="bar" style="width:${pct}%;background:#176087"></div><div class="bar-val">${c.openJobs}</div></div>`;
+    });
+    html += `</div></div>`;
+
+    // Rate trends
+    if (d.rateTrends.length > 0) {
+      html += `<div class="section"><h2>Rate Trends (12-Month)</h2>
+<p class="insight">Average hourly bill rates for Epic consulting engagements over the past year.</p>
+<div class="report-card"><table><tr><th>Month</th><th>Avg Bill Rate</th><th>Avg Pay Rate</th><th>Placements</th></tr>`;
+      d.rateTrends.forEach(t => {
+        html += `<tr><td>${t.month}</td><td>$${t.avgBillRate}/hr</td><td>$${t.avgPayRate}/hr</td><td>${t.placements}</td></tr>`;
+      });
+      html += `</table></div></div>`;
+    }
+
+    // Geographic demand
+    if (d.geoDemand.length > 0) {
+      var maxGeo = d.geoDemand[0].openJobs;
+      html += `<div class="section"><h2>Geographic Demand</h2>
+<p class="insight">Where hospitals are actively hiring Epic consultants, by state.</p><div class="report-card">`;
+      d.geoDemand.forEach(g => {
+        var pct = Math.round((g.openJobs / maxGeo) * 100);
+        html += `<div class="bar-wrap"><div class="bar-label">${g.state}</div><div class="bar" style="width:${pct}%;background:#10b981"></div><div class="bar-val">${g.openJobs}</div></div>`;
+      });
+      html += `</div></div>`;
+    }
+
+    // Footer with CTA
+    html += `<div class="footer">
+  <p>This report contains proprietary market intelligence compiled by Anura Connect.</p>
+  <p>For staffing inquiries or to discuss your Epic implementation needs:</p>
+  <a href="mailto:rachel@anuraconnect.com" class="cta no-print">Contact Anura Connect</a>
+  <p style="margin-top:12px">&copy; ${now.getFullYear()} Anura Connect &bull; rachel@anuraconnect.com</p>
+</div></div></body></html>`;
+
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
+  } catch (e) {
+    console.error("[Market Report]", e.message);
+    res.status(500).send("Error generating report: " + e.message);
   }
 });
 
@@ -2938,6 +4226,238 @@ app.get("/api/outreach/templates", (req, res) => {
   res.json({ templates: OUTREACH_TEMPLATES });
 });
 
+// ── Outreach Sequences (automated multi-step cadences) ──
+var SEQUENCE_TEMPLATES = [
+  {
+    id: "contract-ending",
+    name: "Contract Ending Redeployment",
+    trigger: "contract_ending_35d",
+    description: "Auto-enroll consultants whose contracts end in 35 days",
+    steps: [
+      { day: 0, templateId: "redeployment", subject: "Your Next Epic Opportunity", delayLabel: "Immediately" },
+      { day: 7, templateId: "follow-up", subject: "Following Up — New Opportunities", delayLabel: "+7 days" },
+      { day: 14, templateId: "candidate-checkin", subject: "Quick Check-In — Availability Update?", delayLabel: "+14 days" },
+    ],
+  },
+  {
+    id: "new-prospect",
+    name: "New Client Prospecting",
+    trigger: "manual",
+    description: "Multi-touch outreach to new hospital contacts",
+    steps: [
+      { day: 0, templateId: "intro", subject: "Anura Connect — Epic Consulting Staffing", delayLabel: "Immediately" },
+      { day: 3, templateId: "follow-up", subject: "Following Up — Anura Connect", delayLabel: "+3 days" },
+      { day: 7, templateId: "golive-prospect", subject: "Epic Implementation Support", delayLabel: "+7 days" },
+      { day: 14, templateId: "follow-up", subject: "One More Try — Anura Connect", delayLabel: "+14 days" },
+    ],
+  },
+  {
+    id: "stale-candidate",
+    name: "Re-engage Stale Candidates",
+    trigger: "manual",
+    description: "Reach out to candidates not contacted in 60+ days",
+    steps: [
+      { day: 0, templateId: "candidate-checkin", subject: "We Miss You — Any Updates?", delayLabel: "Immediately" },
+      { day: 10, templateId: "redeployment", subject: "New Opportunities Available", delayLabel: "+10 days" },
+    ],
+  },
+];
+
+// In-memory sequence enrollments (persists until server restart — will move to DB)
+var _sequenceEnrollments = [];
+
+app.get("/api/outreach/sequences", (req, res) => {
+  res.json({
+    sequences: SEQUENCE_TEMPLATES,
+    enrollments: _sequenceEnrollments,
+    activeCount: _sequenceEnrollments.filter(e => e.status === "active").length,
+    completedCount: _sequenceEnrollments.filter(e => e.status === "completed").length,
+  });
+});
+
+app.post("/api/outreach/sequences/enroll", express.json(), (req, res) => {
+  try {
+    var { sequenceId, recipientId, recipientName, recipientEmail, recipientType, variables } = req.body;
+    if (!sequenceId || !recipientEmail) return res.status(400).json({ error: "Missing sequenceId or recipientEmail" });
+    var seq = SEQUENCE_TEMPLATES.find(s => s.id === sequenceId);
+    if (!seq) return res.status(404).json({ error: "Sequence not found" });
+
+    // Check if already enrolled
+    var existing = _sequenceEnrollments.find(e =>
+      e.sequenceId === sequenceId && e.recipientId === recipientId && e.status === "active"
+    );
+    if (existing) return res.json({ success: true, message: "Already enrolled", enrollment: existing });
+
+    var enrollment = {
+      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 4),
+      sequenceId: sequenceId,
+      sequenceName: seq.name,
+      recipientId: recipientId || null,
+      recipientName: recipientName || "",
+      recipientEmail: recipientEmail,
+      recipientType: recipientType || "candidate",
+      variables: variables || {},
+      status: "active",
+      currentStep: 0,
+      enrolledAt: new Date().toISOString(),
+      nextStepAt: new Date().toISOString(),
+      stepsCompleted: [],
+    };
+    _sequenceEnrollments.push(enrollment);
+    res.json({ success: true, enrollment: enrollment });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/outreach/sequences/cancel", express.json(), (req, res) => {
+  var { enrollmentId } = req.body;
+  var enrollment = _sequenceEnrollments.find(e => e.id === enrollmentId);
+  if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
+  enrollment.status = "cancelled";
+  res.json({ success: true });
+});
+
+app.post("/api/outreach/sequences/execute-step", express.json(), async (req, res) => {
+  try {
+    var { enrollmentId } = req.body;
+    var enrollment = _sequenceEnrollments.find(e => e.id === enrollmentId && e.status === "active");
+    if (!enrollment) return res.status(404).json({ error: "Active enrollment not found" });
+
+    var seq = SEQUENCE_TEMPLATES.find(s => s.id === enrollment.sequenceId);
+    if (!seq) return res.status(404).json({ error: "Sequence not found" });
+
+    if (enrollment.currentStep >= seq.steps.length) {
+      enrollment.status = "completed";
+      return res.json({ success: true, message: "Sequence already completed" });
+    }
+
+    var step = seq.steps[enrollment.currentStep];
+    var template = OUTREACH_TEMPLATES.find(t => t.id === step.templateId);
+    var subject = step.subject || (template ? template.subject : "");
+    var body = template ? template.body : "";
+
+    // Replace variables
+    var vars = enrollment.variables || {};
+    Object.keys(vars).forEach(function(key) {
+      var regex = new RegExp("\\{\\{" + key + "\\}\\}", "g");
+      subject = subject.replace(regex, vars[key] || "");
+      body = body.replace(regex, vars[key] || "");
+    });
+
+    // Send via existing outreach/send endpoint logic
+    var sendResult = { method: "mailto" };
+    if (process.env.SENDGRID_API_KEY) {
+      try {
+        var sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + process.env.SENDGRID_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            personalizations: [{ to: [{ email: enrollment.recipientEmail, name: enrollment.recipientName }] }],
+            from: { email: process.env.SENDGRID_FROM_EMAIL || "team@anuraconnect.com", name: "Anura Connect" },
+            subject: subject,
+            content: [{ type: "text/plain", value: body }]
+          })
+        });
+        if (sgResp.ok) sendResult = { method: "sendgrid" };
+        else sendResult = { method: "failed", error: await sgResp.text() };
+      } catch (sgErr) { sendResult = { method: "failed", error: sgErr.message }; }
+    }
+
+    enrollment.stepsCompleted.push({
+      step: enrollment.currentStep,
+      sentAt: new Date().toISOString(),
+      subject: subject,
+      method: sendResult.method,
+    });
+    enrollment.currentStep++;
+
+    if (enrollment.currentStep >= seq.steps.length) {
+      enrollment.status = "completed";
+    } else {
+      var nextStep = seq.steps[enrollment.currentStep];
+      enrollment.nextStepAt = new Date(Date.now() + nextStep.day * 86400000).toISOString();
+    }
+
+    res.json({ success: true, sendResult: sendResult, enrollment: enrollment });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Email Inbox (inbound email processing) ──
+var _inboundEmails = []; // In-memory store, will move to DB
+
+// Webhook endpoint for SendGrid Inbound Parse (or manual logging)
+app.post("/api/inbox/receive", express.json(), async (req, res) => {
+  try {
+    var { from, fromName, to, subject, body, text, html: htmlBody, date } = req.body;
+    var emailBody = text || body || (htmlBody ? htmlBody.replace(/<[^>]*>/g, "") : "");
+
+    // Try to match sender to a Bullhorn candidate or contact
+    var senderEmail = (from || "").toLowerCase().trim();
+    var matchedEntity = null;
+    if (senderEmail && db.ready) {
+      try {
+        var candMatch = await db.getAll("SELECT id, first_name, last_name, 'candidate' as entity_type FROM candidates WHERE LOWER(email) = $1 OR LOWER(email2) = $1 LIMIT 1", [senderEmail]);
+        if (candMatch.length > 0) matchedEntity = { id: candMatch[0].id, name: candMatch[0].first_name + " " + candMatch[0].last_name, type: "candidate" };
+        else {
+          var contactMatch = await db.getAll("SELECT id, first_name, last_name, 'contact' as entity_type FROM client_contacts WHERE LOWER(email) = $1 LIMIT 1", [senderEmail]);
+          if (contactMatch.length > 0) matchedEntity = { id: contactMatch[0].id, name: contactMatch[0].first_name + " " + contactMatch[0].last_name, type: "contact" };
+        }
+      } catch (e) {}
+    }
+
+    // Detect if this looks like a job request
+    var isJobRequest = false;
+    var bodyLower = emailBody.toLowerCase();
+    var jobKeywords = ["need a consultant", "looking for", "epic analyst", "epic consultant", "staffing need", "open position", "job order", "req ", "requisition", "go-live", "implementation", "need help with", "looking to hire", "need someone"];
+    jobKeywords.forEach(function(kw) { if (bodyLower.indexOf(kw) !== -1) isJobRequest = true; });
+
+    var inboundEmail = {
+      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 4),
+      from: from || "",
+      fromName: fromName || "",
+      to: to || "",
+      subject: subject || "(no subject)",
+      body: emailBody.substring(0, 2000),
+      date: date || new Date().toISOString(),
+      matchedEntity: matchedEntity,
+      isJobRequest: isJobRequest,
+      status: "new",
+      processedAt: null,
+    };
+    _inboundEmails.unshift(inboundEmail);
+    // Keep only last 200 emails in memory
+    if (_inboundEmails.length > 200) _inboundEmails = _inboundEmails.slice(0, 200);
+
+    res.json({ success: true, email: inboundEmail });
+  } catch (e) {
+    console.error("[Inbox]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/inbox", (req, res) => {
+  var filter = req.query.filter || "all";
+  var emails = _inboundEmails;
+  if (filter === "job-requests") emails = emails.filter(e => e.isJobRequest);
+  else if (filter === "new") emails = emails.filter(e => e.status === "new");
+  res.json({
+    data: emails,
+    total: emails.length,
+    newCount: _inboundEmails.filter(e => e.status === "new").length,
+    jobRequestCount: _inboundEmails.filter(e => e.isJobRequest).length,
+  });
+});
+
+app.post("/api/inbox/mark-read", express.json(), (req, res) => {
+  var { emailId } = req.body;
+  var email = _inboundEmails.find(e => e.id === emailId);
+  if (email) { email.status = "read"; email.processedAt = new Date().toISOString(); }
+  res.json({ success: true });
+});
+
 app.post("/api/outreach/preview", express.json(), (req, res) => {
   try {
     var { templateId, variables } = req.body;
@@ -2962,6 +4482,8 @@ app.post("/api/outreach/send", express.json(), async (req, res) => {
     var { to, subject, body, recipientName, recipientType, recipientId } = req.body;
     if (!to || !subject || !body) return res.status(400).json({ error: "Missing required fields: to, subject, body" });
 
+    var sendMethod = "mailto";
+
     // If SendGrid is configured, send via API
     if (process.env.SENDGRID_API_KEY) {
       var sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
@@ -2981,30 +4503,28 @@ app.post("/api/outreach/send", express.json(), async (req, res) => {
         var errText = await sgResp.text();
         throw new Error("SendGrid error: " + errText);
       }
-      // Log as a note in Bullhorn if we have a candidate/contact ID
-      if (recipientId && recipientType) {
-        try {
-          await authenticate();
-          var noteEntity = recipientType === "candidate" ? "Candidate" : "ClientContact";
-          // Create a Bullhorn note for the outreach
-          await bhFetch("entity/Note", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "Email",
-              comments: "Outreach: " + subject + "\n\n" + body,
-              personReference: { id: parseInt(recipientId) }
-            })
-          });
-        } catch (noteErr) {
-          console.log("[Outreach] Note creation failed:", noteErr.message);
-        }
+      sendMethod = "sendgrid";
+    }
+
+    // Always log as a note in Bullhorn if we have a recipient
+    if (recipientId && recipientType) {
+      try {
+        await authenticate();
+        await bhWrite("entity/Note", {
+            action: "Email",
+            comments: "Outreach: " + subject + "\n\nTo: " + to + "\n\n" + body,
+            personReference: { id: parseInt(recipientId) }
+        });
+      } catch (noteErr) {
+        console.log("[Outreach] Note creation failed:", noteErr.message);
       }
-      res.json({ success: true, method: "sendgrid" });
-    } else {
-      // No SendGrid — return mailto link as fallback
+    }
+
+    if (sendMethod === "mailto") {
       var mailto = "mailto:" + encodeURIComponent(to) + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
       res.json({ success: true, method: "mailto", mailtoUrl: mailto });
+    } else {
+      res.json({ success: true, method: "sendgrid" });
     }
   } catch (e) {
     console.error("[Outreach] Send error:", e.message);
@@ -3577,6 +5097,196 @@ function startIntelScan(intervalMs) {
   console.log("[Intel] Feed scanner started (every " + Math.round((intervalMs || 1800000) / 60000) + " min)");
 }
 
+// ── BizDev Meeting Report ─────────────────────
+app.get("/api/bizdev", async (req, res) => {
+  try {
+    const now = Date.now();
+    const days30 = 30 * 86400000;
+    const days7 = 7 * 86400000;
+
+    // 1. All Jobs — Open, Accepting Candidates, Closed, Filled
+    var allJobs = [];
+    try {
+      var jobData = await bhFetchAll("search/JobOrder", {
+        query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open" OR status:"Closed" OR status:"Filled" OR status:"Placed")',
+        fields: "id,title,clientCorporation,status,employmentType,salary,numOpenings,submissions,dateAdded,type,address,owner",
+        sort: "-dateAdded",
+      });
+      var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
+      allJobs = (jobData.data || []).map(function(j) {
+        var daysOpen = j.dateAdded ? Math.floor((now - j.dateAdded) / 86400000) : null;
+        return {
+          id: j.id, title: j.title || "", client: j.clientCorporation ? j.clientCorporation.name : "",
+          clientId: j.clientCorporation ? j.clientCorporation.id : null,
+          priority: PRIORITY_LABELS[j.type] || "", type: j.employmentType || "",
+          salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
+          openings: j.numOpenings || 0, submissions: j.submissions ? j.submissions.total : 0,
+          location: j.address ? [j.address.city, j.address.state].filter(Boolean).join(", ") : "",
+          daysOpen: daysOpen, dateAdded: j.dateAdded ? new Date(j.dateAdded).toLocaleDateString() : "",
+          status: j.status || "",
+          owner: j.owner ? ((j.owner.firstName || "") + " " + (j.owner.lastName || "")).trim() : "",
+          ownerId: j.owner ? j.owner.id : null,
+        };
+      });
+    } catch(e) { console.log("[BizDev] Jobs error:", e.message); }
+    var activeJobs = allJobs.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
+    var closedJobs = allJobs.filter(function(j) { return j.status === "Closed" || j.status === "Filled" || j.status === "Placed"; });
+
+    // 2. Top Consultants — Available/Active candidates, grade A or B
+    var topConsultants = [];
+    try {
+      var candData = await bhFetchAll("search/Candidate", {
+        query: 'isDeleted:0 AND (status:"Active" OR status:"Available" OR status:"Active-Reviewed") AND (customText6:"A" OR customText6:"B")',
+        fields: "id,firstName,lastName,occupation,status,customText1,customText2,customText5,customText6,customText7,dateAvailable,address,email,phone,owner",
+        sort: "-dateLastModified",
+      });
+      topConsultants = (candData.data || []).map(function(c) {
+        var avail = c.dateAvailable ? new Date(c.dateAvailable) : null;
+        var availSoon = avail && avail.getTime() <= now + days30;
+        return {
+          id: c.id, name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+          title: c.occupation || "", grade: c.customText6 || "", urgency: c.customText7 || "",
+          primaryCert: c.customText1 || "", secondaryCert: c.customText2 || "",
+          epicRole: c.customText5 || "", status: c.status || "",
+          available: avail ? avail.toLocaleDateString() : "—", availSoon: availSoon,
+          location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
+          email: c.email || "", phone: c.phone || "",
+          owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
+          ownerId: c.owner ? c.owner.id : null,
+        };
+      });
+    } catch(e) { console.log("[BizDev] Top consultants error:", e.message); }
+
+    // 3. New Opportunities — Jobs added in the last 7 days
+    var newOpportunities = activeJobs.filter(function(j) { return j.daysOpen !== null && j.daysOpen <= 7; });
+
+    // 4. Consultants Coming Off Contract — Placements ending within 30 days
+    var expiringPlacements = [];
+    try {
+      if (db.ready) {
+        var expRows = await db.getAll(
+          "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) AND (employment_type IS NULL OR (employment_type NOT ILIKE '%direct%' AND employment_type NOT ILIKE '%permanent%')) ORDER BY date_end ASC",
+          [now, now + days30]
+        );
+        expiringPlacements = expRows.map(function(p) {
+          var daysLeft = p.date_end ? Math.ceil((p.date_end - now) / 86400000) : null;
+          return {
+            id: p.id, candidate: p.candidate_name || "", candidateId: p.candidate_id || null,
+            job: p.job_title || "", client: p.client_name || "", status: p.status || "",
+            endDate: p.date_end ? new Date(p.date_end).toLocaleDateString() : "",
+            daysLeft: daysLeft, billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : "—",
+            payRate: p.pay_rate ? "$" + p.pay_rate + "/hr" : "—",
+            urgency: daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
+          };
+        });
+      } else {
+        var expData = await bhFetchAll("query/Placement", {
+          where: "dateEnd IS NOT NULL AND dateEnd >= " + now + " AND dateEnd <= " + (now + days30) + " AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))",
+          fields: "id,candidate,jobOrder,status,dateBegin,dateEnd,payRate,clientBillRate,employmentType",
+          orderBy: "dateEnd",
+        });
+        expiringPlacements = (expData.data || []).map(function(p) {
+          var daysLeft = p.dateEnd ? Math.ceil((p.dateEnd - now) / 86400000) : null;
+          return {
+            id: p.id,
+            candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+            candidateId: p.candidate ? p.candidate.id : null,
+            job: p.jobOrder ? p.jobOrder.title : "", status: p.status || "",
+            endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : "",
+            daysLeft: daysLeft, billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
+            payRate: p.payRate ? "$" + p.payRate + "/hr" : "—",
+            urgency: daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
+          };
+        });
+      }
+    } catch(e) { console.log("[BizDev] Expiring placements error:", e.message); }
+
+    // 5. Upcoming Placement Starts — Placements starting within 30 days
+    var upcomingStarts = [];
+    try {
+      if (db.ready) {
+        var startRows = await db.getAll(
+          "SELECT * FROM placements WHERE date_begin IS NOT NULL AND date_begin >= $1 AND date_begin <= $2 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_begin ASC",
+          [now - days7, now + days30]
+        );
+        upcomingStarts = startRows.map(function(p) {
+          var daysUntil = p.date_begin ? Math.ceil((p.date_begin - now) / 86400000) : null;
+          return {
+            id: p.id, candidate: p.candidate_name || "", candidateId: p.candidate_id || null,
+            job: p.job_title || "", client: p.client_name || "", status: p.status || "",
+            startDate: p.date_begin ? new Date(p.date_begin).toLocaleDateString() : "",
+            daysUntil: daysUntil, billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : "—",
+            type: p.employment_type || "",
+          };
+        });
+      } else {
+        var startData = await bhFetchAll("query/Placement", {
+          where: "dateBegin IS NOT NULL AND dateBegin >= " + (now - days7) + " AND dateBegin <= " + (now + days30),
+          fields: "id,candidate,jobOrder,status,dateBegin,payRate,clientBillRate,employmentType",
+          orderBy: "dateBegin",
+        });
+        upcomingStarts = (startData.data || []).map(function(p) {
+          var daysUntil = p.dateBegin ? Math.ceil((p.dateBegin - now) / 86400000) : null;
+          return {
+            id: p.id,
+            candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+            candidateId: p.candidate ? p.candidate.id : null,
+            job: p.jobOrder ? p.jobOrder.title : "", status: p.status || "",
+            startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString() : "",
+            daysUntil: daysUntil, billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
+            type: p.employmentType || "",
+          };
+        });
+      }
+    } catch(e) { console.log("[BizDev] Upcoming starts error:", e.message); }
+
+    // Build unique owners and clients for filter dropdowns
+    var ownerSet = {};
+    var clientSet = {};
+    var certSet = {};
+    allJobs.forEach(function(j) {
+      if (j.owner) ownerSet[j.owner] = true;
+      if (j.client) clientSet[j.client] = true;
+    });
+    topConsultants.forEach(function(c) {
+      if (c.owner) ownerSet[c.owner] = true;
+      if (c.primaryCert) {
+        c.primaryCert.split(",").forEach(function(cert) { var t = cert.trim(); if (t) certSet[t] = true; });
+      }
+    });
+    expiringPlacements.forEach(function(p) { if (p.client) clientSet[p.client] = true; });
+    upcomingStarts.forEach(function(p) { if (p.client) clientSet[p.client] = true; });
+
+    res.json({
+      generatedAt: new Date().toLocaleString(),
+      activeOpportunities: activeJobs,
+      closedOpportunities: closedJobs,
+      newOpportunities: newOpportunities,
+      topConsultants: topConsultants,
+      expiringPlacements: expiringPlacements,
+      upcomingStarts: upcomingStarts,
+      filters: {
+        owners: Object.keys(ownerSet).sort(),
+        clients: Object.keys(clientSet).sort(),
+        certs: Object.keys(certSet).sort(),
+      },
+      summary: {
+        totalActiveJobs: activeJobs.length,
+        closedJobs: closedJobs.length,
+        urgentJobs: activeJobs.filter(function(j) { return j.priority === "Urgent" || j.priority === "Hot"; }).length,
+        topConsultantCount: topConsultants.length,
+        expiringCount: expiringPlacements.length,
+        criticalExpiring: expiringPlacements.filter(function(p) { return p.urgency === "critical"; }).length,
+        upcomingStartCount: upcomingStarts.length,
+        newThisWeek: newOpportunities.length,
+      }
+    });
+  } catch(e) {
+    console.error("[BizDev]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Dashboard Summary (for landing page) ──────
 app.get("/api/dashboard", async (req, res) => {
   try {
@@ -3590,10 +5300,10 @@ app.get("/api/dashboard", async (req, res) => {
 
     const now = Date.now();
     const nowMs = now;
-    const in30DaysMs = now + 30 * 86400000;
+    const in35DaysMs = now + 35 * 86400000;
     const past7 = new Date(now - 7 * 86400000).toISOString().split("T")[0].replace(/-/g, "");
 
-    const [stats, urgentJobs, newCandidates, expiringPlac, recentlyAvail] = await Promise.all([
+    const [stats, urgentJobs, newCandidates, expiringPlac, recentlyAvail, newJobsThisWeek] = await Promise.all([
       // Basic stats
       (async () => {
         const [c, j] = await Promise.all([
@@ -3618,7 +5328,7 @@ app.get("/api/dashboard", async (req, res) => {
       }),
       // Expiring placements (next 30 days) — exclude full-time/permanent
       bhFetchAll("query/Placement", {
-        where: `dateEnd IS NOT NULL AND dateEnd >= ${nowMs} AND dateEnd <= ${in30DaysMs} AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))`,
+        where: `dateEnd IS NOT NULL AND dateEnd >= ${nowMs} AND dateEnd <= ${in35DaysMs} AND (employmentType IS NULL OR (employmentType <> 'Direct Hire' AND employmentType <> 'Permanent'))`,
         fields: "id,candidate,jobOrder,dateEnd,payRate,clientBillRate,employmentType",
         orderBy: "dateEnd",
       }),
@@ -3633,6 +5343,12 @@ app.get("/api/dashboard", async (req, res) => {
           sort: "dateAvailable",
         });
       })(),
+      // Jobs added in last 7 days
+      bhFetch("search/JobOrder", {
+        query: `isDeleted:0 AND dateAdded:[${past7} TO *]`,
+        fields: "id",
+        count: 1,
+      }),
     ]);
 
     const PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
@@ -3700,6 +5416,7 @@ app.get("/api/dashboard", async (req, res) => {
         available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
       })),
       availableSoonTotal: recentlyAvail.total || 0,
+      newJobsThisWeek: newJobsThisWeek.total || 0,
     });
   } catch (e) {
     console.error("[Dashboard]", e.message);
@@ -3719,10 +5436,11 @@ app.get("/api/candidates/:id/submissions", async (req, res) => {
         if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
       } catch (dbErr) { console.log("[Submissions] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
-    const data = await bhFetchAll("query/JobSubmission", {
+    const data = await bhFetch("query/JobSubmission", {
       where: `candidate.id=${id} AND isDeleted=false`,
       fields: "id,jobOrder,status,dateAdded,sendingUser,source",
       orderBy: "-dateAdded",
+      count: 100,
     });
     const submissions = (data.data || []).map(s => ({
       id: s.id,
@@ -3793,17 +5511,221 @@ app.get("/api/candidates/:id/files/:fileId", async (req, res) => {
   }
 });
 
+// ═══ CANDIDATE FILE UPLOAD ═══════════════════════════════════════
+app.put("/api/candidates/:id/files", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const s = await authenticate();
+
+    // Read raw body as buffer
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
+    const bodyBuf = Buffer.concat(chunks);
+
+    // Parse multipart boundary from content-type header
+    const contentType = req.headers["content-type"] || "";
+    const boundaryMatch = contentType.match(/boundary=(.+)/);
+    if (!boundaryMatch) {
+      return res.status(400).json({ error: "Missing multipart boundary" });
+    }
+    const boundary = boundaryMatch[1].replace(/^["']|["']$/g, "");
+
+    // Simple multipart parser — extract file part and form fields
+    const parts = parseMultipart(bodyBuf, boundary);
+    const filePart = parts.find(p => p.filename);
+    if (!filePart) {
+      return res.status(400).json({ error: "No file found in upload" });
+    }
+
+    // Extract form fields
+    const fields = {};
+    parts.forEach(p => {
+      if (!p.filename && p.name) {
+        fields[p.name] = p.data.toString("utf8");
+      }
+    });
+
+    const fileType = fields.fileType || "Other";
+    const externalID = "anura-upload-" + Date.now();
+    const fileName = filePart.filename;
+
+    // Build multipart body for Bullhorn file API
+    const bhBoundary = "----BhUpload" + Date.now();
+    const CRLF = "\r\n";
+    const partsBh = [];
+
+    // File content part
+    partsBh.push(
+      `--${bhBoundary}${CRLF}` +
+      `Content-Disposition: form-data; name="file"; filename="${fileName}"${CRLF}` +
+      `Content-Type: ${filePart.contentType || "application/octet-stream"}${CRLF}${CRLF}`
+    );
+    partsBh.push(filePart.data);
+    partsBh.push(CRLF);
+
+    // externalID part
+    partsBh.push(
+      `--${bhBoundary}${CRLF}` +
+      `Content-Disposition: form-data; name="externalID"${CRLF}${CRLF}` +
+      externalID + CRLF
+    );
+
+    // fileType part
+    partsBh.push(
+      `--${bhBoundary}${CRLF}` +
+      `Content-Disposition: form-data; name="fileType"${CRLF}${CRLF}` +
+      fileType + CRLF
+    );
+
+    // name part (use file type + original name for easier identification)
+    partsBh.push(
+      `--${bhBoundary}${CRLF}` +
+      `Content-Disposition: form-data; name="name"${CRLF}${CRLF}` +
+      fileName + CRLF
+    );
+
+    // description part (optional)
+    if (fields.description) {
+      partsBh.push(
+        `--${bhBoundary}${CRLF}` +
+        `Content-Disposition: form-data; name="description"${CRLF}${CRLF}` +
+        fields.description + CRLF
+      );
+    }
+
+    // Close boundary
+    partsBh.push(`--${bhBoundary}--${CRLF}`);
+
+    // Combine into a single buffer
+    const bhBody = Buffer.concat(partsBh.map(p => typeof p === "string" ? Buffer.from(p) : p));
+
+    // Send to Bullhorn file API
+    const bhUrl = `${s.restUrl}file/Candidate/${id}?BhRestToken=${s.bhRestToken}`;
+    const bhRes = await fetch(bhUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": `multipart/form-data; boundary=${bhBoundary}`,
+      },
+      body: bhBody,
+    });
+
+    if (!bhRes.ok) {
+      const err = await bhRes.text();
+      throw new Error(`Bullhorn file upload error (${bhRes.status}): ${err}`);
+    }
+
+    const result = await bhRes.json();
+    console.log("[File Upload] Uploaded", fileName, "to candidate", id, "as", fileType, "→", JSON.stringify(result));
+    res.json({ success: true, fileId: result.fileId || result.id, fileName, fileType });
+  } catch (e) {
+    console.error("[File Upload Error]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Simple multipart/form-data parser.
+ * Returns array of { name, filename, contentType, data (Buffer) }
+ */
+function parseMultipart(buf, boundary) {
+  const results = [];
+  const boundaryBuf = Buffer.from("--" + boundary);
+  const endBuf = Buffer.from("--" + boundary + "--");
+
+  // Split on boundary
+  let start = 0;
+  const positions = [];
+  while (true) {
+    const idx = buf.indexOf(boundaryBuf, start);
+    if (idx === -1) break;
+    positions.push(idx);
+    start = idx + boundaryBuf.length;
+  }
+
+  for (let i = 0; i < positions.length - 1; i++) {
+    const partStart = positions[i] + boundaryBuf.length;
+    const partEnd = positions[i + 1];
+    const partBuf = buf.slice(partStart, partEnd);
+
+    // Find header/body separator (double CRLF)
+    const headerEnd = partBuf.indexOf("\r\n\r\n");
+    if (headerEnd === -1) continue;
+
+    const headerStr = partBuf.slice(0, headerEnd).toString("utf8");
+    // Body is between headers and next boundary (trim trailing CRLF)
+    let bodyBuf = partBuf.slice(headerEnd + 4);
+    if (bodyBuf.length >= 2 && bodyBuf[bodyBuf.length - 2] === 0x0D && bodyBuf[bodyBuf.length - 1] === 0x0A) {
+      bodyBuf = bodyBuf.slice(0, bodyBuf.length - 2);
+    }
+
+    // Parse Content-Disposition
+    const nameMatch = headerStr.match(/name="([^"]+)"/);
+    const filenameMatch = headerStr.match(/filename="([^"]+)"/);
+    const ctMatch = headerStr.match(/Content-Type:\s*(.+)/i);
+
+    results.push({
+      name: nameMatch ? nameMatch[1] : null,
+      filename: filenameMatch ? filenameMatch[1] : null,
+      contentType: ctMatch ? ctMatch[1].trim() : null,
+      data: bodyBuf,
+    });
+  }
+
+  return results;
+}
+
 // ═══ CANDIDATE REFERENCES ════════════════════════════════════════
 app.get("/api/candidates/:id/references", async (req, res) => {
   try {
     const id = req.params.id;
     await authenticate();
-    const data = await bhFetchAll("query/CandidateReference", {
-      where: `candidate.id=${id} AND isDeleted=false`,
-      fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,employmentType,relationship,yearsKnown,comments,dateAdded,candidateTitle,isDeleted,customText1,customText2,customText3",
-      orderBy: "-dateAdded",
-    });
-    const refs = (data.data || []).map(function(r) {
+
+    const refFields = "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,customTextBlock1,dateAdded,status,relationship,yearsKnown,candidateTitle";
+
+    // Try entity sub-resource first, fall back to query if it fails or returns empty
+    let rawRefs = [];
+    try {
+      const data = await bhFetch("entity/Candidate/" + id + "/references", {
+        fields: refFields,
+        count: 50,
+        orderBy: "-dateAdded",
+      });
+      rawRefs = data.data || [];
+    } catch (subErr) {
+      console.log("[References] Sub-resource failed for candidate " + id + ":", subErr.message);
+    }
+
+    // Fallback: query/CandidateReference
+    if (rawRefs.length === 0) {
+      try {
+        const qResult = await bhFetchAll("query/CandidateReference", {
+          where: "candidate.id=" + id + " AND isDeleted=false",
+          fields: refFields,
+          orderBy: "-dateAdded",
+        });
+        rawRefs = qResult.data || [];
+      } catch (qErr) {
+        console.log("[References] Query fallback also failed for candidate " + id + ":", qErr.message);
+      }
+    }
+
+    // Second fallback: search/CandidateReference
+    if (rawRefs.length === 0) {
+      try {
+        const sResult = await bhFetchAll("search/CandidateReference", {
+          query: "candidate.id:" + id + " AND isDeleted:0",
+          fields: refFields,
+          sort: "-dateAdded",
+        });
+        rawRefs = sResult.data || [];
+      } catch (sErr) {
+        console.log("[References] Search fallback also failed for candidate " + id + ":", sErr.message);
+      }
+    }
+
+    const refs = rawRefs.map(function(r) {
       return {
         id: r.id,
         firstName: r.referenceFirstName || "",
@@ -3816,8 +5738,9 @@ app.get("/api/candidates/:id/references", async (req, res) => {
         relationship: r.relationship || "",
         yearsKnown: r.yearsKnown || "",
         candidateTitle: r.candidateTitle || "",
-        comments: r.comments || "",
+        comments: r.customTextBlock1 || "",
         dateAdded: r.dateAdded ? new Date(r.dateAdded).toLocaleDateString() : "",
+        status: r.status || "",
       };
     });
     res.json({ data: refs, total: refs.length });
@@ -3833,11 +5756,19 @@ app.get("/api/candidates/:id/pipeline", async (req, res) => {
     const id = req.params.id;
     await authenticate();
 
-    // Fetch all submissions for this candidate
-    const subData = await bhFetchAll("query/JobSubmission", {
-      where: `candidate.id=${id} AND isDeleted=false`,
-      fields: "id,status",
-    });
+    // Fetch submissions and placements in parallel, capped at 500 each
+    const [subData, placData] = await Promise.all([
+      bhFetch("query/JobSubmission", {
+        where: `candidate.id=${id} AND isDeleted=false`,
+        fields: "id,status",
+        count: 500,
+      }),
+      bhFetch("query/Placement", {
+        where: `candidate.id=${id}`,
+        fields: "id,status",
+        count: 100,
+      }).catch(function() { return { data: [] }; }),
+    ]);
     const subs = subData.data || [];
 
     // Count by normalized status category
@@ -3853,17 +5784,7 @@ app.get("/api/candidates/:id/pipeline", async (req, res) => {
       else { stats.other++; }
     });
     stats.total = subs.length;
-
-    // Also count placements
-    try {
-      const placData = await bhFetchAll("query/Placement", {
-        where: `candidate.id=${id}`,
-        fields: "id,status",
-      });
-      stats.placements = (placData.data || []).length;
-    } catch (pe) {
-      stats.placements = 0;
-    }
+    stats.placements = (placData.data || []).length;
 
     res.json(stats);
   } catch (e) {
@@ -3951,6 +5872,621 @@ app.get("/api/pipeline", async (req, res) => {
     res.json({ stages, summary, days, total: totalAll });
   } catch (e) {
     console.error("[Pipeline]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ MICROSOFT OUTLOOK / 365 INTEGRATION ════════════════════════
+// Per-user OAuth2 flow with Microsoft Graph API for email read/send/sync
+
+var OUTLOOK_TENANT = (process.env.OUTLOOK_TENANT_ID || "common").trim();
+var OUTLOOK_CONFIG = {
+  clientId: (process.env.OUTLOOK_CLIENT_ID || "").trim(),
+  clientSecret: (process.env.OUTLOOK_CLIENT_SECRET || "").trim(),
+  redirectUri: (process.env.RAILWAY_PUBLIC_DOMAIN ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.BASE_URL || "https://bullhorn-dashboard-production.up.railway.app") + "/auth/outlook/callback",
+  scopes: "openid profile email offline_access Mail.Read Mail.Send User.Read",
+  authorizeUrl: "https://login.microsoftonline.com/" + OUTLOOK_TENANT + "/oauth2/v2.0/authorize",
+  tokenUrl: "https://login.microsoftonline.com/" + OUTLOOK_TENANT + "/oauth2/v2.0/token",
+  graphUrl: "https://graph.microsoft.com/v1.0",
+};
+
+// In-memory token store (keyed by email). Production should use encrypted DB storage.
+var _outlookUsers = {};
+
+// Check if Outlook integration is configured
+function outlookEnabled() { return !!(OUTLOOK_CONFIG.clientId && OUTLOOK_CONFIG.clientSecret); }
+
+// Status endpoint
+app.get("/api/outlook/status", (req, res) => {
+  var configured = outlookEnabled();
+  var connectedUsers = Object.keys(_outlookUsers).map(email => ({
+    email: email,
+    name: _outlookUsers[email].name || email,
+    connectedAt: _outlookUsers[email].connectedAt,
+  }));
+
+  // Also check DB for persistent tokens
+  if (configured && db.ready && connectedUsers.length === 0) {
+    db.getAll("SELECT email, display_name, connected_at FROM outlook_tokens WHERE revoked = false ORDER BY connected_at DESC")
+      .then(rows => {
+        res.json({ configured, connectedUsers: rows.map(r => ({ email: r.email, name: r.display_name, connectedAt: r.connected_at })), redirectUri: OUTLOOK_CONFIG.redirectUri });
+      })
+      .catch(() => res.json({ configured, connectedUsers, redirectUri: OUTLOOK_CONFIG.redirectUri }));
+  } else {
+    res.json({ configured, connectedUsers, redirectUri: OUTLOOK_CONFIG.redirectUri });
+  }
+});
+
+// Step 1: Redirect user to Microsoft login
+app.get("/auth/outlook/login", (req, res) => {
+  if (!outlookEnabled()) return res.status(503).send("Outlook integration not configured. Set OUTLOOK_CLIENT_ID and OUTLOOK_CLIENT_SECRET in Railway environment variables.");
+  var state = crypto.randomBytes(16).toString("hex");
+  var url = OUTLOOK_CONFIG.authorizeUrl + "?" + new URLSearchParams({
+    client_id: OUTLOOK_CONFIG.clientId,
+    response_type: "code",
+    redirect_uri: OUTLOOK_CONFIG.redirectUri,
+    scope: OUTLOOK_CONFIG.scopes,
+    response_mode: "query",
+    state: state,
+    prompt: "consent",
+  }).toString();
+  res.redirect(url);
+});
+
+// Step 2: Handle callback from Microsoft
+app.get("/auth/outlook/callback", async (req, res) => {
+  try {
+    var code = req.query.code;
+    if (!code) return res.status(400).send("No authorization code received. Error: " + (req.query.error_description || req.query.error || "unknown"));
+
+    // Exchange code for tokens
+    var tokenResp = await fetch(OUTLOOK_CONFIG.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: OUTLOOK_CONFIG.clientId,
+        client_secret: OUTLOOK_CONFIG.clientSecret,
+        code: code,
+        redirect_uri: OUTLOOK_CONFIG.redirectUri,
+        grant_type: "authorization_code",
+        scope: OUTLOOK_CONFIG.scopes,
+      }).toString(),
+    });
+    if (!tokenResp.ok) {
+      var errBody = await tokenResp.text();
+      return res.status(400).send("Token exchange failed: " + errBody);
+    }
+    var tokens = await tokenResp.json();
+
+    // Get user profile
+    var profileResp = await fetch(OUTLOOK_CONFIG.graphUrl + "/me", {
+      headers: { Authorization: "Bearer " + tokens.access_token },
+    });
+    var profile = profileResp.ok ? await profileResp.json() : {};
+    var userEmail = (profile.mail || profile.userPrincipalName || "").toLowerCase();
+
+    if (!userEmail) return res.status(400).send("Could not determine your email address from Microsoft.");
+
+    // Store tokens
+    _outlookUsers[userEmail] = {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresAt: Date.now() + (tokens.expires_in || 3600) * 1000,
+      name: profile.displayName || userEmail,
+      connectedAt: new Date().toISOString(),
+    };
+
+    // Persist to DB if available
+    if (db.ready) {
+      try {
+        await db.query(`
+          INSERT INTO outlook_tokens (email, display_name, access_token, refresh_token, expires_at, connected_at, revoked)
+          VALUES ($1, $2, $3, $4, $5, NOW(), false)
+          ON CONFLICT (email) DO UPDATE SET access_token=$3, refresh_token=$4, expires_at=$5, display_name=$2, revoked=false, connected_at=NOW()
+        `, [userEmail, profile.displayName || "", tokens.access_token, tokens.refresh_token, new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString()]);
+      } catch (e) { console.log("[Outlook] DB persist failed:", e.message); }
+    }
+
+    // Redirect back to dashboard
+    res.redirect("/?outlook=connected&user=" + encodeURIComponent(userEmail));
+  } catch (e) {
+    console.error("[Outlook Callback]", e.message);
+    res.status(500).send("Error connecting Outlook: " + e.message);
+  }
+});
+
+// Refresh token helper
+async function refreshOutlookToken(userEmail) {
+  var user = _outlookUsers[userEmail];
+  if (!user || !user.refreshToken) {
+    // Try loading from DB
+    if (db.ready) {
+      try {
+        var rows = await db.getAll("SELECT * FROM outlook_tokens WHERE email=$1 AND revoked=false LIMIT 1", [userEmail]);
+        if (rows.length > 0) {
+          user = { accessToken: rows[0].access_token, refreshToken: rows[0].refresh_token, expiresAt: new Date(rows[0].expires_at).getTime(), name: rows[0].display_name, connectedAt: rows[0].connected_at };
+          _outlookUsers[userEmail] = user;
+        }
+      } catch (e) {}
+    }
+    if (!user || !user.refreshToken) throw new Error("No Outlook connection for " + userEmail);
+  }
+  if (user.expiresAt && Date.now() < user.expiresAt - 60000) return user.accessToken;
+
+  var resp = await fetch(OUTLOOK_CONFIG.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: OUTLOOK_CONFIG.clientId,
+      client_secret: OUTLOOK_CONFIG.clientSecret,
+      refresh_token: user.refreshToken,
+      grant_type: "refresh_token",
+      scope: OUTLOOK_CONFIG.scopes,
+    }).toString(),
+  });
+  if (!resp.ok) throw new Error("Token refresh failed");
+  var tokens = await resp.json();
+  user.accessToken = tokens.access_token;
+  if (tokens.refresh_token) user.refreshToken = tokens.refresh_token;
+  user.expiresAt = Date.now() + (tokens.expires_in || 3600) * 1000;
+
+  // Update DB
+  if (db.ready) {
+    try { await db.query("UPDATE outlook_tokens SET access_token=$1, refresh_token=$2, expires_at=$3 WHERE email=$4", [user.accessToken, user.refreshToken, new Date(user.expiresAt).toISOString(), userEmail]); } catch (e) {}
+  }
+  return user.accessToken;
+}
+
+// Graph API helper
+async function graphFetch(userEmail, endpoint, options) {
+  var token = await refreshOutlookToken(userEmail);
+  var resp = await fetch(OUTLOOK_CONFIG.graphUrl + endpoint, {
+    ...options,
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", ...(options && options.headers ? options.headers : {}) },
+  });
+  if (!resp.ok) {
+    var errText = await resp.text();
+    throw new Error("Graph API error (" + resp.status + "): " + errText.substring(0, 200));
+  }
+  // Some Graph endpoints (e.g. sendMail) return 202/204 with no body
+  var contentType = resp.headers.get("content-type") || "";
+  if (resp.status === 204 || resp.status === 202 || !contentType.includes("application/json")) {
+    return { success: true };
+  }
+  return resp.json();
+}
+
+// Read emails
+app.get("/api/outlook/emails", async (req, res) => {
+  try {
+    var userEmail = req.query.user;
+    if (!userEmail) {
+      var users = Object.keys(_outlookUsers);
+      if (users.length === 0) return res.json({ data: [], total: 0, error: "No Outlook accounts connected" });
+      userEmail = users[0];
+    }
+    var folder = req.query.folder || "inbox";
+    var top = parseInt(req.query.limit) || 50;
+    var skip = parseInt(req.query.skip) || 0;
+    var q = req.query.q || "";
+
+    var endpoint;
+    if (q) {
+      // $search cannot be combined with $skip or $orderby in Graph API
+      endpoint = "/me/mailFolders/" + folder + "/messages?$top=" + top + "&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,importance&$search=\"" + encodeURIComponent(q) + "\"";
+    } else {
+      endpoint = "/me/mailFolders/" + folder + "/messages?$top=" + top + "&$skip=" + skip + "&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,importance";
+    }
+
+    var data = await graphFetch(userEmail, endpoint);
+    var emails = (data.value || []).map(function(m) {
+      return {
+        id: m.id,
+        subject: m.subject || "(no subject)",
+        from: m.from ? (m.from.emailAddress ? m.from.emailAddress.address : "") : "",
+        fromName: m.from ? (m.from.emailAddress ? m.from.emailAddress.name : "") : "",
+        to: (m.toRecipients || []).map(r => r.emailAddress ? r.emailAddress.address : "").join(", "),
+        date: m.receivedDateTime || "",
+        preview: m.bodyPreview || "",
+        isRead: m.isRead,
+        hasAttachments: m.hasAttachments,
+        importance: m.importance || "normal",
+      };
+    });
+
+    // Match emails to Bullhorn records
+    if (db.ready) {
+      var allAddresses = new Set();
+      emails.forEach(function(e) {
+        if (e.from) allAddresses.add(e.from.toLowerCase());
+        (e.to || "").split(",").forEach(function(a) { var t = a.trim().toLowerCase(); if (t) allAddresses.add(t); });
+      });
+      var addressList = Array.from(allAddresses);
+      if (addressList.length > 0) {
+        try {
+          var placeholders = addressList.map((_, i) => "$" + (i + 1)).join(",");
+          var candMatches = await db.getAll("SELECT id, first_name, last_name, email, email2 FROM candidates WHERE LOWER(email) IN (" + placeholders + ") OR LOWER(email2) IN (" + placeholders + ")", addressList.concat(addressList));
+          var contactMatches = await db.getAll("SELECT id, first_name, last_name, email FROM client_contacts WHERE LOWER(email) IN (" + placeholders + ")", addressList);
+
+          var matchMap = {};
+          candMatches.forEach(function(c) {
+            var e1 = (c.email || "").toLowerCase();
+            var e2 = (c.email2 || "").toLowerCase();
+            if (e1) matchMap[e1] = { id: c.id, name: c.first_name + " " + c.last_name, type: "candidate" };
+            if (e2) matchMap[e2] = { id: c.id, name: c.first_name + " " + c.last_name, type: "candidate" };
+          });
+          contactMatches.forEach(function(c) {
+            var e = (c.email || "").toLowerCase();
+            if (e) matchMap[e] = { id: c.id, name: c.first_name + " " + c.last_name, type: "contact" };
+          });
+
+          emails.forEach(function(e) {
+            e.matchedRecord = matchMap[e.from.toLowerCase()] || null;
+            // Also check recipients
+            if (!e.matchedRecord) {
+              (e.to || "").split(",").forEach(function(a) {
+                var t = a.trim().toLowerCase();
+                if (t && matchMap[t]) e.matchedRecord = matchMap[t];
+              });
+            }
+          });
+        } catch (e) { console.log("[Outlook Emails] Record matching error:", e.message); }
+      }
+    }
+
+    res.json({ data: emails, total: data["@odata.count"] || emails.length, user: userEmail });
+  } catch (e) {
+    console.error("[Outlook Emails]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Read single email (full body)
+app.get("/api/outlook/emails/:messageId", async (req, res) => {
+  try {
+    var userEmail = req.query.user || Object.keys(_outlookUsers)[0];
+    if (!userEmail) return res.status(400).json({ error: "No Outlook account specified" });
+    var data = await graphFetch(userEmail, "/me/messages/" + req.params.messageId + "?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments,importance");
+    res.json({ data: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Send email
+app.post("/api/outlook/send", express.json(), async (req, res) => {
+  try {
+    var { user, to, subject, body, cc, saveToSentItems } = req.body;
+    var userEmail = user || Object.keys(_outlookUsers)[0];
+    if (!userEmail) return res.status(400).json({ error: "No Outlook account connected" });
+    if (!to || !subject) return res.status(400).json({ error: "Missing 'to' and 'subject'" });
+
+    var message = {
+      subject: subject,
+      body: { contentType: "HTML", content: body || "" },
+      toRecipients: to.split(",").map(function(e) { return { emailAddress: { address: e.trim() } }; }),
+    };
+    if (cc) message.ccRecipients = cc.split(",").map(function(e) { return { emailAddress: { address: e.trim() } }; });
+
+    await graphFetch(userEmail, "/me/sendMail", {
+      method: "POST",
+      body: JSON.stringify({ message: message, saveToSentItems: saveToSentItems !== false }),
+    });
+
+    res.json({ success: true, method: "outlook" });
+  } catch (e) {
+    console.error("[Outlook Send]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Log email to Bullhorn as a Note/Activity
+app.post("/api/outlook/log-to-bullhorn", express.json(), async (req, res) => {
+  try {
+    var { messageId, user, entityType, entityId, subject, body, fromEmail } = req.body;
+    if (!entityId || !entityType) return res.status(400).json({ error: "Missing entityType or entityId" });
+    await authenticate();
+
+    var noteBody = "Email: " + (subject || "(no subject)") + "\nFrom: " + (fromEmail || "") + "\n\n" + (body || "").replace(/<[^>]*>/g, "").substring(0, 2000);
+
+    var noteData = {
+      action: "Email",
+      comments: noteBody,
+      personReference: entityType === "candidate" ? { id: parseInt(entityId) } : undefined,
+    };
+    // For contacts, use clientContactReferences
+    if (entityType === "contact") {
+      noteData.personReference = undefined;
+      noteData.clientContactReferences = { total: 1, data: [{ id: parseInt(entityId) }] };
+    }
+
+    await bhWrite("entity/Note", noteData);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error("[Outlook Log]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Disconnect account
+app.post("/api/outlook/disconnect", express.json(), (req, res) => {
+  var { email } = req.body;
+  if (_outlookUsers[email]) delete _outlookUsers[email];
+  if (db.ready) {
+    db.query("UPDATE outlook_tokens SET revoked=true WHERE email=$1", [email]).catch(() => {});
+  }
+  res.json({ success: true });
+});
+
+// Create outlook_tokens table if it doesn't exist
+if (db.ready || db.isEnabled()) {
+  setTimeout(async function() {
+    try {
+      if (db.ready) {
+        await db.query(`CREATE TABLE IF NOT EXISTS outlook_tokens (
+          email TEXT PRIMARY KEY,
+          display_name TEXT,
+          access_token TEXT,
+          refresh_token TEXT,
+          expires_at TEXT,
+          connected_at TIMESTAMP DEFAULT NOW(),
+          revoked BOOLEAN DEFAULT false
+        )`);
+        console.log("[Outlook] Token table ready");
+        // Also create email_log table for tracking synced emails
+        await db.query(`CREATE TABLE IF NOT EXISTS email_log (
+          id SERIAL PRIMARY KEY,
+          message_id TEXT UNIQUE,
+          outlook_user TEXT,
+          subject TEXT,
+          from_email TEXT,
+          from_name TEXT,
+          to_emails TEXT,
+          body_preview TEXT,
+          received_at TIMESTAMPTZ,
+          matched_entity_type TEXT,
+          matched_entity_id INTEGER,
+          matched_entity_name TEXT,
+          bullhorn_note_id INTEGER,
+          logged_to_bullhorn BOOLEAN DEFAULT false,
+          synced_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
+        console.log("[Outlook] Email log table ready");
+      }
+    } catch (e) { console.log("[Outlook] Could not create tables:", e.message); }
+  }, 5000);
+}
+
+// ═══ AUTO EMAIL SYNC ═══════════════════════════════════════════════
+var _lastEmailSync = 0;
+var _emailSyncRunning = false;
+
+async function syncOutlookEmails() {
+  if (_emailSyncRunning) return;
+  if (!db.ready) return;
+  _emailSyncRunning = true;
+  console.log("[Email Sync] Starting auto-sync...");
+
+  try {
+    // Get all connected Outlook users
+    var connectedUsers = Object.keys(_outlookUsers);
+    if (connectedUsers.length === 0) {
+      // Try loading from DB
+      try {
+        var rows = await db.getAll("SELECT email FROM outlook_tokens WHERE revoked = false");
+        rows.forEach(function(r) { if (r.email && !_outlookUsers[r.email]) connectedUsers.push(r.email); });
+      } catch (e) {}
+    }
+    if (connectedUsers.length === 0) { _emailSyncRunning = false; return; }
+
+    var totalSynced = 0;
+    for (var u = 0; u < connectedUsers.length; u++) {
+      var userEmail = connectedUsers[u];
+      try {
+        // Fetch recent emails (last 48 hours of inbox + sent)
+        var folders = ["inbox", "sentitems"];
+        for (var f = 0; f < folders.length; f++) {
+          var endpoint = "/me/mailFolders/" + folders[f] + "/messages?$top=50&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,body";
+          var data = await graphFetch(userEmail, endpoint);
+          var messages = data.value || [];
+
+          for (var m = 0; m < messages.length; m++) {
+            var msg = messages[m];
+            // Skip if already synced
+            try {
+              var exists = await db.getOne("SELECT id FROM email_log WHERE message_id = $1", [msg.id]);
+              if (exists) continue;
+            } catch (e) { continue; }
+
+            var fromAddr = msg.from && msg.from.emailAddress ? msg.from.emailAddress.address : "";
+            var fromName = msg.from && msg.from.emailAddress ? msg.from.emailAddress.name : "";
+            var toAddrs = (msg.toRecipients || []).map(function(r) { return r.emailAddress ? r.emailAddress.address : ""; }).filter(Boolean);
+
+            // Match to Bullhorn records by email address
+            var allAddrs = [fromAddr].concat(toAddrs).filter(Boolean).map(function(a) { return a.toLowerCase(); });
+            // Remove team member emails from matching
+            var teamEmails = connectedUsers.map(function(e) { return e.toLowerCase(); });
+            var externalAddrs = allAddrs.filter(function(a) { return teamEmails.indexOf(a) < 0; });
+
+            var matchedRecord = null;
+            if (externalAddrs.length > 0) {
+              try {
+                var ph = externalAddrs.map(function(_, i) { return "$" + (i + 1); }).join(",");
+                var candMatch = await db.getOne("SELECT id, first_name, last_name FROM candidates WHERE LOWER(email) IN (" + ph + ") OR LOWER(email2) IN (" + ph + ") LIMIT 1", externalAddrs.concat(externalAddrs));
+                if (candMatch) {
+                  matchedRecord = { type: "candidate", id: candMatch.id, name: (candMatch.first_name + " " + candMatch.last_name).trim() };
+                } else {
+                  var contactMatch = await db.getOne("SELECT id, first_name, last_name FROM client_contacts WHERE LOWER(email) IN (" + ph + ") LIMIT 1", externalAddrs);
+                  if (contactMatch) {
+                    matchedRecord = { type: "contact", id: contactMatch.id, name: (contactMatch.first_name + " " + contactMatch.last_name).trim() };
+                  }
+                }
+              } catch (e) {}
+            }
+
+            // Log to email_log table
+            var bodyText = (msg.body && msg.body.content) ? msg.body.content.replace(/<[^>]*>/g, "").substring(0, 500) : (msg.bodyPreview || "");
+            await db.query(
+              `INSERT INTO email_log (message_id, outlook_user, subject, from_email, from_name, to_emails, body_preview, received_at, matched_entity_type, matched_entity_id, matched_entity_name)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+               ON CONFLICT (message_id) DO NOTHING`,
+              [msg.id, userEmail, msg.subject || "", fromAddr, fromName, toAddrs.join(", "), bodyText, msg.receivedDateTime, matchedRecord ? matchedRecord.type : null, matchedRecord ? matchedRecord.id : null, matchedRecord ? matchedRecord.name : null]
+            );
+
+            // Auto-log to Bullhorn as a Note if matched
+            if (matchedRecord) {
+              try {
+                await authenticate();
+                var noteBody = "Email: " + (msg.subject || "(no subject)") + "\nFrom: " + fromAddr + " (" + fromName + ")" + "\nTo: " + toAddrs.join(", ") + "\nDate: " + (msg.receivedDateTime || "") + "\n\n" + bodyText;
+                var noteData = { action: "Email", comments: noteBody };
+                if (matchedRecord.type === "candidate") {
+                  noteData.personReference = { id: matchedRecord.id };
+                } else {
+                  noteData.clientContactReferences = { total: 1, data: [{ id: matchedRecord.id }] };
+                }
+                var noteResult = await bhWrite("entity/Note", noteData);
+                var noteId = noteResult.changedEntityId || null;
+                await db.query("UPDATE email_log SET logged_to_bullhorn = true, bullhorn_note_id = $1 WHERE message_id = $2", [noteId, msg.id]);
+                totalSynced++;
+              } catch (noteErr) { console.log("[Email Sync] Note creation failed for " + fromAddr + ":", noteErr.message); }
+            }
+          }
+        }
+      } catch (userErr) { console.log("[Email Sync] Error for user " + userEmail + ":", userErr.message); }
+    }
+
+    _lastEmailSync = Date.now();
+    console.log("[Email Sync] Complete — " + totalSynced + " emails logged to Bullhorn");
+  } catch (e) {
+    console.error("[Email Sync] Error:", e.message);
+  }
+  _emailSyncRunning = false;
+}
+
+// Run email sync every 15 minutes
+setInterval(function() { syncOutlookEmails().catch(function(e) { console.error("[Email Sync] Interval error:", e.message); }); }, 15 * 60 * 1000);
+// Also run 30 seconds after startup
+setTimeout(function() { syncOutlookEmails().catch(function(e) { console.error("[Email Sync] Startup error:", e.message); }); }, 30000);
+
+// Manual trigger
+app.post("/api/outlook/sync-now", async (req, res) => {
+  syncOutlookEmails().catch(function(e) { console.error("[Email Sync] Manual trigger error:", e.message); });
+  res.json({ started: true, lastSync: _lastEmailSync ? new Date(_lastEmailSync).toISOString() : null });
+});
+
+// Get email history for a specific candidate or contact
+app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
+  try {
+    var entityType = req.params.entityType;
+    var entityId = parseInt(req.params.entityId);
+    if (!entityId || !entityType) return res.status(400).json({ error: "Missing entityType or entityId" });
+
+    // 1. Try DB email_log first
+    var loggedEmails = [];
+    if (db.ready) {
+      try {
+        loggedEmails = await db.getAll(
+          "SELECT * FROM email_log WHERE matched_entity_type = $1 AND matched_entity_id = $2 ORDER BY received_at DESC LIMIT 100",
+          [entityType, entityId]
+        );
+      } catch (e) { console.log("[Email History] DB email_log query failed:", e.message); }
+    }
+
+    // 2. Try DB notes
+    var bhNotes = [];
+    if (db.ready) {
+      try {
+        bhNotes = await db.getAll(
+          "SELECT id, action, comments_text, date_added, commenting_person_name FROM notes WHERE person_id = $1 AND (LOWER(action) LIKE '%email%' OR LOWER(action) LIKE '%e-mail%') ORDER BY date_added DESC LIMIT 50",
+          [entityId]
+        );
+      } catch (e) {}
+    }
+
+    // 3. If DB returned nothing, search Outlook directly by candidate email
+    if (loggedEmails.length === 0 && bhNotes.length === 0) {
+      try {
+        // Look up the candidate/contact email from Bullhorn
+        var entityEmail = null;
+        var entityEmail2 = null;
+        await authenticate();
+        if (entityType === "candidate") {
+          var candData = await bhFetch("entity/Candidate/" + entityId, { fields: "id,email,email2" });
+          var cand = candData.data || candData;
+          entityEmail = cand.email || null;
+          entityEmail2 = cand.email2 || null;
+        }
+
+        if (entityEmail || entityEmail2) {
+          var connectedUsers = Object.keys(_outlookUsers);
+          if (connectedUsers.length > 0) {
+            var userEmail = connectedUsers[0];
+            var searchTerms = [];
+            if (entityEmail) searchTerms.push(entityEmail);
+            if (entityEmail2 && entityEmail2 !== entityEmail) searchTerms.push(entityEmail2);
+
+            // Search Outlook for emails matching this person's email address
+            var outlookEmails = [];
+            for (var i = 0; i < searchTerms.length; i++) {
+              try {
+                var searchEndpoint = "/me/messages?$search=\"" + encodeURIComponent(searchTerms[i]) + "\"&$top=50&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview";
+                var searchData = await graphFetch(userEmail, searchEndpoint);
+                (searchData.value || []).forEach(function(msg) {
+                  outlookEmails.push({
+                    message_id: msg.id,
+                    outlook_user: userEmail,
+                    subject: msg.subject || "(no subject)",
+                    from_email: msg.from && msg.from.emailAddress ? msg.from.emailAddress.address : "",
+                    from_name: msg.from && msg.from.emailAddress ? msg.from.emailAddress.name : "",
+                    to_emails: (msg.toRecipients || []).map(function(r) { return r.emailAddress ? r.emailAddress.address : ""; }).join(", "),
+                    body_preview: msg.bodyPreview || "",
+                    received_at: msg.receivedDateTime || "",
+                    matched_entity_type: entityType,
+                    matched_entity_id: entityId,
+                    logged_to_bullhorn: false,
+                  });
+                });
+              } catch (searchErr) { console.log("[Email History] Outlook search failed for " + searchTerms[i] + ":", searchErr.message); }
+            }
+
+            // Dedupe by message_id
+            var seen = {};
+            loggedEmails = outlookEmails.filter(function(e) {
+              if (seen[e.message_id]) return false;
+              seen[e.message_id] = true;
+              return true;
+            });
+          }
+        }
+      } catch (outlookErr) { console.log("[Email History] Outlook direct search failed:", outlookErr.message); }
+    }
+
+    // 4. If still nothing, search Bullhorn notes directly for email-type actions
+    if (loggedEmails.length === 0 && bhNotes.length === 0 && entityType === "candidate") {
+      try {
+        await authenticate();
+        var noteSearch = await bhFetch("search/Note", {
+          query: "personReference.id:" + entityId + " AND isDeleted:0 AND (action:Email OR action:\"Sent Email\" OR action:\"Received Email\" OR action:\"e-mail\")",
+          fields: "id,action,comments,dateAdded,commentingPerson",
+          sort: "-dateAdded",
+          count: 50,
+        });
+        bhNotes = (noteSearch.data || []).map(function(n) {
+          return {
+            id: n.id,
+            action: n.action || "Email",
+            comments_text: n.comments || "",
+            date_added: n.dateAdded || null,
+            commenting_person_name: n.commentingPerson ? (n.commentingPerson.firstName + " " + n.commentingPerson.lastName) : "",
+          };
+        });
+      } catch (bhNoteErr) { console.log("[Email History] Bullhorn note search fallback failed:", bhNoteErr.message); }
+    }
+
+    res.json({ emails: loggedEmails, notes: bhNotes, total: loggedEmails.length + bhNotes.length });
+  } catch (e) {
+    console.error("[Email History]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -4279,7 +6815,7 @@ app.get("/api/touch-report", async (req, res) => {
     // Fetch stale client contacts (active, assigned to health system, with owner)
     const clientData = await bhFetchAll("search/ClientContact", {
       query: `isDeleted:0 AND status:"Active" AND clientCorporation.id:[1 TO *] AND owner.id:[1 TO *]`,
-      fields: "id,firstName,lastName,title,status,dateLastModified,email,phone,owner,clientCorporation",
+      fields: "id,firstName,lastName,occupation,status,dateLastModified,email,phone,owner,clientCorporation",
       sort: "dateLastModified",
     });
 
@@ -4324,7 +6860,7 @@ app.get("/api/touch-report", async (req, res) => {
         id: c.id,
         type: "ClientContact",
         name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
-        title: c.title || "",
+        title: c.occupation || c.title || "",
         status: c.status || "",
         email: c.email || "",
         phone: c.phone || "",
@@ -4349,14 +6885,146 @@ app.get("/api/touch-report", async (req, res) => {
 });
 
 // ── Ask Anura: natural language data queries ─────
+// ── Custom Sheets ─────────────────────────────────
+app.get("/api/sheets", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const userEmail = req.query.userEmail || "";
+    const sheets = await db.listSheets(userEmail);
+    res.json({ sheets });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/sheets", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const { name, description, visibility, userEmail, userName } = req.body;
+    if (!name) return res.status(400).json({ error: "Sheet name is required" });
+    const sheet = await db.createSheet(name, description, visibility, userEmail, userName);
+    res.json({ sheet });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/sheets/:id", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const userEmail = req.query.userEmail || "";
+    const sheet = await db.getSheet(parseInt(req.params.id), userEmail);
+    if (!sheet) return res.status(404).json({ error: "Sheet not found" });
+    res.json({ sheet });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put("/api/sheets/:id", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const { name, description, visibility } = req.body;
+    await db.updateSheet(parseInt(req.params.id), { name, description, visibility });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/api/sheets/:id", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    await db.deleteSheet(parseInt(req.params.id));
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/sheets/:id/members", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const { candidateId, candidateName, userEmail, userName, notes } = req.body;
+    if (!candidateId) return res.status(400).json({ error: "candidateId is required" });
+    await db.addToSheet(parseInt(req.params.id), candidateId, candidateName, userEmail, userName, notes);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/api/sheets/:id/members/:candidateId", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    await db.removeFromSheet(parseInt(req.params.id), parseInt(req.params.candidateId));
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/candidate/:id/sheets", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const sheets = await db.listSheetsForCandidate(parseInt(req.params.id));
+    res.json({ sheets });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Smart Lists (by primary cert) ─────────────────
+
+// Merge DB smart lists that map to the same normalized cert name
+function normalizeSmartLists(rawLists) {
+  // Reuse the same normalization map defined inside the endpoint below
+  var NORM = {
+    "pb": "Professional Billing", "epic pb": "Professional Billing",
+    "epic professional billing": "Professional Billing",
+    "resolute pb (professional billing)": "Professional Billing",
+    "resolute professional billing": "Professional Billing",
+    "professional billing": "Professional Billing",
+    "hb": "Hospital Billing", "epic hb": "Hospital Billing",
+    "resolute hb (hospital billing)": "Hospital Billing",
+    "resolute hospital billing": "Hospital Billing",
+    "hospital billing": "Hospital Billing",
+    "cadence": "Cadence", "epic cadence": "Cadence",
+    "grand central": "Grand Central", "epic grand central": "Grand Central",
+    "prelude": "Prelude", "prelude / adt": "Prelude", "prelude/adt": "Prelude", "epic prelude": "Prelude",
+    "epiccare ambulatory": "EpicCare Ambulatory", "ambulatory": "EpicCare Ambulatory", "epic ambulatory": "EpicCare Ambulatory",
+    "ambulatory for pt": "EpicCare Ambulatory",
+    "epiccare inpatient": "EpicCare Inpatient", "inpatient": "EpicCare Inpatient", "epic inpatient": "EpicCare Inpatient",
+    "beaker (anatomic pathology)": "Beaker AP", "beaker ap": "Beaker AP",
+    "beaker (clinical pathology)": "Beaker CP", "beaker cp": "Beaker CP",
+    "beaker ct": "Beaker CT",
+    "optime": "OpTime", "epic optime": "OpTime",
+    "order entry / orders": "Orders", "order entry/orders": "Orders", "orders": "Orders", "inpatient orders": "Orders",
+    "him (health information management)": "HIM", "him": "HIM",
+    "rte": "RTE", "epic rte": "RTE",
+    "mychart": "MyChart", "my chart": "MyChart", "epic mychart": "MyChart",
+    "clindoc": "ClinDoc", "epic clindoc": "ClinDoc",
+    "security": "Security", "epic security coordinator": "Security", "epic security lead": "Security",
+    "epic identity": "Epic Identity",
+    "epic hello world": "Hello World", "hello world": "Hello World",
+    "care everywhere": "EpicCare Everywhere", "epiccare everywhere": "EpicCare Everywhere",
+    "epiccare link": "EpicCare Link",
+    "pb claims": "PB Claims", "hb claims": "HB Claims",
+    "pb contracts": "PB Contracts",
+  };
+  function norm(raw) {
+    var k = raw.trim().toLowerCase();
+    if (NORM[k]) return NORM[k];
+    if (k.startsWith("epic ") && NORM[k.substring(5)]) return NORM[k.substring(5)];
+    return raw.trim().replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+  }
+  var merged = {};
+  rawLists.forEach(function(list) {
+    var key = norm(list.name);
+    if (!merged[key]) merged[key] = { name: key, candidates: [] };
+    list.candidates.forEach(function(c) {
+      if (!merged[key].candidates.some(function(e) { return e.id === c.id; })) {
+        merged[key].candidates.push(c);
+      }
+    });
+  });
+  return Object.values(merged).sort(function(a, b) { return b.candidates.length - a.candidates.length; });
+}
+
 app.get("/api/smart-lists", async (req, res) => {
   try {
-    // Try Postgres first
+    // Try Postgres first — then normalize the cert names
     if (db.ready) {
       try {
         var dbResult = await db.getSmartLists();
-        if (dbResult) return res.json({ lists: dbResult.lists, total: dbResult.total });
+        if (dbResult) {
+          var normalized = normalizeSmartLists(dbResult.lists);
+          return res.json({ lists: normalized, total: dbResult.total });
+        }
       } catch (dbErr) { console.log("[Smart Lists] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
 
@@ -4367,6 +7035,101 @@ app.get("/api/smart-lists", async (req, res) => {
       sort: "-dateLastModified",
     });
 
+    // ── Cert normalization map ──
+    // Maps variations to canonical display names so Smart Lists don't fragment
+    const CERT_NORMALIZE = {
+      // Professional Billing variants
+      "pb": "Professional Billing",
+      "epic pb": "Professional Billing",
+      "epic professional billing": "Professional Billing",
+      "resolute pb (professional billing)": "Professional Billing",
+      "resolute professional billing": "Professional Billing",
+      "professional billing": "Professional Billing",
+      "pb claims": "PB Claims",
+      "pb contracts": "PB Contracts",
+      // Hospital Billing variants
+      "hb": "Hospital Billing",
+      "epic hb": "Hospital Billing",
+      "resolute hb (hospital billing)": "Hospital Billing",
+      "resolute hospital billing": "Hospital Billing",
+      "hospital billing": "Hospital Billing",
+      "hb claims": "HB Claims",
+      // Cadence
+      "cadence": "Cadence",
+      "epic cadence": "Cadence",
+      // Grand Central
+      "grand central": "Grand Central",
+      "epic grand central": "Grand Central",
+      // Prelude
+      "prelude": "Prelude",
+      "prelude / adt": "Prelude",
+      "prelude/adt": "Prelude",
+      "epic prelude": "Prelude",
+      // Ambulatory
+      "epiccare ambulatory": "EpicCare Ambulatory",
+      "ambulatory": "EpicCare Ambulatory",
+      "epic ambulatory": "EpicCare Ambulatory",
+      // Inpatient
+      "epiccare inpatient": "EpicCare Inpatient",
+      "inpatient": "EpicCare Inpatient",
+      "epic inpatient": "EpicCare Inpatient",
+      // Beaker — keep sub-types separate but normalize naming
+      "beaker (anatomic pathology)": "Beaker AP",
+      "beaker ap": "Beaker AP",
+      "beaker (clinical pathology)": "Beaker CP",
+      "beaker cp": "Beaker CP",
+      "beaker ct": "Beaker CT",
+      // Willow — keep sub-types
+      "willow": "Willow",
+      "willow inpatient": "Willow Inpatient",
+      "willow ambulatory": "Willow Ambulatory",
+      // OpTime
+      "optime": "OpTime",
+      "epic optime": "OpTime",
+      // Orders
+      "order entry / orders": "Orders",
+      "order entry/orders": "Orders",
+      "orders": "Orders",
+      "inpatient orders": "Orders",
+      // HIM
+      "him (health information management)": "HIM",
+      "him": "HIM",
+      // RTE
+      "rte": "RTE",
+      "epic rte": "RTE",
+      // MyChart
+      "mychart": "MyChart",
+      "my chart": "MyChart",
+      "epic mychart": "MyChart",
+      // ClinDoc
+      "clindoc": "ClinDoc",
+      "epic clindoc": "ClinDoc",
+      // Security
+      "security": "Security",
+      "epic security coordinator": "Security",
+      "epic security lead": "Security",
+      // Other "Epic X" prefix normalization
+      "epic identity": "Epic Identity",
+      "epic hello world": "Hello World",
+      "hello world": "Hello World",
+      // Common
+      "care everywhere": "EpicCare Everywhere",
+      "epiccare everywhere": "EpicCare Everywhere",
+      "epiccare link": "EpicCare Link",
+    };
+
+    function normalizeCert(raw) {
+      var key = raw.trim().toLowerCase();
+      if (CERT_NORMALIZE[key]) return CERT_NORMALIZE[key];
+      // Strip "Epic " prefix as fallback
+      if (key.startsWith("epic ") && key.length > 5) {
+        var stripped = key.substring(5);
+        if (CERT_NORMALIZE[stripped]) return CERT_NORMALIZE[stripped];
+      }
+      // Title-case the original if no match
+      return raw.trim().replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+    }
+
     // Group by ALL primary certs (candidates with multiple certs appear in each list)
     const lists = {};
     (data.data || []).forEach((c) => {
@@ -4376,7 +7139,7 @@ app.get("/api/smart-lists", async (req, res) => {
       const certKeys = cert.split(",").map(s => s.trim()).filter(Boolean);
       const candidateObj = {
         id: c.id,
-        name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+        name: titleCase(((c.firstName || "") + " " + (c.lastName || "")).trim()),
         title: c.occupation || "",
         status: c.status || "",
         primaryCert: cert,
@@ -4389,9 +7152,13 @@ app.get("/api/smart-lists", async (req, res) => {
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
         email: c.email || "",
       };
-      certKeys.forEach((key) => {
+      certKeys.forEach((raw) => {
+        var key = normalizeCert(raw);
         if (!lists[key]) lists[key] = { name: key, candidates: [] };
-        lists[key].candidates.push(candidateObj);
+        // Deduplicate — same candidate shouldn't appear twice in same list
+        if (!lists[key].candidates.some(function(e) { return e.id === candidateObj.id; })) {
+          lists[key].candidates.push(candidateObj);
+        }
       });
     });
 
@@ -4432,12 +7199,40 @@ app.get("/api/ask", async (req, res) => {
     const listCertMatch = question.match(/(?:list|show|give|find|get|all)\s+.*(?:candidates?|consultants?|people)\s+.*(?:with|who have|certified|certification)\s+.*?(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i);
     // Catch "<cert> candidates" pattern — e.g. "give me all the professional billing candidates"
     const certBeforeNounMatch = question.match(/(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)\s+(?:candidates?|consultants?|people|resources?)/i);
+    // Catch "how many <cert> candidates" or "how many candidates have <cert>" BEFORE generic count
+    const howManyCertMatch = question.match(/how many\s+(?:candidates?|consultants?|people)?\s*(?:have|with|are certified in|hold)?\s*(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)/i)
+      || question.match(/how many\s+(professional\s+billing|hospital\s+billing|pb|hb|cadence|willow|beaker|cupid|tapestry|cogito|bridges|radiant|prelude|phoenix|resolute|rover|clarity|ambulatory|inpatient|epiccare|optime|grand\s+central|hyperspace|my\s?chart)\s+(?:candidates?|consultants?|people|resources?)/i);
     const gradeMatch = question.match(/(?:grade|tier)\s+(a|b|c)/i);
     const roleMatch = question.match(/(?:who is|show me)\s+(ts|is|dev|analyst|trainer)/i);
     const daysMatch = question.match(/(\d+)\s*days?/);
     const daysCutoff = daysMatch ? parseInt(daysMatch[1]) : 30;
 
-    if (question.match(/how many\s+(active\s+)?candidates/)) {
+    if (howManyCertMatch) {
+      // "How many candidates have professional billing" — cert-specific count
+      const rawCert = howManyCertMatch[1].trim().toLowerCase();
+      const certLabel = CERT_ALIASES[rawCert] || rawCert;
+      const searchTerm = certLabel.split(" ")[0];
+      const certQuery = `isDeleted:0 AND (customText1:${searchTerm}* OR customText2:${searchTerm}*)`;
+      const r = await bhFetchAll("search/Candidate", {
+        query: certQuery,
+        fields: "id,firstName,lastName,occupation,customText1,customText2,customText6,status,dateAvailable,address",
+        sort: "-dateLastModified",
+      });
+      var cands = (r.data || []).map(function(c) { return {
+        id: c.id,
+        name: (c.firstName || "") + " " + (c.lastName || ""),
+        title: c.occupation || "",
+        primaryCert: c.customText1 || "",
+        secondaryCert: c.customText2 || "",
+        grade: c.customText6 || "",
+        status: c.status || "",
+        location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
+        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
+      }; });
+      answer = `Found **${r.total}** candidates with **${certLabel}** certification:`;
+      data = cands;
+
+    } else if (question.match(/how many\s+(active\s+)?candidates/)) {
       const r = await bhFetchAll("search/Candidate", { query: 'isDeleted:0 AND status:"Active"', fields: "id", });
       answer = `You have **${r.total}** active candidates in Bullhorn.`;
 
@@ -4507,6 +7302,38 @@ app.get("/api/ask", async (req, res) => {
       }));
       answer = `**${r.total}** candidates available now or soon:`;
       data = cands;
+
+    } else if (question.match(/msa|opportunit(?:y|ies)|pipeline|deal/) && !question.match(/placement|candidate|job/)) {
+      // MSA Pipeline queries
+      var statusFilter = null;
+      if (question.match(/prospect/)) statusFilter = "Prospect";
+      else if (question.match(/negotiat/)) statusFilter = "In Negotiation";
+      else if (question.match(/signed|won|closed\s*won/)) statusFilter = "Signed";
+      else if (question.match(/lost|closed\s*lost/)) statusFilter = "Lost";
+
+      var queryParts = ["isDeleted:0"];
+      if (statusFilter) queryParts.push('status:"' + statusFilter + '"');
+      var r = await bhFetchAll("search/Opportunity", {
+        query: queryParts.join(" AND "),
+        fields: "id,title,status,dealValue,winProbabilityPercent,estimatedStartDate,owner,clientCorporation,dateLastModified",
+        sort: "-dateLastModified",
+      });
+      data = (r.data || []).map(function(o) { return {
+        id: o.id,
+        title: o.title || "",
+        status: o.status || "",
+        dealValue: o.dealValue || 0,
+        winProbability: o.winProbabilityPercent || 0,
+        estimatedStart: o.estimatedStartDate ? new Date(o.estimatedStartDate).toLocaleDateString() : "",
+        owner: o.owner ? (o.owner.firstName + " " + o.owner.lastName) : "",
+        client: o.clientCorporation ? o.clientCorporation.name : "",
+      }; });
+      var totalValue = data.reduce(function(sum, o) { return sum + o.dealValue; }, 0);
+      if (statusFilter) {
+        answer = "Found **" + r.total + "** MSAs in **" + statusFilter + "** stage" + (totalValue ? " (total value: **$" + totalValue.toLocaleString() + "**):" : ":");
+      } else {
+        answer = "**" + r.total + "** MSAs/Opportunities in your pipeline" + (totalValue ? " (total pipeline value: **$" + totalValue.toLocaleString() + "**):" : ":");
+      }
 
     } else if (primaryCertMatch || listCertMatch || certBeforeNounMatch || certMatch) {
       const match = primaryCertMatch || listCertMatch || certBeforeNounMatch || certMatch;
@@ -5375,6 +8202,89 @@ app.post("/api/portal/submit", async (req, res) => {
 // Serve the portal page (public, no auth required)
 app.get("/portal", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "portal.html"));
+});
+
+// ═══ PUBLIC TEARSHEET ═══════════════════════════════════════════
+app.get("/tearsheet/:id", async (req, res) => {
+  try {
+    var id = req.params.id;
+    await authenticate();
+    var data = await bhFetch("entity/Candidate/" + id, {
+      fields: "id,firstName,lastName,nickName,occupation,status,address,salary,email,phone,mobile,dateAvailable,source,owner,customText1,customText2,customText3,customText5,customText6,description"
+    });
+    var c = data.data || data;
+    if (!c || !c.id) return res.status(404).send("<h1>Candidate not found</h1>");
+    var addr = c.address || {};
+    var location = [addr.city, addr.state].filter(Boolean).join(", ");
+    var primaryCert = Array.isArray(c.customText1) ? c.customText1.join(", ") : (c.customText1 || "");
+    var secondaryCert = Array.isArray(c.customText2) ? c.customText2.join(", ") : (c.customText2 || "");
+    var epicRole = Array.isArray(c.customText5) ? c.customText5.join(", ") : (c.customText5 || "");
+    var grade = c.customText6 || "";
+    var preferredRole = Array.isArray(c.customText3) ? c.customText3.join(", ") : (c.customText3 || "");
+    var gradeColors = { A: "#16a34a", B: "#f59e0b", C: "#ef4444" };
+    var gradeColor = gradeColors[grade] || "#64748b";
+
+    function esc(s) { return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+
+    var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">';
+    html += '<title>Tearsheet - ' + esc(c.firstName + " " + c.lastName) + ' - Anura Connect</title>';
+    html += '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px 20px;max-width:700px;margin:0 auto;color:#0f172a;background:#f8fafc}';
+    html += '.ts-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:16px;border-bottom:3px solid #176087}';
+    html += '.ts-logo{font-size:24px;font-weight:800;color:#176087}.ts-sub{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em}';
+    html += '.ts-name{font-size:28px;font-weight:700;color:#0E2E47;margin-bottom:4px}';
+    html += '.ts-title{font-size:16px;color:#64748b;margin-bottom:16px}';
+    html += '.ts-section{margin-bottom:24px;background:#fff;border-radius:8px;padding:16px;border:1px solid #e2e8f0}';
+    html += '.ts-section h4{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#176087;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}';
+    html += '.ts-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:14px}';
+    html += '.ts-label{color:#94a3b8;font-size:12px}.ts-val{color:#0f172a;font-weight:500;margin-bottom:8px}';
+    html += '.ts-notes{font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap}';
+    html += '.badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600;background:#e2e8f0;color:#475569}';
+    html += '.footer{margin-top:32px;text-align:center;font-size:11px;color:#94a3b8;padding-top:16px;border-top:1px solid #e2e8f0}';
+    html += '@media print{body{padding:20px;background:#fff}.ts-section{border:none;padding:12px 0}}</style></head><body>';
+
+    html += '<div class="ts-brand"><div><div class="ts-logo">Anura Connect</div><div class="ts-sub">Candidate Tearsheet</div></div></div>';
+    html += '<div class="ts-name">' + esc(c.firstName + " " + c.lastName) + '</div>';
+    html += '<div class="ts-title">' + esc(c.occupation || "") + '  &bull;  <span class="badge">' + esc(c.status || "Unknown") + '</span></div>';
+
+    // Contact Info
+    html += '<div class="ts-section"><h4>Contact Information</h4><div class="ts-row">';
+    html += '<div><div class="ts-label">Email</div><div class="ts-val">' + esc(c.email || "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Phone</div><div class="ts-val">' + esc(c.phone || "\u2014") + '</div></div>';
+    if (c.mobile) html += '<div><div class="ts-label">Mobile</div><div class="ts-val">' + esc(c.mobile) + '</div></div>';
+    html += '<div><div class="ts-label">Location</div><div class="ts-val">' + esc(location || "\u2014") + '</div></div>';
+    html += '</div></div>';
+
+    // Certifications & Grade
+    html += '<div class="ts-section"><h4>Certifications &amp; Grade</h4><div class="ts-row">';
+    html += '<div><div class="ts-label">Primary Certifications</div><div class="ts-val" style="color:#176087;font-weight:700">' + esc(primaryCert || "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Secondary Certifications</div><div class="ts-val">' + esc(secondaryCert || "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Epic Role</div><div class="ts-val">' + esc(epicRole || "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Grade</div><div class="ts-val" style="font-weight:700;color:' + gradeColor + '">' + esc(grade || "\u2014") + '</div></div>';
+    if (preferredRole) html += '<div><div class="ts-label">Preferred Roles</div><div class="ts-val">' + esc(preferredRole) + '</div></div>';
+    html += '</div></div>';
+
+    // Availability & Compensation
+    html += '<div class="ts-section"><h4>Availability &amp; Compensation</h4><div class="ts-row">';
+    html += '<div><div class="ts-label">Pay Rate</div><div class="ts-val" style="font-weight:700;color:#10b981">' + (c.salary ? "$" + Number(c.salary).toLocaleString() : "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Available</div><div class="ts-val">' + (c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "\u2014") + '</div></div>';
+    if (c.source) html += '<div><div class="ts-label">Source</div><div class="ts-val">' + esc(c.source) + '</div></div>';
+    if (c.owner) html += '<div><div class="ts-label">Owner</div><div class="ts-val">' + esc(c.owner.firstName + " " + c.owner.lastName) + '</div></div>';
+    html += '</div></div>';
+
+    // Description
+    if (c.description) {
+      html += '<div class="ts-section"><h4>Notes &amp; Background</h4>';
+      html += '<div class="ts-notes">' + c.description.replace(/<[^>]*>/g, "") + '</div>';
+      html += '</div>';
+    }
+
+    html += '<div class="footer">Generated by Anura Connect &bull; ' + new Date().toLocaleDateString() + '</div>';
+    html += '</body></html>';
+    res.send(html);
+  } catch (e) {
+    console.error("[Tearsheet]", e.message);
+    res.status(500).send("<h1>Error loading tearsheet</h1><p>" + e.message + "</p>");
+  }
 });
 
 // Serve the dashboard

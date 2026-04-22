@@ -659,6 +659,35 @@ async function createTables() {
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_portal_templates_client ON portal_templates(client_id)`);
 
+  // Custom sheets (user-created candidate shortlists)
+  await query(`
+    CREATE TABLE IF NOT EXISTS custom_sheets (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      visibility TEXT NOT NULL DEFAULT 'private',
+      created_by TEXT,
+      created_by_name TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS custom_sheet_members (
+      id SERIAL PRIMARY KEY,
+      sheet_id INTEGER NOT NULL REFERENCES custom_sheets(id) ON DELETE CASCADE,
+      candidate_id INTEGER NOT NULL,
+      candidate_name TEXT,
+      added_by TEXT,
+      added_by_name TEXT,
+      added_at TIMESTAMPTZ DEFAULT NOW(),
+      notes TEXT DEFAULT '',
+      UNIQUE(sheet_id, candidate_id)
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_sheet_members_sheet ON custom_sheet_members(sheet_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_sheet_members_candidate ON custom_sheet_members(candidate_id)`);
+
   // Indexes for common queries
   await query(`CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_candidates_modified ON candidates(date_last_modified)`);
@@ -798,8 +827,8 @@ var PLACEMENT_FIELDS = [
   "dateBegin","dateEnd","dateAdded","dateLastModified",
   "payRate","clientBillRate","salary","salaryUnit",
   "fee","overtimeRate","clientOvertimeRate",
-  "hoursPerDay","daysPerWeek","daysGuaranteed",
-  "housingManager","referringUser",
+  "hoursPerDay","daysGuaranteed",
+  "referringUser",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
   "customTextBlock1","customTextBlock2","customTextBlock3",
@@ -818,7 +847,6 @@ var CLIENT_FIELDS = [
   "id","name","status","companyURL","phone",
   "industryList","numEmployees","revenue","notes",
   "address","billingAddress","billingPhone","billingContact",
-  "owner",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
   "customTextBlock1","customTextBlock2","customTextBlock3",
@@ -842,22 +870,21 @@ var SUBMISSION_FIELDS = [
   "customTextBlock1","customTextBlock2",
   "customInt1","customInt2","customInt3",
   "customFloat1","customFloat2","customFloat3",
-  "customDate1","customDate2",
-  "externalID","milesRadius"
+  "customDate1","customDate2"
 ].join(",");
 
 var NOTE_FIELDS = [
-  "id","personReference","clientCorporation","jobOrder","placement",
+  "id","personReference","jobOrder",
   "action","comments","dateAdded","dateLastModified",
   "commentingPerson","isDeleted",
-  "externalID","minutesSpent"
+  "minutesSpent"
 ].join(",");
 
 var OPPORTUNITY_FIELDS = [
   "id","title","type","status","clientCorporation","owner",
   "estimatedStartDate","estimatedEndDate","estimatedHoursPerWeek",
   "salary",
-  "numOpenings","winProbabilityPercent","weightedDealValue","dealValue","commission",
+  "numOpenings","winProbabilityPercent","weightedDealValue","dealValue",
   "dateAdded","dateLastModified","description","lead","source","reasonClosed",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
@@ -865,7 +892,7 @@ var OPPORTUNITY_FIELDS = [
   "customInt1","customInt2","customInt3",
   "customFloat1","customFloat2","customFloat3",
   "customDate1","customDate2","customDate3",
-  "isDeleted","externalID","jobOrders","candidates"
+  "isDeleted","externalID","jobOrders"
 ].join(",");
 
 var CLIENT_CONTACT_FIELDS = [
@@ -887,13 +914,13 @@ var CORPORATE_USER_FIELDS = [
   "id","firstName","lastName","name","email","email2",
   "phone","mobile","username","occupation","status",
   "isDeleted","dateLastModified",
-  "primaryDepartment","externalID"
+  "primaryDepartment"
 ].join(",");
 
 var SENDOUT_FIELDS = [
   "id","candidate","jobOrder","clientCorporation","clientContact",
-  "dateAdded","dateLastModified",
-  "sendingUser","isRead"
+  "dateAdded",
+  "isRead"
 ].join(",");
 
 var APPOINTMENT_FIELDS = [
@@ -905,7 +932,7 @@ var APPOINTMENT_FIELDS = [
 
 var TASK_FIELDS = [
   "id","subject","type","description",
-  "candidateReference","clientContactReference","jobOrder","placement",
+  "candidate","clientContact","jobOrder","placement",
   "owner","dateBegin","dateEnd","dateAdded","dateLastModified",
   "dateCompleted","isDeleted","isCompleted"
 ].join(",");
@@ -1446,7 +1473,8 @@ var SYNC_ENTITIES = {
     queryField: "where",
     baseQuery: "id IS NOT NULL",
     fields: SENDOUT_FIELDS,
-    sortField: "-dateLastModified",
+    sortField: "-dateAdded",
+    incrementalField: "dateAdded",
     transform: function (r) {
       var cand = r.candidate || {};
       var jo = r.jobOrder || {};
@@ -1517,8 +1545,8 @@ var SYNC_ENTITIES = {
     fields: TASK_FIELDS,
     sortField: "-dateLastModified",
     transform: function (r) {
-      var cand = r.candidateReference || {};
-      var contact = r.clientContactReference || {};
+      var cand = r.candidate || r.candidateReference || {};
+      var contact = r.clientContact || r.clientContactReference || {};
       var jo = r.jobOrder || {};
       var pl = r.placement || {};
       return {
@@ -1599,12 +1627,13 @@ async function syncEntity(entityType, syncType) {
       var state = await getOne("SELECT * FROM sync_state WHERE entity_type=$1", [entityType]);
       if (state && state.last_incremental_sync) {
         var sinceMs = new Date(state.last_incremental_sync).getTime() - 60000; // 1 min overlap for safety
+        var incField = config.incrementalField || "dateLastModified";
         if (config.queryField === "query") {
           // search/ endpoint uses Lucene syntax
-          queryOrWhere += " AND dateLastModified:[" + sinceMs + " TO *]";
+          queryOrWhere += " AND " + incField + ":[" + sinceMs + " TO *]";
         } else {
           // query/ endpoint uses SQL-like syntax
-          queryOrWhere += " AND dateLastModified >= " + sinceMs;
+          queryOrWhere += " AND " + incField + " >= " + sinceMs;
         }
       }
     }
@@ -1702,14 +1731,14 @@ async function incrementalSync() {
   var start = Date.now();
   var entities = Object.keys(SYNC_ENTITIES);
   var totalSynced = 0;
-  var anyFailed = false;
+  var failedEntities = [];
 
   for (var i = 0; i < entities.length; i++) {
     try {
       var result = await syncEntity(entities[i], "incremental");
       totalSynced += result.synced;
     } catch (err) {
-      anyFailed = true;
+      failedEntities.push(entities[i]);
       console.error("[Sync] Incremental sync of " + entities[i] + " failed:", err.message);
     }
   }
@@ -1718,11 +1747,14 @@ async function incrementalSync() {
   if (totalSynced > 0) {
     console.log("[Sync] Incremental: " + totalSynced + " records updated in " + elapsed + "s");
   }
+  // If most entities succeeded and records synced, treat as success with a note
+  var anyFailed = failedEntities.length > 0;
+  var mostFailed = failedEntities.length > entities.length / 2;
   lastSyncStatus = {
     time: new Date(),
-    success: !anyFailed,
+    success: !mostFailed,
     message: anyFailed
-      ? "Sync completed with errors — " + totalSynced + " records updated"
+      ? totalSynced + " records synced — " + failedEntities.join(", ") + " had issues"
       : totalSynced > 0
         ? totalSynced + " records updated"
         : "No changes detected",
@@ -1825,9 +1857,13 @@ async function dbSearchCandidates(filters) {
     conditions.push("status != 'Placed'");
   }
   if (filters.q) {
-    n++; var q = "%" + filters.q + "%";
-    conditions.push("(first_name ILIKE $" + n + " OR last_name ILIKE $" + n + " OR occupation ILIKE $" + n + " OR custom_text1 ILIKE $" + n + " OR custom_text2 ILIKE $" + n + ")");
-    params.push(q);
+    // Split query into words so "Juan Felipe Hernandez" matches across first_name + last_name
+    var words = filters.q.trim().split(/\s+/);
+    words.forEach(function(w) {
+      n++; var wq = "%" + w + "%";
+      conditions.push("(first_name ILIKE $" + n + " OR last_name ILIKE $" + n + " OR occupation ILIKE $" + n + " OR custom_text1 ILIKE $" + n + " OR custom_text2 ILIKE $" + n + ")");
+      params.push(wq);
+    });
   }
   if (filters.cert) {
     n++; conditions.push("(custom_text1 ILIKE $" + n + " OR custom_text2 ILIKE $" + n + ")");
@@ -2461,6 +2497,109 @@ async function dbDeletePortalTemplate(id) {
   return true;
 }
 
+/* ═══ CUSTOM SHEETS ═══ */
+async function dbListSheets(userEmail) {
+  if (!dbReady) return [];
+  // Return public sheets + sheets created by this user
+  var rows = (await query(
+    "SELECT s.*, (SELECT COUNT(*) FROM custom_sheet_members WHERE sheet_id = s.id) as member_count FROM custom_sheets s WHERE s.visibility = 'public' OR s.created_by = $1 ORDER BY s.updated_at DESC",
+    [userEmail || ""]
+  )).rows;
+  return rows.map(function(r) {
+    return {
+      id: r.id, name: r.name, description: r.description || "",
+      visibility: r.visibility, createdBy: r.created_by, createdByName: r.created_by_name || "",
+      createdAt: r.created_at, updatedAt: r.updated_at,
+      memberCount: parseInt(r.member_count) || 0,
+    };
+  });
+}
+
+async function dbCreateSheet(name, description, visibility, userEmail, userName) {
+  if (!dbReady) return null;
+  var res = await query(
+    "INSERT INTO custom_sheets (name, description, visibility, created_by, created_by_name) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+    [name, description || "", visibility || "private", userEmail || "", userName || ""]
+  );
+  return res.rows[0];
+}
+
+async function dbGetSheet(sheetId, userEmail) {
+  if (!dbReady) return null;
+  var sheet = await getOne("SELECT * FROM custom_sheets WHERE id = $1 AND (visibility = 'public' OR created_by = $2)", [sheetId, userEmail || ""]);
+  if (!sheet) return null;
+  var members = (await query(
+    "SELECT m.*, c.first_name, c.last_name, c.occupation, c.status, c.custom_text1, c.custom_text2, c.custom_text5, c.custom_text6, c.email, c.salary, c.date_available, c.address_city, c.address_state FROM custom_sheet_members m LEFT JOIN candidates c ON c.id = m.candidate_id WHERE m.sheet_id = $1 ORDER BY m.added_at DESC",
+    [sheetId]
+  )).rows;
+  return {
+    id: sheet.id, name: sheet.name, description: sheet.description || "",
+    visibility: sheet.visibility, createdBy: sheet.created_by, createdByName: sheet.created_by_name || "",
+    createdAt: sheet.created_at, updatedAt: sheet.updated_at,
+    members: members.map(function(m) {
+      return {
+        id: m.candidate_id,
+        name: m.candidate_name || ((m.first_name || "") + " " + (m.last_name || "")).trim(),
+        title: m.occupation || "", status: m.status || "",
+        primaryCert: m.custom_text1 || "", secondaryCert: m.custom_text2 || "",
+        epicRole: m.custom_text5 || "", grade: m.custom_text6 || "",
+        email: m.email || "",
+        salary: m.salary ? "$" + Number(m.salary).toLocaleString() : "—",
+        available: m.date_available ? fmtDate(m.date_available) : "",
+        location: [m.address_city, m.address_state].filter(Boolean).join(", "),
+        addedBy: m.added_by_name || m.added_by || "",
+        addedAt: m.added_at,
+        notes: m.notes || "",
+      };
+    }),
+  };
+}
+
+async function dbAddToSheet(sheetId, candidateId, candidateName, userEmail, userName, notes) {
+  if (!dbReady) return null;
+  await query(
+    "INSERT INTO custom_sheet_members (sheet_id, candidate_id, candidate_name, added_by, added_by_name, notes) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (sheet_id, candidate_id) DO NOTHING",
+    [sheetId, candidateId, candidateName || "", userEmail || "", userName || "", notes || ""]
+  );
+  await query("UPDATE custom_sheets SET updated_at = NOW() WHERE id = $1", [sheetId]);
+  return true;
+}
+
+async function dbRemoveFromSheet(sheetId, candidateId) {
+  if (!dbReady) return null;
+  await query("DELETE FROM custom_sheet_members WHERE sheet_id = $1 AND candidate_id = $2", [sheetId, candidateId]);
+  await query("UPDATE custom_sheets SET updated_at = NOW() WHERE id = $1", [sheetId]);
+  return true;
+}
+
+async function dbUpdateSheet(sheetId, fields) {
+  if (!dbReady) return null;
+  var sets = ["updated_at = NOW()"];
+  var params = [];
+  var pi = 1;
+  if (fields.name !== undefined) { sets.push("name = $" + pi); params.push(fields.name); pi++; }
+  if (fields.description !== undefined) { sets.push("description = $" + pi); params.push(fields.description); pi++; }
+  if (fields.visibility !== undefined) { sets.push("visibility = $" + pi); params.push(fields.visibility); pi++; }
+  params.push(sheetId);
+  await query("UPDATE custom_sheets SET " + sets.join(", ") + " WHERE id = $" + pi, params);
+  return true;
+}
+
+async function dbDeleteSheet(sheetId) {
+  if (!dbReady) return null;
+  await query("DELETE FROM custom_sheets WHERE id = $1", [sheetId]);
+  return true;
+}
+
+async function dbListSheetsForCandidate(candidateId) {
+  if (!dbReady) return [];
+  var rows = (await query(
+    "SELECT s.id, s.name, s.visibility FROM custom_sheets s INNER JOIN custom_sheet_members m ON m.sheet_id = s.id WHERE m.candidate_id = $1",
+    [candidateId]
+  )).rows;
+  return rows;
+}
+
 /* ═══ EXPORTS ═══ */
 module.exports = {
   init: init,
@@ -2492,5 +2631,14 @@ module.exports = {
   getPortalTemplate: dbGetPortalTemplate,
   savePortalTemplate: dbSavePortalTemplate,
   deletePortalTemplate: dbDeletePortalTemplate,
+  // Custom sheets
+  listSheets: dbListSheets,
+  createSheet: dbCreateSheet,
+  getSheet: dbGetSheet,
+  addToSheet: dbAddToSheet,
+  removeFromSheet: dbRemoveFromSheet,
+  updateSheet: dbUpdateSheet,
+  deleteSheet: dbDeleteSheet,
+  listSheetsForCandidate: dbListSheetsForCandidate,
   get ready() { return dbReady; },
 };
