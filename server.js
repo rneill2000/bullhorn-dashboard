@@ -6886,13 +6886,72 @@ app.get("/api/touch-report", async (req, res) => {
 
 // ── Ask Anura: natural language data queries ─────
 // ── Smart Lists (by primary cert) ─────────────────
+
+// Merge DB smart lists that map to the same normalized cert name
+function normalizeSmartLists(rawLists) {
+  // Reuse the same normalization map defined inside the endpoint below
+  var NORM = {
+    "pb": "Professional Billing", "epic pb": "Professional Billing",
+    "epic professional billing": "Professional Billing",
+    "resolute pb (professional billing)": "Professional Billing",
+    "resolute professional billing": "Professional Billing",
+    "professional billing": "Professional Billing",
+    "hb": "Hospital Billing", "epic hb": "Hospital Billing",
+    "resolute hb (hospital billing)": "Hospital Billing",
+    "resolute hospital billing": "Hospital Billing",
+    "hospital billing": "Hospital Billing",
+    "cadence": "Cadence", "epic cadence": "Cadence",
+    "grand central": "Grand Central", "epic grand central": "Grand Central",
+    "prelude": "Prelude", "prelude / adt": "Prelude", "prelude/adt": "Prelude", "epic prelude": "Prelude",
+    "epiccare ambulatory": "EpicCare Ambulatory", "ambulatory": "EpicCare Ambulatory", "epic ambulatory": "EpicCare Ambulatory",
+    "ambulatory for pt": "EpicCare Ambulatory",
+    "epiccare inpatient": "EpicCare Inpatient", "inpatient": "EpicCare Inpatient", "epic inpatient": "EpicCare Inpatient",
+    "beaker (anatomic pathology)": "Beaker AP", "beaker ap": "Beaker AP",
+    "beaker (clinical pathology)": "Beaker CP", "beaker cp": "Beaker CP",
+    "beaker ct": "Beaker CT",
+    "optime": "OpTime", "epic optime": "OpTime",
+    "order entry / orders": "Orders", "order entry/orders": "Orders", "orders": "Orders", "inpatient orders": "Orders",
+    "him (health information management)": "HIM", "him": "HIM",
+    "rte": "RTE", "epic rte": "RTE",
+    "mychart": "MyChart", "my chart": "MyChart", "epic mychart": "MyChart",
+    "clindoc": "ClinDoc", "epic clindoc": "ClinDoc",
+    "security": "Security", "epic security coordinator": "Security", "epic security lead": "Security",
+    "epic identity": "Epic Identity",
+    "epic hello world": "Hello World", "hello world": "Hello World",
+    "care everywhere": "EpicCare Everywhere", "epiccare everywhere": "EpicCare Everywhere",
+    "epiccare link": "EpicCare Link",
+    "pb claims": "PB Claims", "hb claims": "HB Claims",
+    "pb contracts": "PB Contracts",
+  };
+  function norm(raw) {
+    var k = raw.trim().toLowerCase();
+    if (NORM[k]) return NORM[k];
+    if (k.startsWith("epic ") && NORM[k.substring(5)]) return NORM[k.substring(5)];
+    return raw.trim().replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+  }
+  var merged = {};
+  rawLists.forEach(function(list) {
+    var key = norm(list.name);
+    if (!merged[key]) merged[key] = { name: key, candidates: [] };
+    list.candidates.forEach(function(c) {
+      if (!merged[key].candidates.some(function(e) { return e.id === c.id; })) {
+        merged[key].candidates.push(c);
+      }
+    });
+  });
+  return Object.values(merged).sort(function(a, b) { return b.candidates.length - a.candidates.length; });
+}
+
 app.get("/api/smart-lists", async (req, res) => {
   try {
-    // Try Postgres first
+    // Try Postgres first — then normalize the cert names
     if (db.ready) {
       try {
         var dbResult = await db.getSmartLists();
-        if (dbResult) return res.json({ lists: dbResult.lists, total: dbResult.total });
+        if (dbResult) {
+          var normalized = normalizeSmartLists(dbResult.lists);
+          return res.json({ lists: normalized, total: dbResult.total });
+        }
       } catch (dbErr) { console.log("[Smart Lists] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
 
@@ -6903,6 +6962,101 @@ app.get("/api/smart-lists", async (req, res) => {
       sort: "-dateLastModified",
     });
 
+    // ── Cert normalization map ──
+    // Maps variations to canonical display names so Smart Lists don't fragment
+    const CERT_NORMALIZE = {
+      // Professional Billing variants
+      "pb": "Professional Billing",
+      "epic pb": "Professional Billing",
+      "epic professional billing": "Professional Billing",
+      "resolute pb (professional billing)": "Professional Billing",
+      "resolute professional billing": "Professional Billing",
+      "professional billing": "Professional Billing",
+      "pb claims": "PB Claims",
+      "pb contracts": "PB Contracts",
+      // Hospital Billing variants
+      "hb": "Hospital Billing",
+      "epic hb": "Hospital Billing",
+      "resolute hb (hospital billing)": "Hospital Billing",
+      "resolute hospital billing": "Hospital Billing",
+      "hospital billing": "Hospital Billing",
+      "hb claims": "HB Claims",
+      // Cadence
+      "cadence": "Cadence",
+      "epic cadence": "Cadence",
+      // Grand Central
+      "grand central": "Grand Central",
+      "epic grand central": "Grand Central",
+      // Prelude
+      "prelude": "Prelude",
+      "prelude / adt": "Prelude",
+      "prelude/adt": "Prelude",
+      "epic prelude": "Prelude",
+      // Ambulatory
+      "epiccare ambulatory": "EpicCare Ambulatory",
+      "ambulatory": "EpicCare Ambulatory",
+      "epic ambulatory": "EpicCare Ambulatory",
+      // Inpatient
+      "epiccare inpatient": "EpicCare Inpatient",
+      "inpatient": "EpicCare Inpatient",
+      "epic inpatient": "EpicCare Inpatient",
+      // Beaker — keep sub-types separate but normalize naming
+      "beaker (anatomic pathology)": "Beaker AP",
+      "beaker ap": "Beaker AP",
+      "beaker (clinical pathology)": "Beaker CP",
+      "beaker cp": "Beaker CP",
+      "beaker ct": "Beaker CT",
+      // Willow — keep sub-types
+      "willow": "Willow",
+      "willow inpatient": "Willow Inpatient",
+      "willow ambulatory": "Willow Ambulatory",
+      // OpTime
+      "optime": "OpTime",
+      "epic optime": "OpTime",
+      // Orders
+      "order entry / orders": "Orders",
+      "order entry/orders": "Orders",
+      "orders": "Orders",
+      "inpatient orders": "Orders",
+      // HIM
+      "him (health information management)": "HIM",
+      "him": "HIM",
+      // RTE
+      "rte": "RTE",
+      "epic rte": "RTE",
+      // MyChart
+      "mychart": "MyChart",
+      "my chart": "MyChart",
+      "epic mychart": "MyChart",
+      // ClinDoc
+      "clindoc": "ClinDoc",
+      "epic clindoc": "ClinDoc",
+      // Security
+      "security": "Security",
+      "epic security coordinator": "Security",
+      "epic security lead": "Security",
+      // Other "Epic X" prefix normalization
+      "epic identity": "Epic Identity",
+      "epic hello world": "Hello World",
+      "hello world": "Hello World",
+      // Common
+      "care everywhere": "EpicCare Everywhere",
+      "epiccare everywhere": "EpicCare Everywhere",
+      "epiccare link": "EpicCare Link",
+    };
+
+    function normalizeCert(raw) {
+      var key = raw.trim().toLowerCase();
+      if (CERT_NORMALIZE[key]) return CERT_NORMALIZE[key];
+      // Strip "Epic " prefix as fallback
+      if (key.startsWith("epic ") && key.length > 5) {
+        var stripped = key.substring(5);
+        if (CERT_NORMALIZE[stripped]) return CERT_NORMALIZE[stripped];
+      }
+      // Title-case the original if no match
+      return raw.trim().replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+    }
+
     // Group by ALL primary certs (candidates with multiple certs appear in each list)
     const lists = {};
     (data.data || []).forEach((c) => {
@@ -6912,7 +7066,7 @@ app.get("/api/smart-lists", async (req, res) => {
       const certKeys = cert.split(",").map(s => s.trim()).filter(Boolean);
       const candidateObj = {
         id: c.id,
-        name: ((c.firstName || "") + " " + (c.lastName || "")).trim(),
+        name: titleCase(((c.firstName || "") + " " + (c.lastName || "")).trim()),
         title: c.occupation || "",
         status: c.status || "",
         primaryCert: cert,
@@ -6925,9 +7079,13 @@ app.get("/api/smart-lists", async (req, res) => {
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
         email: c.email || "",
       };
-      certKeys.forEach((key) => {
+      certKeys.forEach((raw) => {
+        var key = normalizeCert(raw);
         if (!lists[key]) lists[key] = { name: key, candidates: [] };
-        lists[key].candidates.push(candidateObj);
+        // Deduplicate — same candidate shouldn't appear twice in same list
+        if (!lists[key].candidates.some(function(e) { return e.id === candidateObj.id; })) {
+          lists[key].candidates.push(candidateObj);
+        }
       });
     });
 
