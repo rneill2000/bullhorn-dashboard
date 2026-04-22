@@ -368,6 +368,12 @@ app.get("/api/meta/:entity", async (req, res) => {
   }
 });
 
+// ── Name normalization helper ────────────────────
+function titleCase(str) {
+  if (!str) return "";
+  return String(str).toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+}
+
 // ── Candidates ──────────────────────────────────
 app.get("/api/candidates", async (req, res) => {
   try {
@@ -456,8 +462,8 @@ app.get("/api/candidates", async (req, res) => {
 
       return {
         id: c.id,
-        firstName: c.firstName || "",
-        lastName: c.lastName || "",
+        firstName: titleCase(c.firstName),
+        lastName: titleCase(c.lastName),
         title: c.occupation || "",
         primaryCert: parseCerts(c.customText1),
         secondaryCert: parseCerts(c.customText2),
@@ -519,10 +525,10 @@ app.get("/api/candidates/:id", async (req, res) => {
     const addr = c.address || {};
     const detail = {
       id: c.id,
-      firstName: c.firstName || "",
-      lastName: c.lastName || "",
-      middleName: c.middleName || "",
-      nickName: c.nickName || "",
+      firstName: titleCase(c.firstName),
+      lastName: titleCase(c.lastName),
+      middleName: titleCase(c.middleName),
+      nickName: titleCase(c.nickName),
       title: c.occupation || "",
       status: c.status || "Unknown",
       location: [addr.city, addr.state].filter(Boolean).join(", "),
@@ -1153,7 +1159,7 @@ app.get("/api/submission-analytics", async (req, res) => {
     const submissions = subs.map(s => ({
       id: s.id,
       candidateId: s.candidate ? s.candidate.id : null,
-      candidateName: s.candidate ? ((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim() : "",
+      candidateName: s.candidate ? titleCase(((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim()) : "",
       jobId: s.jobOrder ? s.jobOrder.id : null,
       jobTitle: s.jobOrder ? s.jobOrder.title || "" : "",
       client: s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name || "" : "",
@@ -2439,9 +2445,9 @@ app.get("/api/new-candidates", async (req, res) => {
     const candidates = (r.data || []).map(function(c) {
       return {
         id: c.id,
-        firstName: c.firstName || "",
-        lastName: c.lastName || "",
-        name: (c.firstName || "") + " " + (c.lastName || ""),
+        firstName: titleCase(c.firstName),
+        lastName: titleCase(c.lastName),
+        name: titleCase((c.firstName || "") + " " + (c.lastName || "")),
         title: c.occupation || "",
         primaryCert: c.customText1 || "",
         secondaryCert: c.customText2 || "",
@@ -2817,7 +2823,7 @@ app.get("/api/contract-end-matches", async (req, res) => {
 
       return {
         candidateId: candId,
-        candidateName: cand.name || (p.candidate ? (p.candidate.firstName + " " + p.candidate.lastName) : ""),
+        candidateName: titleCase(cand.name || (p.candidate ? (p.candidate.firstName + " " + p.candidate.lastName) : "")),
         primaryCert: cand.primaryCert || "",
         grade: cand.grade || "",
         currentJob: p.jobOrder ? p.jobOrder.title : "",
@@ -3224,8 +3230,8 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
 
       return {
         id: c.id,
-        firstName: c.firstName || "",
-        lastName: c.lastName || "",
+        firstName: titleCase(c.firstName),
+        lastName: titleCase(c.lastName),
         title: c.occupation || "",
         primaryCert: primaryCerts,
         secondaryCert: secondaryCerts,
