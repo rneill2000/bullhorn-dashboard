@@ -854,18 +854,21 @@ app.post("/api/candidates/:id/update", async (req, res) => {
 
 // ── Submission Pipeline Statuses ──────────────────
 const SUBMISSION_STATUSES = [
-  "Internal Submission",
+  "Internally Submitted",
   "Client Submission",
-  "Interview - Round 1",
-  "Interview - Round 2",
-  "Interview - Round 3",
-  "Offer",
+  "First Interview",
+  "Second Interview",
+  "Third Interview",
+  "Offer Extended",
   "Offer Accepted",
   "Placed",
-  "Rejected - Not a Fit",
-  "Client Declined",
-  "Candidate Declined Offer",
-  "Withdrawn",
+  "Client Rejected",
+  "Sales Rejected",
+  "Consultant Rejected",
+  "Offer Rejected",
+  "Withdrew",
+  "Candidate Withdrew",
+  "On Hold",
 ];
 
 // Get all submissions for pipeline view
@@ -1086,11 +1089,19 @@ app.get("/api/submission-analytics", async (req, res) => {
     const subs = data.data || [];
 
     // ── Win/Loss ratios ──
-    // Include both our custom pipeline statuses AND Bullhorn native statuses
-    const winStatuses = ["Offer Accepted", "Placed", "Approved"];
-    const lossStatuses = ["Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn", "Rejected"];
-    const interviewStatuses = ["Interview - Round 1", "Interview - Round 2", "Interview - Round 3"];
-    const pendingStatuses = ["Internal Submission", "Client Submission", "Offer", "Submitted", "New Lead"];
+    // Matches both Bullhorn native statuses AND our custom pipeline statuses
+    const winStatuses = ["Placed", "Offer Accepted", "Approved"];
+    const lossStatuses = [
+      "Client Rejected", "Sales Rejected", "Sales Rep Rejected", "Consultant Rejected",
+      "Withdrew", "Candidate Withdrew", "Offer Rejected",
+      // Custom pipeline statuses
+      "Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn"
+    ];
+    const interviewStatuses = [
+      "First Interview", "Second Interview", "Third Interview",
+      "Interview - Round 1", "Interview - Round 2", "Interview - Round 3"
+    ];
+    const holdStatuses = ["On Hold", "Hold"];
     let totalSubs = subs.length;
     let wins = 0, losses = 0, active = 0, interviews = 0;
     subs.forEach(s => {
@@ -1207,8 +1218,12 @@ app.post("/api/submission-report", async (req, res) => {
     });
     const subs = data.data || [];
 
-    const winStatuses = ["Offer Accepted", "Placed", "Approved"];
-    const lossStatuses = ["Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn", "Rejected"];
+    const winStatuses = ["Placed", "Offer Accepted", "Approved"];
+    const lossStatuses = [
+      "Client Rejected", "Sales Rejected", "Sales Rep Rejected", "Consultant Rejected",
+      "Withdrew", "Candidate Withdrew", "Offer Rejected",
+      "Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn"
+    ];
     let wins = 0, losses = 0;
     subs.forEach(s => {
       if (winStatuses.includes(s.status)) wins++;

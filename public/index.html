@@ -3317,7 +3317,7 @@ function renderSubTracker(data) {
   h += '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px">';
   h += '<h4 style="margin:0 0 12px;font-size:14px;color:#0E2E47">Avg. Days in Stage</h4>';
   var stages = data.avgStageTimes || {};
-  var stageOrder = ["Internal Submission", "Client Submission", "Interview - Round 1", "Interview - Round 2", "Interview - Round 3", "Offer"];
+  var stageOrder = ["Internally Submitted", "Client Submission", "First Interview", "Second Interview", "Third Interview", "Offer Extended"];
   var hasStageData = stageOrder.some(function(s) { return stages[s] !== undefined; });
   if (!hasStageData) {
     h += '<div style="color:#94a3b8;font-size:13px;padding:16px 0;text-align:center">Not enough data yet</div>';
@@ -3781,18 +3781,28 @@ function renderSubmissionPipeline(result) {
 
 function subPipeStatusColor(status) {
   var map = {
+    "Internally Submitted": { color: "#176087", bg: "#e0f2fe", border: "#bae6fd" },
     "Internal Submission": { color: "#176087", bg: "#e0f2fe", border: "#bae6fd" },
     "Client Submission": { color: "#7c3aed", bg: "#ede9fe", border: "#ddd6fe" },
+    "First Interview": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
+    "Second Interview": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
+    "Third Interview": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
     "Interview - Round 1": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
     "Interview - Round 2": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
     "Interview - Round 3": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
+    "Offer Extended": { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
     "Offer": { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
     "Offer Accepted": { color: "#059669", bg: "#ecfdf5", border: "#a7f3d0" },
-    "Placed": { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
-    "Rejected - Not a Fit": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
-    "Client Declined": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
-    "Candidate Declined Offer": { color: "#f59e0b", bg: "#fffbeb", border: "#fde68a" },
-    "Withdrawn": { color: "#64748b", bg: "#f1f5f9", border: "#e2e8f0" },
+    "Placed": { color: "#059669", bg: "#ecfdf5", border: "#a7f3d0" },
+    "Client Rejected": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
+    "Sales Rejected": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
+    "Sales Rep Rejected": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
+    "Consultant Rejected": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
+    "Offer Rejected": { color: "#f59e0b", bg: "#fffbeb", border: "#fde68a" },
+    "Withdrew": { color: "#64748b", bg: "#f1f5f9", border: "#e2e8f0" },
+    "Candidate Withdrew": { color: "#64748b", bg: "#f1f5f9", border: "#e2e8f0" },
+    "On Hold": { color: "#f59e0b", bg: "#fffbeb", border: "#fde68a" },
+    "Hold": { color: "#f59e0b", bg: "#fffbeb", border: "#fde68a" },
   };
   return map[status] || { color: "#64748b", bg: "#f1f5f9", border: "#e2e8f0" };
 }
