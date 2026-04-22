@@ -110,6 +110,17 @@ tbody tr:hover{background:#eff6ff}
 .file-meta{font-size:11px;color:#94a3b8}
 .file-dl{padding:4px 10px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none;white-space:nowrap}
 .file-dl:hover{background:#eff6ff;border-color:#176087}
+/* File upload */
+.file-upload-zone{border:2px dashed #cbd5e1;border-radius:10px;padding:20px;text-align:center;cursor:pointer;transition:all .2s;margin-top:12px;background:#fafbfc}
+.file-upload-zone:hover,.file-upload-zone.drag-over{border-color:#176087;background:#eff6ff}
+.file-upload-zone .upload-icon{font-size:28px;margin-bottom:6px}
+.file-upload-zone .upload-text{font-size:13px;color:#64748b;font-weight:500}
+.file-upload-zone .upload-hint{font-size:11px;color:#94a3b8;margin-top:4px}
+.file-upload-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.file-upload-btn{padding:5px 12px;border-radius:6px;border:1px solid;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:4px}
+.upload-progress{margin-top:10px;padding:10px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;font-size:12px;display:none}
+.upload-progress .progress-bar{height:6px;border-radius:3px;background:#e2e8f0;margin-top:6px;overflow:hidden}
+.upload-progress .progress-fill{height:100%;border-radius:3px;background:#176087;transition:width .3s;width:0%}
 /* Edit profile */
 .edit-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
 .edit-field{display:flex;flex-direction:column;gap:3px}
@@ -1070,11 +1081,15 @@ function detectFileTag(f) {
 }
 
 function loadCandidateFiles(candidateId) {
+  window._filesCandidateId = candidateId;
   apiFetch("candidates/" + candidateId + "/files").then(function(r) {
     var el = document.getElementById("detail-files");
     if (!el) return;
     var files = r.data || [];
-    var h = '<h4>Files & Documents (' + files.length + ')</h4>';
+    var h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+    h += '<h4 style="margin:0">Files & Documents (' + files.length + ')</h4>';
+    h += '<button class="file-upload-btn" style="border-color:#176087;background:#eff6ff;color:#176087" onclick="toggleUploadZone()">+ Upload File</button>';
+    h += '</div>';
 
     // Tag legend
     h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">';
@@ -1082,6 +1097,34 @@ function loadCandidateFiles(candidateId) {
     h += '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#e0f2fe;color:#176087;font-weight:600">Anura Resume</span>';
     h += '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#fffbeb;color:#d97706;font-weight:600">References</span>';
     h += '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#ede9fe;color:#7c3aed;font-weight:600">Epic Certs</span>';
+    h += '</div>';
+
+    // ── Upload Zone (hidden by default) ──
+    h += '<div id="file-upload-area" style="display:none">';
+    h += '<div style="margin-bottom:10px"><label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">File Type</label>';
+    h += '<select id="upload-file-type" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:inherit">';
+    h += '<option value="Resume">Resume / CV</option>';
+    h += '<option value="Reference">References</option>';
+    h += '<option value="Other">Other Document</option>';
+    h += '</select></div>';
+    h += '<div style="margin-bottom:10px"><label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Description (optional)</label>';
+    h += '<input type="text" id="upload-file-desc" placeholder="e.g. Updated resume April 2026" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:inherit" /></div>';
+    h += '<div class="file-upload-zone" id="file-dropzone" onclick="document.getElementById(\'file-upload-input\').click()" ondragover="event.preventDefault();this.classList.add(\'drag-over\')" ondragleave="this.classList.remove(\'drag-over\')" ondrop="handleFileDrop(event)">';
+    h += '<div class="upload-icon">\uD83D\uDCC1</div>';
+    h += '<div class="upload-text">Click to browse or drag & drop files here</div>';
+    h += '<div class="upload-hint">PDF, DOC, DOCX, XLS, XLSX, JPG, PNG \u2022 Max 10 MB</div>';
+    h += '<input type="file" id="file-upload-input" style="display:none" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.rtf,.csv" multiple onchange="handleFileSelect(this.files)" />';
+    h += '</div>';
+    // Quick upload buttons
+    h += '<div class="file-upload-btns">';
+    h += '<button class="file-upload-btn" style="border-color:#16a34a;background:#f0fdf4;color:#16a34a" onclick="quickUpload(\'Resume\')">📄 Upload Resume</button>';
+    h += '<button class="file-upload-btn" style="border-color:#d97706;background:#fffbeb;color:#d97706" onclick="quickUpload(\'Reference\')">📋 Upload References</button>';
+    h += '</div>';
+    // Upload progress
+    h += '<div class="upload-progress" id="upload-progress-area">';
+    h += '<div id="upload-status-text">Uploading...</div>';
+    h += '<div class="progress-bar"><div class="progress-fill" id="upload-progress-bar"></div></div>';
+    h += '</div>';
     h += '</div>';
 
     if (files.length === 0) {
@@ -1112,6 +1155,120 @@ function loadCandidateFiles(candidateId) {
     var el = document.getElementById("detail-files");
     if (el) el.innerHTML = '<h4>Files & Documents</h4><div style="color:#94a3b8;font-size:12px">Could not load files</div>';
   });
+}
+
+/* ═══ FILE UPLOAD FUNCTIONS ═══ */
+function toggleUploadZone() {
+  var area = document.getElementById("file-upload-area");
+  if (!area) return;
+  area.style.display = area.style.display === "none" ? "block" : "none";
+}
+
+function quickUpload(fileType) {
+  var sel = document.getElementById("upload-file-type");
+  if (sel) sel.value = fileType;
+  document.getElementById("file-upload-input").click();
+}
+
+function handleFileDrop(e) {
+  e.preventDefault();
+  var zone = document.getElementById("file-dropzone");
+  if (zone) zone.classList.remove("drag-over");
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    handleFileSelect(e.dataTransfer.files);
+  }
+}
+
+function handleFileSelect(files) {
+  if (!files || files.length === 0) return;
+  var candidateId = window._filesCandidateId;
+  if (!candidateId) { alert("No candidate selected"); return; }
+
+  var fileType = (document.getElementById("upload-file-type") || {}).value || "Other";
+  var description = (document.getElementById("upload-file-desc") || {}).value || "";
+
+  // Validate files
+  var maxSize = 10 * 1024 * 1024; // 10 MB
+  for (var i = 0; i < files.length; i++) {
+    if (files[i].size > maxSize) {
+      alert("File \"" + files[i].name + "\" is too large (max 10 MB).");
+      return;
+    }
+  }
+
+  // Upload files sequentially
+  var fileArr = Array.prototype.slice.call(files);
+  var total = fileArr.length;
+  var uploaded = 0;
+
+  var progressArea = document.getElementById("upload-progress-area");
+  var statusText = document.getElementById("upload-status-text");
+  var progressBar = document.getElementById("upload-progress-bar");
+  if (progressArea) progressArea.style.display = "block";
+
+  function uploadNext() {
+    if (uploaded >= total) {
+      // All done — refresh file list
+      if (statusText) statusText.textContent = "All " + total + " file" + (total > 1 ? "s" : "") + " uploaded successfully!";
+      if (statusText) statusText.style.color = "#16a34a";
+      if (progressBar) progressBar.style.width = "100%";
+      if (progressBar) progressBar.style.background = "#16a34a";
+      setTimeout(function() {
+        if (progressArea) progressArea.style.display = "none";
+        if (statusText) { statusText.style.color = ""; statusText.textContent = "Uploading..."; }
+        if (progressBar) { progressBar.style.width = "0%"; progressBar.style.background = "#176087"; }
+        // Hide upload area and refresh
+        var area = document.getElementById("file-upload-area");
+        if (area) area.style.display = "none";
+        loadCandidateFiles(candidateId);
+      }, 1500);
+      return;
+    }
+
+    var file = fileArr[uploaded];
+    if (statusText) statusText.textContent = "Uploading " + (uploaded + 1) + " of " + total + ": " + file.name + "...";
+    if (progressBar) progressBar.style.width = Math.round(((uploaded) / total) * 100) + "%";
+
+    var formData = new FormData();
+    formData.append("file", file);
+    formData.append("fileType", fileType);
+    if (description) formData.append("description", description);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("PUT", "/api/candidates/" + candidateId + "/files");
+
+    xhr.upload.onprogress = function(ev) {
+      if (ev.lengthComputable) {
+        var filePct = Math.round((ev.loaded / ev.total) * 100);
+        var overallPct = Math.round(((uploaded / total) + (filePct / 100 / total)) * 100);
+        if (progressBar) progressBar.style.width = overallPct + "%";
+      }
+    };
+
+    xhr.onload = function() {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        uploaded++;
+        uploadNext();
+      } else {
+        var err = "Upload failed";
+        try { err = JSON.parse(xhr.responseText).error || err; } catch(e) {}
+        if (statusText) { statusText.textContent = "Error: " + err; statusText.style.color = "#ef4444"; }
+        if (progressBar) { progressBar.style.background = "#ef4444"; }
+      }
+    };
+
+    xhr.onerror = function() {
+      if (statusText) { statusText.textContent = "Network error — could not upload file"; statusText.style.color = "#ef4444"; }
+    };
+
+    xhr.send(formData);
+  }
+
+  uploadNext();
+
+  // Reset the file input so the same file can be re-selected
+  var inp = document.getElementById("file-upload-input");
+  if (inp) inp.value = "";
 }
 
 function loadCandidateRefs(candidateId, inlineRefs) {

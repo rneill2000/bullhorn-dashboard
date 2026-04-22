@@ -1680,7 +1680,7 @@ app.get("/api/jobs/:id", async (req, res) => {
 });
 
 // ── MSA Pipeline (Opportunities) ──────────────────────────
-const MSA_STAGES = ["Identified", "Qualifying", "Active", "Negotiating", "Legal Review", "Signed", "Lost"];
+const MSA_STAGES = ["Prospect", "In Negotiation", "Signed", "Lost"];
 
 app.get("/api/opportunities", async (req, res) => {
   try {
@@ -4918,6 +4918,171 @@ app.get("/api/candidates/:id/files/:fileId", async (req, res) => {
   }
 });
 
+// ═══ CANDIDATE FILE UPLOAD ═══════════════════════════════════════
+app.put("/api/candidates/:id/files", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const s = await authenticate();
+
+    // Read raw body as buffer
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
+    const bodyBuf = Buffer.concat(chunks);
+
+    // Parse multipart boundary from content-type header
+    const contentType = req.headers["content-type"] || "";
+    const boundaryMatch = contentType.match(/boundary=(.+)/);
+    if (!boundaryMatch) {
+      return res.status(400).json({ error: "Missing multipart boundary" });
+    }
+    const boundary = boundaryMatch[1].replace(/^["']|["']$/g, "");
+
+    // Simple multipart parser — extract file part and form fields
+    const parts = parseMultipart(bodyBuf, boundary);
+    const filePart = parts.find(p => p.filename);
+    if (!filePart) {
+      return res.status(400).json({ error: "No file found in upload" });
+    }
+
+    // Extract form fields
+    const fields = {};
+    parts.forEach(p => {
+      if (!p.filename && p.name) {
+        fields[p.name] = p.data.toString("utf8");
+      }
+    });
+
+    const fileType = fields.fileType || "Other";
+    const externalID = "anura-upload-" + Date.now();
+    const fileName = filePart.filename;
+
+    // Build multipart body for Bullhorn file API
+    const bhBoundary = "----BhUpload" + Date.now();
+    const CRLF = "\r\n";
+    const partsBh = [];
+
+    // File content part
+    partsBh.push(
+      `--${bhBoundary}${CRLF}` +
+      `Content-Disposition: form-data; name="file"; filename="${fileName}"${CRLF}` +
+      `Content-Type: ${filePart.contentType || "application/octet-stream"}${CRLF}${CRLF}`
+    );
+    partsBh.push(filePart.data);
+    partsBh.push(CRLF);
+
+    // externalID part
+    partsBh.push(
+      `--${bhBoundary}${CRLF}` +
+      `Content-Disposition: form-data; name="externalID"${CRLF}${CRLF}` +
+      externalID + CRLF
+    );
+
+    // fileType part
+    partsBh.push(
+      `--${bhBoundary}${CRLF}` +
+      `Content-Disposition: form-data; name="fileType"${CRLF}${CRLF}` +
+      fileType + CRLF
+    );
+
+    // name part (use file type + original name for easier identification)
+    partsBh.push(
+      `--${bhBoundary}${CRLF}` +
+      `Content-Disposition: form-data; name="name"${CRLF}${CRLF}` +
+      fileName + CRLF
+    );
+
+    // description part (optional)
+    if (fields.description) {
+      partsBh.push(
+        `--${bhBoundary}${CRLF}` +
+        `Content-Disposition: form-data; name="description"${CRLF}${CRLF}` +
+        fields.description + CRLF
+      );
+    }
+
+    // Close boundary
+    partsBh.push(`--${bhBoundary}--${CRLF}`);
+
+    // Combine into a single buffer
+    const bhBody = Buffer.concat(partsBh.map(p => typeof p === "string" ? Buffer.from(p) : p));
+
+    // Send to Bullhorn file API
+    const bhUrl = `${s.restUrl}file/Candidate/${id}?BhRestToken=${s.bhRestToken}`;
+    const bhRes = await fetch(bhUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": `multipart/form-data; boundary=${bhBoundary}`,
+      },
+      body: bhBody,
+    });
+
+    if (!bhRes.ok) {
+      const err = await bhRes.text();
+      throw new Error(`Bullhorn file upload error (${bhRes.status}): ${err}`);
+    }
+
+    const result = await bhRes.json();
+    console.log("[File Upload] Uploaded", fileName, "to candidate", id, "as", fileType, "→", JSON.stringify(result));
+    res.json({ success: true, fileId: result.fileId || result.id, fileName, fileType });
+  } catch (e) {
+    console.error("[File Upload Error]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Simple multipart/form-data parser.
+ * Returns array of { name, filename, contentType, data (Buffer) }
+ */
+function parseMultipart(buf, boundary) {
+  const results = [];
+  const boundaryBuf = Buffer.from("--" + boundary);
+  const endBuf = Buffer.from("--" + boundary + "--");
+
+  // Split on boundary
+  let start = 0;
+  const positions = [];
+  while (true) {
+    const idx = buf.indexOf(boundaryBuf, start);
+    if (idx === -1) break;
+    positions.push(idx);
+    start = idx + boundaryBuf.length;
+  }
+
+  for (let i = 0; i < positions.length - 1; i++) {
+    const partStart = positions[i] + boundaryBuf.length;
+    const partEnd = positions[i + 1];
+    const partBuf = buf.slice(partStart, partEnd);
+
+    // Find header/body separator (double CRLF)
+    const headerEnd = partBuf.indexOf("\r\n\r\n");
+    if (headerEnd === -1) continue;
+
+    const headerStr = partBuf.slice(0, headerEnd).toString("utf8");
+    // Body is between headers and next boundary (trim trailing CRLF)
+    let bodyBuf = partBuf.slice(headerEnd + 4);
+    if (bodyBuf.length >= 2 && bodyBuf[bodyBuf.length - 2] === 0x0D && bodyBuf[bodyBuf.length - 1] === 0x0A) {
+      bodyBuf = bodyBuf.slice(0, bodyBuf.length - 2);
+    }
+
+    // Parse Content-Disposition
+    const nameMatch = headerStr.match(/name="([^"]+)"/);
+    const filenameMatch = headerStr.match(/filename="([^"]+)"/);
+    const ctMatch = headerStr.match(/Content-Type:\s*(.+)/i);
+
+    results.push({
+      name: nameMatch ? nameMatch[1] : null,
+      filename: filenameMatch ? filenameMatch[1] : null,
+      contentType: ctMatch ? ctMatch[1].trim() : null,
+      data: bodyBuf,
+    });
+  }
+
+  return results;
+}
+
 // ═══ CANDIDATE REFERENCES ════════════════════════════════════════
 app.get("/api/candidates/:id/references", async (req, res) => {
   try {
@@ -6317,11 +6482,8 @@ app.get("/api/ask", async (req, res) => {
     } else if (question.match(/msa|opportunit(?:y|ies)|pipeline|deal/) && !question.match(/placement|candidate|job/)) {
       // MSA Pipeline queries
       var statusFilter = null;
-      if (question.match(/identif/)) statusFilter = "Identified";
-      else if (question.match(/qualif/)) statusFilter = "Qualifying";
-      else if (question.match(/active/)) statusFilter = "Active";
-      else if (question.match(/negotiat/)) statusFilter = "Negotiating";
-      else if (question.match(/legal|review/)) statusFilter = "Legal Review";
+      if (question.match(/prospect/)) statusFilter = "Prospect";
+      else if (question.match(/negotiat/)) statusFilter = "In Negotiation";
       else if (question.match(/signed|won|closed\s*won/)) statusFilter = "Signed";
       else if (question.match(/lost|closed\s*lost/)) statusFilter = "Lost";
 
