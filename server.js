@@ -657,7 +657,7 @@ app.post("/api/candidates/:id/notes", async (req, res) => {
 // ── Submit Candidate to Job ────────────────────
 app.post("/api/submissions", async (req, res) => {
   try {
-    const { candidateId, jobId, comments } = req.body;
+    const { candidateId, jobId, comments, notifyUsers } = req.body;
     if (!candidateId || !jobId) {
       return res.status(400).json({ error: "candidateId and jobId are required" });
     }
@@ -684,7 +684,96 @@ app.post("/api/submissions", async (req, res) => {
       await bhWrite("entity/Note", noteBody, "PUT");
     } catch (noteErr) { console.log("[Submission] Note logging failed:", noteErr.message); }
 
-    res.json({ success: true, submissionId: result.changedEntityId, message: "Candidate submitted successfully" });
+    // ── Send email notifications to tagged colleagues ──
+    var emailResults = [];
+    if (notifyUsers && Array.isArray(notifyUsers) && notifyUsers.length > 0) {
+      // Fetch candidate and job details for the notification email
+      let candName = "Candidate #" + candidateId;
+      let jobTitle = "Job #" + jobId;
+      try {
+        const cand = await bhFetch(`entity/Candidate/${candidateId}`, { fields: "id,firstName,lastName" });
+        if (cand && cand.data) candName = ((cand.data.firstName || "") + " " + (cand.data.lastName || "")).trim();
+      } catch (e) {}
+      try {
+        const job = await bhFetch(`entity/JobOrder/${jobId}`, { fields: "id,title,clientCorporation(name)" });
+        if (job && job.data) {
+          jobTitle = job.data.title || jobTitle;
+          if (job.data.clientCorporation && job.data.clientCorporation.name) jobTitle += " — " + job.data.clientCorporation.name;
+        }
+      } catch (e) {}
+
+      const dashUrl = process.env.BULLHORN_REDIRECT_URI ? process.env.BULLHORN_REDIRECT_URI.replace("/auth/callback", "") : "https://bullhorn-dashboard-production.up.railway.app";
+      const emailSubject = `New Submission: ${candName} → ${jobTitle}`;
+      const emailHtml = `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:#176087;padding:20px 24px;border-radius:8px 8px 0 0">
+            <h2 style="margin:0;color:#fff;font-size:18px">New Candidate Submission</h2>
+          </div>
+          <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px">
+            <table style="width:100%;border-collapse:collapse;font-size:14px;color:#334155">
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b;width:120px">Candidate</td><td style="padding:8px 0">${candName}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b">Job</td><td style="padding:8px 0">${jobTitle}</td></tr>
+              ${comments ? `<tr><td style="padding:8px 0;font-weight:600;color:#64748b;vertical-align:top">Notes</td><td style="padding:8px 0;white-space:pre-wrap">${comments.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</td></tr>` : ""}
+            </table>
+            <div style="margin-top:20px;text-align:center">
+              <a href="${dashUrl}" style="display:inline-block;padding:10px 24px;background:#176087;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px">View in Dashboard</a>
+            </div>
+            <div style="margin-top:16px;font-size:12px;color:#94a3b8;text-align:center">Sent from Anura Connect Dashboard</div>
+          </div>
+        </div>`;
+
+      // Try Outlook first, then SendGrid, then log as fallback
+      for (const user of notifyUsers) {
+        if (!user.email) continue;
+        try {
+          let sent = false;
+          // Try Outlook (if any user is connected)
+          const outlookUser = Object.keys(_outlookUsers)[0];
+          if (outlookUser && _outlookUsers[outlookUser]) {
+            try {
+              const message = {
+                subject: emailSubject,
+                body: { contentType: "HTML", content: emailHtml },
+                toRecipients: [{ emailAddress: { address: user.email } }],
+              };
+              await graphFetch(outlookUser, "/me/sendMail", {
+                method: "POST",
+                body: JSON.stringify({ message, saveToSentItems: true }),
+              });
+              sent = true;
+              emailResults.push({ user: user.name, email: user.email, method: "outlook", success: true });
+              console.log("[Submission Notify] Sent via Outlook to", user.email);
+            } catch (outlookErr) {
+              console.log("[Submission Notify] Outlook failed for", user.email, ":", outlookErr.message);
+            }
+          }
+          // Fallback to SendGrid
+          if (!sent && process.env.SENDGRID_API_KEY) {
+            const sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+              method: "POST",
+              headers: { "Authorization": "Bearer " + process.env.SENDGRID_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                personalizations: [{ to: [{ email: user.email, name: user.name }] }],
+                from: { email: process.env.SENDGRID_FROM_EMAIL || "team@anuraconnect.com", name: "Anura Connect" },
+                subject: emailSubject,
+                content: [{ type: "text/html", value: emailHtml }],
+              }),
+            });
+            sent = sgResp.ok || sgResp.status === 202;
+            emailResults.push({ user: user.name, email: user.email, method: "sendgrid", success: sent });
+            console.log("[Submission Notify] SendGrid", sent ? "sent" : "failed", "to", user.email);
+          }
+          if (!sent) {
+            emailResults.push({ user: user.name, email: user.email, method: "none", success: false, reason: "No email service available" });
+          }
+        } catch (emailErr) {
+          emailResults.push({ user: user.name, email: user.email, success: false, reason: emailErr.message });
+          console.error("[Submission Notify] Error for", user.email, ":", emailErr.message);
+        }
+      }
+    }
+
+    res.json({ success: true, submissionId: result.changedEntityId, message: "Candidate submitted successfully", notifications: emailResults });
   } catch (e) {
     console.error("[Submission]", e.message);
     res.status(500).json({ error: e.message });

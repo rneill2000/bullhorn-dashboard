@@ -121,6 +121,20 @@ tbody tr:hover{background:#eff6ff}
 .upload-progress{margin-top:10px;padding:10px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;font-size:12px;display:none}
 .upload-progress .progress-bar{height:6px;border-radius:3px;background:#e2e8f0;margin-top:6px;overflow:hidden}
 .upload-progress .progress-fill{height:100%;border-radius:3px;background:#176087;transition:width .3s;width:0%}
+/* Tag picker */
+.tag-picker{position:relative;margin-top:8px;margin-bottom:8px}
+.tag-picker-label{font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px}
+.tag-picker-input{width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:inherit;outline:none}
+.tag-picker-input:focus{border-color:#176087}
+.tag-picker-dropdown{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e2e8f0;border-radius:0 0 8px 8px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:160px;overflow-y:auto;z-index:100;display:none}
+.tag-picker-dropdown.show{display:block}
+.tag-option{padding:8px 12px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px}
+.tag-option:hover{background:#eff6ff}
+.tag-option .tag-avatar{width:24px;height:24px;border-radius:50%;background:#176087;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.tagged-users{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.tagged-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:14px;background:#ede9fe;color:#7c3aed;font-size:12px;font-weight:600}
+.tagged-chip .chip-x{cursor:pointer;margin-left:2px;font-weight:700;opacity:.6}
+.tagged-chip .chip-x:hover{opacity:1}
 /* Edit profile */
 .edit-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
 .edit-field{display:flex;flex-direction:column;gap:3px}
@@ -2393,6 +2407,13 @@ function renderDetailContent(c) {
   h += '<div style="margin-bottom:8px"><label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:4px">Availability Date</label>';
   h += '<input type="date" id="submit-avail-date" '+fld+'></div>';
   h += '<textarea id="submit-comments-input" style="width:100%;height:120px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;resize:vertical;font-family:inherit;line-height:1.6"></textarea>';
+  // ── Notify Colleagues Tag Picker ──
+  h += '<div class="tag-picker" id="notify-tag-picker">';
+  h += '<label class="tag-picker-label">Notify Colleagues</label>';
+  h += '<input type="text" class="tag-picker-input" id="notify-search" placeholder="Search team members to notify..." oninput="filterNotifyUsers()" onfocus="showNotifyDropdown()" />';
+  h += '<div class="tag-picker-dropdown" id="notify-dropdown"></div>';
+  h += '<div class="tagged-users" id="notify-tagged"></div>';
+  h += '</div>';
   h += '<div id="submit-confirmation" style="display:none;margin-top:8px;padding:12px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;font-size:13px"></div>';
   h += '<div style="display:flex;gap:8px;margin-top:8px">';
   h += '<button id="submit-job-btn" onclick="confirmSubmitToJob()" style="padding:6px 16px;border-radius:6px;border:none;background:#7c3aed;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Review & Submit</button>';
@@ -2748,6 +2769,17 @@ function showSubmitForm() {
     var pr = document.getElementById("submit-pay-rate");
     if (pr && !pr.value) pr.value = c.hourlyRate;
   }
+  // Load team members for notify picker & reset tagged list
+  window._notifyTagged = [];
+  window._notifyUsers = [];
+  var taggedEl = document.getElementById("notify-tagged");
+  if (taggedEl) taggedEl.innerHTML = "";
+  var searchEl = document.getElementById("notify-search");
+  if (searchEl) searchEl.value = "";
+  apiFetch("users").then(function(r) {
+    window._notifyUsers = (r.data || []).filter(function(u) { return u.email; });
+    renderNotifyDropdown(window._notifyUsers);
+  }).catch(function() {});
   // Load open jobs into the dropdown
   var sel = document.getElementById("submit-job-select");
   if(sel) {
@@ -2770,6 +2802,74 @@ function showSubmitForm() {
     });
   }
 }
+
+/* ═══ NOTIFY TAG PICKER ═══ */
+function renderNotifyDropdown(users) {
+  var dd = document.getElementById("notify-dropdown");
+  if (!dd) return;
+  var h = "";
+  users.forEach(function(u) {
+    var already = (window._notifyTagged || []).some(function(t) { return t.id === u.id; });
+    if (already) return;
+    var initials = ((u.name || "").split(" ").map(function(w) { return w[0] || ""; }).join("")).toUpperCase().substring(0, 2);
+    h += '<div class="tag-option" onclick="tagNotifyUser(' + u.id + ')">';
+    h += '<div class="tag-avatar">' + initials + '</div>';
+    h += '<div><div style="font-weight:600">' + esc(u.name) + '</div><div style="font-size:11px;color:#94a3b8">' + esc(u.email) + '</div></div>';
+    h += '</div>';
+  });
+  if (!h) h = '<div style="padding:10px;color:#94a3b8;font-size:12px;text-align:center">No more team members to add</div>';
+  dd.innerHTML = h;
+}
+
+function filterNotifyUsers() {
+  var q = (document.getElementById("notify-search").value || "").toLowerCase();
+  var filtered = (window._notifyUsers || []).filter(function(u) {
+    return u.name.toLowerCase().indexOf(q) !== -1 || u.email.toLowerCase().indexOf(q) !== -1;
+  });
+  renderNotifyDropdown(filtered);
+  var dd = document.getElementById("notify-dropdown");
+  if (dd) dd.classList.add("show");
+}
+
+function showNotifyDropdown() {
+  var dd = document.getElementById("notify-dropdown");
+  if (dd) { renderNotifyDropdown(window._notifyUsers || []); dd.classList.add("show"); }
+}
+
+function tagNotifyUser(userId) {
+  var user = (window._notifyUsers || []).find(function(u) { return u.id === userId; });
+  if (!user) return;
+  if (!window._notifyTagged) window._notifyTagged = [];
+  if (window._notifyTagged.some(function(t) { return t.id === userId; })) return;
+  window._notifyTagged.push(user);
+  renderTaggedChips();
+  renderNotifyDropdown(window._notifyUsers || []);
+  var inp = document.getElementById("notify-search");
+  if (inp) inp.value = "";
+}
+
+function removeNotifyTag(userId) {
+  window._notifyTagged = (window._notifyTagged || []).filter(function(t) { return t.id !== userId; });
+  renderTaggedChips();
+  renderNotifyDropdown(window._notifyUsers || []);
+}
+
+function renderTaggedChips() {
+  var el = document.getElementById("notify-tagged");
+  if (!el) return;
+  var h = "";
+  (window._notifyTagged || []).forEach(function(u) {
+    h += '<span class="tagged-chip"><span>' + esc(u.name) + '</span><span class="chip-x" onclick="removeNotifyTag(' + u.id + ')">×</span></span>';
+  });
+  el.innerHTML = h;
+}
+
+// Close dropdown when clicking outside
+document.addEventListener("click", function(e) {
+  var picker = document.getElementById("notify-tag-picker");
+  var dd = document.getElementById("notify-dropdown");
+  if (dd && picker && !picker.contains(e.target)) dd.classList.remove("show");
+});
 
 function confirmSubmitToJob() {
   var c = window._lastDetailCandidate;
@@ -2797,6 +2897,10 @@ function confirmSubmitToJob() {
   }
   if(availDate) summary += '<div><strong>Availability:</strong> ' + new Date(availDate + "T00:00:00").toLocaleDateString() + '</div>';
   if(comments) summary += '<div><strong>Notes:</strong> ' + esc(comments) + '</div>';
+  var tagged = window._notifyTagged || [];
+  if(tagged.length > 0) {
+    summary += '<div><strong>Notify:</strong> ' + tagged.map(function(u) { return esc(u.name); }).join(", ") + '</div>';
+  }
   confEl.innerHTML = summary;
   confEl.style.display = "block";
 
@@ -2819,13 +2923,27 @@ function executeSubmitToJob(jobId, payRate, billRate, availDate, comments) {
   if(availDate) fullComments += "Availability: " + new Date(availDate + "T00:00:00").toLocaleDateString() + "\n";
   if(comments) fullComments += "\n" + comments;
 
+  var notifyUsers = (window._notifyTagged || []).map(function(u) { return { id: u.id, name: u.name, email: u.email }; });
   apiFetch("submissions", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ candidateId: c.id, jobId: parseInt(jobId), payRate: payRate, billRate: billRate, availDate: availDate, comments: fullComments.trim() })
+    body: JSON.stringify({ candidateId: c.id, jobId: parseInt(jobId), payRate: payRate, billRate: billRate, availDate: availDate, comments: fullComments.trim(), notifyUsers: notifyUsers })
   }).then(function(r) {
     var confEl = document.getElementById("submit-confirmation");
-    confEl.innerHTML = '<div style="color:#16a34a;font-weight:600">✅ Candidate submitted successfully!</div>';
+    var msg = '<div style="color:#16a34a;font-weight:600">✅ Candidate submitted successfully!</div>';
+    if (r.notifications && r.notifications.length > 0) {
+      var allSent = r.notifications.every(function(n) { return n.success; });
+      msg += '<div style="margin-top:6px;font-size:12px;color:#64748b">';
+      if (allSent) {
+        msg += '📧 Notified: ' + r.notifications.map(function(n) { return n.user; }).join(", ");
+      } else {
+        r.notifications.forEach(function(n) {
+          msg += '<div>' + (n.success ? '✅' : '⚠️') + ' ' + n.user + (n.success ? ' — notified' : ' — notification failed') + '</div>';
+        });
+      }
+      msg += '</div>';
+    }
+    confEl.innerHTML = msg;
     btn.textContent = "Submitted!";
     btn.style.background = "#16a34a";
     // Reset form after a beat and refresh
@@ -2834,6 +2952,7 @@ function executeSubmitToJob(jobId, payRate, billRate, availDate, comments) {
       document.getElementById("submit-bill-rate").value = "";
       document.getElementById("submit-avail-date").value = "";
       document.getElementById("submit-comments-input").value = "";
+      window._notifyTagged = [];
       confEl.style.display = "none";
       openDetail(c.id, c);
     }, 1500);
