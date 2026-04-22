@@ -7015,7 +7015,7 @@ function renderNewCandidates(d){
 
   // Candidate Table
   var cols=[
-    {key:"name",label:"Name",render:function(r){return '<span class="name-link" onclick="showCandidateDetail('+r.id+')">'+esc(r.name)+'</span>';}},
+    {key:"name",label:"Name",render:function(r){return '<span class="name-link" onclick="openDetail('+r.id+')">'+esc(r.name)+'</span>';}},
     {key:"title",label:"Title",render:function(r){return esc(r.title||"\u2014");}},
     {key:"primaryCert",label:"Primary Cert",render:function(r){return r.primaryCert?'<span style="font-size:12px;color:#176087">'+esc(r.primaryCert)+'</span>':'<span class="muted">\u2014</span>';}},
     {key:"grade",label:"Grade",render:function(r){var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};return r.grade?'<span class="fw600" style="color:'+(gc[r.grade]||"#64748b")+'">'+esc(r.grade)+'</span>':'<span class="muted">\u2014</span>';}},
@@ -7027,12 +7027,12 @@ function renderNewCandidates(d){
 
   h+='<div class="table-wrap"><table><thead><tr>';
   cols.forEach(function(c){
-    h+='<th style="cursor:pointer" onclick="applySorting(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
+    h+='<th style="cursor:pointer" onclick="sortTable(\''+c.key+'\');loadPage()">'+c.label+(_sortCol===c.key?(_sortDir==="asc"?' \u25B2':' \u25BC'):'')+'</th>';
   });
   h+='</tr></thead><tbody>';
-  var sorted=sortTable(cands);
+  var sorted=applySorting(cands,cols);
   sorted.forEach(function(r){
-    h+='<tr style="cursor:pointer" onclick="showCandidateDetail('+r.id+')">';
+    h+='<tr style="cursor:pointer" onclick="openDetail('+r.id+')">';
     cols.forEach(function(c){ h+='<td>'+c.render(r)+'</td>'; });
     h+='</tr>';
   });
