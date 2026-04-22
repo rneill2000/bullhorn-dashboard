@@ -666,12 +666,12 @@ app.post("/api/submissions", async (req, res) => {
     const subBody = {
       candidate: { id: parseInt(candidateId) },
       jobOrder: { id: parseInt(jobId) },
-      status: "Submitted",
+      status: "Internal Submission",
       dateWebResponse: Date.now(),
       comments: comments || "",
     };
     const result = await bhWrite("entity/JobSubmission", subBody, "PUT");
-    console.log("[Submission] Created submission", candidateId, "→ Job", jobId, "→", result);
+    console.log("[Submission] Created internal submission", candidateId, "→ Job", jobId, "→", result);
 
     // Also log a note about the submission
     try {
@@ -844,6 +844,223 @@ app.post("/api/candidates/:id/update", async (req, res) => {
     console.error("[Update Candidate]", e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Submission Pipeline Statuses ──────────────────
+const SUBMISSION_STATUSES = [
+  "Internal Submission",
+  "Client Submission",
+  "Interview - Round 1",
+  "Interview - Round 2",
+  "Interview - Round 3",
+  "Offer",
+  "Placed",
+  "Rejected - Not a Fit",
+  "Client Declined",
+  "Candidate Declined Offer",
+  "Withdrawn",
+];
+
+// Get all submissions for pipeline view
+app.get("/api/submission-pipeline", async (req, res) => {
+  try {
+    const { status, q, owner } = req.query;
+    let where = "isDeleted=false";
+    if (status && status !== "All") {
+      where += ` AND status='${status.replace(/'/g, "''")}'`;
+    }
+
+    const data = await bhFetchAll("query/JobSubmission", {
+      where,
+      fields: "id,candidate,jobOrder,status,dateAdded,dateLastModified,sendingUser,comments,source",
+      orderBy: "-dateLastModified",
+    });
+
+    let submissions = (data.data || []).map(s => {
+      const candName = s.candidate ? ((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim() : "";
+      const jobTitle = s.jobOrder ? (s.jobOrder.title || "") : "";
+      const client = s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name || "" : "";
+      const submittedBy = s.sendingUser ? ((s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "")).trim() : "";
+      return {
+        id: s.id,
+        candidateId: s.candidate ? s.candidate.id : null,
+        candidateName: candName,
+        jobId: s.jobOrder ? s.jobOrder.id : null,
+        jobTitle,
+        client,
+        status: s.status || "Submitted",
+        dateAdded: s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "",
+        dateAddedRaw: s.dateAdded || 0,
+        dateModified: s.dateLastModified ? new Date(s.dateLastModified).toLocaleDateString() : "",
+        dateModifiedRaw: s.dateLastModified || 0,
+        submittedBy,
+        comments: s.comments || "",
+      };
+    });
+
+    // Filter by search query
+    if (q) {
+      const ql = q.toLowerCase();
+      submissions = submissions.filter(s =>
+        s.candidateName.toLowerCase().includes(ql) ||
+        s.jobTitle.toLowerCase().includes(ql) ||
+        s.client.toLowerCase().includes(ql) ||
+        s.submittedBy.toLowerCase().includes(ql)
+      );
+    }
+
+    // Filter by owner/submitter
+    if (owner) {
+      const ol = owner.toLowerCase();
+      submissions = submissions.filter(s => s.submittedBy.toLowerCase().includes(ol));
+    }
+
+    res.json({
+      data: submissions,
+      total: submissions.length,
+      statuses: SUBMISSION_STATUSES,
+    });
+  } catch (e) {
+    console.error("[Submission Pipeline]", e.message);
+    res.status(500).json({ error: e.message, data: [], statuses: SUBMISSION_STATUSES });
+  }
+});
+
+// Update submission status
+app.post("/api/submissions/:id/status", async (req, res) => {
+  try {
+    const subId = parseInt(req.params.id);
+    const { status, comments, notifyUsers } = req.body;
+    if (!status) return res.status(400).json({ error: "status is required" });
+
+    // Update the JobSubmission status in Bullhorn
+    const result = await bhWrite(`entity/JobSubmission/${subId}`, { status }, "POST");
+    console.log("[Submission Status] Updated", subId, "→", status);
+
+    // Log a note about the status change
+    try {
+      // Get the submission to find the candidate
+      const sub = await bhFetch(`entity/JobSubmission/${subId}`, { fields: "id,candidate,jobOrder" });
+      const candId = sub.data && sub.data.candidate ? sub.data.candidate.id : null;
+      if (candId) {
+        const noteBody = {
+          personReference: { id: candId },
+          action: "Status Change",
+          comments: `Submission #${subId} status changed to: ${status}` + (comments ? "\n" + comments : ""),
+          dateAdded: Date.now(),
+        };
+        await bhWrite("entity/Note", noteBody, "PUT");
+      }
+    } catch (noteErr) {
+      console.log("[Submission Status] Note logging failed:", noteErr.message);
+    }
+
+    // Send email notifications if colleagues were tagged
+    var emailResults = [];
+    if (notifyUsers && Array.isArray(notifyUsers) && notifyUsers.length > 0) {
+      let candName = "Candidate";
+      let jobTitle = "Job";
+      try {
+        const sub = await bhFetch(`entity/JobSubmission/${subId}`, { fields: "id,candidate,jobOrder" });
+        if (sub.data) {
+          if (sub.data.candidate) {
+            const cand = await bhFetch(`entity/Candidate/${sub.data.candidate.id}`, { fields: "id,firstName,lastName" });
+            if (cand.data) candName = ((cand.data.firstName || "") + " " + (cand.data.lastName || "")).trim();
+          }
+          if (sub.data.jobOrder) {
+            const job = await bhFetch(`entity/JobOrder/${sub.data.jobOrder.id}`, { fields: "id,title,clientCorporation(name)" });
+            if (job.data) {
+              jobTitle = job.data.title || jobTitle;
+              if (job.data.clientCorporation && job.data.clientCorporation.name) jobTitle += " — " + job.data.clientCorporation.name;
+            }
+          }
+        }
+      } catch (e) {}
+
+      const dashUrl = process.env.BULLHORN_REDIRECT_URI ? process.env.BULLHORN_REDIRECT_URI.replace("/auth/callback", "") : "https://bullhorn-dashboard-production.up.railway.app";
+      const emailSubject = `Submission Update: ${candName} → ${status}`;
+      const statusColors = {
+        "Offer": "#16a34a", "Placed": "#16a34a",
+        "Rejected - Not a Fit": "#ef4444", "Client Declined": "#ef4444", "Candidate Declined Offer": "#ef4444", "Withdrawn": "#ef4444",
+      };
+      const statusColor = statusColors[status] || "#176087";
+      const emailHtml = `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:${statusColor};padding:20px 24px;border-radius:8px 8px 0 0">
+            <h2 style="margin:0;color:#fff;font-size:18px">Submission Status Update</h2>
+          </div>
+          <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px">
+            <div style="text-align:center;margin-bottom:16px">
+              <span style="display:inline-block;padding:6px 16px;border-radius:20px;background:${statusColor}22;color:${statusColor};font-weight:700;font-size:14px">${status}</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:14px;color:#334155">
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b;width:120px">Candidate</td><td style="padding:8px 0">${candName}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b">Job</td><td style="padding:8px 0">${jobTitle}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:600;color:#64748b">New Status</td><td style="padding:8px 0;font-weight:700;color:${statusColor}">${status}</td></tr>
+              ${comments ? `<tr><td style="padding:8px 0;font-weight:600;color:#64748b;vertical-align:top">Notes</td><td style="padding:8px 0">${comments.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</td></tr>` : ""}
+            </table>
+            <div style="margin-top:20px;text-align:center">
+              <a href="${dashUrl}" style="display:inline-block;padding:10px 24px;background:${statusColor};color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px">View in Dashboard</a>
+            </div>
+            <div style="margin-top:16px;font-size:12px;color:#94a3b8;text-align:center">Sent from Anura Connect Dashboard</div>
+          </div>
+        </div>`;
+
+      for (const user of notifyUsers) {
+        if (!user.email) continue;
+        try {
+          let sent = false;
+          const outlookUser = Object.keys(_outlookUsers)[0];
+          if (outlookUser && _outlookUsers[outlookUser]) {
+            try {
+              await graphFetch(outlookUser, "/me/sendMail", {
+                method: "POST",
+                body: JSON.stringify({
+                  message: {
+                    subject: emailSubject,
+                    body: { contentType: "HTML", content: emailHtml },
+                    toRecipients: [{ emailAddress: { address: user.email } }],
+                  },
+                  saveToSentItems: true,
+                }),
+              });
+              sent = true;
+              emailResults.push({ user: user.name, success: true, method: "outlook" });
+            } catch (outlookErr) {
+              console.log("[Status Notify] Outlook failed:", outlookErr.message);
+            }
+          }
+          if (!sent && process.env.SENDGRID_API_KEY) {
+            const sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+              method: "POST",
+              headers: { "Authorization": "Bearer " + process.env.SENDGRID_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                personalizations: [{ to: [{ email: user.email, name: user.name }] }],
+                from: { email: process.env.SENDGRID_FROM_EMAIL || "team@anuraconnect.com", name: "Anura Connect" },
+                subject: emailSubject,
+                content: [{ type: "text/html", value: emailHtml }],
+              }),
+            });
+            sent = sgResp.ok || sgResp.status === 202;
+            emailResults.push({ user: user.name, success: sent, method: "sendgrid" });
+          }
+          if (!sent) emailResults.push({ user: user.name, success: false, reason: "No email service" });
+        } catch (emailErr) {
+          emailResults.push({ user: user.name, success: false, reason: emailErr.message });
+        }
+      }
+    }
+
+    res.json({ success: true, status, notifications: emailResults });
+  } catch (e) {
+    console.error("[Submission Status]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get available submission statuses
+app.get("/api/submission-statuses", (req, res) => {
+  res.json({ statuses: SUBMISSION_STATUSES });
 });
 
 // ── Corporate Users (for owner dropdowns) ────────

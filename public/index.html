@@ -3000,6 +3000,7 @@ var NAV_GROUPS=[
   ]},
   {section:"Consultants", items:[
     {key:"consultants",label:"Consultants",emoji:"\uD83D\uDC54"},
+    {key:"submissions",label:"Submissions",emoji:"\uD83D\uDCE9"},
     {key:"placements",label:"Placements",emoji:"\uD83D\uDCCB"},
     {key:"pipeline",label:"Pipeline",emoji:"\uD83D\uDD04"},
   ]},
@@ -3238,6 +3239,219 @@ function _jobRowClick(idx){
   var f=_lastData.filteredJobs||_lastData.jobs||[];
   var r=f[idx];
   if(r&&r.id) openJobDetail(r.id);
+}
+
+/* ═══ SUBMISSION PIPELINE ═══ */
+var _subPipeData = [];
+var _subPipeStatuses = [];
+var _subPipeSort = { col: "dateModifiedRaw", dir: "desc" };
+
+function renderSubmissionPipeline(result) {
+  _subPipeData = result.data || [];
+  _subPipeStatuses = result.statuses || [];
+  var total = result.total || _subPipeData.length;
+
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px">';
+  h += '<div style="font-size:14px;color:#64748b">' + total + ' submission' + (total !== 1 ? 's' : '') + '</div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+
+  // Status filter
+  h += '<select id="sub-pipe-status-filter" onchange="filterSubPipeline()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit">';
+  h += '<option value="All"' + ((filters.status || "All") === "All" ? " selected" : "") + '>All Statuses</option>';
+  _subPipeStatuses.forEach(function(s) {
+    h += '<option value="' + esc(s) + '"' + (filters.status === s ? " selected" : "") + '>' + esc(s) + '</option>';
+  });
+  h += '</select>';
+
+  // Export
+  h += '<button onclick="exportSubPipeline()" style="padding:6px 12px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#176087;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Export CSV</button>';
+  h += '</div></div>';
+
+  // Status summary cards
+  var statusCounts = {};
+  _subPipeData.forEach(function(s) {
+    statusCounts[s.status] = (statusCounts[s.status] || 0) + 1;
+  });
+  var activeStatuses = ["Internal Submission", "Client Submission", "Interview - Round 1", "Interview - Round 2", "Interview - Round 3", "Offer"];
+  var closedStatuses = ["Placed", "Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn"];
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">';
+  activeStatuses.forEach(function(st) {
+    var cnt = statusCounts[st] || 0;
+    if (cnt === 0 && (filters.status || "All") !== "All") return;
+    var colors = subPipeStatusColor(st);
+    h += '<div onclick="filterSubPipelineByStatus(\'' + esc(st) + '\')" style="cursor:pointer;padding:8px 14px;border-radius:8px;background:' + colors.bg + ';border:1px solid ' + colors.border + ';text-align:center;min-width:80px">';
+    h += '<div style="font-size:20px;font-weight:800;color:' + colors.color + '">' + cnt + '</div>';
+    h += '<div style="font-size:10px;font-weight:600;color:' + colors.color + ';opacity:.8">' + esc(st) + '</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+
+  // Table
+  h += '<div style="overflow-x:auto"><table class="data-table" id="sub-pipe-table"><thead><tr>';
+  var cols = [
+    { key: "candidateName", label: "Candidate" },
+    { key: "jobTitle", label: "Job" },
+    { key: "client", label: "Client" },
+    { key: "status", label: "Status" },
+    { key: "submittedBy", label: "Submitted By" },
+    { key: "dateAdded", label: "Submitted", sortKey: "dateAddedRaw" },
+    { key: "dateModified", label: "Last Updated", sortKey: "dateModifiedRaw" },
+    { key: "_actions", label: "" },
+  ];
+  cols.forEach(function(c) {
+    var sk = c.sortKey || c.key;
+    var arrow = "";
+    if (_subPipeSort.col === sk) arrow = _subPipeSort.dir === "asc" ? " ▲" : " ▼";
+    if (c.key === "_actions") {
+      h += '<th style="width:40px"></th>';
+    } else {
+      h += '<th onclick="sortSubPipeline(\'' + sk + '\')" style="cursor:pointer;white-space:nowrap">' + c.label + arrow + '</th>';
+    }
+  });
+  h += '</tr></thead><tbody>';
+
+  // Sort
+  var sorted = _subPipeData.slice().sort(function(a, b) {
+    var ak = a[_subPipeSort.col], bk = b[_subPipeSort.col];
+    if (typeof ak === "string") ak = ak.toLowerCase();
+    if (typeof bk === "string") bk = bk.toLowerCase();
+    if (ak < bk) return _subPipeSort.dir === "asc" ? -1 : 1;
+    if (ak > bk) return _subPipeSort.dir === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  if (sorted.length === 0) {
+    h += '<tr><td colspan="8" style="text-align:center;padding:32px;color:#94a3b8">No submissions found</td></tr>';
+  } else {
+    sorted.forEach(function(s) {
+      var colors = subPipeStatusColor(s.status);
+      h += '<tr>';
+      h += '<td><span class="name-link" onclick="openDetail(' + s.candidateId + ')">' + esc(s.candidateName) + '</span></td>';
+      h += '<td>' + esc(s.jobTitle) + '</td>';
+      h += '<td>' + esc(s.client) + '</td>';
+      // Status dropdown
+      h += '<td><select onchange="updateSubStatus(' + s.id + ', this.value)" style="padding:4px 8px;border:1px solid ' + colors.border + ';border-radius:6px;background:' + colors.bg + ';color:' + colors.color + ';font-size:11px;font-weight:600;font-family:inherit;cursor:pointer">';
+      _subPipeStatuses.forEach(function(st) {
+        h += '<option value="' + esc(st) + '"' + (s.status === st ? ' selected' : '') + '>' + esc(st) + '</option>';
+      });
+      // Include current status if it's not in the standard list
+      if (_subPipeStatuses.indexOf(s.status) === -1) {
+        h += '<option value="' + esc(s.status) + '" selected>' + esc(s.status) + '</option>';
+      }
+      h += '</select></td>';
+      h += '<td>' + esc(s.submittedBy) + '</td>';
+      h += '<td>' + esc(s.dateAdded) + '</td>';
+      h += '<td>' + esc(s.dateModified) + '</td>';
+      h += '<td><span style="cursor:pointer;font-size:16px" title="View comments" onclick="showSubComments(' + s.id + ')">💬</span></td>';
+      h += '</tr>';
+    });
+  }
+  h += '</tbody></table></div>';
+
+  // Comments/notes modal area (hidden)
+  h += '<div id="sub-comments-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:1000;display:none;align-items:center;justify-content:center">';
+  h += '<div style="background:#fff;border-radius:12px;padding:24px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)">';
+  h += '<div id="sub-comments-content"></div>';
+  h += '</div></div>';
+
+  return h;
+}
+
+function subPipeStatusColor(status) {
+  var map = {
+    "Internal Submission": { color: "#176087", bg: "#e0f2fe", border: "#bae6fd" },
+    "Client Submission": { color: "#7c3aed", bg: "#ede9fe", border: "#ddd6fe" },
+    "Interview - Round 1": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
+    "Interview - Round 2": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
+    "Interview - Round 3": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
+    "Offer": { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+    "Placed": { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+    "Rejected - Not a Fit": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
+    "Client Declined": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
+    "Candidate Declined Offer": { color: "#f59e0b", bg: "#fffbeb", border: "#fde68a" },
+    "Withdrawn": { color: "#64748b", bg: "#f1f5f9", border: "#e2e8f0" },
+  };
+  return map[status] || { color: "#64748b", bg: "#f1f5f9", border: "#e2e8f0" };
+}
+
+function sortSubPipeline(col) {
+  if (_subPipeSort.col === col) {
+    _subPipeSort.dir = _subPipeSort.dir === "asc" ? "desc" : "asc";
+  } else {
+    _subPipeSort.col = col;
+    _subPipeSort.dir = "asc";
+  }
+  document.getElementById("content").innerHTML = renderSubmissionPipeline({ data: _subPipeData, statuses: _subPipeStatuses, total: _subPipeData.length });
+}
+
+function filterSubPipeline() {
+  var sel = document.getElementById("sub-pipe-status-filter");
+  filters.status = sel ? sel.value : "All";
+  loadPage();
+}
+
+function filterSubPipelineByStatus(status) {
+  filters.status = status;
+  loadPage();
+}
+
+function updateSubStatus(subId, newStatus) {
+  // Prompt for optional notes and notify
+  var note = prompt("Add a note for this status change (optional):");
+  apiFetch("submissions/" + subId + "/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: newStatus, comments: note || "" })
+  }).then(function(r) {
+    if (r.success) {
+      // Update local data
+      _subPipeData.forEach(function(s) { if (s.id === subId) { s.status = newStatus; s.dateModified = new Date().toLocaleDateString(); s.dateModifiedRaw = Date.now(); } });
+      document.getElementById("content").innerHTML = renderSubmissionPipeline({ data: _subPipeData, statuses: _subPipeStatuses, total: _subPipeData.length });
+    } else {
+      alert("Failed to update status: " + (r.error || "Unknown error"));
+      loadPage();
+    }
+  }).catch(function(e) {
+    alert("Error updating status: " + e.message);
+    loadPage();
+  });
+}
+
+function showSubComments(subId) {
+  var sub = _subPipeData.find(function(s) { return s.id === subId; });
+  if (!sub) return;
+  var modal = document.getElementById("sub-comments-modal");
+  var content = document.getElementById("sub-comments-content");
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">';
+  h += '<h3 style="margin:0;color:#0E2E47">Submission Details</h3>';
+  h += '<span style="cursor:pointer;font-size:20px;color:#94a3b8" onclick="document.getElementById(\'sub-comments-modal\').style.display=\'none\'">✕</span>';
+  h += '</div>';
+  h += '<div style="margin-bottom:12px"><strong>Candidate:</strong> ' + esc(sub.candidateName) + '</div>';
+  h += '<div style="margin-bottom:12px"><strong>Job:</strong> ' + esc(sub.jobTitle) + (sub.client ? ' — ' + esc(sub.client) : '') + '</div>';
+  var colors = subPipeStatusColor(sub.status);
+  h += '<div style="margin-bottom:12px"><strong>Status:</strong> <span style="padding:2px 10px;border-radius:10px;background:' + colors.bg + ';color:' + colors.color + ';font-weight:600;font-size:12px">' + esc(sub.status) + '</span></div>';
+  h += '<div style="margin-bottom:12px"><strong>Submitted:</strong> ' + esc(sub.dateAdded) + ' by ' + esc(sub.submittedBy) + '</div>';
+  if (sub.comments) {
+    h += '<div style="margin-top:12px;padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0"><strong>Notes:</strong><div style="margin-top:6px;white-space:pre-wrap;font-size:13px;color:#334155">' + esc(sub.comments) + '</div></div>';
+  } else {
+    h += '<div style="color:#94a3b8;font-size:13px">No notes on this submission</div>';
+  }
+  content.innerHTML = h;
+  modal.style.display = "flex";
+}
+
+function exportSubPipeline() {
+  var cols = [
+    { key: "candidateName", label: "Candidate" },
+    { key: "jobTitle", label: "Job" },
+    { key: "client", label: "Client" },
+    { key: "status", label: "Status" },
+    { key: "submittedBy", label: "Submitted By" },
+    { key: "dateAdded", label: "Submitted" },
+    { key: "dateModified", label: "Last Updated" },
+    { key: "comments", label: "Notes" },
+  ];
+  exportCSV("Anura-Submissions-" + new Date().toISOString().slice(0, 10) + ".csv", cols, _subPipeData);
 }
 
 function renderPlacements(data,bhTotal){
@@ -7330,6 +7544,9 @@ async function loadPage(){
         var pf=filters.priority||"All";
         var jr=await loadJobs(q,sf,pf==="All"?"":pf);
         h=renderJobs(jr.data,jr.total);break;
+      case "submissions":
+        var subPipe=await apiFetch("submission-pipeline",{status:filters.status||"All",q:getQ(),owner:filters.owner||""});
+        h=renderSubmissionPipeline(subPipe);break;
       case "smartmatch":
         h=renderSmartMatch();break;
       case "pipeline":
