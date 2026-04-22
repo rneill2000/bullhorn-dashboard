@@ -3273,7 +3273,7 @@ function renderSubTracker(data) {
   h += stKpiCard(data.total, "Total Submissions", "#176087", "#e0f2fe");
   h += stKpiCard(data.active + data.interviews, "Active / In Process", "#7c3aed", "#ede9fe");
   h += stKpiCard(data.interviews, "In Interviews", "#0891b2", "#ecfeff");
-  h += stKpiCard(data.wins, "Wins (Offer/Placed)", "#16a34a", "#f0fdf4");
+  h += stKpiCard(data.wins, "Wins (Accepted/Placed)", "#16a34a", "#f0fdf4");
   h += stKpiCard(data.losses, "Losses", "#ef4444", "#fef2f2");
   h += stKpiCard(data.winRate + "%", "Win Rate", data.winRate >= 50 ? "#16a34a" : data.winRate >= 25 ? "#f59e0b" : "#ef4444", data.winRate >= 50 ? "#f0fdf4" : data.winRate >= 25 ? "#fffbeb" : "#fef2f2");
   h += '</div>';
@@ -3787,6 +3787,7 @@ function subPipeStatusColor(status) {
     "Interview - Round 2": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
     "Interview - Round 3": { color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
     "Offer": { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+    "Offer Accepted": { color: "#059669", bg: "#ecfdf5", border: "#a7f3d0" },
     "Placed": { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
     "Rejected - Not a Fit": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
     "Client Declined": { color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },

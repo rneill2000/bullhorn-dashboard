@@ -854,6 +854,7 @@ const SUBMISSION_STATUSES = [
   "Interview - Round 2",
   "Interview - Round 3",
   "Offer",
+  "Offer Accepted",
   "Placed",
   "Rejected - Not a Fit",
   "Client Declined",
@@ -1079,7 +1080,7 @@ app.get("/api/submission-analytics", async (req, res) => {
     const subs = data.data || [];
 
     // ── Win/Loss ratios ──
-    const winStatuses = ["Offer", "Placed"];
+    const winStatuses = ["Offer Accepted", "Placed"];
     const lossStatuses = ["Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn"];
     const interviewStatuses = ["Interview - Round 1", "Interview - Round 2", "Interview - Round 3"];
     let totalSubs = subs.length;
@@ -1198,7 +1199,7 @@ app.post("/api/submission-report", async (req, res) => {
     });
     const subs = data.data || [];
 
-    const winStatuses = ["Offer", "Placed"];
+    const winStatuses = ["Offer Accepted", "Placed"];
     const lossStatuses = ["Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn"];
     let wins = 0, losses = 0;
     subs.forEach(s => {
