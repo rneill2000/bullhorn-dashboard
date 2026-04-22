@@ -2994,6 +2994,7 @@ var NAV_GROUPS=[
   {section:"Candidates", items:[
     {key:"candidates",label:"Candidates",emoji:"\uD83D\uDC65"},
     {key:"newcandidates",label:"New Candidates",emoji:"\uD83C\uDD95"},
+    {key:"subtracker",label:"Submittal Tracker",emoji:"\uD83D\uDCCA"},
     {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
     {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
     {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
@@ -3240,6 +3241,390 @@ function _jobRowClick(idx){
   var r=f[idx];
   if(r&&r.id) openJobDetail(r.id);
 }
+
+/* ═══ SUBMITTAL TRACKER ═══ */
+var _stFrom = "";
+var _stTo = "";
+var _stData = null;
+var _stFilter = { client: "All", status: "All", recruiter: "All" };
+var _stSort = { col: "dateAddedRaw", dir: "desc" };
+var _stReportUsers = []; // tagged users for report
+
+function renderSubTracker(data) {
+  _stData = data;
+  var h = '';
+
+  // ── Date range picker + Send Report button ──
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px">';
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+  h += '<label style="font-size:12px;font-weight:600;color:#64748b">From</label>';
+  h += '<input type="date" id="st-from" value="' + (_stFrom || "") + '" onchange="stDateChange()" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit" />';
+  h += '<label style="font-size:12px;font-weight:600;color:#64748b">To</label>';
+  h += '<input type="date" id="st-to" value="' + (_stTo || "") + '" onchange="stDateChange()" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit" />';
+  if (_stFrom || _stTo) h += '<button onclick="stClearDates()" style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#64748b;font-size:11px;cursor:pointer;font-family:inherit">Clear</button>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:8px">';
+  h += '<button onclick="exportSubTracker()" style="padding:6px 12px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#176087;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Export CSV</button>';
+  h += '<button onclick="openReportModal()" style="padding:6px 12px;border-radius:6px;border:none;background:#176087;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">📧 Send Report</button>';
+  h += '</div></div>';
+
+  // ── KPI Cards ──
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px">';
+  h += stKpiCard(data.total, "Total Submissions", "#176087", "#e0f2fe");
+  h += stKpiCard(data.active + data.interviews, "Active / In Process", "#7c3aed", "#ede9fe");
+  h += stKpiCard(data.interviews, "In Interviews", "#0891b2", "#ecfeff");
+  h += stKpiCard(data.wins, "Wins (Offer/Placed)", "#16a34a", "#f0fdf4");
+  h += stKpiCard(data.losses, "Losses", "#ef4444", "#fef2f2");
+  h += stKpiCard(data.winRate + "%", "Win Rate", data.winRate >= 50 ? "#16a34a" : data.winRate >= 25 ? "#f59e0b" : "#ef4444", data.winRate >= 50 ? "#f0fdf4" : data.winRate >= 25 ? "#fffbeb" : "#fef2f2");
+  h += '</div>';
+
+  // ── Charts row ──
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">';
+
+  // Client acceptance rates bar chart
+  h += '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px">';
+  h += '<h4 style="margin:0 0 12px;font-size:14px;color:#0E2E47">Client Acceptance Rates</h4>';
+  var clients = (data.clientRates || []).filter(function(c) { return c.total >= 2; }).slice(0, 10);
+  if (clients.length === 0) {
+    h += '<div style="color:#94a3b8;font-size:13px;padding:16px 0;text-align:center">Not enough data yet</div>';
+  } else {
+    var maxTotal = Math.max.apply(null, clients.map(function(c) { return c.total; }));
+    clients.forEach(function(c) {
+      var pct = maxTotal > 0 ? Math.round((c.total / maxTotal) * 100) : 0;
+      var winPct = c.total > 0 ? Math.round((c.wins / c.total) * 100) : 0;
+      var lossPct = c.total > 0 ? Math.round((c.losses / c.total) * 100) : 0;
+      h += '<div style="margin-bottom:8px">';
+      h += '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">';
+      h += '<span style="font-weight:600;color:#0E2E47">' + esc(c.client.length > 25 ? c.client.substring(0, 25) + '…' : c.client) + '</span>';
+      h += '<span style="color:#64748b">' + c.total + ' subs · ' + (c.acceptRate !== null ? c.acceptRate + '% win' : 'pending') + '</span>';
+      h += '</div>';
+      h += '<div style="height:14px;border-radius:4px;background:#f1f5f9;overflow:hidden;display:flex">';
+      if (c.wins > 0) h += '<div style="width:' + winPct + '%;background:#16a34a;height:100%"></div>';
+      if (c.losses > 0) h += '<div style="width:' + lossPct + '%;background:#ef4444;height:100%"></div>';
+      var activePct = 100 - winPct - lossPct;
+      if (activePct > 0) h += '<div style="width:' + activePct + '%;background:#bae6fd;height:100%"></div>';
+      h += '</div></div>';
+    });
+    h += '<div style="display:flex;gap:12px;margin-top:8px;font-size:10px;color:#64748b">';
+    h += '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#16a34a;margin-right:3px"></span>Won</span>';
+    h += '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#ef4444;margin-right:3px"></span>Lost</span>';
+    h += '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#bae6fd;margin-right:3px"></span>Active</span>';
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Time-to-fill chart
+  h += '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px">';
+  h += '<h4 style="margin:0 0 12px;font-size:14px;color:#0E2E47">Avg. Days in Stage</h4>';
+  var stages = data.avgStageTimes || {};
+  var stageOrder = ["Internal Submission", "Client Submission", "Interview - Round 1", "Interview - Round 2", "Interview - Round 3", "Offer", "Placed"];
+  var hasStageData = stageOrder.some(function(s) { return stages[s] !== undefined; });
+  if (!hasStageData) {
+    h += '<div style="color:#94a3b8;font-size:13px;padding:16px 0;text-align:center">Not enough data yet</div>';
+  } else {
+    var maxDays = Math.max.apply(null, stageOrder.map(function(s) { return stages[s] || 0; })) || 1;
+    stageOrder.forEach(function(s) {
+      var days = stages[s];
+      if (days === undefined) return;
+      var pct = Math.round((days / maxDays) * 100);
+      var colors = subPipeStatusColor(s);
+      h += '<div style="margin-bottom:8px">';
+      h += '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">';
+      h += '<span style="font-weight:600;color:#0E2E47">' + esc(s) + '</span>';
+      h += '<span style="color:' + colors.color + ';font-weight:700">' + days + ' day' + (days !== 1 ? 's' : '') + '</span>';
+      h += '</div>';
+      h += '<div style="height:14px;border-radius:4px;background:#f1f5f9;overflow:hidden">';
+      h += '<div style="width:' + pct + '%;background:' + colors.color + ';height:100%;border-radius:4px;opacity:.7"></div>';
+      h += '</div></div>';
+    });
+  }
+  h += '</div>';
+  h += '</div>';
+
+  // ── Filters row ──
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">';
+  // Client filter
+  var clientNames = [];
+  (data.submissions || []).forEach(function(s) { if (s.client && clientNames.indexOf(s.client) === -1) clientNames.push(s.client); });
+  clientNames.sort();
+  h += '<select id="st-client-filter" onchange="stApplyFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit">';
+  h += '<option value="All">All Clients</option>';
+  clientNames.forEach(function(c) { h += '<option value="' + esc(c) + '"' + (_stFilter.client === c ? ' selected' : '') + '>' + esc(c) + '</option>'; });
+  h += '</select>';
+  // Status filter
+  h += '<select id="st-status-filter" onchange="stApplyFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit">';
+  h += '<option value="All">All Statuses</option>';
+  (data.statuses || []).forEach(function(s) { h += '<option value="' + esc(s) + '"' + (_stFilter.status === s ? ' selected' : '') + '>' + esc(s) + '</option>'; });
+  h += '</select>';
+  // Recruiter filter
+  var recruiters = [];
+  (data.submissions || []).forEach(function(s) { if (s.submittedBy && recruiters.indexOf(s.submittedBy) === -1) recruiters.push(s.submittedBy); });
+  recruiters.sort();
+  h += '<select id="st-recruiter-filter" onchange="stApplyFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit">';
+  h += '<option value="All">All Recruiters</option>';
+  recruiters.forEach(function(r) { h += '<option value="' + esc(r) + '"' + (_stFilter.recruiter === r ? ' selected' : '') + '>' + esc(r) + '</option>'; });
+  h += '</select>';
+  h += '<div style="font-size:12px;color:#64748b;margin-left:auto" id="st-showing-count"></div>';
+  h += '</div>';
+
+  // ── Submissions table ──
+  h += '<div style="overflow-x:auto"><table class="data-table" id="st-table"><thead><tr>';
+  var cols = [
+    { key: "candidateName", label: "Candidate" },
+    { key: "jobTitle", label: "Job" },
+    { key: "client", label: "Client" },
+    { key: "status", label: "Status" },
+    { key: "submittedBy", label: "Recruiter" },
+    { key: "dateAdded", label: "Submitted", sortKey: "dateAddedRaw" },
+    { key: "dateModified", label: "Updated", sortKey: "dateModifiedRaw" },
+  ];
+  cols.forEach(function(c) {
+    var sk = c.sortKey || c.key;
+    var arrow = "";
+    if (_stSort.col === sk) arrow = _stSort.dir === "asc" ? " ▲" : " ▼";
+    h += '<th onclick="sortSubTracker(\'' + sk + '\')" style="cursor:pointer;white-space:nowrap">' + c.label + arrow + '</th>';
+  });
+  h += '</tr></thead><tbody id="st-tbody">';
+  h += stBuildRows(data.submissions || []);
+  h += '</tbody></table></div>';
+
+  // ── Report modal (hidden) ──
+  h += '<div id="st-report-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:1000;align-items:center;justify-content:center">';
+  h += '<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.2)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">';
+  h += '<h3 style="margin:0;color:#0E2E47">Send Submission Report</h3>';
+  h += '<span style="cursor:pointer;font-size:20px;color:#94a3b8" onclick="closeReportModal()">✕</span>';
+  h += '</div>';
+  h += '<div style="margin-bottom:12px;font-size:13px;color:#64748b">Send a styled email report with current metrics and active submissions to selected colleagues.</div>';
+  h += '<div class="tag-picker" id="report-tag-picker" style="margin-bottom:12px">';
+  h += '<label class="tag-picker-label">Recipients</label>';
+  h += '<input type="text" class="tag-picker-input" id="report-search" placeholder="Search team members..." oninput="filterReportUsers()" onfocus="showReportDropdown()" />';
+  h += '<div class="tag-picker-dropdown" id="report-dropdown"></div>';
+  h += '<div class="tagged-users" id="report-tagged"></div>';
+  h += '</div>';
+  h += '<div id="report-send-status" style="display:none;margin-bottom:12px;padding:10px;border-radius:8px;font-size:13px"></div>';
+  h += '<div style="display:flex;gap:8px;justify-content:flex-end">';
+  h += '<button onclick="closeReportModal()" style="padding:8px 16px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-size:13px;cursor:pointer;font-family:inherit">Cancel</button>';
+  h += '<button id="report-send-btn" onclick="sendSubReport()" style="padding:8px 16px;border-radius:6px;border:none;background:#176087;color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Send Report</button>';
+  h += '</div></div></div>';
+
+  return h;
+}
+
+function stKpiCard(value, label, color, bg) {
+  return '<div style="padding:14px;border-radius:10px;background:' + bg + ';border:1px solid ' + color + '22;text-align:center">'
+    + '<div style="font-size:28px;font-weight:800;color:' + color + ';line-height:1">' + value + '</div>'
+    + '<div style="font-size:11px;font-weight:600;color:#64748b;margin-top:6px">' + label + '</div></div>';
+}
+
+function stBuildRows(subs) {
+  // Apply filters
+  var filtered = subs.filter(function(s) {
+    if (_stFilter.client !== "All" && s.client !== _stFilter.client) return false;
+    if (_stFilter.status !== "All" && s.status !== _stFilter.status) return false;
+    if (_stFilter.recruiter !== "All" && s.submittedBy !== _stFilter.recruiter) return false;
+    return true;
+  });
+  // Sort
+  filtered.sort(function(a, b) {
+    var ak = a[_stSort.col], bk = b[_stSort.col];
+    if (typeof ak === "string") ak = ak.toLowerCase();
+    if (typeof bk === "string") bk = bk.toLowerCase();
+    if (ak < bk) return _stSort.dir === "asc" ? -1 : 1;
+    if (ak > bk) return _stSort.dir === "asc" ? 1 : -1;
+    return 0;
+  });
+  // Update count
+  setTimeout(function() {
+    var el = document.getElementById("st-showing-count");
+    if (el) el.textContent = "Showing " + filtered.length + " of " + subs.length;
+  }, 0);
+  if (filtered.length === 0) return '<tr><td colspan="7" style="text-align:center;padding:32px;color:#94a3b8">No submissions match filters</td></tr>';
+  var h = "";
+  filtered.forEach(function(s) {
+    var colors = subPipeStatusColor(s.status);
+    h += '<tr>';
+    h += '<td><span class="name-link" onclick="openDetail(' + s.candidateId + ')">' + esc(s.candidateName) + '</span></td>';
+    h += '<td>' + esc(s.jobTitle) + '</td>';
+    h += '<td>' + esc(s.client) + '</td>';
+    h += '<td><span style="padding:2px 10px;border-radius:10px;background:' + colors.bg + ';color:' + colors.color + ';font-size:11px;font-weight:600;white-space:nowrap">' + esc(s.status) + '</span></td>';
+    h += '<td>' + esc(s.submittedBy) + '</td>';
+    h += '<td>' + esc(s.dateAdded) + '</td>';
+    h += '<td>' + esc(s.dateModified) + '</td>';
+    h += '</tr>';
+  });
+  return h;
+}
+
+function stApplyFilters() {
+  _stFilter.client = (document.getElementById("st-client-filter") || {}).value || "All";
+  _stFilter.status = (document.getElementById("st-status-filter") || {}).value || "All";
+  _stFilter.recruiter = (document.getElementById("st-recruiter-filter") || {}).value || "All";
+  var tbody = document.getElementById("st-tbody");
+  if (tbody && _stData) tbody.innerHTML = stBuildRows(_stData.submissions || []);
+}
+
+function sortSubTracker(col) {
+  if (_stSort.col === col) {
+    _stSort.dir = _stSort.dir === "asc" ? "desc" : "asc";
+  } else {
+    _stSort.col = col;
+    _stSort.dir = "asc";
+  }
+  if (_stData) document.getElementById("content").innerHTML = renderSubTracker(_stData);
+}
+
+function stDateChange() {
+  _stFrom = (document.getElementById("st-from") || {}).value || "";
+  _stTo = (document.getElementById("st-to") || {}).value || "";
+  loadPage();
+}
+
+function stClearDates() {
+  _stFrom = "";
+  _stTo = "";
+  loadPage();
+}
+
+function exportSubTracker() {
+  if (!_stData) return;
+  var cols = [
+    { key: "candidateName", label: "Candidate" },
+    { key: "jobTitle", label: "Job" },
+    { key: "client", label: "Client" },
+    { key: "status", label: "Status" },
+    { key: "submittedBy", label: "Recruiter" },
+    { key: "dateAdded", label: "Submitted" },
+    { key: "dateModified", label: "Updated" },
+  ];
+  exportCSV("Anura-Submittal-Report-" + new Date().toISOString().slice(0, 10) + ".csv", cols, _stData.submissions || []);
+}
+
+// ── Report Modal (reuses user list pattern) ──
+function openReportModal() {
+  _stReportUsers = [];
+  var modal = document.getElementById("st-report-modal");
+  if (modal) modal.style.display = "flex";
+  var taggedEl = document.getElementById("report-tagged");
+  if (taggedEl) taggedEl.innerHTML = "";
+  var searchEl = document.getElementById("report-search");
+  if (searchEl) searchEl.value = "";
+  var statusEl = document.getElementById("report-send-status");
+  if (statusEl) statusEl.style.display = "none";
+  // Load users
+  apiFetch("users").then(function(r) {
+    window._reportAllUsers = (r.data || []).filter(function(u) { return u.email; });
+    renderReportDropdown(window._reportAllUsers);
+  }).catch(function() {});
+}
+
+function closeReportModal() {
+  var modal = document.getElementById("st-report-modal");
+  if (modal) modal.style.display = "none";
+}
+
+function renderReportDropdown(users) {
+  var dd = document.getElementById("report-dropdown");
+  if (!dd) return;
+  var h = "";
+  users.forEach(function(u) {
+    if (_stReportUsers.some(function(t) { return t.id === u.id; })) return;
+    var initials = ((u.name || "").split(" ").map(function(w) { return w[0] || ""; }).join("")).toUpperCase().substring(0, 2);
+    h += '<div class="tag-option" onclick="tagReportUser(' + u.id + ')">';
+    h += '<div class="tag-avatar">' + initials + '</div>';
+    h += '<div><div style="font-weight:600">' + esc(u.name) + '</div><div style="font-size:11px;color:#94a3b8">' + esc(u.email) + '</div></div>';
+    h += '</div>';
+  });
+  if (!h) h = '<div style="padding:10px;color:#94a3b8;font-size:12px;text-align:center">No more team members</div>';
+  dd.innerHTML = h;
+}
+
+function filterReportUsers() {
+  var q = (document.getElementById("report-search").value || "").toLowerCase();
+  var filtered = (window._reportAllUsers || []).filter(function(u) {
+    return u.name.toLowerCase().indexOf(q) !== -1 || u.email.toLowerCase().indexOf(q) !== -1;
+  });
+  renderReportDropdown(filtered);
+  var dd = document.getElementById("report-dropdown");
+  if (dd) dd.classList.add("show");
+}
+
+function showReportDropdown() {
+  renderReportDropdown(window._reportAllUsers || []);
+  var dd = document.getElementById("report-dropdown");
+  if (dd) dd.classList.add("show");
+}
+
+function tagReportUser(userId) {
+  var user = (window._reportAllUsers || []).find(function(u) { return u.id === userId; });
+  if (!user || _stReportUsers.some(function(t) { return t.id === userId; })) return;
+  _stReportUsers.push(user);
+  renderReportChips();
+  renderReportDropdown(window._reportAllUsers || []);
+  var inp = document.getElementById("report-search");
+  if (inp) inp.value = "";
+}
+
+function removeReportTag(userId) {
+  _stReportUsers = _stReportUsers.filter(function(t) { return t.id !== userId; });
+  renderReportChips();
+  renderReportDropdown(window._reportAllUsers || []);
+}
+
+function renderReportChips() {
+  var el = document.getElementById("report-tagged");
+  if (!el) return;
+  var h = "";
+  _stReportUsers.forEach(function(u) {
+    h += '<span class="tagged-chip"><span>' + esc(u.name) + '</span><span class="chip-x" onclick="removeReportTag(' + u.id + ')">×</span></span>';
+  });
+  el.innerHTML = h;
+}
+
+function sendSubReport() {
+  if (_stReportUsers.length === 0) { alert("Please select at least one recipient"); return; }
+  var btn = document.getElementById("report-send-btn");
+  var statusEl = document.getElementById("report-send-status");
+  btn.textContent = "Sending...";
+  btn.disabled = true;
+
+  var recipients = _stReportUsers.map(function(u) { return { id: u.id, name: u.name, email: u.email }; });
+  apiFetch("submission-report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ recipients: recipients, from: _stFrom || undefined, to: _stTo || undefined })
+  }).then(function(r) {
+    statusEl.style.display = "block";
+    if (r.success && r.sent > 0) {
+      statusEl.style.background = "#f0fdf4";
+      statusEl.style.color = "#16a34a";
+      statusEl.style.border = "1px solid #bbf7d0";
+      statusEl.innerHTML = '✅ Report sent to ' + r.sent + ' of ' + r.total + ' recipient' + (r.total > 1 ? 's' : '');
+    } else {
+      statusEl.style.background = "#fef2f2";
+      statusEl.style.color = "#ef4444";
+      statusEl.style.border = "1px solid #fecaca";
+      statusEl.innerHTML = '⚠️ Failed to send report. Check email configuration.';
+    }
+    btn.textContent = "Send Report";
+    btn.disabled = false;
+  }).catch(function(e) {
+    statusEl.style.display = "block";
+    statusEl.style.background = "#fef2f2";
+    statusEl.style.color = "#ef4444";
+    statusEl.style.border = "1px solid #fecaca";
+    statusEl.innerHTML = '⚠️ Error: ' + e.message;
+    btn.textContent = "Send Report";
+    btn.disabled = false;
+  });
+}
+
+// Close report dropdown when clicking outside
+document.addEventListener("click", function(e) {
+  var picker = document.getElementById("report-tag-picker");
+  var dd = document.getElementById("report-dropdown");
+  if (dd && picker && !picker.contains(e.target)) dd.classList.remove("show");
+});
 
 /* ═══ SUBMISSION PIPELINE ═══ */
 var _subPipeData = [];
@@ -7547,6 +7932,12 @@ async function loadPage(){
       case "submissions":
         var subPipe=await apiFetch("submission-pipeline",{status:filters.status||"All",q:getQ(),owner:filters.owner||""});
         h=renderSubmissionPipeline(subPipe);break;
+      case "subtracker":
+        var stParams={};
+        if(_stFrom) stParams.from=_stFrom;
+        if(_stTo) stParams.to=_stTo;
+        var stData=await apiFetch("submission-analytics",stParams);
+        h=renderSubTracker(stData);break;
       case "smartmatch":
         h=renderSmartMatch();break;
       case "pipeline":

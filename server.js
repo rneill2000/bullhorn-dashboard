@@ -1063,6 +1063,269 @@ app.get("/api/submission-statuses", (req, res) => {
   res.json({ statuses: SUBMISSION_STATUSES });
 });
 
+// ── Submission Analytics ─────────────────────────
+app.get("/api/submission-analytics", async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    let where = "isDeleted=false";
+    if (from) where += ` AND dateAdded>=${new Date(from).getTime()}`;
+    if (to) where += ` AND dateAdded<=${new Date(to + "T23:59:59").getTime()}`;
+
+    const data = await bhFetchAll("query/JobSubmission", {
+      where,
+      fields: "id,candidate,jobOrder,status,dateAdded,dateLastModified,sendingUser",
+      orderBy: "-dateAdded",
+    });
+    const subs = data.data || [];
+
+    // ── Win/Loss ratios ──
+    const winStatuses = ["Offer", "Placed"];
+    const lossStatuses = ["Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn"];
+    const interviewStatuses = ["Interview - Round 1", "Interview - Round 2", "Interview - Round 3"];
+    let totalSubs = subs.length;
+    let wins = 0, losses = 0, active = 0, interviews = 0;
+    subs.forEach(s => {
+      if (winStatuses.includes(s.status)) wins++;
+      else if (lossStatuses.includes(s.status)) losses++;
+      else if (interviewStatuses.includes(s.status)) interviews++;
+      else active++;
+    });
+    const decided = wins + losses;
+    const winRate = decided > 0 ? Math.round((wins / decided) * 100) : 0;
+
+    // ── Client acceptance rates ──
+    const byClient = {};
+    subs.forEach(s => {
+      const client = s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name || "Unknown" : "Unknown";
+      if (!byClient[client]) byClient[client] = { total: 0, wins: 0, losses: 0, interviews: 0, active: 0 };
+      byClient[client].total++;
+      if (winStatuses.includes(s.status)) byClient[client].wins++;
+      else if (lossStatuses.includes(s.status)) byClient[client].losses++;
+      else if (interviewStatuses.includes(s.status)) byClient[client].interviews++;
+      else byClient[client].active++;
+    });
+    const clientRates = Object.keys(byClient).map(name => {
+      const c = byClient[name];
+      const decided = c.wins + c.losses;
+      return {
+        client: name,
+        total: c.total,
+        wins: c.wins,
+        losses: c.losses,
+        interviews: c.interviews,
+        active: c.active,
+        acceptRate: decided > 0 ? Math.round((c.wins / decided) * 100) : null,
+      };
+    }).sort((a, b) => b.total - a.total);
+
+    // ── Time-to-fill stages (average days between dateAdded and dateLastModified by status) ──
+    const stageTimes = {};
+    subs.forEach(s => {
+      if (!s.dateAdded || !s.dateLastModified) return;
+      const days = Math.max(0, Math.round((s.dateLastModified - s.dateAdded) / 86400000));
+      if (!stageTimes[s.status]) stageTimes[s.status] = [];
+      stageTimes[s.status].push(days);
+    });
+    const avgStageTimes = {};
+    Object.keys(stageTimes).forEach(st => {
+      const arr = stageTimes[st];
+      avgStageTimes[st] = Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+    });
+
+    // ── By recruiter ──
+    const byRecruiter = {};
+    subs.forEach(s => {
+      const name = s.sendingUser ? ((s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "")).trim() : "Unknown";
+      if (!byRecruiter[name]) byRecruiter[name] = { total: 0, wins: 0, losses: 0 };
+      byRecruiter[name].total++;
+      if (winStatuses.includes(s.status)) byRecruiter[name].wins++;
+      else if (lossStatuses.includes(s.status)) byRecruiter[name].losses++;
+    });
+
+    // ── Status breakdown ──
+    const statusCounts = {};
+    subs.forEach(s => { statusCounts[s.status] = (statusCounts[s.status] || 0) + 1; });
+
+    // ── Submissions list for table ──
+    const submissions = subs.map(s => ({
+      id: s.id,
+      candidateId: s.candidate ? s.candidate.id : null,
+      candidateName: s.candidate ? ((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim() : "",
+      jobId: s.jobOrder ? s.jobOrder.id : null,
+      jobTitle: s.jobOrder ? s.jobOrder.title || "" : "",
+      client: s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name || "" : "",
+      status: s.status || "",
+      dateAdded: s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "",
+      dateAddedRaw: s.dateAdded || 0,
+      dateModified: s.dateLastModified ? new Date(s.dateLastModified).toLocaleDateString() : "",
+      dateModifiedRaw: s.dateLastModified || 0,
+      submittedBy: s.sendingUser ? ((s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "")).trim() : "",
+    }));
+
+    res.json({
+      total: totalSubs,
+      wins, losses, active, interviews, winRate,
+      clientRates,
+      avgStageTimes,
+      byRecruiter,
+      statusCounts,
+      statuses: SUBMISSION_STATUSES,
+      submissions,
+    });
+  } catch (e) {
+    console.error("[Submission Analytics]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Send Submission Report Email ─────────────────
+app.post("/api/submission-report", async (req, res) => {
+  try {
+    const { recipients, from, to } = req.body;
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ error: "At least one recipient is required" });
+    }
+
+    // Fetch analytics data
+    let where = "isDeleted=false";
+    if (from) where += ` AND dateAdded>=${new Date(from).getTime()}`;
+    if (to) where += ` AND dateAdded<=${new Date(to + "T23:59:59").getTime()}`;
+
+    const data = await bhFetchAll("query/JobSubmission", {
+      where,
+      fields: "id,candidate,jobOrder,status,dateAdded,sendingUser",
+      orderBy: "-dateAdded",
+    });
+    const subs = data.data || [];
+
+    const winStatuses = ["Offer", "Placed"];
+    const lossStatuses = ["Rejected - Not a Fit", "Client Declined", "Candidate Declined Offer", "Withdrawn"];
+    let wins = 0, losses = 0;
+    subs.forEach(s => {
+      if (winStatuses.includes(s.status)) wins++;
+      else if (lossStatuses.includes(s.status)) losses++;
+    });
+    const decided = wins + losses;
+    const winRate = decided > 0 ? Math.round((wins / decided) * 100) : 0;
+
+    // Build active submissions table
+    const activeSubs = subs.filter(s => !winStatuses.includes(s.status) && !lossStatuses.includes(s.status));
+    let tableRows = "";
+    activeSubs.slice(0, 50).forEach(s => {
+      const candName = s.candidate ? ((s.candidate.firstName || "") + " " + (s.candidate.lastName || "")).trim() : "Unknown";
+      const jobTitle = s.jobOrder ? s.jobOrder.title || "" : "";
+      const client = s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name || "" : "";
+      const date = s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "";
+      tableRows += `<tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px">${candName}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px">${jobTitle}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px">${client}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px"><span style="padding:2px 8px;border-radius:10px;background:#e0f2fe;color:#176087;font-size:11px;font-weight:600">${s.status || "Submitted"}</span></td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px">${date}</td>
+      </tr>`;
+    });
+
+    const dateRange = from && to ? `${new Date(from).toLocaleDateString()} – ${new Date(to).toLocaleDateString()}` : "All Time";
+    const dashUrl = process.env.BULLHORN_REDIRECT_URI ? process.env.BULLHORN_REDIRECT_URI.replace("/auth/callback", "") : "https://bullhorn-dashboard-production.up.railway.app";
+
+    const emailHtml = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:700px;margin:0 auto">
+        <div style="background:#176087;padding:20px 24px;border-radius:8px 8px 0 0">
+          <h2 style="margin:0;color:#fff;font-size:18px">Submission Pipeline Report</h2>
+          <div style="color:#bae6fd;font-size:13px;margin-top:4px">${dateRange}</div>
+        </div>
+        <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:none">
+          <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap">
+            <div style="flex:1;min-width:100px;padding:12px;background:#f8fafc;border-radius:8px;text-align:center;border:1px solid #e2e8f0">
+              <div style="font-size:28px;font-weight:800;color:#176087">${subs.length}</div>
+              <div style="font-size:11px;color:#64748b;font-weight:600">Total Submissions</div>
+            </div>
+            <div style="flex:1;min-width:100px;padding:12px;background:#f0fdf4;border-radius:8px;text-align:center;border:1px solid #bbf7d0">
+              <div style="font-size:28px;font-weight:800;color:#16a34a">${activeSubs.length}</div>
+              <div style="font-size:11px;color:#64748b;font-weight:600">Active / In Process</div>
+            </div>
+            <div style="flex:1;min-width:100px;padding:12px;background:#ede9fe;border-radius:8px;text-align:center;border:1px solid #ddd6fe">
+              <div style="font-size:28px;font-weight:800;color:#7c3aed">${winRate}%</div>
+              <div style="font-size:11px;color:#64748b;font-weight:600">Win Rate</div>
+            </div>
+            <div style="flex:1;min-width:100px;padding:12px;background:#f0fdf4;border-radius:8px;text-align:center;border:1px solid #bbf7d0">
+              <div style="font-size:28px;font-weight:800;color:#16a34a">${wins}</div>
+              <div style="font-size:11px;color:#64748b;font-weight:600">Wins</div>
+            </div>
+          </div>
+          <h3 style="margin:0 0 12px;color:#0E2E47;font-size:15px">Active Submissions (${activeSubs.length})</h3>
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="background:#f8fafc">
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Candidate</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Job</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Client</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Status</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0">Submitted</th>
+            </tr></thead>
+            <tbody>${tableRows || '<tr><td colspan="5" style="padding:16px;text-align:center;color:#94a3b8">No active submissions</td></tr>'}</tbody>
+          </table>
+          ${activeSubs.length > 50 ? '<div style="margin-top:8px;font-size:12px;color:#94a3b8;text-align:center">Showing first 50 of ' + activeSubs.length + ' active submissions</div>' : ''}
+          <div style="margin-top:20px;text-align:center">
+            <a href="${dashUrl}" style="display:inline-block;padding:10px 24px;background:#176087;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px">View Full Dashboard</a>
+          </div>
+        </div>
+        <div style="padding:12px;text-align:center;font-size:11px;color:#94a3b8;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;background:#fafbfc">
+          Sent from Anura Connect Dashboard · ${new Date().toLocaleDateString()}
+        </div>
+      </div>`;
+
+    const emailSubject = `Submission Pipeline Report — ${dateRange} (${subs.length} submissions, ${winRate}% win rate)`;
+    const emailResults = [];
+
+    for (const user of recipients) {
+      if (!user.email) continue;
+      try {
+        let sent = false;
+        const outlookUser = Object.keys(_outlookUsers)[0];
+        if (outlookUser && _outlookUsers[outlookUser]) {
+          try {
+            await graphFetch(outlookUser, "/me/sendMail", {
+              method: "POST",
+              body: JSON.stringify({
+                message: {
+                  subject: emailSubject,
+                  body: { contentType: "HTML", content: emailHtml },
+                  toRecipients: [{ emailAddress: { address: user.email } }],
+                },
+                saveToSentItems: true,
+              }),
+            });
+            sent = true;
+            emailResults.push({ user: user.name, success: true, method: "outlook" });
+          } catch (oe) { console.log("[Report] Outlook failed:", oe.message); }
+        }
+        if (!sent && process.env.SENDGRID_API_KEY) {
+          const sgResp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+            method: "POST",
+            headers: { "Authorization": "Bearer " + process.env.SENDGRID_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              personalizations: [{ to: [{ email: user.email, name: user.name }] }],
+              from: { email: process.env.SENDGRID_FROM_EMAIL || "team@anuraconnect.com", name: "Anura Connect" },
+              subject: emailSubject,
+              content: [{ type: "text/html", value: emailHtml }],
+            }),
+          });
+          sent = sgResp.ok || sgResp.status === 202;
+          emailResults.push({ user: user.name, success: sent, method: "sendgrid" });
+        }
+        if (!sent) emailResults.push({ user: user.name, success: false });
+      } catch (emailErr) {
+        emailResults.push({ user: user.name, success: false, reason: emailErr.message });
+      }
+    }
+
+    res.json({ success: true, sent: emailResults.filter(r => r.success).length, total: emailResults.length, results: emailResults });
+  } catch (e) {
+    console.error("[Submission Report]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Corporate Users (for owner dropdowns) ────────
 app.get("/api/users", async (req, res) => {
   try {
