@@ -3246,7 +3246,7 @@ function _jobRowClick(idx){
 var _stFrom = "";
 var _stTo = "";
 var _stData = null;
-var _stFilter = { client: "All", status: "All", recruiter: "All" };
+var _stFilter = { client: [], status: [], recruiter: [] };
 var _stSort = { col: "dateAddedRaw", dir: "desc" };
 var _stReportUsers = []; // tagged users for report
 
@@ -3341,30 +3341,31 @@ function renderSubTracker(data) {
   h += '</div>';
   h += '</div>';
 
-  // ── Filters row ──
-  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">';
+  // ── Filters row (multi-select) ──
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-start">';
+
   // Client filter
   var clientNames = [];
   (data.submissions || []).forEach(function(s) { if (s.client && clientNames.indexOf(s.client) === -1) clientNames.push(s.client); });
   clientNames.sort();
-  h += '<select id="st-client-filter" onchange="stApplyFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit">';
-  h += '<option value="All">All Clients</option>';
-  clientNames.forEach(function(c) { h += '<option value="' + esc(c) + '"' + (_stFilter.client === c ? ' selected' : '') + '>' + esc(c) + '</option>'; });
-  h += '</select>';
+  h += stMultiSelect("client", "Clients", clientNames, _stFilter.client);
+
   // Status filter
-  h += '<select id="st-status-filter" onchange="stApplyFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit">';
-  h += '<option value="All">All Statuses</option>';
-  (data.statuses || []).forEach(function(s) { h += '<option value="' + esc(s) + '"' + (_stFilter.status === s ? ' selected' : '') + '>' + esc(s) + '</option>'; });
-  h += '</select>';
+  var statusList = [];
+  (data.submissions || []).forEach(function(s) { if (s.status && statusList.indexOf(s.status) === -1) statusList.push(s.status); });
+  h += stMultiSelect("status", "Statuses", statusList, _stFilter.status);
+
   // Recruiter filter
   var recruiters = [];
   (data.submissions || []).forEach(function(s) { if (s.submittedBy && recruiters.indexOf(s.submittedBy) === -1) recruiters.push(s.submittedBy); });
   recruiters.sort();
-  h += '<select id="st-recruiter-filter" onchange="stApplyFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit">';
-  h += '<option value="All">All Recruiters</option>';
-  recruiters.forEach(function(r) { h += '<option value="' + esc(r) + '"' + (_stFilter.recruiter === r ? ' selected' : '') + '>' + esc(r) + '</option>'; });
-  h += '</select>';
-  h += '<div style="font-size:12px;color:#64748b;margin-left:auto" id="st-showing-count"></div>';
+  h += stMultiSelect("recruiter", "Recruiters", recruiters, _stFilter.recruiter);
+
+  // Clear all filters
+  if (_stFilter.client.length || _stFilter.status.length || _stFilter.recruiter.length) {
+    h += '<button onclick="stClearFilters()" style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#ef4444;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap">✕ Clear Filters</button>';
+  }
+  h += '<div style="font-size:12px;color:#64748b;margin-left:auto;white-space:nowrap;align-self:center" id="st-showing-count"></div>';
   h += '</div>';
 
   // ── Submissions table ──
@@ -3420,9 +3421,9 @@ function stKpiCard(value, label, color, bg) {
 function stBuildRows(subs) {
   // Apply filters
   var filtered = subs.filter(function(s) {
-    if (_stFilter.client !== "All" && s.client !== _stFilter.client) return false;
-    if (_stFilter.status !== "All" && s.status !== _stFilter.status) return false;
-    if (_stFilter.recruiter !== "All" && s.submittedBy !== _stFilter.recruiter) return false;
+    if (_stFilter.client.length && _stFilter.client.indexOf(s.client) === -1) return false;
+    if (_stFilter.status.length && _stFilter.status.indexOf(s.status) === -1) return false;
+    if (_stFilter.recruiter.length && _stFilter.recruiter.indexOf(s.submittedBy) === -1) return false;
     return true;
   });
   // Sort
@@ -3493,10 +3494,75 @@ function stUpdateStatus(subId, newStatus, selectEl) {
   });
 }
 
+function stMultiSelect(key, label, options, selected) {
+  var id = "st-ms-" + key;
+  var h = '<div style="position:relative;display:inline-block">';
+  var count = selected.length;
+  var btnLabel = count === 0 ? "All " + label : count + " " + label;
+  var btnStyle = count > 0
+    ? "padding:6px 10px;border:1px solid #176087;border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer;background:#e0f2fe;color:#176087;font-weight:600;white-space:nowrap"
+    : "padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer;background:#fff;color:#334155;white-space:nowrap";
+  h += '<button onclick="stToggleDropdown(\'' + key + '\')" style="' + btnStyle + '">' + esc(btnLabel) + ' ▾</button>';
+  h += '<div id="' + id + '-dd" style="display:none;position:absolute;top:100%;left:0;z-index:100;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);min-width:200px;max-height:280px;overflow-y:auto;margin-top:4px;padding:4px 0">';
+  options.forEach(function(opt) {
+    var isOn = selected.indexOf(opt) !== -1;
+    var optStyle = isOn
+      ? "display:flex;align-items:center;gap:8px;padding:7px 12px;cursor:pointer;font-size:12px;background:#e0f2fe;color:#176087;font-weight:600"
+      : "display:flex;align-items:center;gap:8px;padding:7px 12px;cursor:pointer;font-size:12px;color:#334155";
+    var check = isOn ? "☑" : "☐";
+    h += '<div style="' + optStyle + '" onclick="stToggleFilter(\'' + key + '\',\'' + esc(opt).replace(/'/g, "\\'") + '\')" onmouseover="this.style.background=\'#f1f5f9\'" onmouseout="this.style.background=\'' + (isOn ? '#e0f2fe' : '#fff') + '\'">';
+    h += '<span style="font-size:14px">' + check + '</span> ' + esc(opt) + '</div>';
+  });
+  h += '</div></div>';
+  return h;
+}
+
+function stToggleDropdown(key) {
+  var dd = document.getElementById("st-ms-" + key + "-dd");
+  if (!dd) return;
+  // Close all other dropdowns first
+  ["client","status","recruiter"].forEach(function(k) {
+    if (k !== key) {
+      var other = document.getElementById("st-ms-" + k + "-dd");
+      if (other) other.style.display = "none";
+    }
+  });
+  dd.style.display = dd.style.display === "none" ? "block" : "none";
+}
+
+function stToggleFilter(key, value) {
+  var arr = _stFilter[key];
+  var idx = arr.indexOf(value);
+  if (idx === -1) arr.push(value);
+  else arr.splice(idx, 1);
+  // Re-render the whole tracker to update chips, table, and counts
+  if (_stData) document.getElementById("content").innerHTML = renderSubTracker(_stData);
+  // Re-open the dropdown after re-render
+  setTimeout(function() {
+    var dd = document.getElementById("st-ms-" + key + "-dd");
+    if (dd) dd.style.display = "block";
+  }, 10);
+}
+
+function stClearFilters() {
+  _stFilter.client = [];
+  _stFilter.status = [];
+  _stFilter.recruiter = [];
+  if (_stData) document.getElementById("content").innerHTML = renderSubTracker(_stData);
+}
+
+// Close multi-select dropdowns when clicking outside
+document.addEventListener("click", function(e) {
+  if (!e.target.closest("[id^='st-ms-']") && !e.target.closest("[onclick*='stToggleDropdown']")) {
+    ["client","status","recruiter"].forEach(function(k) {
+      var dd = document.getElementById("st-ms-" + k + "-dd");
+      if (dd) dd.style.display = "none";
+    });
+  }
+});
+
 function stApplyFilters() {
-  _stFilter.client = (document.getElementById("st-client-filter") || {}).value || "All";
-  _stFilter.status = (document.getElementById("st-status-filter") || {}).value || "All";
-  _stFilter.recruiter = (document.getElementById("st-recruiter-filter") || {}).value || "All";
+  // Called on date change — filters are now handled via stToggleFilter
   var tbody = document.getElementById("st-tbody");
   if (tbody && _stData) tbody.innerHTML = stBuildRows(_stData.submissions || []);
 }
