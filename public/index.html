@@ -5268,17 +5268,24 @@ var EPIC_MODULES = {
 };
 
 function slBuildRoleLists(lists) {
-  var ROLE_LEVELS = ["Executive","Director","PM","Manager"];
+  var ROLE_LEVELS = ["Executive","Director","PM","Manager","Analyst","Trainer","TS","IS","Dev"];
   var roleLists = {};
   ROLE_LEVELS.forEach(function(r) { roleLists[r] = { name: r, candidates: [] }; });
   var seen = {};
   (lists || []).forEach(function(l) {
     (l.candidates || []).forEach(function(c) {
-      var roles = (c.preferredRole || "").split(",").map(function(s){return s.trim();}).filter(Boolean);
-      roles.forEach(function(role) {
-        if (roleLists[role] && !seen[role + "_" + c.id]) {
-          seen[role + "_" + c.id] = true;
-          roleLists[role].candidates.push(c);
+      // Check preferredRole (customText3), epicRole (customText5), and title
+      var allRoleText = ((c.preferredRole || "") + "," + (c.epicRole || "") + "," + (c.title || ""));
+      var roles = allRoleText.split(",").map(function(s){return s.trim();}).filter(Boolean);
+      // Also do keyword matching for roles that might appear as substrings
+      var matched = {};
+      ROLE_LEVELS.forEach(function(level) {
+        // Check explicit role match or keyword in any role field
+        var hasExact = roles.some(function(r){ return r.toLowerCase() === level.toLowerCase(); });
+        var hasKeyword = allRoleText.toLowerCase().indexOf(level.toLowerCase()) !== -1;
+        if ((hasExact || hasKeyword) && !seen[level + "_" + c.id]) {
+          seen[level + "_" + c.id] = true;
+          roleLists[level].candidates.push(c);
         }
       });
     });
@@ -5383,8 +5390,8 @@ function renderSmartLists(data) {
 
   var html = '<div class="stats-row">';
   if (isRoleMode) {
-    html += statCard("\uD83D\uDC54", "Role Groups", displayLists.length, "PM, Director, Executive, Manager", "#7c3aed");
-    html += statCard("\uD83D\uDC65", "Leadership Candidates", groupTotal, "Non-analyst roles", "#10b981");
+    html += statCard("\uD83D\uDC54", "Role Groups", displayLists.length, "All role levels", "#7c3aed");
+    html += statCard("\uD83D\uDC65", "Total in Roles", groupTotal, "Across all roles", "#10b981");
   } else if (isModuleMode) {
     html += statCard("\uD83C\uDFE5", "Epic Modules", displayLists.length, "Grouped by application area", "#0369a1");
     html += statCard("\uD83D\uDC65", "Total Candidates", data.total || 0, "Across all modules", "#10b981");
