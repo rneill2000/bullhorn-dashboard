@@ -872,7 +872,7 @@ app.get("/api/submission-pipeline", async (req, res) => {
 
     const data = await bhFetchAll("query/JobSubmission", {
       where,
-      fields: "id,candidate,jobOrder,status,dateAdded,dateLastModified,sendingUser,comments,source",
+      fields: "id,candidate(id,firstName,lastName),jobOrder(id,title,clientCorporation(id,name)),status,dateAdded,dateLastModified,sendingUser(id,firstName,lastName),comments,source",
       orderBy: "-dateLastModified",
     });
 
@@ -1073,7 +1073,7 @@ app.get("/api/submission-analytics", async (req, res) => {
 
     const data = await bhFetchAll("query/JobSubmission", {
       where,
-      fields: "id,candidate,jobOrder,status,dateAdded,dateLastModified,sendingUser",
+      fields: "id,candidate(id,firstName,lastName),jobOrder(id,title,clientCorporation(id,name)),status,dateAdded,dateLastModified,sendingUser(id,firstName,lastName)",
       orderBy: "-dateAdded",
     });
     const subs = data.data || [];

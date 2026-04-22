@@ -3441,19 +3441,56 @@ function stBuildRows(subs) {
   }, 0);
   if (filtered.length === 0) return '<tr><td colspan="7" style="text-align:center;padding:32px;color:#94a3b8">No submissions match filters</td></tr>';
   var h = "";
+  var statuses = (_stData && _stData.statuses) ? _stData.statuses : [];
   filtered.forEach(function(s) {
     var colors = subPipeStatusColor(s.status);
     h += '<tr>';
     h += '<td><span class="name-link" onclick="openDetail(' + s.candidateId + ')">' + esc(s.candidateName) + '</span></td>';
     h += '<td>' + esc(s.jobTitle) + '</td>';
     h += '<td>' + esc(s.client) + '</td>';
-    h += '<td><span style="padding:2px 10px;border-radius:10px;background:' + colors.bg + ';color:' + colors.color + ';font-size:11px;font-weight:600;white-space:nowrap">' + esc(s.status) + '</span></td>';
+    // Inline editable status dropdown
+    h += '<td><select onchange="stUpdateStatus(' + s.id + ', this.value, this)" style="padding:3px 8px;border:1px solid ' + colors.border + ';border-radius:6px;background:' + colors.bg + ';color:' + colors.color + ';font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;max-width:180px">';
+    statuses.forEach(function(st) {
+      h += '<option value="' + esc(st) + '"' + (s.status === st ? ' selected' : '') + '>' + esc(st) + '</option>';
+    });
+    if (statuses.indexOf(s.status) === -1) {
+      h += '<option value="' + esc(s.status) + '" selected>' + esc(s.status) + '</option>';
+    }
+    h += '</select></td>';
     h += '<td>' + esc(s.submittedBy) + '</td>';
     h += '<td>' + esc(s.dateAdded) + '</td>';
     h += '<td>' + esc(s.dateModified) + '</td>';
     h += '</tr>';
   });
   return h;
+}
+
+function stUpdateStatus(subId, newStatus, selectEl) {
+  var note = prompt("Add a note for this status change (optional):");
+  // Update the dropdown color immediately
+  var colors = subPipeStatusColor(newStatus);
+  selectEl.style.background = colors.bg;
+  selectEl.style.color = colors.color;
+  selectEl.style.borderColor = colors.border;
+
+  apiFetch("submissions/" + subId + "/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: newStatus, comments: note || "" })
+  }).then(function(r) {
+    if (r.success && _stData) {
+      // Update local data
+      (_stData.submissions || []).forEach(function(s) {
+        if (s.id === subId) { s.status = newStatus; s.dateModified = new Date().toLocaleDateString(); s.dateModifiedRaw = Date.now(); }
+      });
+    } else if (!r.success) {
+      alert("Failed to update status");
+      loadPage();
+    }
+  }).catch(function(e) {
+    alert("Error updating status: " + e.message);
+    loadPage();
+  });
 }
 
 function stApplyFilters() {
