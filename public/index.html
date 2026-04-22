@@ -7524,7 +7524,7 @@ var _msaData=null;
 function renderMSAPipeline(d){
   _msaData=d;
   var opps=d.data||[];
-  var stages=d.stages||["Prospect","In Negotiation","Signed","Lost"];
+  var stages=d.stages||["Identified","Qualifying","Negotiating","Legal Review"];
   var sf=filters.status||"all";
   var ownerFilter=filters.owner||"";
 
@@ -7534,20 +7534,20 @@ function renderMSAPipeline(d){
   var ownerList=Object.keys(owners).sort();
 
   // KPI summary
-  var totalValue=0,prospectCount=0,negotiationCount=0,signedCount=0,lostCount=0;
+  var totalValue=0,identifiedCount=0,qualifyingCount=0,negotiatingCount=0,legalReviewCount=0;
   opps.forEach(function(o){
     totalValue+=o.dealValue||0;
-    if(o.status==="Prospect") prospectCount++;
-    else if(o.status==="In Negotiation") negotiationCount++;
-    else if(o.status==="Signed") signedCount++;
-    else if(o.status==="Lost") lostCount++;
+    if(o.status==="Identified") identifiedCount++;
+    else if(o.status==="Qualifying") qualifyingCount++;
+    else if(o.status==="Negotiating") negotiatingCount++;
+    else if(o.status==="Legal Review") legalReviewCount++;
   });
 
   var h='<div style="margin-bottom:20px">';
   // KPI Cards
   h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">';
   h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #176087"><div style="font-size:24px;font-weight:700;color:#176087">'+opps.length+'</div><div style="font-size:12px;color:#64748b">Total MSAs</div></div>';
-  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #f59e0b"><div style="font-size:24px;font-weight:700;color:#f59e0b">'+prospectCount+'</div><div style="font-size:12px;color:#64748b">Prospect</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #f59e0b"><div style="font-size:24px;font-weight:700;color:#f59e0b">'+identifiedCount+'</div><div style="font-size:12px;color:#64748b">Prospect</div></div>';
   h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #8b5cf6"><div style="font-size:24px;font-weight:700;color:#8b5cf6">'+negotiationCount+'</div><div style="font-size:12px;color:#64748b">In Negotiation</div></div>';
   h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #16a34a"><div style="font-size:24px;font-weight:700;color:#16a34a">'+signedCount+'</div><div style="font-size:12px;color:#64748b">Signed</div></div>';
   if(totalValue>0) h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #0ea5e9"><div style="font-size:24px;font-weight:700;color:#0ea5e9">$'+totalValue.toLocaleString()+'</div><div style="font-size:12px;color:#64748b">Pipeline Value</div></div>';

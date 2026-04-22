@@ -2273,7 +2273,7 @@ app.get("/api/jobs/:id", async (req, res) => {
 });
 
 // ── MSA Pipeline (Opportunities) ──────────────────────────
-const MSA_STAGES = ["Prospect", "In Negotiation", "Signed", "Lost"];
+const MSA_STAGES = ["Identified", "Qualifying", "Negotiating", "Legal Review"];
 
 app.get("/api/opportunities", async (req, res) => {
   try {
