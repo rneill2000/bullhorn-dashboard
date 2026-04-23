@@ -45,6 +45,7 @@ const BH = {
 /* ═══ SESSION STATE ═══ */
 // Backend API session (shared, uses API service account)
 let session = { bhRestToken: null, restUrl: null, expiresAt: 0 };
+let _authPromise = null; // dedup concurrent auth calls
 
 // User sessions — maps sessionToken → user info
 const userSessions = {};
@@ -179,7 +180,18 @@ async function authenticate() {
   if (session.bhRestToken && Date.now() < session.expiresAt) {
     return session;
   }
-
+  // Deduplicate: if another request is already authenticating, wait for it
+  if (_authPromise) {
+    return _authPromise;
+  }
+  _authPromise = _doAuthenticate();
+  try {
+    return await _authPromise;
+  } finally {
+    _authPromise = null;
+  }
+}
+async function _doAuthenticate() {
   console.log("[Bullhorn] Authenticating...");
 
   // Step 1: Get authorization code via automated login
@@ -318,15 +330,24 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
   const total = first.total || (first.data || []).length;
   let allData = [...(first.data || [])];
 
-  // If there are more pages, fetch them in parallel
+  // If there are more pages, fetch them in parallel (resilient to partial failures)
   if (total > pageSize) {
     const pages = [];
     for (let start = pageSize; start < total; start += pageSize) {
       pages.push(bhFetch(endpoint, { ...params, [startKey]: start }));
     }
-    const results = await Promise.all(pages);
+    const results = await Promise.allSettled(pages);
+    let failedPages = 0;
     for (const r of results) {
-      allData = allData.concat(r.data || []);
+      if (r.status === "fulfilled") {
+        allData = allData.concat(r.value.data || []);
+      } else {
+        failedPages++;
+        console.warn("[Bullhorn] Page fetch failed (partial data returned):", r.reason?.message || r.reason);
+      }
+    }
+    if (failedPages > 0) {
+      console.warn(`[Bullhorn] ${failedPages}/${results.length} pages failed for ${endpoint} — returning ${allData.length}/${total} records`);
     }
   }
 
@@ -6402,8 +6423,10 @@ setTimeout(function() { syncOutlookEmails().catch(function(e) { console.error("[
 
 // Manual trigger
 app.post("/api/outlook/sync-now", async (req, res) => {
-  syncOutlookEmails().catch(function(e) { console.error("[Email Sync] Manual trigger error:", e.message); });
-  res.json({ started: true, lastSync: _lastEmailSync ? new Date(_lastEmailSync).toISOString() : null });
+  try {
+    syncOutlookEmails().catch(function(e) { console.error("[Email Sync] Manual trigger error:", e.message); });
+    res.json({ started: true, lastSync: _lastEmailSync ? new Date(_lastEmailSync).toISOString() : null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Get email history for a specific candidate or contact
@@ -6993,9 +7016,18 @@ app.get("/api/candidate/:id/sheets", async (req, res) => {
 app.get("/api/starred", async (req, res) => {
   try {
     if (!db.ready) return res.status(503).json({ error: "Database not available" });
-    const data = await db.getStarredWithPlacements();
+    var data;
+    try {
+      data = await db.getStarredWithPlacements();
+    } catch (joinErr) {
+      console.error("[Starred] Join query failed, falling back to simple list:", joinErr.message);
+      data = await db.listStarred();
+    }
     res.json({ candidates: data });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error("[Starred]", e.message, e.stack);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get("/api/starred-ids", async (req, res) => {
@@ -7903,45 +7935,49 @@ async function resolveTemplate(templateId) {
 
 // List all prefillable fields for a given template (for the dashboard pre-fill form)
 app.get("/api/portal/prefill-fields", async (req, res) => {
-  const templateId = req.query.templateId;
-  var template = await resolveTemplate(templateId);
-  if (!template) return res.status(400).json({ error: "Unknown template" });
+  try {
+    const templateId = req.query.templateId;
+    var template = await resolveTemplate(templateId);
+    if (!template) return res.status(400).json({ error: "Unknown template" });
 
-  const fields = [];
-  var sectionList = template.isCustom ? template.sections : template.sections.map(function (sKey) { return PORTAL_SECTIONS[sKey]; }).filter(Boolean);
+    const fields = [];
+    var sectionList = template.isCustom ? template.sections : template.sections.map(function (sKey) { return PORTAL_SECTIONS[sKey]; }).filter(Boolean);
 
-  sectionList.forEach(function (section) {
-    (section.fields || []).forEach(function (f) {
-      if (f.prefillable) {
-        fields.push({ name: f.name, label: f.label, type: f.type, locked: !!f.locked, section: section.label });
-      }
+    sectionList.forEach(function (section) {
+      (section.fields || []).forEach(function (f) {
+        if (f.prefillable) {
+          fields.push({ name: f.name, label: f.label, type: f.type, locked: !!f.locked, section: section.label });
+        }
+      });
     });
-  });
-  res.json(fields);
+    res.json(fields);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Generate a portal link for a client + template + optional prefill data + extra recipients
 app.post("/api/portal/generate-link", async (req, res) => {
-  const { clientId, templateId, prefill, extraEmails } = req.body;
-  if (!clientId || !templateId) return res.status(400).json({ error: "clientId and templateId required" });
-  var template = await resolveTemplate(templateId);
-  if (!template) return res.status(400).json({ error: "Unknown template: " + templateId });
+  try {
+    const { clientId, templateId, prefill, extraEmails } = req.body;
+    if (!clientId || !templateId) return res.status(400).json({ error: "clientId and templateId required" });
+    var template = await resolveTemplate(templateId);
+    if (!template) return res.status(400).json({ error: "Unknown template: " + templateId });
 
-  // Build link data: prefill + extra notification emails
-  const linkData = {};
-  if (prefill && Object.keys(prefill).length > 0) linkData.pf = prefill;
-  if (extraEmails && extraEmails.length > 0) linkData.ne = extraEmails; // ne = notify emails
+    // Build link data: prefill + extra notification emails
+    const linkData = {};
+    if (prefill && Object.keys(prefill).length > 0) linkData.pf = prefill;
+    if (extraEmails && extraEmails.length > 0) linkData.ne = extraEmails; // ne = notify emails
 
-  const dataStr = Object.keys(linkData).length > 0
-    ? Buffer.from(JSON.stringify(linkData)).toString("base64url")
-    : "";
+    const dataStr = Object.keys(linkData).length > 0
+      ? Buffer.from(JSON.stringify(linkData)).toString("base64url")
+      : "";
 
-  const sig = generatePortalSig(String(clientId), templateId, dataStr);
-  const baseUrl = process.env.PORTAL_BASE_URL || (req.protocol + "://" + req.get("host"));
-  let link = baseUrl + "/portal?c=" + clientId + "&t=" + templateId + "&s=" + sig;
-  if (dataStr) link += "&d=" + dataStr;
+    const sig = generatePortalSig(String(clientId), templateId, dataStr);
+    const baseUrl = process.env.PORTAL_BASE_URL || (req.protocol + "://" + req.get("host"));
+    let link = baseUrl + "/portal?c=" + clientId + "&t=" + templateId + "&s=" + sig;
+    if (dataStr) link += "&d=" + dataStr;
 
-  res.json({ link, clientId, templateId, sig });
+    res.json({ link, clientId, templateId, sig });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Get form config for a portal link (called by the public portal page)

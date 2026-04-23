@@ -37,9 +37,25 @@ function init() {
   console.log("[DB] Postgres pool initialized");
 }
 
-async function query(text, params) {
+async function query(text, params, _retries) {
   if (!pool) throw new Error("Database not initialized");
-  return pool.query(text, params);
+  _retries = _retries || 0;
+  try {
+    return await pool.query(text, params);
+  } catch (err) {
+    // Retry once on transient connection errors
+    var isTransient = err.code === "ECONNRESET" || err.code === "ECONNREFUSED" ||
+      err.code === "57P01" /* admin shutdown */ || err.code === "57P03" /* not accepting connections */ ||
+      err.code === "08006" /* connection failure */ || err.code === "08001" /* unable to connect */ ||
+      err.code === "08003" /* connection does not exist */ ||
+      (err.message && err.message.indexOf("Connection terminated") >= 0);
+    if (isTransient && _retries < 2) {
+      console.warn("[DB] Transient error (retry " + (_retries + 1) + "/2):", err.code || err.message);
+      await new Promise(function(r) { setTimeout(r, 500 * (_retries + 1)); });
+      return query(text, params, _retries + 1);
+    }
+    throw err;
+  }
 }
 
 async function getOne(text, params) {
