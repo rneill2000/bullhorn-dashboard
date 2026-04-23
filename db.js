@@ -2693,7 +2693,7 @@ async function dbGetStarredWithPlacements() {
             p.id as placement_id, p.job_title, p.client_name, p.date_end, p.date_begin, p.status as placement_status, p.pay_rate, p.client_bill_rate
      FROM starred_candidates sc
      LEFT JOIN candidates c ON c.id = sc.candidate_id
-     LEFT JOIN placements p ON p.candidate_id = sc.candidate_id AND (p.is_deleted IS NULL OR p.is_deleted = false)
+     LEFT JOIN placements p ON p.candidate_id = sc.candidate_id
      ORDER BY sc.starred_at DESC`
   )).rows;
   // Group by candidate (they may have multiple placements)
