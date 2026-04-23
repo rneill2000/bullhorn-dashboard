@@ -21,6 +21,16 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+/* ═══ PROCESS STABILITY ═══ */
+// Prevent unhandled errors from crashing the entire server
+process.on("uncaughtException", function (err) {
+  console.error("[FATAL] Uncaught exception — server staying alive:", err.message);
+  console.error(err.stack);
+});
+process.on("unhandledRejection", function (reason, promise) {
+  console.error("[FATAL] Unhandled promise rejection — server staying alive:", reason);
+});
+
 /* ═══ CONFIG ═══ */
 const BH = {
   clientId: process.env.BULLHORN_CLIENT_ID || "",
@@ -52,6 +62,20 @@ function getUser(req) {
   const tok = cookies.bh_session;
   return tok && userSessions[tok] ? userSessions[tok] : null;
 }
+
+// Clean up expired user sessions every hour (prevent memory leak)
+setInterval(function () {
+  var now = Date.now();
+  var maxAge = 24 * 60 * 60 * 1000; // 24 hours
+  var count = 0;
+  Object.keys(userSessions).forEach(function (tok) {
+    if (now - (userSessions[tok].loggedInAt || 0) > maxAge) {
+      delete userSessions[tok];
+      count++;
+    }
+  });
+  if (count > 0) console.log("[Session] Cleaned up " + count + " expired user sessions");
+}, 60 * 60 * 1000);
 
 /* ═══ USER SSO ROUTES ═══ */
 
@@ -235,12 +259,19 @@ async function authenticate() {
 }
 
 /* ═══ API PROXY HELPER ═══ */
-async function bhFetch(endpoint, params = {}) {
+async function bhFetch(endpoint, params = {}, _retried) {
   const s = await authenticate();
   params.BhRestToken = s.bhRestToken;
   const qs = new URLSearchParams(params).toString();
   const url = `${s.restUrl}${endpoint}?${qs}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  // If we get a 401, force re-auth and retry once
+  if (res.status === 401 && !_retried) {
+    console.log("[Bullhorn] Got 401 — forcing re-auth and retrying");
+    session.expiresAt = 0; // force re-auth
+    delete params.BhRestToken;
+    return bhFetch(endpoint, params, true);
+  }
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Bullhorn API error (${res.status}): ${err}`);
@@ -8332,6 +8363,16 @@ app.get("/tearsheet/:id", async (req, res) => {
 // Serve the dashboard
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+/* ═══ GLOBAL ERROR HANDLER ═══ */
+// Catch any unhandled errors in route handlers so they return 500 instead of crashing
+app.use(function (err, req, res, next) {
+  console.error("[Express] Unhandled route error:", err.message);
+  console.error(err.stack);
+  if (!res.headersSent) {
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 /* ═══ DATABASE INIT ═══ */
