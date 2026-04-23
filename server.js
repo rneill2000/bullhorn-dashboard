@@ -6958,6 +6958,48 @@ app.get("/api/candidate/:id/sheets", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Starred Candidates ───────────────────────────────
+app.get("/api/starred", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const data = await db.getStarredWithPlacements();
+    res.json({ candidates: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/starred-ids", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const ids = await db.getAllStarredIds();
+    res.json({ ids });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/candidates/:id/star", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const { userEmail, userName, notes } = req.body;
+    await db.starCandidate(parseInt(req.params.id), userEmail, userName, notes);
+    res.json({ success: true, starred: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/api/candidates/:id/star", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    await db.unstarCandidate(parseInt(req.params.id));
+    res.json({ success: true, starred: false });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/candidates/:id/star", async (req, res) => {
+  try {
+    if (!db.ready) return res.status(503).json({ error: "Database not available" });
+    const starred = await db.isStarred(parseInt(req.params.id));
+    res.json({ starred });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Smart Lists (by primary cert) ─────────────────
 
 // Merge DB smart lists that map to the same normalized cert name

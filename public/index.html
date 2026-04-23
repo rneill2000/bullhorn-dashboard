@@ -206,6 +206,16 @@ tbody tr:hover{background:#eff6ff}
 .ts-notes{font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap}
 .ts-actions{display:flex;gap:10px;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0}
 .ts-actions button{padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+/* Star Candidates */
+.star-btn{background:none;border:none;cursor:pointer;font-size:16px;padding:2px 4px;line-height:1;transition:transform .15s;display:inline-flex;align-items:center}
+.star-btn:hover{transform:scale(1.2)}
+.star-btn.starred{color:#f59e0b}
+.star-btn.unstarred{color:#d1d5db}
+.star-card{background:#fff;border-radius:12px;border:1px solid #e9eef4;padding:20px;transition:box-shadow .15s,border-color .15s}
+.star-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.06);border-color:#f59e0b}
+.star-card.expiring-soon{border-left:4px solid #f59e0b}
+.star-card.expiring-urgent{border-left:4px solid #dc2626}
+.star-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px}
 /* Smart Lists */
 .sl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
 .sl-card{background:#fff;border-radius:10px;border:1px solid #e9eef4;padding:16px;cursor:pointer;transition:box-shadow .15s,border-color .15s}
@@ -2320,7 +2330,9 @@ function renderDetailContent(c) {
   if(c.employeeType) h += '<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:#eff6ff;color:#176087">'+esc(c.employeeType)+'</span>';
   h += '</div>';
   // Action buttons row
-  h += '<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">';
+  h += '<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">';
+  var _starredDetail = isStarred(c.id);
+  h += '<button class="star-btn '+(_starredDetail?"starred":"unstarred")+'" data-cid="'+c.id+'" onclick="toggleStar('+c.id+',\'\',event)" title="'+(_starredDetail?"Unstar":"Star")+' this candidate" style="font-size:20px;padding:2px 6px">'+(_starredDetail?'&#9733;':'&#9734;')+'</button>';
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #176087;background:#fff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openTearsheet()">📄 Tearsheet</button>';
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editCandidateProfile()">✏️ Edit Profile</button>';
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="showAddNoteForm()">📝 Add Note</button>';
@@ -2982,6 +2994,55 @@ function getQ(){ return (filters.q||"").toLowerCase(); }
 function matchQ(text){ return text.toLowerCase().indexOf(getQ())>=0; }
 function toggleAdv(){ advOpen=!advOpen; loadPage(); }
 
+// ── Star Candidates state ──
+var _starredIds = {};  // candidateId → true
+var _starFilter = "all"; // "all", "expiring", "available"
+
+async function loadStarredIds() {
+  try {
+    var r = await apiFetch("starred-ids");
+    _starredIds = {};
+    (r.ids || []).forEach(function(id) { _starredIds[id] = true; });
+  } catch(e) { console.warn("[Stars] Could not load starred IDs:", e.message); }
+}
+
+function isStarred(candidateId) { return !!_starredIds[candidateId]; }
+
+async function toggleStar(candidateId, candidateName, event) {
+  if (event) { event.stopPropagation(); event.preventDefault(); }
+  var wasStarred = isStarred(candidateId);
+  // Optimistic update
+  if (wasStarred) { delete _starredIds[candidateId]; } else { _starredIds[candidateId] = true; }
+  // Update the star button visually immediately
+  var btns = document.querySelectorAll('.star-btn[data-cid="' + candidateId + '"]');
+  btns.forEach(function(b) {
+    b.className = "star-btn " + (wasStarred ? "unstarred" : "starred");
+    b.innerHTML = wasStarred ? "&#9734;" : "&#9733;";
+    b.title = wasStarred ? "Star this candidate" : "Unstar this candidate";
+  });
+  try {
+    if (wasStarred) {
+      await fetch("/api/candidates/" + candidateId + "/star", { method: "DELETE" });
+    } else {
+      await fetch("/api/candidates/" + candidateId + "/star", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userEmail: currentUser ? currentUser.email : "", userName: currentUser ? currentUser.name : "" })
+      });
+    }
+    // Refresh star page if we're on it
+    if (currentPage === "starcandidates") loadPage();
+  } catch(e) {
+    // Revert on failure
+    if (wasStarred) { _starredIds[candidateId] = true; } else { delete _starredIds[candidateId]; }
+    console.error("[Stars] Toggle failed:", e.message);
+  }
+}
+
+function starBtnHtml(candidateId) {
+  var starred = isStarred(candidateId);
+  return '<button class="star-btn ' + (starred ? "starred" : "unstarred") + '" data-cid="' + candidateId + '" onclick="toggleStar(' + candidateId + ',\'\',event)" title="' + (starred ? "Unstar" : "Star") + ' this candidate">' + (starred ? "&#9733;" : "&#9734;") + '</button>';
+}
+
 // Row click handlers — store last data for click reference
 function candClick(idx){ var c=_lastData.candidates[idx]; if(c) openDetail(c.id, c); }
 
@@ -2994,6 +3055,7 @@ var NAV_GROUPS=[
   ]},
   {section:"Candidates", items:[
     {key:"candidates",label:"Candidates",emoji:"\uD83D\uDC65"},
+    {key:"starcandidates",label:"Star Candidates",emoji:"\u2B50"},
     {key:"newcandidates",label:"New Candidates",emoji:"\uD83C\uDD95"},
     {key:"subtracker",label:"Submittal Tracker",emoji:"\uD83D\uDCCA"},
     {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
@@ -3110,6 +3172,7 @@ function renderCandidates(data,bhTotal){
   _lastData.candidates=f;
   var displayTotal=bhTotal||f.length;
   var cols=[
+    {key:"star",label:"\u2605",render:function(r){return starBtnHtml(r.id);},exportVal:function(r){return isStarred(r.id)?"Yes":"No";}},
     {key:"name",label:"Name",render:function(r){return '<span class="name-link">'+esc(r.firstName+" "+r.lastName)+'</span>';},exportVal:function(r){return r.firstName+" "+r.lastName;}},
     {key:"title",label:"Title",exportVal:function(r){return r.title||"";}},
     {key:"primaryCert",label:"Primary Cert",render:function(r){return r.primaryCert?'<span style="font-size:12px;color:#176087;max-width:200px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.primaryCert)+'">'+esc(r.primaryCert)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.primaryCert||"";}},
@@ -3165,6 +3228,7 @@ function renderConsultants(data,bhTotal){
   _lastData.consultants=f;
   var displayTotal=f.length;
   var cols=[
+    {key:"star",label:"\u2605",render:function(r){return starBtnHtml(r.id);},exportVal:function(r){return isStarred(r.id)?"Yes":"No";}},
     {key:"name",label:"Name",render:function(r){return '<span class="name-link">'+esc(r.firstName+" "+r.lastName)+'</span>';},exportVal:function(r){return r.firstName+" "+r.lastName;}},
     {key:"title",label:"Title",exportVal:function(r){return r.title||"";}},
     {key:"primaryCert",label:"Primary Cert",render:function(r){return r.primaryCert?'<span style="font-size:12px;color:#176087;max-width:200px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.primaryCert)+'">'+esc(r.primaryCert)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.primaryCert||"";}},
@@ -3193,6 +3257,150 @@ function renderConsultants(data,bhTotal){
   html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'consultants.csv\',consultCols,_lastData.consultants)">\uD83D\uDCE5 Export CSV</button></div>';
   html+='<div class="table-wrap">'+makeTable(cols,f,"candClick")+'</div>';
   window.consultCols=cols;
+  return html;
+}
+
+function renderStarCandidates(data){
+  var candidates = data.candidates || [];
+  var now = Date.now();
+  var twoMonthsMs = 60 * 86400000; // ~60 days
+
+  // Compute expiry info for each candidate
+  candidates.forEach(function(c) {
+    c._activePlacement = null;
+    c._daysUntilExpiry = null;
+    c._expiryStatus = "none"; // none, ok, soon (<=60 days), urgent (<=30 days)
+    if (c.placements && c.placements.length) {
+      // Find the active/most-recent placement with an end date
+      var active = c.placements.filter(function(p) {
+        return p.rawEndDate && p.rawEndDate > now;
+      }).sort(function(a, b) { return (a.rawEndDate || 0) - (b.rawEndDate || 0); });
+      if (active.length) {
+        c._activePlacement = active[0];
+        c._daysUntilExpiry = Math.ceil((active[0].rawEndDate - now) / 86400000);
+        if (c._daysUntilExpiry <= 30) c._expiryStatus = "urgent";
+        else if (c._daysUntilExpiry <= 60) c._expiryStatus = "soon";
+        else c._expiryStatus = "ok";
+      }
+    }
+  });
+
+  // Filter
+  var filtered = candidates;
+  if (_starFilter === "expiring") {
+    filtered = candidates.filter(function(c) { return c._expiryStatus === "soon" || c._expiryStatus === "urgent"; });
+  } else if (_starFilter === "available") {
+    filtered = candidates.filter(function(c) { return c.status !== "Placed"; });
+  }
+
+  // Search
+  var q = getQ();
+  if (q) {
+    filtered = filtered.filter(function(c) {
+      return matchQ(c.name) || matchQ(c.primaryCert || "") || matchQ(c.grade || "") || matchQ(c.title || "") || matchQ(c.owner || "");
+    });
+  }
+
+  // Stats
+  var totalStarred = candidates.length;
+  var expiringSoon = candidates.filter(function(c) { return c._expiryStatus === "soon" || c._expiryStatus === "urgent"; }).length;
+  var availableNow = candidates.filter(function(c) { return c.status !== "Placed"; }).length;
+  var aGrade = candidates.filter(function(c) { return c.grade === "A" || c.grade === "A+"; }).length;
+
+  var html = '';
+
+  // Stats row
+  html += '<div class="stats-row">';
+  html += statCard("\u2B50", "Starred", totalStarred, "Total star candidates", "#f59e0b");
+  html += statCard("\u26A0\uFE0F", "Expiring Soon", expiringSoon, "Contracts ending within 60 days", "#dc2626");
+  html += statCard("\u2705", "Available", availableNow, "Not currently placed", "#10b981");
+  html += statCard("\uD83C\uDFC6", "A / A+ Grade", aGrade, "Top-tier talent", "#176087");
+  html += '</div>';
+
+  // Toolbar
+  html += '<div class="toolbar">';
+  html += '<div class="search-wrap"><span class="ico">\uD83D\uDD0D</span><input type="text" placeholder="Search starred candidates\u2026" value="' + esc(filters.q || "") + '" oninput="filters.q=this.value;render()"></div>';
+  html += '<div class="chips">';
+  var filterOpts = [["all","All"],["expiring","Expiring Soon"],["available","Available"]];
+  filterOpts.forEach(function(f) {
+    html += '<button class="chip' + (_starFilter === f[0] ? " on" : "") + '" onclick="_starFilter=\'' + f[0] + '\';loadPage()">' + f[1] + '</button>';
+  });
+  html += '</div>';
+  html += '</div>';
+
+  if (filtered.length === 0) {
+    if (totalStarred === 0) {
+      html += '<div class="empty-state"><div class="big">\u2B50</div><div class="title">No starred candidates yet</div>';
+      html += '<div class="sub">Star your top candidates from the Candidates or Consultants page to track them here.</div></div>';
+    } else {
+      html += '<div class="empty-state"><div class="big">\uD83D\uDD0D</div><div class="title">No matches</div>';
+      html += '<div class="sub">Try adjusting your search or filter.</div></div>';
+    }
+    return html;
+  }
+
+  // Candidate cards
+  html += '<div class="star-grid">';
+  filtered.forEach(function(c) {
+    var cardClass = "star-card";
+    if (c._expiryStatus === "urgent") cardClass += " expiring-urgent";
+    else if (c._expiryStatus === "soon") cardClass += " expiring-soon";
+
+    html += '<div class="' + cardClass + '">';
+
+    // Header row: star + name + grade
+    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+    html += starBtnHtml(c.id);
+    html += '<div style="flex:1;min-width:0">';
+    html += '<div style="font-size:15px;font-weight:700;color:#0E2E47;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onclick="openDetail(' + c.id + ',null)" title="' + esc(c.name) + '">' + esc(c.name) + '</div>';
+    html += '<div style="font-size:12px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(c.title || "No title") + '</div>';
+    html += '</div>';
+    var gc = {"A":"#16a34a","A+":"#16a34a","B":"#f59e0b","C":"#ef4444"};
+    if (c.grade) html += '<span style="font-size:16px;font-weight:800;color:' + (gc[c.grade] || "#64748b") + ';padding:4px 10px;border-radius:6px;background:' + (gc[c.grade] || "#64748b") + '14">' + esc(c.grade) + '</span>';
+    html += '</div>';
+
+    // Info grid
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:12px;margin-bottom:10px">';
+    html += '<div><span style="color:#94a3b8">Cert:</span> <span style="color:#176087;font-weight:600">' + esc(c.primaryCert || "\u2014") + '</span></div>';
+    html += '<div><span style="color:#94a3b8">Status:</span> ' + badge(c.status) + '</div>';
+    html += '<div><span style="color:#94a3b8">Location:</span> ' + esc(c.location || "\u2014") + '</div>';
+    html += '<div><span style="color:#94a3b8">Owner:</span> ' + esc(c.owner || "\u2014") + '</div>';
+    html += '</div>';
+
+    // Placement / Contract info
+    if (c._activePlacement) {
+      var p = c._activePlacement;
+      var expiryColor = c._expiryStatus === "urgent" ? "#dc2626" : c._expiryStatus === "soon" ? "#f59e0b" : "#10b981";
+      html += '<div style="background:#f8fafc;border-radius:8px;padding:10px;margin-bottom:10px;border:1px solid #e2e8f0">';
+      html += '<div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Active Contract</div>';
+      html += '<div style="font-size:13px;font-weight:600;color:#0E2E47;margin-bottom:4px">' + esc(p.jobTitle) + '</div>';
+      html += '<div style="font-size:12px;color:#64748b;margin-bottom:6px">' + esc(p.client) + '</div>';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+      html += '<div style="font-size:12px"><span style="color:#94a3b8">Ends:</span> <span style="font-weight:700;color:' + expiryColor + '">' + esc(p.endDate) + '</span></div>';
+      if (c._daysUntilExpiry !== null) {
+        html += '<span style="font-size:11px;font-weight:700;color:' + expiryColor + ';background:' + expiryColor + '14;padding:2px 8px;border-radius:4px">' + c._daysUntilExpiry + ' days left</span>';
+      }
+      html += '</div></div>';
+    } else if (c.status === "Placed") {
+      html += '<div style="background:#f8fafc;border-radius:8px;padding:10px;margin-bottom:10px;border:1px solid #e2e8f0;font-size:12px;color:#94a3b8">Placed — no end date set</div>';
+    }
+
+    // Auto-tearsheet badge for expiring soon
+    if (c._expiryStatus === "soon" || c._expiryStatus === "urgent") {
+      html += '<div style="display:flex;gap:6px">';
+      html += '<button style="flex:1;padding:6px 12px;border-radius:6px;border:1px solid #176087;background:#eff6ff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openDetail(' + c.id + ',null);setTimeout(openTearsheet,500)">\uD83D\uDCC4 View Tearsheet</button>';
+      html += '<button style="padding:6px 12px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openDetail(' + c.id + ',null)">View Profile</button>';
+      html += '</div>';
+    } else {
+      html += '<div style="display:flex;gap:6px">';
+      html += '<button style="flex:1;padding:6px 12px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openDetail(' + c.id + ',null)">View Profile</button>';
+      html += '</div>';
+    }
+
+    html += '</div>'; // end star-card
+  });
+  html += '</div>'; // end star-grid
+
   return html;
 }
 
@@ -7547,9 +7755,10 @@ function renderMSAPipeline(d){
   // KPI Cards
   h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">';
   h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #176087"><div style="font-size:24px;font-weight:700;color:#176087">'+opps.length+'</div><div style="font-size:12px;color:#64748b">Total MSAs</div></div>';
-  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #f59e0b"><div style="font-size:24px;font-weight:700;color:#f59e0b">'+identifiedCount+'</div><div style="font-size:12px;color:#64748b">Prospect</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #f59e0b"><div style="font-size:24px;font-weight:700;color:#f59e0b">'+identifiedCount+'</div><div style="font-size:12px;color:#64748b">Identified</div></div>';
   h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #8b5cf6"><div style="font-size:24px;font-weight:700;color:#8b5cf6">'+qualifyingCount+'</div><div style="font-size:12px;color:#64748b">Qualifying</div></div>';
-  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #16a34a"><div style="font-size:24px;font-weight:700;color:#16a34a">'+negotiatingCount+'</div><div style="font-size:12px;color:#64748b">Negotiating</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #3b82f6"><div style="font-size:24px;font-weight:700;color:#3b82f6">'+negotiatingCount+'</div><div style="font-size:12px;color:#64748b">Negotiating</div></div>';
+  h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #16a34a"><div style="font-size:24px;font-weight:700;color:#16a34a">'+legalReviewCount+'</div><div style="font-size:12px;color:#64748b">Legal Review</div></div>';
   if(totalValue>0) h+='<div class="card" style="padding:16px;text-align:center;border-left:4px solid #0ea5e9"><div style="font-size:24px;font-weight:700;color:#0ea5e9">$'+totalValue.toLocaleString()+'</div><div style="font-size:12px;color:#64748b">Pipeline Value</div></div>';
   h+='</div>';
 
@@ -7588,7 +7797,7 @@ function renderMSAPipeline(d){
 }
 
 function renderMSABoard(opps,stages){
-  var stageColors={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
+  var stageColors={"Identified":"#f59e0b","Qualifying":"#8b5cf6","Negotiating":"#3b82f6","Legal Review":"#16a34a"};
   var h='<div style="display:grid;grid-template-columns:repeat('+stages.length+',1fr);gap:16px;overflow-x:auto;min-width:0">';
   stages.forEach(function(stage){
     var color=stageColors[stage]||"#64748b";
@@ -7624,7 +7833,7 @@ function renderMSATable(opps){
     {key:"title",label:"Title",render:function(r){return '<span class="name-link" onclick="showMSADetail('+r.id+')">'+esc(r.title)+'</span>';}},
     {key:"client",label:"Client",render:function(r){return esc(r.client||"\u2014");}},
     {key:"status",label:"Stage",render:function(r){
-      var sc={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
+      var sc={"Identified":"#f59e0b","Qualifying":"#8b5cf6","Negotiating":"#3b82f6","Legal Review":"#16a34a"};
       var c=sc[r.status]||"#64748b";
       return '<span style="padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;background:'+c+'18;color:'+c+'">'+esc(r.status)+'</span>';
     }},
@@ -7661,7 +7870,7 @@ function showMSADetail(id){
   panel.style.display="block";
   panel.innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading MSA details\u2026</div>';
   apiFetch("opportunities/"+id).then(function(d){
-    var stageColors={"Prospect":"#f59e0b","In Negotiation":"#8b5cf6","Signed":"#16a34a","Lost":"#ef4444"};
+    var stageColors={"Identified":"#f59e0b","Qualifying":"#8b5cf6","Negotiating":"#3b82f6","Legal Review":"#16a34a"};
     var color=stageColors[d.status]||"#64748b";
     var h='<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:20px">';
     h+='<div><h2 style="margin:0 0 4px;font-size:20px;color:#1e293b">'+esc(d.title)+'</h2>';
@@ -8454,6 +8663,9 @@ async function loadPage(){
         h=renderIntel(intelData);break;
       case "outreach":
         h=await renderOutreach();break;
+      case "starcandidates":
+        var scData=await apiFetch("starred");
+        h=renderStarCandidates(scData);break;
       case "newcandidates":
         var ncParams={range:_ncRange||"month"};
         if(_ncRange==="custom"&&_ncFrom&&_ncTo){ncParams.from=_ncFrom;ncParams.to=_ncTo;delete ncParams.range;}
@@ -8495,6 +8707,8 @@ checkConnection().then(function(){
     alert("Sign-in failed: "+urlParams.get("auth_error"));
     history.replaceState(null,"","/");
   }
+  // Load starred candidate IDs for star buttons
+  loadStarredIds();
   // If logged in, default to My Dashboard
   if(currentUser && currentPage==="home") currentPage="mydash";
   loadPage();

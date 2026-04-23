@@ -688,6 +688,19 @@ async function createTables() {
   await query(`CREATE INDEX IF NOT EXISTS idx_sheet_members_sheet ON custom_sheet_members(sheet_id)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_sheet_members_candidate ON custom_sheet_members(candidate_id)`);
 
+  // Starred candidates (company-wide star list for top talent tracking)
+  await query(`
+    CREATE TABLE IF NOT EXISTS starred_candidates (
+      id SERIAL PRIMARY KEY,
+      candidate_id INTEGER NOT NULL UNIQUE,
+      starred_by TEXT,
+      starred_by_name TEXT,
+      notes TEXT DEFAULT '',
+      starred_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_starred_candidate ON starred_candidates(candidate_id)`);
+
   // Indexes for common queries
   await query(`CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_candidates_modified ON candidates(date_last_modified)`);
@@ -2600,6 +2613,112 @@ async function dbListSheetsForCandidate(candidateId) {
   return rows;
 }
 
+/* ═══ STARRED CANDIDATES ═══ */
+async function dbListStarred() {
+  if (!dbReady) return [];
+  var rows = (await query(
+    "SELECT sc.*, c.first_name, c.last_name, c.occupation, c.status, c.custom_text1, c.custom_text2, c.custom_text5, c.custom_text6, c.email, c.phone, c.mobile, c.salary, c.date_available, c.address_city, c.address_state, c.owner_name FROM starred_candidates sc LEFT JOIN candidates c ON c.id = sc.candidate_id ORDER BY sc.starred_at DESC"
+  )).rows;
+  return rows.map(function(r) {
+    return {
+      id: r.candidate_id,
+      firstName: r.first_name || "", lastName: r.last_name || "",
+      name: ((r.first_name || "") + " " + (r.last_name || "")).trim(),
+      title: r.occupation || "", status: r.status || "",
+      primaryCert: r.custom_text1 || "", secondaryCert: r.custom_text2 || "",
+      epicRole: r.custom_text5 || "", grade: r.custom_text6 || "",
+      email: r.email || "", phone: r.phone || "", mobile: r.mobile || "",
+      salary: r.salary ? "$" + Number(r.salary).toLocaleString() : "",
+      available: r.date_available ? fmtDate(r.date_available) : "",
+      location: [r.address_city, r.address_state].filter(Boolean).join(", "),
+      owner: r.owner_name || "",
+      starredBy: r.starred_by_name || r.starred_by || "",
+      starredAt: r.starred_at,
+      starNotes: r.notes || "",
+    };
+  });
+}
+
+async function dbStarCandidate(candidateId, userEmail, userName, notes) {
+  if (!dbReady) return null;
+  await query(
+    "INSERT INTO starred_candidates (candidate_id, starred_by, starred_by_name, notes) VALUES ($1, $2, $3, $4) ON CONFLICT (candidate_id) DO UPDATE SET starred_by = $2, starred_by_name = $3, notes = $4, starred_at = NOW()",
+    [candidateId, userEmail || "", userName || "", notes || ""]
+  );
+  return true;
+}
+
+async function dbUnstarCandidate(candidateId) {
+  if (!dbReady) return null;
+  await query("DELETE FROM starred_candidates WHERE candidate_id = $1", [candidateId]);
+  return true;
+}
+
+async function dbIsStarred(candidateId) {
+  if (!dbReady) return false;
+  var row = await getOne("SELECT 1 FROM starred_candidates WHERE candidate_id = $1", [candidateId]);
+  return !!row;
+}
+
+async function dbGetAllStarredIds() {
+  if (!dbReady) return [];
+  var rows = (await query("SELECT candidate_id FROM starred_candidates")).rows;
+  return rows.map(function(r) { return r.candidate_id; });
+}
+
+async function dbGetStarredWithPlacements() {
+  if (!dbReady) return [];
+  // Get all starred candidates with their active placement end dates
+  var rows = (await query(
+    `SELECT sc.candidate_id, sc.starred_by_name, sc.starred_at, sc.notes as star_notes,
+            c.first_name, c.last_name, c.occupation, c.status, c.custom_text1, c.custom_text2,
+            c.custom_text5, c.custom_text6, c.email, c.phone, c.mobile, c.salary, c.date_available,
+            c.address_city, c.address_state, c.owner_name,
+            p.id as placement_id, p.job_title, p.client_name, p.date_end, p.date_begin, p.status as placement_status, p.pay_rate, p.client_bill_rate
+     FROM starred_candidates sc
+     LEFT JOIN candidates c ON c.id = sc.candidate_id
+     LEFT JOIN placements p ON p.candidate_id = sc.candidate_id AND (p.is_deleted IS NULL OR p.is_deleted = false)
+     ORDER BY sc.starred_at DESC`
+  )).rows;
+  // Group by candidate (they may have multiple placements)
+  var map = {};
+  rows.forEach(function(r) {
+    if (!map[r.candidate_id]) {
+      map[r.candidate_id] = {
+        id: r.candidate_id,
+        firstName: r.first_name || "", lastName: r.last_name || "",
+        name: ((r.first_name || "") + " " + (r.last_name || "")).trim(),
+        title: r.occupation || "", status: r.status || "",
+        primaryCert: r.custom_text1 || "", secondaryCert: r.custom_text2 || "",
+        epicRole: r.custom_text5 || "", grade: r.custom_text6 || "",
+        email: r.email || "", phone: r.phone || "", mobile: r.mobile || "",
+        salary: r.salary ? "$" + Number(r.salary).toLocaleString() : "",
+        available: r.date_available ? fmtDate(r.date_available) : "",
+        location: [r.address_city, r.address_state].filter(Boolean).join(", "),
+        owner: r.owner_name || "",
+        starredBy: r.starred_by_name || "",
+        starredAt: r.starred_at,
+        starNotes: r.star_notes || "",
+        placements: [],
+      };
+    }
+    if (r.placement_id) {
+      map[r.candidate_id].placements.push({
+        id: r.placement_id,
+        jobTitle: r.job_title || "",
+        client: r.client_name || "",
+        status: r.placement_status || "",
+        startDate: r.date_begin ? fmtDate(r.date_begin) : "",
+        endDate: r.date_end ? fmtDate(r.date_end) : "",
+        rawEndDate: r.date_end || null,
+        payRate: r.pay_rate ? "$" + Number(r.pay_rate).toFixed(2) : "",
+        billRate: r.client_bill_rate ? "$" + Number(r.client_bill_rate).toFixed(2) : "",
+      });
+    }
+  });
+  return Object.values(map);
+}
+
 /* ═══ EXPORTS ═══ */
 module.exports = {
   init: init,
@@ -2640,5 +2759,12 @@ module.exports = {
   updateSheet: dbUpdateSheet,
   deleteSheet: dbDeleteSheet,
   listSheetsForCandidate: dbListSheetsForCandidate,
+  // Starred candidates
+  listStarred: dbListStarred,
+  starCandidate: dbStarCandidate,
+  unstarCandidate: dbUnstarCandidate,
+  isStarred: dbIsStarred,
+  getAllStarredIds: dbGetAllStarredIds,
+  getStarredWithPlacements: dbGetStarredWithPlacements,
   get ready() { return dbReady; },
 };
