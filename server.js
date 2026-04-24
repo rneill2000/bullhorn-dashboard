@@ -5217,7 +5217,7 @@ app.get("/api/bizdev", async (req, res) => {
     try {
       if (db.ready) {
         var expRows = await db.getAll(
-          "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) AND (employment_type IS NULL OR (employment_type NOT ILIKE '%direct%' AND employment_type NOT ILIKE '%permanent%')) ORDER BY date_end ASC",
+          "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (employment_type IS NULL OR (employment_type NOT ILIKE '%direct%' AND employment_type NOT ILIKE '%permanent%')) ORDER BY date_end ASC",
           [now, now + days30]
         );
         expiringPlacements = expRows.map(function(p) {
@@ -5258,7 +5258,7 @@ app.get("/api/bizdev", async (req, res) => {
     try {
       if (db.ready) {
         var startRows = await db.getAll(
-          "SELECT * FROM placements WHERE date_begin IS NOT NULL AND date_begin >= $1 AND date_begin <= $2 AND (is_deleted IS NULL OR is_deleted = false) ORDER BY date_begin ASC",
+          "SELECT * FROM placements WHERE date_begin IS NOT NULL AND date_begin >= $1 AND date_begin <= $2 ORDER BY date_begin ASC",
           [now - days7, now + days30]
         );
         upcomingStarts = startRows.map(function(p) {

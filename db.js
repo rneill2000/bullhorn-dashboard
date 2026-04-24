@@ -2172,7 +2172,7 @@ async function dbGetDashboard() {
   // If no rows with status filter, try without (some BH instances use different status names)
   if (expRows.length === 0) {
     expRows = (await query(
-      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) " + PERM_FILTER + " ORDER BY date_end ASC", [now, in30Days]
+      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 " + PERM_FILTER + " ORDER BY date_end ASC", [now, in30Days]
     )).rows;
   }
 
@@ -2441,7 +2441,7 @@ async function dbGetExpiringPlacements(days) {
   // Fallback without status filter if no results
   if (rows.length === 0) {
     rows = (await query(
-      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 AND (is_deleted IS NULL OR is_deleted = false) " + PERM_FILTER2 + " ORDER BY date_end ASC", [now, future]
+      "SELECT * FROM placements WHERE date_end IS NOT NULL AND date_end > 0 AND date_end >= $1 AND date_end <= $2 " + PERM_FILTER2 + " ORDER BY date_end ASC", [now, future]
     )).rows;
   }
 
