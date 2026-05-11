@@ -662,7 +662,7 @@ app.get("/api/candidates/:id", async (req, res) => {
       // Fetch notes via query/ (search/ can fail if notes aren't indexed)
       bhFetchAll("query/Note", {
         where: `personReference.id=${id} AND isDeleted=false`,
-        fields: "id,action,comments,dateAdded,commentingPerson",
+        fields: "id,action,comments,dateAdded,commentingPerson(id,firstName,lastName)",
         orderBy: "-dateAdded",
         count: 200,
       }).catch(function(e) { console.log("[Candidate Detail] Notes query error:", e.message); return { data: [] }; }),
@@ -4539,8 +4539,44 @@ var OUTREACH_TEMPLATES = [
   }
 ];
 
-app.get("/api/outreach/templates", (req, res) => {
-  res.json({ templates: OUTREACH_TEMPLATES });
+app.get("/api/outreach/templates", async (req, res) => {
+  var all = [...OUTREACH_TEMPLATES];
+  // Merge in user-created templates from DB
+  if (db.ready) {
+    try {
+      var custom = await db.listEmailTemplates();
+      custom.forEach(function(t) { t.isCustom = true; });
+      all = all.concat(custom);
+    } catch(e) { console.log("[Templates] DB error:", e.message); }
+  }
+  res.json({ templates: all });
+});
+
+app.post("/api/outreach/templates", express.json(), async (req, res) => {
+  try {
+    var { name, subject, body } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: "Template name is required" });
+    var user = getUser(req);
+    var id = await db.saveEmailTemplate({
+      name: name.trim(),
+      subject: subject || "",
+      body: body || "",
+      createdBy: user ? (user.firstName + " " + user.lastName).trim() : "",
+    });
+    res.json({ success: true, id: id });
+  } catch(e) {
+    console.error("[Save Template]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete("/api/outreach/templates/:id", async (req, res) => {
+  try {
+    await db.deleteEmailTemplate(req.params.id);
+    res.json({ success: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Outreach Sequences (automated multi-step cadences) ──
@@ -6220,6 +6256,13 @@ const EPIC_CERTS = {
   "stork": "Stork", "kaleidoscope": "Kaleidoscope",
   "home health": "Home Health", "comfort": "Comfort",
   "bugsy": "Bugsy", "cloverleaf": "Cloverleaf",
+  "beacon": "Beacon", "beacon oncology": "Beacon",
+  "compass rose": "Compass Rose", "compass rose analytics": "Compass Rose",
+  "compass rose clinical": "Compass Rose",
+  "chronicare": "CronicCare", "chroniccare": "ChronicCare",
+  "caboodle": "Caboodle", "cogito": "Cogito",
+  "nebula": "Nebula", "haiku": "Haiku", "canto": "Canto",
+  "lumens": "Lumens", "epic cheers": "Cheers",
 };
 const EPIC_CERT_NAMES = [...new Set(Object.values(EPIC_CERTS))];
 
@@ -6227,10 +6270,13 @@ const EPIC_CERT_NAMES = [...new Set(Object.values(EPIC_CERTS))];
  * Epic roles to detect in resumes.
  */
 const EPIC_ROLES = [
-  "Technical Services", "Implementation Services", "Analyst", "Developer",
-  "Trainer", "Project Manager", "Functional Analyst", "Technical Architect",
-  "Integration Analyst", "Report Writer", "Application Coordinator",
-  "Team Lead", "Principal Trainer", "Credentialed Trainer",
+  // Order matters: specific compound roles must come before generic ones
+  "Technical Services", "Implementation Services",
+  "Functional Analyst", "Integration Analyst", "Technical Architect",
+  "Application Coordinator", "Report Writer",
+  "Principal Trainer", "Credentialed Trainer",
+  "Project Manager", "Team Lead",
+  "Analyst", "Developer", "Trainer",  // generic roles last
 ];
 
 /**
@@ -6238,8 +6284,102 @@ const EPIC_ROLES = [
  * Returns object with fields + confidence scores.
  */
 function parseResumeText(text) {
-  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
-  const fullText = text;
+  // ── PRE-PROCESS: detect garbled PDF text (no line breaks) and try to fix ──
+  var processedText = text;
+  var lineCount = text.split(/\n/).filter(function(l) { return l.trim(); }).length;
+  if (lineCount <= 3 && text.length > 200) {
+    // Likely garbled PDF output — insert line breaks at likely boundaries
+    processedText = text
+      .replace(/(Summary|Objective|Experience|Education|Skills|Certif|Contact)/gi, "\n$1") // section headers first
+      .replace(/(\.(?:com|org|net|edu))\s*([A-Z])/g, "$1\n$2")   // domain ending → new section
+      .replace(/(\d{5}(?:-\d{4})?)([A-Za-z])/g, "$1\n$2")        // zip code followed by text
+      .replace(/([a-zA-Z])(\(?(?:\d{3})\)?[-.\s]?\d{3}[-.\s]?\d{4})/g, "$1\n$2") // text followed by phone
+      .replace(/([^\n\s])([a-zA-Z0-9._%+-]{2,}@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, function(m, pre, email) {
+        if (/[a-zA-Z0-9._%+-]/.test(pre) && !/[@.]/.test(pre)) {
+          var combined = pre + email;
+          if (/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(combined)) return m;
+          return pre + "\n" + email;
+        }
+        return m;
+      }) // text butted against email
+      // Split before "City ST ZIP" patterns (e.g. "Denver CO 80202")
+      .replace(/([a-zA-Z])(\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Suite|Ste|Apt|#)\s*\d+)/g, "$1\n$2") // street address
+      .replace(/([a-zA-Z\d])([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s*,?\s*[A-Z]{2}\s+\d{5})/g, "$1\n$2"); // city state zip
+    // If the first "line" is still very long and starts with potential name + credentials,
+    // try to split the name from what follows (e.g. "Michael Chen MBA CPHIMS1500 Main St...")
+    var firstLine = processedText.split(/\n/)[0] || "";
+    if (firstLine.length > 60) {
+      // Try to find where name+credentials end and address/other data begins
+      var nameSplit = firstLine.match(/^([A-Za-z][A-Za-z'. -]+(?:\s+(?:MBA|RN|BSN|MSN|DNP|MD|DO|PhD|PharmD|CPA|PMP|CPHIMS|FHIMSS|RHIA|RHIT|CCS|CPC|CBCS|LCSW|MPH|MHA|MPA|JD|Esq|FACHE))*)\s*(\d.+|$)/i);
+      if (nameSplit && nameSplit[1].length >= 4) {
+        processedText = nameSplit[1].trim() + "\n" + (nameSplit[2] || "").trim() + processedText.substring(firstLine.length);
+      }
+    }
+  }
+
+  // ── PRE-PROCESS PASS 2: fix DOCX-style concatenation (runs always) ──
+  // mammoth often merges styled blocks into single lines. Fix line-by-line.
+  var CREDENTIAL_LIST = "MBA|RN|BSN|MSN|DNP|MD|DO|PhD|PharmD|CPA|PMP|CPHIMS|FHIMSS|RHIA|RHIT|CCS|CPC|CBCS|LCSW|MPH|MHA|MPA|JD|Esq|FACHE|CSSBB|NP|PA|FNP|CNS|CRNA|LPN|CNA|CISA|CISSP|MCSE";
+  var fixedLines = processedText.split(/\n/).map(function(rawLine) {
+    var line = rawLine;
+    // (a) Header line: "Name, CREDENTIALTitle text..." — split after credential before title
+    //     e.g. "BRIAN ROTH, MHAEnterprise Epic..." → "BRIAN ROTH, MHA\nEnterprise Epic..."
+    var credSplitRe = new RegExp("^([A-Za-z][A-Za-z'. ,-]+(?:" + CREDENTIAL_LIST + "))([A-Z][a-z].{10,})", "");
+    var credSplit = line.match(credSplitRe);
+    if (credSplit) {
+      line = credSplit[1].trim() + "\n" + credSplit[2];
+    }
+    // (b) Split "Phone: NNN.NNN.NNNN | Email: x@y" into separate lines around | delimiters
+    //     but only for header-style lines containing Phone/Email/LinkedIn
+    if (/Phone|Email|LinkedIn/i.test(line) && /\|/.test(line)) {
+      line = line.replace(/\s*\|\s*/g, "\n");
+    }
+    // (c) Location + contact: "City, State | Open to..." → split on |
+    if (/Open to|Willing to|Available/i.test(line) && /\|/.test(line)) {
+      line = line.replace(/\s*\|\s*/g, "\n");
+    }
+    // (d) Work history: "Job TitleCompany Name | YYYY to YYYY" — split where a lowercase letter
+    //     butts directly against an uppercase letter (no space) before a date-containing segment
+    //     e.g. "Senior Director, Outpatient Clinical Systems, Patient Digital IntakeNorthwell Health | 2023 to Present"
+    //     Key insight: the concatenation point is always lowercase→uppercase with NO space
+    if (/(?:19|20)\d{2}\s*(?:to|-|–|—)\s*(?:(?:19|20)\d{2}|Present|Current)/i.test(line) && line.length > 50) {
+      // Find the LAST lowercase-to-uppercase transition that's followed by a date range + org-like word
+      var bestWorkSplit = null;
+      var workRe = /([a-z,)])([A-Z])/g;
+      var wm;
+      while ((wm = workRe.exec(line)) !== null) {
+        var afterPart = line.substring(wm.index + 1); // from the uppercase letter onward
+        // Check if this split point leads to something that looks like "OrgName ... | date range"
+        if (/^[A-Z][a-zA-Z&'. ]+.*(?:19|20)\d{2}\s*(?:to|-|–|—)\s*(?:(?:19|20)\d{2}|Present|Current)/i.test(afterPart)) {
+          bestWorkSplit = wm.index + 1; // split before the uppercase letter
+        }
+      }
+      if (bestWorkSplit) {
+        line = line.substring(0, bestWorkSplit).trim() + "\n" + line.substring(bestWorkSplit).trim();
+      }
+    }
+    // (e) "Epic Systems, Application Coordinator2011 to 2012" — split before year at end
+    var roleDateSplit = line.match(/^(.+[a-zA-Z])((?:19|20)\d{2}\s+to\s+(?:(?:19|20)\d{2}|Present|Current))$/i);
+    if (roleDateSplit) {
+      line = roleDateSplit[1].trim() + " | " + roleDateSplit[2].trim();
+    }
+    // (f) Education: "Bachelor of Science, PsychologyIowa State University"
+    //     Split where a field name (lowercase) butts against a school name (uppercase + University/College/Institute)
+    var eduSplit = line.match(/^(.+[a-z])((?:[A-Z][a-zA-Z ]*)?(?:University|College|Institute|School)[^\n]*)$/);
+    if (eduSplit) {
+      line = eduSplit[1].trim() + "\n" + eduSplit[2].trim();
+    }
+    // (g) Engagement lines: "DaVitaLed ambulatory..." — org name then "Led/Managed/Supported..."
+    var engageSplit = line.match(/^([A-Z][a-zA-Z&' .]+?)((?:Led|Managed|Supported|Conducted|Designed|Built|Directed|Standardized|Oversaw|Created|Developed|Served|Drove)[^\n]+)$/);
+    if (engageSplit && engageSplit[1].length >= 3 && engageSplit[1].length <= 40) {
+      line = engageSplit[1].trim() + "\n" + engageSplit[2].trim();
+    }
+    return line;
+  });
+  processedText = fixedLines.join("\n");
+
+  const lines = processedText.split(/\n/).map(l => l.trim()).filter(Boolean);
+  const fullText = processedText;
   const result = {
     firstName: { value: "", confidence: 0 },
     lastName: { value: "", confidence: 0 },
@@ -6283,16 +6423,34 @@ function parseResumeText(text) {
   }
 
   // ── NAME (from first few lines, avoiding email/phone lines) ──
+  const CREDENTIAL_SUFFIXES = /\b(?:MBA|RN|BSN|MSN|DNP|MD|DO|PhD|PharmD|CPA|PMP|CPHIMS|FHIMSS|RHIA|RHIT|CCS|CPC|CBCS|CSSBB|LCSW|NP|PA|FNP|CNS|CRNA|LPN|CNA|MPH|MHA|MPA|JD|Esq|FACHE|CISA|CISSP|MCSE)\b/g;
   const headerLines = lines.slice(0, 8);
   for (const line of headerLines) {
     // Skip lines that are mostly email, phone, URL, or address-like
     if (line.match(/@/) || line.match(/\d{3}[-.\s]\d{3}/) || line.match(/^http/i)) continue;
     if (line.match(/^\d+\s/) || line.match(/suite|apt|road|street|drive|ave|blvd|ln|ct/i)) continue;
     // Skip section headers
-    if (line.match(/^(summary|objective|experience|education|skills|certif|profess|techni)/i)) continue;
-    // Name: typically 2-4 words, all alpha, first line that looks like a name
-    const nameCandidate = line.replace(/[,|•·\-]/g, " ").trim();
-    const words = nameCandidate.split(/\s+/).filter(w => w.match(/^[A-Za-z'.]+$/));
+    if (line.match(/^(summary|objective|experience|education|skills|certif|profess|techni|contact)/i)) continue;
+    // Skip lines that are Epic cert/role descriptors
+    if (line.match(/^epic\s+(certif|role|module|application)/i)) continue;
+    // Strip credential suffixes before name detection
+    var nameCandidate = line
+      .replace(CREDENTIAL_SUFFIXES, "")
+      .replace(/[|•·]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    // Detect "LAST, FIRST" or "LAST, FIRST M." format (comma after first word)
+    // After credential stripping, clean up residual commas, periods, and spaces for matching
+    var nameClean = nameCandidate.replace(/,\s*,/g, ",").replace(/[,.\s]+$/,"").replace(/\s+/g," ").trim();
+    const lastFirstMatch = nameClean.match(/^([A-Za-z'-]+)\s*,\s*([A-Za-z'-]+)(?:\s+[A-Za-z'.]{1,3}\.?)?\s*$/);
+    if (lastFirstMatch) {
+      result.firstName = { value: lastFirstMatch[2], confidence: 0.95 };
+      result.lastName = { value: lastFirstMatch[1], confidence: 0.95 };
+      break;
+    }
+    // Normal "FIRST LAST" or "FIRST MIDDLE LAST" — strip remaining commas/dashes
+    nameCandidate = nameCandidate.replace(/[,\-]/g, " ").replace(/\s+/g, " ").trim();
+    const words = nameCandidate.split(/\s+/).filter(w => w.match(/^[A-Za-z'.]+$/) && w.length > 1);
     if (words.length >= 2 && words.length <= 4 && nameCandidate.length < 40) {
       result.firstName = { value: words[0], confidence: 0.90 };
       result.lastName = { value: words[words.length - 1], confidence: 0.90 };
@@ -6305,10 +6463,14 @@ function parseResumeText(text) {
   }
 
   // ── ADDRESS / CITY / STATE / ZIP ──
-  // Look for "City, ST 12345" pattern
-  const addrMatch = fullText.match(/([A-Z][a-zA-Z\s]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/);
+  // Look for "City, ST 12345" or "City ST 12345" pattern — use [a-zA-Z ] (no \s) to avoid crossing newlines
+  const addrMatch = fullText.match(/([A-Z][a-zA-Z ]+),?\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/);
   if (addrMatch) {
-    result.city = { value: addrMatch[1].trim(), confidence: 0.92 };
+    // Clean city: take only the last word(s) that look like a city name (avoid street bleed-in)
+    var rawCity = addrMatch[1].trim();
+    var streetCutoff = rawCity.match(/.+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Court|Ct|Way|Place|Pl)\s+(.+)/i);
+    if (streetCutoff) rawCity = streetCutoff[1].trim();
+    result.city = { value: rawCity, confidence: 0.92 };
     result.state = { value: addrMatch[2], confidence: 0.95 };
     result.zip = { value: addrMatch[3], confidence: 0.95 };
     // Look for street address on preceding line
@@ -6322,24 +6484,160 @@ function parseResumeText(text) {
     }
   }
 
+  // Fallback: "City, State" (full state name, no zip) — common in docx resumes
+  // Only look in the first ~500 chars (header area) to avoid matching org locations in work history
+  if (!result.city.value) {
+    var US_STATES = {
+      "alabama":"AL","alaska":"AK","arizona":"AZ","arkansas":"AR","california":"CA",
+      "colorado":"CO","connecticut":"CT","delaware":"DE","florida":"FL","georgia":"GA",
+      "hawaii":"HI","idaho":"ID","illinois":"IL","indiana":"IN","iowa":"IA",
+      "kansas":"KS","kentucky":"KY","louisiana":"LA","maine":"ME","maryland":"MD",
+      "massachusetts":"MA","michigan":"MI","minnesota":"MN","mississippi":"MS","missouri":"MO",
+      "montana":"MT","nebraska":"NE","nevada":"NV","new hampshire":"NH","new jersey":"NJ",
+      "new mexico":"NM","new york":"NY","north carolina":"NC","north dakota":"ND","ohio":"OH",
+      "oklahoma":"OK","oregon":"OR","pennsylvania":"PA","rhode island":"RI","south carolina":"SC",
+      "south dakota":"SD","tennessee":"TN","texas":"TX","utah":"UT","vermont":"VT",
+      "virginia":"VA","washington":"WA","west virginia":"WV","wisconsin":"WI","wyoming":"WY",
+      "district of columbia":"DC"
+    };
+    var headerArea = fullText.substring(0, 500);
+    // Match "City, StateName" in header (e.g. "Portland, Maine") — use [^\n] to avoid crossing lines
+    // Try all matches, not just the first, since "ROTH, MHA" might match before "Portland, Maine"
+    var cityStateRe = /([A-Z][a-z]+(?:[ ]+[A-Z][a-z]+)?),[ ]*([A-Z][a-z]+(?:[ ]+[A-Z][a-z]+)?)/g;
+    var csm;
+    while ((csm = cityStateRe.exec(headerArea)) !== null) {
+      var stateAbbr = US_STATES[csm[2].toLowerCase()];
+      if (stateAbbr) {
+        result.city = { value: csm[1].trim(), confidence: 0.88 };
+        result.state = { value: stateAbbr, confidence: 0.90 };
+        result.address = { value: csm[1] + ", " + stateAbbr, confidence: 0.80 };
+        break;
+      }
+    }
+    // Also try "City, ST" (2-letter abbreviation without zip) in header
+    if (!result.city.value) {
+      var cityAbbrMatch = headerArea.match(/([A-Z][a-z]+(?:[ ]+[A-Z][a-z]+)?),[ ]*([A-Z]{2})(?:[ \n|]|$)/);
+      if (cityAbbrMatch) {
+        var stateVals = Object.values(US_STATES);
+        if (stateVals.indexOf(cityAbbrMatch[2]) !== -1) {
+          result.city = { value: cityAbbrMatch[1].trim(), confidence: 0.88 };
+          result.state = { value: cityAbbrMatch[2], confidence: 0.90 };
+          result.address = { value: cityAbbrMatch[1] + ", " + cityAbbrMatch[2], confidence: 0.80 };
+        }
+      }
+    }
+  }
+
   // ── EPIC CERTIFICATIONS ──
   const foundCerts = new Set();
   const lowerText = fullText.toLowerCase();
-  // Check for each known cert name in the text
+
+  // Ambiguous cert names that also appear as common words / city names.
+  // Only count these if they appear in an Epic-context section or cert listing.
+  const AMBIGUOUS_CERTS = new Set(["phoenix", "clarity", "comfort", "welcome", "wisdom", "ambulatory", "inpatient"]);
+
+  // First pass: look for an explicit Epic Certifications section or a cert listing line
+  // Match cert section headers like "Epic Certifications", "Active Epic Certifications", "EPIC CERTIFIED MODULES"
+  const epicSectionMatch = fullText.match(/(?:(?:Active|Current)\s+)?(?:Epic|EPIC)\s*(?:Certif|Module|Application|System|Certified)[^\n]*(?:\n[^\n]*){0,15}/i);
+  // Also detect pipe/comma cert listing lines like "Hospital Billing | Cadence | Prelude"
+  const certListMatch = fullText.match(/(?:EPIC\s+)?CERTIF[A-Z]*\s*[:\n]\s*([^\n]+)/i);
+
+  // Build the "cert context" — text blocks where cert names are most trustworthy
+  var certContext = "";
+  if (epicSectionMatch) certContext += epicSectionMatch[0].toLowerCase() + " ";
+  if (certListMatch) certContext += certListMatch[0].toLowerCase() + " ";
+  // Also look for lines that list multiple known certs separated by | or , or -
+  // But skip bullet-point description lines (start with •/-/*) which mention certs in passing
+  const allLines = fullText.split(/\n/);
+  for (var li = 0; li < allLines.length; li++) {
+    var rawLine = allLines[li].trim();
+    var lineLower = rawLine.toLowerCase();
+    // Skip descriptive bullets — these mention certs in context, not as listings
+    if (rawLine.match(/^[•\-\*▪]/) || rawLine.match(/^(?:led|managed|supported|created|designed|developed|conducted|optimized|trained)/i)) continue;
+    // Skip lines that are too long to be a cert listing (>120 chars = probably a description)
+    if (rawLine.length > 120) continue;
+    var certHits = 0;
+    for (var cn of EPIC_CERT_NAMES) {
+      if (lineLower.includes(cn.toLowerCase())) certHits++;
+    }
+    if (certHits >= 2) certContext += lineLower + " ";
+  }
+
+  // Check each cert name against cert context (preferred) or full text
+  // If we found a cert section/listing, strongly prefer only certs from that section
+  var hasCertSection = certContext.trim().length > 10;
   for (const certName of EPIC_CERT_NAMES) {
-    if (lowerText.includes(certName.toLowerCase())) {
+    var certLower = certName.toLowerCase();
+    var certRegex = new RegExp("\\b" + certLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i");
+    if (AMBIGUOUS_CERTS.has(certLower)) {
+      // Ambiguous — only match inside cert context sections
+      if (certContext && certRegex.test(certContext)) {
+        foundCerts.add(certName);
+      }
+    } else if (hasCertSection) {
+      // We have a cert section — prefer certs listed there to avoid false positives
+      // from work history descriptions like "Supported Resolute Hospital Billing module"
+      if (certRegex.test(certContext)) {
+        foundCerts.add(certName);
+      }
+    } else {
+      // No cert section found — match in full text but require word boundary
+      if (certRegex.test(fullText)) {
+        foundCerts.add(certName);
+      }
+    }
+  }
+
+  // Also scan cert context for alias matches (e.g. "pb" → Professional Billing)
+  if (certContext) {
+    for (const [alias, canonical] of Object.entries(EPIC_CERTS)) {
+      if (alias.length > 2) {
+        var aliasRegex = new RegExp("\\b" + alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i");
+        if (aliasRegex.test(certContext)) {
+          foundCerts.add(canonical);
+        }
+      }
+    }
+  }
+
+  // Also gather certs near the "certified" keyword (covers "Beaker certified" and "certified in X")
+  // This catches certs that appear in prose near "certified" but aren't in a formal cert listing
+  const certifiedAfter = fullText.match(/certif[a-z]*[^.\n]*?[.\n]/gi) || [];
+  const certifiedBefore = fullText.match(/[^.\n]*?certif[a-z]*/gi) || [];
+  const certifiedText = certifiedAfter.concat(certifiedBefore).join(" ").toLowerCase();
+  for (const certName of EPIC_CERT_NAMES) {
+    var certLower2 = certName.toLowerCase();
+    var certRegex2 = new RegExp("\\b" + certLower2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i");
+    if (AMBIGUOUS_CERTS.has(certLower2)) continue; // still skip ambiguous ones
+    if (certRegex2.test(certifiedText)) {
       foundCerts.add(certName);
     }
   }
-  // Also check for "Epic" keyword context for certs
-  const epicSectionMatch = fullText.match(/(?:Epic|EPIC)\s*(?:Certif|Module|Application|System)[^\n]*(?:\n[^\n]*){0,10}/i);
-  if (epicSectionMatch) {
-    const epicBlock = epicSectionMatch[0].toLowerCase();
-    for (const [alias, canonical] of Object.entries(EPIC_CERTS)) {
-      if (alias.length > 2 && epicBlock.includes(alias)) {
-        foundCerts.add(canonical);
+
+  // Filter: if we have a cert section, cross-check all found certs.
+  // Keep a cert only if it appears in: (a) the cert context, OR (b) near the "certified" keyword.
+  // This filters out false positives from work-history descriptions.
+  var hasCertSection = certContext.trim().length > 10;
+  if (hasCertSection) {
+    var trustedCerts = new Set();
+    for (const c of foundCerts) {
+      var cReg = new RegExp("\\b" + c.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b");
+      if (cReg.test(certContext) || cReg.test(certifiedText)) {
+        trustedCerts.add(c);
       }
     }
+    foundCerts.clear();
+    for (var tc of trustedCerts) foundCerts.add(tc);
+  }
+
+  // Deduplicate: if a compound cert exists, remove its generic parts
+  if (foundCerts.has("EpicCare Ambulatory")) { foundCerts.delete("Ambulatory"); foundCerts.delete("EpicCare"); }
+  if (foundCerts.has("EpicCare Inpatient")) { foundCerts.delete("Inpatient"); foundCerts.delete("EpicCare"); }
+  if (foundCerts.has("EpicCare") && foundCerts.has("Ambulatory") && !foundCerts.has("EpicCare Ambulatory")) {
+    foundCerts.add("EpicCare Ambulatory"); foundCerts.delete("EpicCare"); foundCerts.delete("Ambulatory");
+  }
+  if (foundCerts.has("EpicCare") && foundCerts.has("Inpatient") && !foundCerts.has("EpicCare Inpatient")) {
+    foundCerts.add("EpicCare Inpatient"); foundCerts.delete("EpicCare"); foundCerts.delete("Inpatient");
   }
   if (foundCerts.size > 0) {
     result.epicCertifications = {
@@ -6349,16 +6647,70 @@ function parseResumeText(text) {
   }
 
   // ── EPIC ROLE ──
-  for (const role of EPIC_ROLES) {
-    const roleRegex = new RegExp("\\b" + role.replace(/\s+/g, "\\s+") + "\\b", "i");
-    if (roleRegex.test(fullText)) {
-      result.epicRole = { value: role, confidence: 0.80 };
-      // Higher confidence if "Epic" is near the role mention
-      const epicRoleMatch = fullText.match(new RegExp("Epic\\s+" + role.replace(/\s+/g, "\\s+"), "i"));
-      if (epicRoleMatch) {
-        result.epicRole.confidence = 0.92;
+  // Strategy: find the FIRST (most recent / most prominent) role in the text.
+  // "Epic Role: X" line is highest priority; then "Epic X" in a title line;
+  // then role in header lines; then first occurrence in body text.
+  // Generic single-word roles (Analyst, Developer, Trainer) only win if no compound role found.
+  const GENERIC_ROLES = new Set(["Analyst", "Developer", "Trainer"]);
+
+  // Priority 1: explicit "Epic Role:" line
+  const epicRoleLine = fullText.match(/Epic\s+Role\s*:\s*([^\n,]+)/i);
+  if (epicRoleLine) {
+    var declaredRole = epicRoleLine[1].trim();
+    // Match the declared role against our known list
+    for (const role of EPIC_ROLES) {
+      var roleReg = new RegExp("\\b" + role.replace(/\s+/g, "\\s+") + "\\b", "i");
+      if (roleReg.test(declaredRole)) {
+        result.epicRole = { value: role, confidence: 0.95 };
+        break;
       }
-      break;
+    }
+  }
+
+  // Priority 2: if no explicit role line, find the best role by position and context
+  if (!result.epicRole.value) {
+    var bestRole = null;
+    var bestRoleScore = 0;
+    for (const role of EPIC_ROLES) {
+      const roleRegex = new RegExp("\\b" + role.replace(/\s+/g, "\\s+") + "\\b", "i");
+      if (!roleRegex.test(fullText)) continue;
+      // Check if "Epic" appears directly before the role in a title context
+      const epicPrefixRegex = new RegExp("Epic\\s+" + role.replace(/\s+/g, "\\s+"), "i");
+      const hasEpicPrefix = epicPrefixRegex.test(fullText);
+      // Check if role appears on the same line as "Epic Systems" or "Epic" (e.g. "Epic Systems, Application Coordinator")
+      var onEpicLine = false;
+      var allTextLines = fullText.split(/\n/);
+      for (var eli = 0; eli < allTextLines.length; eli++) {
+        if (/\bEpic\b/i.test(allTextLines[eli]) && roleRegex.test(allTextLines[eli])) {
+          onEpicLine = true;
+          break;
+        }
+      }
+      // Check if role appears in header/title context (first 5 lines)
+      const inHeader = headerLines.slice(0, 5).some(function(hl) { return roleRegex.test(hl); });
+      // Base score: 5 = on same line as "Epic" (strongest signal), 4 = Epic-prefixed, 3 = in header, 1 = in body
+      var score = 1;
+      if (hasEpicPrefix) score = 4;
+      if (onEpicLine) score = 5;
+      else if (inHeader) score = 3;
+      // Penalty for generic roles — only use them as last resort
+      if (GENERIC_ROLES.has(role)) score -= 2;
+      // Tiebreaker: prefer the role that appears FIRST in the text (most recent job / top of resume)
+      if (score > bestRoleScore) {
+        bestRole = role;
+        bestRoleScore = score;
+      } else if (score === bestRoleScore && bestRole) {
+        // Same score — prefer whichever appears first in the text
+        var curIdx = fullText.search(new RegExp("\\b" + role.replace(/\s+/g, "\\s+") + "\\b", "i"));
+        var bestIdx = fullText.search(new RegExp("\\b" + bestRole.replace(/\s+/g, "\\s+") + "\\b", "i"));
+        if (curIdx < bestIdx) {
+          bestRole = role;
+        }
+      }
+    }
+    if (bestRole) {
+      var roleConf = bestRoleScore >= 4 ? 0.92 : bestRoleScore >= 3 ? 0.88 : 0.75;
+      result.epicRole = { value: bestRole, confidence: roleConf };
     }
   }
 
@@ -6408,18 +6760,74 @@ function parseResumeText(text) {
           degree: degreeLabels[i],
           field: field,
           confidence: 0.85,
+          _pos: m.index, // track position for school matching
         });
       }
     }
   });
-  // Look for university/college names
-  const uniMatch = fullText.match(/(?:University|College|Institute|School)\s+(?:of\s+)?[A-Z][^\n,]{2,40}/g);
-  if (uniMatch && eduEntries.length > 0) {
-    eduEntries[0].school = uniMatch[0].trim();
-    eduEntries[0].confidence = 0.90;
-  } else if (uniMatch && eduEntries.length === 0) {
-    eduEntries.push({ school: uniMatch[0].trim(), degree: "", field: "", confidence: 0.75 });
+  // Sort education entries by position in text (so we can do position-based school matching)
+  eduEntries.sort(function(a, b) { return (a._pos || 0) - (b._pos || 0); });
+
+  // Look for university/college names with positions
+  const EMPLOYER_PATTERN = /\b(Medical Center|Health System|Hospital|Healthcare|Health Care)\b/i;
+  var uniWithPos = [];
+  // Prefer Education section if present
+  const eduSectionMatch = fullText.match(/EDUCATION[^\n]*(?:\n[^\n]*){0,15}/i);
+  var eduSearchText = eduSectionMatch ? eduSectionMatch[0] : fullText;
+  var eduSearchOffset = eduSectionMatch ? fullText.indexOf(eduSectionMatch[0]) : 0;
+  var uniRe = /(?:University|College|Institute|School)[ ]+(?:of[ ]+)?[A-Z][^\n,]{2,40}/g;
+  var um;
+  while ((um = uniRe.exec(eduSearchText)) !== null) {
+    if (!EMPLOYER_PATTERN.test(um[0])) {
+      uniWithPos.push({ name: um[0].trim(), pos: um.index + eduSearchOffset });
+    }
   }
+  // Also match standalone well-known school name patterns (e.g. "Iowa State University")
+  // Use [ ] instead of \s to avoid crossing newlines
+  var standaloneUniRe = /([A-Z][a-zA-Z]+(?:[ ]+[A-Z][a-zA-Z]+)*[ ]+(?:University|College|Institute))/g;
+  var sum;
+  while ((sum = standaloneUniRe.exec(eduSearchText)) !== null) {
+    if (!EMPLOYER_PATTERN.test(sum[0])) {
+      var absPos = sum.index + eduSearchOffset;
+      // Avoid duplicates (within 20 chars of existing match)
+      var isDup = uniWithPos.some(function(u) { return Math.abs(u.pos - absPos) < 20; });
+      if (!isDup) {
+        uniWithPos.push({ name: sum[0].trim(), pos: absPos });
+      }
+    }
+  }
+  uniWithPos.sort(function(a, b) { return a.pos - b.pos; });
+
+  // Position-aware school assignment: each school maps to the nearest PRECEDING degree(s)
+  if (uniWithPos.length > 0 && eduEntries.length > 0) {
+    for (var si = 0; si < uniWithPos.length; si++) {
+      var schoolPos = uniWithPos[si].pos;
+      // Find all degrees that appear BEFORE this school and AFTER the previous school
+      var prevSchoolPos = si > 0 ? uniWithPos[si - 1].pos : -1;
+      for (var di = 0; di < eduEntries.length; di++) {
+        var degreePos = eduEntries[di]._pos || 0;
+        if (!eduEntries[di].school && degreePos > prevSchoolPos && degreePos < schoolPos) {
+          eduEntries[di].school = uniWithPos[si].name;
+          eduEntries[di].confidence = 0.90;
+        }
+      }
+      // If no preceding degree was found, assign to the nearest following degree
+      var assigned = eduEntries.some(function(e) { return e.school === uniWithPos[si].name; });
+      if (!assigned) {
+        for (var di2 = 0; di2 < eduEntries.length; di2++) {
+          if (!eduEntries[di2].school && (eduEntries[di2]._pos || 0) >= schoolPos) {
+            eduEntries[di2].school = uniWithPos[si].name;
+            eduEntries[di2].confidence = 0.90;
+            break;
+          }
+        }
+      }
+    }
+  } else if (uniWithPos.length > 0 && eduEntries.length === 0) {
+    eduEntries.push({ school: uniWithPos[0].name, degree: "", field: "", confidence: 0.75 });
+  }
+  // Clean up internal _pos field
+  eduEntries.forEach(function(e) { delete e._pos; });
   result.education = { value: eduEntries, confidence: eduEntries.length > 0 ? 0.85 : 0 };
 
   // ── WORK HISTORY ──
@@ -6431,22 +6839,96 @@ function parseResumeText(text) {
   while ((dateMatch = dateRangePattern.exec(fullText)) !== null) {
     dateRanges.push({ text: dateMatch[0], index: dateMatch.index });
   }
-  // For each date range, look for job title/company in surrounding lines
+  // For each date range, look for job title/company in the lines BEFORE the date
+  var ORG_WORDS = /\b(health|hospital|medical|center|systems?|university|clinic|partners|group|inc|llc|corp|consulting|solutions|services|network|ireland|nordic|associates|advisors)\b/i;
   for (const dr of dateRanges) {
-    const contextStart = Math.max(0, dr.index - 200);
-    const contextEnd = Math.min(fullText.length, dr.index + dr.text.length + 50);
-    const context = fullText.substring(contextStart, contextEnd);
-    const contextLines = context.split(/\n/).map(l => l.trim()).filter(Boolean);
+    // Look at text before the date range (where title/company usually appear)
+    const contextStart = Math.max(0, dr.index - 300);
+    const beforeText = fullText.substring(contextStart, dr.index);
+    const beforeLines = beforeText.split(/\n/).map(l => l.trim()).filter(Boolean);
+
+    // Clean trailing pipes from lines (common in "Company | Date" format after splitting)
+    var cleanedLines = beforeLines.map(function(l) { return l.replace(/\s*\|\s*$/, "").replace(/^\s*\|\s*/, "").trim(); });
+
+    // Skip lines that are section headers, bullets, cert listings, or other noise
+    const SKIP_LINE = /^(epic\s+certif|certif|education|skills|experience|professional|summary|objective|contact|[•\-\*▪]|\d{4}\s*[-–])/i;
+    // Also skip lines that look like another date range (belongs to a different job)
+    const DATE_LINE = /(?:(?:Jan(?:uary)?|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*\.?\s*\d{4}|(?:19|20)\d{2})\s*(?:[-–—]|to)\s*(?:(?:19|20)\d{2}|Present|Current)/i;
 
     let title = "";
     let company = "";
-    for (const cl of contextLines) {
-      if (cl.includes(dr.text)) continue;
-      // Skip bullet points / descriptions
+    // Walk backwards from the date to find the closest title/company lines
+    for (let bi = cleanedLines.length - 1; bi >= 0 && bi >= cleanedLines.length - 4; bi--) {
+      const cl = cleanedLines[bi];
+      if (!cl || cl.length < 3) continue;
+      if (SKIP_LINE.test(cl)) continue;
+      if (DATE_LINE.test(cl)) break; // hit a previous job's dates, stop
       if (cl.match(/^[•\-\*▪]/)) continue;
-      if (cl.length > 10 && cl.length < 80) {
-        if (!title) title = cl;
-        else if (!company) company = cl;
+      if (cl.length > 120) continue;
+      // Skip lines that are addresses (City, ST ZIP)
+      if (cl.match(/^[A-Z][a-zA-Z ]+,?\s+[A-Z]{2}\s+\d{5}/)) continue;
+      // Skip very short single-word lines that look like client/project names (not titles or orgs)
+      // e.g. "Stanford", "DaVita", "Loyola" — these are engagement client names, not employers
+      if (cl.length < 25 && !cl.includes(",") && !ORG_WORDS.test(cl) && !TITLE_WORDS.test(cl)) continue;
+      // Skip description/accomplishment lines that start with action verbs
+      if (/^(Led|Managed|Built|Directed|Designed|Conducted|Oversaw|Drove|Supported|Created|Developed|Served|Standardized|Redesigned|Implemented|Executed|Coordinated|Delivered|Optimized|Maintained|Established|Trained|Facilitated|Spearheaded|Championed|Streamlined)\b/i.test(cl)) continue;
+      if (!company) {
+        // Check if this line has a pipe — could be "Company | Partner" format
+        if (cl.includes("|")) {
+          // Split on pipe and use the parts as company (and optionally partner/subcontractor)
+          var pipeParts = cl.split("|").map(function(p) { return p.trim(); }).filter(Boolean);
+          company = pipeParts[0];
+        } else {
+          company = cl;
+        }
+      } else if (!title) { title = company; company = cl; }
+    }
+    // Determine which line is the title and which is the company.
+    // The walker assigns: company = nearest line to date, title = line above that.
+    // Use both org-word and title-word heuristics to decide which is which.
+    var TITLE_WORDS = /^(Senior|Junior|Lead|Chief|Vice|Associate|Assistant|Staff|Principal|Director|Manager|Coordinator|Analyst|Engineer|Architect|Consultant|Specialist|Administrator|Supervisor|Officer|President|VP|Project|Program|Epic|Clinical|Technical|Functional|Integration|Application|Report|Team|Build|Implementation)\b/i;
+    if (title && company) {
+      var titleIsOrg = ORG_WORDS.test(title);
+      var companyIsOrg = ORG_WORDS.test(company);
+      var titleIsTitle = TITLE_WORDS.test(title);
+      var companyIsTitle = TITLE_WORDS.test(company);
+      // Strong signal: one starts with a job-title word
+      if (companyIsTitle && !titleIsTitle) {
+        // company has the job title, title has the org — swap
+        var tmp = title; title = company; company = tmp;
+      } else if (titleIsTitle && !companyIsTitle) {
+        // Already correct — no swap needed
+      } else if (titleIsOrg && !companyIsOrg) {
+        // Title has the org, company has the job title — swap
+        var tmp2 = title; title = company; company = tmp2;
+      }
+      // If both or neither match, keep default assignment
+    } else if (company && !title) {
+      // Only one line found — guess whether it's title or company
+      if (ORG_WORDS.test(company)) {
+        // It's a company name, title unknown
+      } else {
+        title = company; company = "";
+      }
+    }
+    // Clean up: strip trailing pipes and extra whitespace from both fields
+    title = (title || "").replace(/\s*\|[\s|]*$/, "").trim();
+    company = (company || "").replace(/\s*\|[\s|]*$/, "").trim();
+    // If we have one field with "Company, Role" or "Role, Dept" format, try to split it
+    // Check both title and company since the walker might put it in either slot
+    var comboField = (!company && title) ? "title" : (!title && company) ? "company" : "";
+    var comboValue = comboField === "title" ? title : comboField === "company" ? company : "";
+    if (comboField && comboValue && comboValue.includes(",")) {
+      var comboParts = comboValue.split(",").map(function(p) { return p.trim(); });
+      if (comboParts.length === 2) {
+        var firstIsOrg = ORG_WORDS.test(comboParts[0]) || /\b(Epic|Systems)\b/i.test(comboParts[0]);
+        var secondIsTitle = TITLE_WORDS.test(comboParts[1]);
+        if (firstIsOrg && secondIsTitle) {
+          company = comboParts[0];
+          title = comboParts[1];
+        } else if (!firstIsOrg && secondIsTitle) {
+          // Could be "Dept, Role" — keep as-is
+        }
       }
     }
     if (title || company) {
@@ -7554,7 +8036,7 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
         await authenticate();
         var noteSearch = await bhFetchAll("query/Note", {
           where: "personReference.id=" + entityId + " AND isDeleted=false AND (action='Email' OR action='Sent Email' OR action='Received Email' OR action='e-mail' OR action='Correspondence')",
-          fields: "id,action,comments,dateAdded,commentingPerson",
+          fields: "id,action,comments,dateAdded,commentingPerson(id,firstName,lastName)",
           orderBy: "-dateAdded",
           count: 200,
         });
