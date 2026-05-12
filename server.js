@@ -6433,8 +6433,9 @@ function parseResumeText(text) {
     if (line.match(/^(summary|objective|experience|education|skills|certif|profess|techni|contact)/i)) continue;
     // Skip lines that are Epic cert/role descriptors
     if (line.match(/^epic\s+(certif|role|module|application)/i)) continue;
-    // Strip credential suffixes before name detection
+    // Strip "Resume of", "CV of", "Curriculum Vitae of" prefixes
     var nameCandidate = line
+      .replace(/^(?:Resume|CV|Curriculum\s+Vitae)\s+(?:of|for)\s+/i, "")
       .replace(CREDENTIAL_SUFFIXES, "")
       .replace(/[|•·]/g, " ")
       .replace(/\s+/g, " ")
@@ -6671,6 +6672,8 @@ function parseResumeText(text) {
   if (!result.epicRole.value) {
     var bestRole = null;
     var bestRoleScore = 0;
+    var bestRolePos = Infinity;
+    var allTextLines = fullText.split(/\n/);
     for (const role of EPIC_ROLES) {
       const roleRegex = new RegExp("\\b" + role.replace(/\s+/g, "\\s+") + "\\b", "i");
       if (!roleRegex.test(fullText)) continue;
@@ -6679,7 +6682,6 @@ function parseResumeText(text) {
       const hasEpicPrefix = epicPrefixRegex.test(fullText);
       // Check if role appears on the same line as "Epic Systems" or "Epic" (e.g. "Epic Systems, Application Coordinator")
       var onEpicLine = false;
-      var allTextLines = fullText.split(/\n/);
       for (var eli = 0; eli < allTextLines.length; eli++) {
         if (/\bEpic\b/i.test(allTextLines[eli]) && roleRegex.test(allTextLines[eli])) {
           onEpicLine = true;
@@ -6688,24 +6690,47 @@ function parseResumeText(text) {
       }
       // Check if role appears in header/title context (first 5 lines)
       const inHeader = headerLines.slice(0, 5).some(function(hl) { return roleRegex.test(hl); });
-      // Base score: 5 = on same line as "Epic" (strongest signal), 4 = Epic-prefixed, 3 = in header, 1 = in body
+      // Check if role appears in a job title line (ALL CAPS line preceding a date range)
+      var inJobTitle = false;
+      var jobTitlePos = Infinity;
+      for (var jti = 0; jti < allTextLines.length; jti++) {
+        var jtLine = allTextLines[jti].trim();
+        // Job title lines: mostly uppercase, not bullets, not section headers, contains the role
+        if (jtLine.length > 5 && jtLine === jtLine.toUpperCase() && roleRegex.test(jtLine) &&
+            !/^[•\-\*▪]/.test(jtLine) && !/^(EDUCATION|SKILLS|CERTIF|SUMMARY|PROFESSIONAL SUMMARY|PROFESSIONAL EXPERIENCE|EPIC CERTIF)/i.test(jtLine)) {
+          inJobTitle = true;
+          var jtPos = fullText.indexOf(jtLine);
+          if (jtPos < jobTitlePos) jobTitlePos = jtPos;
+        }
+      }
+      // Find the FIRST occurrence position (most recent job = top of resume)
+      var rolePos = inJobTitle ? jobTitlePos : fullText.search(roleRegex);
+      // Base score: 5 = on same line as "Epic" (strongest signal), 4.5 = in job title line,
+      //             4 = Epic-prefixed, 3 = in header, 1 = in body
       var score = 1;
       if (hasEpicPrefix) score = 4;
       if (onEpicLine) score = 5;
+      else if (inJobTitle) score = 4.5;
       else if (inHeader) score = 3;
-      // Penalty for generic roles — only use them as last resort
-      if (GENERIC_ROLES.has(role)) score -= 2;
-      // Tiebreaker: prefer the role that appears FIRST in the text (most recent job / top of resume)
-      if (score > bestRoleScore) {
+      // Generic roles (Analyst, Developer, Trainer) get a penalty, but NOT if they
+      // appear in a job title earlier in the text (most recent job should win).
+      if (GENERIC_ROLES.has(role)) {
+        if (inJobTitle && bestRole && rolePos < bestRolePos - 50) {
+          // Generic role is in a job title AND appears earlier — boost instead of penalty
+          // This ensures a current "Analyst" role beats an old "Credentialed Trainer"
+          score += 1;
+        } else if (inJobTitle && !bestRole) {
+          // First role being evaluated and it's generic but in a job title — mild penalty only
+          score -= 1;
+        } else {
+          score -= 2;
+        }
+      }
+      // Compare: prefer higher score, then earlier position as tiebreaker
+      if (score > bestRoleScore || (score === bestRoleScore && rolePos < bestRolePos)) {
         bestRole = role;
         bestRoleScore = score;
-      } else if (score === bestRoleScore && bestRole) {
-        // Same score — prefer whichever appears first in the text
-        var curIdx = fullText.search(new RegExp("\\b" + role.replace(/\s+/g, "\\s+") + "\\b", "i"));
-        var bestIdx = fullText.search(new RegExp("\\b" + bestRole.replace(/\s+/g, "\\s+") + "\\b", "i"));
-        if (curIdx < bestIdx) {
-          bestRole = role;
-        }
+        bestRolePos = rolePos;
       }
     }
     if (bestRole) {
@@ -6832,6 +6857,7 @@ function parseResumeText(text) {
 
   // ── WORK HISTORY ──
   const workEntries = [];
+  var TITLE_WORDS = /^(Senior|Junior|Lead|Chief|Vice|Associate|Assistant|Staff|Principal|Director|Manager|Coordinator|Analyst|Engineer|Architect|Consultant|Specialist|Administrator|Supervisor|Officer|President|VP|Project|Program|Epic|Clinical|Technical|Functional|Integration|Application|Report|Team|Build|Implementation)\b/i;
   // Pattern: date range lines like "Jan 2020 – Present" or "2019 - 2022"
   const dateRangePattern = /(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*\.?\s*\d{4}|(?:(?:19|20)\d{2}))\s*[-–—to]+\s*(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*\.?\s*\d{4}|(?:(?:19|20)\d{2})|Present|Current)/gi;
   let dateMatch;
@@ -6886,7 +6912,6 @@ function parseResumeText(text) {
     // Determine which line is the title and which is the company.
     // The walker assigns: company = nearest line to date, title = line above that.
     // Use both org-word and title-word heuristics to decide which is which.
-    var TITLE_WORDS = /^(Senior|Junior|Lead|Chief|Vice|Associate|Assistant|Staff|Principal|Director|Manager|Coordinator|Analyst|Engineer|Architect|Consultant|Specialist|Administrator|Supervisor|Officer|President|VP|Project|Program|Epic|Clinical|Technical|Functional|Integration|Application|Report|Team|Build|Implementation)\b/i;
     if (title && company) {
       var titleIsOrg = ORG_WORDS.test(title);
       var companyIsOrg = ORG_WORDS.test(company);
