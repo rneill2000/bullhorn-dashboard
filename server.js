@@ -545,6 +545,29 @@ app.get("/api/candidates", async (req, res) => {
       };
     });
 
+    // Enrich with last-contacted from local DB if available
+    if (db.ready) {
+      try {
+        var ids = candidates.map(function(c) { return c.id; });
+        if (ids.length > 0) {
+          var lcRows = await db.getAll(
+            "SELECT id, last_contacted_at, last_contacted_by, last_contacted_type FROM candidates WHERE id = ANY($1::int[]) AND last_contacted_at IS NOT NULL",
+            [ids]
+          );
+          var lcMap = {};
+          lcRows.forEach(function(r) { lcMap[r.id] = r; });
+          candidates.forEach(function(c) {
+            var lc = lcMap[c.id];
+            if (lc) {
+              c.lastContactedAt = lc.last_contacted_at;
+              c.lastContactedBy = lc.last_contacted_by || "";
+              c.lastContactedType = lc.last_contacted_type || "";
+            }
+          });
+        }
+      } catch (lcErr) { console.log("[Candidates] LastContacted enrichment failed:", lcErr.message); }
+    }
+
     res.json({ data: candidates, total: data.total });
   } catch (e) {
     console.error("[Candidates]", e.message);
@@ -738,6 +761,18 @@ app.get("/api/candidates/:id", async (req, res) => {
       customInt3: c.customInt3,
     };
 
+    // Attach last-contacted info from local DB
+    if (db.ready) {
+      try {
+        var lcInfo = await db.getLastContacted(parseInt(id));
+        if (lcInfo && lcInfo.at) {
+          detail.lastContactedAt = lcInfo.at;
+          detail.lastContactedBy = lcInfo.by || "";
+          detail.lastContactedType = lcInfo.type || "";
+        }
+      } catch (lcErr) { console.log("[LastContact] Get failed:", lcErr.message); }
+    }
+
     // Process notes (already fetched in parallel above)
     var allNotes = (notesResult.data || []).map(n => ({
       id: n.id,
@@ -803,6 +838,11 @@ app.post("/api/candidates/:id/notes", async (req, res) => {
           [result.changedEntityId || 0, candidateId, action || "General Note", comments.trim(), Date.now(), Date.now()]
         );
       } catch (dbErr) { console.log("[Add Note] DB insert failed:", dbErr.message); }
+    }
+
+    // Track last-contacted
+    if (db.ready) {
+      try { await db.updateLastContacted(candidateId, "Me", action || "Note"); } catch (lcErr) { console.log("[LastContact] Update failed:", lcErr.message); }
     }
 
     res.json({ success: true, noteId: result.changedEntityId, message: "Note added successfully" });
@@ -3381,18 +3421,22 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
     var allSearchCerts = matchedCerts.concat(smRelated);
     var candidateFields = "id,firstName,lastName,occupation,status,address,salary,dateAvailable,email,phone,customText1,customText2,customText3,customText5,customText6,customText7,dateLastModified,description,customTextBlock1,employeeType";
 
+    // Status filter: include all non-placed, non-archived candidates for matching
+    var smStatusFilter = 'isDeleted:0 AND NOT status:"Placed" AND NOT status:"Archive" AND NOT status:"Inactive"';
+
     let query;
     if (hasCerts) {
       // Cert-based job: primary filter is certification match
-      query = "isDeleted:0 AND (status:Active OR status:Available OR status:\"Active-Reviewed\")";
+      query = smStatusFilter;
       const certClauses = allSearchCerts.map(c => {
         const escaped = c.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
-        return `(customText1:"${escaped}" OR customText2:"${escaped}")`;
+        // Use both exact phrase AND wildcard to catch comma-separated cert lists
+        return `(customText1:"${escaped}" OR customText2:"${escaped}" OR customText1:${escaped}* OR customText2:${escaped}*)`;
       });
       query += " AND (" + certClauses.join(" OR ") + ")";
     } else if (isLeadershipRole) {
       // Leadership role without specific certs: fetch candidates by role level
-      query = "isDeleted:0 AND (status:Active OR status:Available OR status:\"Active-Reviewed\")";
+      query = smStatusFilter;
       // Search for candidates with leadership preferred roles
       var roleClauses = [];
       if (detectedRoleLevel >= 4) roleClauses = ['customText3:"Director"', 'customText3:"Executive"', 'customText3:"PM"'];
@@ -3401,7 +3445,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
       if (roleClauses.length > 0) query += " AND (" + roleClauses.join(" OR ") + ")";
     } else {
       // Fallback: broad search
-      query = "isDeleted:0 AND (status:Active OR status:Available OR status:\"Active-Reviewed\")";
+      query = smStatusFilter;
     }
 
     const candData = await bhFetchAll("search/Candidate", {
@@ -4873,6 +4917,11 @@ app.post("/api/outreach/send", express.json(), async (req, res) => {
       }
     }
 
+    // Track last-contacted
+    if (recipientId && recipientType === "candidate" && db.ready) {
+      try { await db.updateLastContacted(parseInt(recipientId), "Me", "Email"); } catch (lcErr) { console.log("[LastContact] Update failed:", lcErr.message); }
+    }
+
     if (sendMethod === "mailto") {
       var mailto = "mailto:" + encodeURIComponent(to) + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
       res.json({ success: true, method: "mailto", mailtoUrl: mailto });
@@ -6048,18 +6097,45 @@ app.get("/api/candidates/:id/files/:fileId", async (req, res) => {
       const err = await fileRes.text();
       throw new Error(`Bullhorn file error (${fileRes.status}): ${err}`);
     }
-    // Forward content type and pipe the binary response
-    const contentType = fileRes.headers.get("content-type") || "application/octet-stream";
+    const bhContentType = fileRes.headers.get("content-type") || "";
+
+    // Bullhorn's file endpoint returns JSON with base64-encoded fileContent
+    // Format: { "File": { "contentType":"...", "fileContent":"<base64>", "name":"..." } }
+    if (bhContentType.includes("application/json") || bhContentType.includes("text/json")) {
+      const json = await fileRes.json();
+      const fileObj = json.File || json.file || json;
+      const base64Data = fileObj.fileContent || fileObj.content || "";
+      const actualContentType = fileObj.contentType || fileObj.type || "application/octet-stream";
+      const fileName = fileObj.name || `file-${fileId}`;
+
+      if (!base64Data) {
+        return res.status(404).json({ error: "No file content returned from Bullhorn" });
+      }
+
+      const fileBuf = Buffer.from(base64Data, "base64");
+      const viewableTypes = ["application/pdf", "image/png", "image/jpeg", "image/gif", "image/svg+xml", "image/webp", "text/plain"];
+      const isViewable = viewableTypes.some(t => actualContentType.startsWith(t));
+
+      res.set("Content-Type", actualContentType);
+      res.set("Content-Length", fileBuf.length);
+      if (req.query.download === "1" || !isViewable) {
+        res.set("Content-Disposition", `attachment; filename="${fileName}"`);
+      } else {
+        res.set("Content-Disposition", `inline; filename="${fileName}"`);
+      }
+      return res.send(fileBuf);
+    }
+
+    // Fallback: Bullhorn returned raw binary (some versions do this)
+    const contentType = bhContentType || "application/octet-stream";
     const disposition = fileRes.headers.get("content-disposition");
     res.set("Content-Type", contentType);
-    // If ?download=1, force browser download instead of inline view
     if (req.query.download === "1") {
       const fileName = disposition ? disposition.replace(/.*filename="?([^"]+)"?.*/, "$1") : `file-${fileId}`;
       res.set("Content-Disposition", `attachment; filename="${fileName}"`);
     } else if (disposition) {
       res.set("Content-Disposition", disposition);
     }
-    // Stream the file body
     const arrayBuf = await fileRes.arrayBuffer();
     res.send(Buffer.from(arrayBuf));
   } catch (e) {
@@ -6259,7 +6335,7 @@ const EPIC_CERTS = {
   "beacon": "Beacon", "beacon oncology": "Beacon",
   "compass rose": "Compass Rose", "compass rose analytics": "Compass Rose",
   "compass rose clinical": "Compass Rose",
-  "chronicare": "CronicCare", "chroniccare": "ChronicCare",
+  "chronicare": "ChronicCare", "chroniccare": "ChronicCare",
   "caboodle": "Caboodle", "cogito": "Cogito",
   "nebula": "Nebula", "haiku": "Haiku", "canto": "Canto",
   "lumens": "Lumens", "epic cheers": "Cheers",
@@ -6284,6 +6360,10 @@ const EPIC_ROLES = [
  * Returns object with fields + confidence scores.
  */
 function parseResumeText(text) {
+  // Defensive: ensure text is always a string
+  if (!text || typeof text !== "string") {
+    text = String(text || "");
+  }
   // ── PRE-PROCESS: detect garbled PDF text (no line breaks) and try to fix ──
   var processedText = text;
   var lineCount = text.split(/\n/).filter(function(l) { return l.trim(); }).length;
@@ -7014,11 +7094,21 @@ app.post("/api/resume/parse", async (req, res) => {
         };
 
         if (ext === "pdf") {
-          const pdfData = await pdfParse(filePart.data);
-          resumeText = pdfData.text || "";
+          try {
+            const pdfData = await pdfParse(filePart.data);
+            resumeText = (pdfData && pdfData.text) ? String(pdfData.text) : "";
+          } catch (pdfErr) {
+            console.error("[Resume Parser] pdf-parse failed:", pdfErr.message);
+            return res.status(400).json({ error: "Could not read this PDF. It may be scanned, encrypted, or in an unsupported format. Try saving as a new PDF or converting to DOCX." });
+          }
         } else if (ext === "docx" || ext === "doc") {
-          const mammothResult = await mammoth.extractRawText({ buffer: filePart.data });
-          resumeText = mammothResult.value || "";
+          try {
+            const mammothResult = await mammoth.extractRawText({ buffer: filePart.data });
+            resumeText = (mammothResult && mammothResult.value) ? String(mammothResult.value) : "";
+          } catch (docxErr) {
+            console.error("[Resume Parser] mammoth failed:", docxErr.message);
+            return res.status(400).json({ error: "Could not read this document. It may be corrupted or in an unsupported format. Try re-saving as .docx or converting to PDF." });
+          }
         } else {
           // Try as plain text
           resumeText = filePart.data.toString("utf8");
@@ -8045,12 +8135,12 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
       } catch (e) { console.log("[Email History] DB email_log query failed:", e.message); }
     }
 
-    // ── 2. Bullhorn email-type notes (DB first, then Bullhorn API) ──
+    // ── 2. Bullhorn notes — ALL touch actions (emails, calls, HereFish, etc.) ──
     var bhNotes = [];
     if (db.ready) {
       try {
         bhNotes = await db.getAll(
-          "SELECT id, action, comments_text, date_added, commenting_person_name FROM notes WHERE person_id = $1 AND (LOWER(action) LIKE '%email%' OR LOWER(action) LIKE '%e-mail%' OR LOWER(action) LIKE '%correspondence%') ORDER BY date_added DESC LIMIT 200",
+          "SELECT id, action, comments_text, date_added, commenting_person_name FROM notes WHERE person_id = $1 AND action IS NOT NULL AND action != '' ORDER BY date_added DESC LIMIT 200",
           [entityId]
         );
       } catch (e) {}
@@ -8060,7 +8150,7 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
       try {
         await authenticate();
         var noteSearch = await bhFetchAll("query/Note", {
-          where: "personReference.id=" + entityId + " AND isDeleted=false AND (action='Email' OR action='Sent Email' OR action='Received Email' OR action='e-mail' OR action='Correspondence')",
+          where: "personReference.id=" + entityId + " AND isDeleted=false",
           fields: "id,action,comments,dateAdded,commentingPerson(id,firstName,lastName)",
           orderBy: "-dateAdded",
           count: 200,
@@ -8152,6 +8242,37 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
     });
     // Sort newest first
     mergedEmails.sort(function(a, b) { return (b.received_at || "").localeCompare(a.received_at || ""); });
+
+    // Auto-stamp last-contacted from the most recent email or note
+    if (db.ready && entityType === "candidate") {
+      try {
+        var mostRecent = null;
+        var mostRecentBy = "";
+        var mostRecentType = "";
+        if (mergedEmails.length > 0) {
+          var e0 = mergedEmails[0];
+          mostRecent = new Date(e0.received_at);
+          mostRecentBy = e0.from_name || e0.from_email || e0.outlook_user || "";
+          mostRecentType = "Email";
+        }
+        if (bhNotes.length > 0) {
+          var n0 = bhNotes[0];
+          var noteDate = n0.date_added ? new Date(Number(n0.date_added)) : null;
+          if (noteDate && (!mostRecent || noteDate > mostRecent)) {
+            mostRecent = noteDate;
+            mostRecentBy = n0.commenting_person_name || "";
+            mostRecentType = n0.action || "Email";
+          }
+        }
+        if (mostRecent && !isNaN(mostRecent.getTime())) {
+          var existing = await db.getLastContacted(entityId);
+          if (!existing || !existing.at || mostRecent > new Date(existing.at)) {
+            await db.updateLastContacted(entityId, mostRecentBy, mostRecentType);
+            console.log("[Email History] Auto-stamped last-contacted for candidate", entityId, "→", mostRecent.toISOString());
+          }
+        }
+      } catch (lcErr) { console.log("[Email History] Auto-stamp last-contacted failed:", lcErr.message); }
+    }
 
     res.json({ emails: mergedEmails, notes: bhNotes, total: mergedEmails.length + bhNotes.length });
   } catch (e) {

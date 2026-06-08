@@ -245,10 +245,14 @@ async function createTables() {
       custom_date1 BIGINT,
       custom_text_block1 TEXT,
       correlation_id TEXT,
+      is_deleted BOOLEAN,
       raw_json JSONB,
       synced_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+
+  // Add is_deleted if missing (existing DBs)
+  await query(`ALTER TABLE placements ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN`).catch(function(){});
 
   // Clients — comprehensive
   await query(`
@@ -697,6 +701,24 @@ async function createTables() {
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_portal_templates_client ON portal_templates(client_id)`);
 
+  // Last-contacted tracking columns on candidates
+  await query(`ALTER TABLE candidates ADD COLUMN IF NOT EXISTS last_contacted_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE candidates ADD COLUMN IF NOT EXISTS last_contacted_by TEXT`);
+  await query(`ALTER TABLE candidates ADD COLUMN IF NOT EXISTS last_contacted_type TEXT`);
+
+  // Email outreach templates (user-created)
+  await query(`
+    CREATE TABLE IF NOT EXISTS email_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      subject TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL DEFAULT '',
+      created_by TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   // Custom sheets (user-created candidate shortlists)
   await query(`
     CREATE TABLE IF NOT EXISTS custom_sheets (
@@ -770,6 +792,20 @@ async function createTables() {
   await query(`CREATE INDEX IF NOT EXISTS idx_sourcing_candidate ON sourcing_candidates(candidate_id)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_sourcing_stage ON sourcing_candidates(stage)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_sourcing_source ON sourcing_candidates(source)`);
+
+  // Sourcing outreach log — tracks when team members reach out to sourced candidates
+  await query(`
+    CREATE TABLE IF NOT EXISTS sourcing_outreach (
+      id SERIAL PRIMARY KEY,
+      sourcing_id INTEGER NOT NULL REFERENCES sourcing_candidates(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL DEFAULT 'linkedin_message',
+      contacted_by TEXT,
+      contacted_by_name TEXT,
+      note TEXT DEFAULT '',
+      contacted_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_outreach_sourcing ON sourcing_outreach(sourcing_id)`);
 
   // Indexes for common queries
   await query(`CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status)`);
@@ -918,12 +954,11 @@ var PLACEMENT_FIELDS = [
   "customInt1","customInt2","customInt3",
   "customDate1","customDate2","customDate3",
   "taxRate","markUpPercentage",
-  "comments","externalID"
+  "comments"
 ].join(",");
 
 var CLIENT_FIELDS = [
-  "id","name","status","companyURL","phone","faxPhone",
-  "owner(id,firstName,lastName,email)",
+  "id","name","status","companyURL","phone","fax",
   "industryList","numEmployees","revenue","notes",
   "address","billingAddress","billingPhone","billingContact",
   "customText1","customText2","customText3","customText4","customText5",
@@ -953,7 +988,7 @@ var SUBMISSION_FIELDS = [
 ].join(",");
 
 var NOTE_FIELDS = [
-  "id","personReference","clientCorporation","jobOrder","placement",
+  "id","personReference",
   "action","comments","dateAdded","dateLastModified",
   "commentingPerson","isDeleted",
   "minutesSpent"
@@ -961,10 +996,17 @@ var NOTE_FIELDS = [
 
 var OPPORTUNITY_FIELDS = [
   "id","title","type","status","owner",
+  "clientCorporation",
   "estimatedStartDate","estimatedEndDate",
   "salary","numOpenings",
   "winProbabilityPercent","weightedDealValue","dealValue",
   "dateAdded","dateLastModified","description",
+  "customText1","customText2","customText3","customText4","customText5",
+  "customText6","customText7","customText8","customText9","customText10",
+  "customTextBlock1","customTextBlock2",
+  "customInt1","customInt2","customInt3",
+  "customFloat1","customFloat2","customFloat3",
+  "customDate1","customDate2","customDate3",
   "isDeleted"
 ].join(",");
 
@@ -1251,17 +1293,18 @@ var SYNC_ENTITIES = {
         custom_date1: safeNum(r.customDate1),
         custom_text_block1: safeStr(r.customTextBlock1),
         correlation_id: safeStr(r.correlationId),
+        is_deleted: safeBool(r.isDeleted),
         raw_json: JSON.stringify(r),
       };
     },
     upsertSql: `
-      INSERT INTO placements (id,candidate_id,candidate_name,job_id,job_title,client_id,client_name,status,employment_type,date_begin,date_end,date_added,date_last_modified,pay_rate,client_bill_rate,salary,salary_unit,fee,overtime_rate,client_overtime_rate,double_time_rate,hours_per_day,days_per_week,housing_manager_id,housing_manager_name,referring_user_id,referring_user_name,custom_text1,custom_text2,custom_text3,custom_text4,custom_text5,custom_float1,custom_float2,custom_float3,custom_int1,custom_int2,custom_date1,custom_text_block1,correlation_id,raw_json,synced_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41::jsonb,NOW())
+      INSERT INTO placements (id,candidate_id,candidate_name,job_id,job_title,client_id,client_name,status,employment_type,date_begin,date_end,date_added,date_last_modified,pay_rate,client_bill_rate,salary,salary_unit,fee,overtime_rate,client_overtime_rate,double_time_rate,hours_per_day,days_per_week,housing_manager_id,housing_manager_name,referring_user_id,referring_user_name,custom_text1,custom_text2,custom_text3,custom_text4,custom_text5,custom_float1,custom_float2,custom_float3,custom_int1,custom_int2,custom_date1,custom_text_block1,correlation_id,is_deleted,raw_json,synced_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42::jsonb,NOW())
       ON CONFLICT (id) DO UPDATE SET
-        candidate_id=$2,candidate_name=$3,job_id=$4,job_title=$5,client_id=$6,client_name=$7,status=$8,employment_type=$9,date_begin=$10,date_end=$11,date_added=$12,date_last_modified=$13,pay_rate=$14,client_bill_rate=$15,salary=$16,salary_unit=$17,fee=$18,overtime_rate=$19,client_overtime_rate=$20,double_time_rate=$21,hours_per_day=$22,days_per_week=$23,housing_manager_id=$24,housing_manager_name=$25,referring_user_id=$26,referring_user_name=$27,custom_text1=$28,custom_text2=$29,custom_text3=$30,custom_text4=$31,custom_text5=$32,custom_float1=$33,custom_float2=$34,custom_float3=$35,custom_int1=$36,custom_int2=$37,custom_date1=$38,custom_text_block1=$39,correlation_id=$40,raw_json=$41::jsonb,synced_at=NOW()
+        candidate_id=$2,candidate_name=$3,job_id=$4,job_title=$5,client_id=$6,client_name=$7,status=$8,employment_type=$9,date_begin=$10,date_end=$11,date_added=$12,date_last_modified=$13,pay_rate=$14,client_bill_rate=$15,salary=$16,salary_unit=$17,fee=$18,overtime_rate=$19,client_overtime_rate=$20,double_time_rate=$21,hours_per_day=$22,days_per_week=$23,housing_manager_id=$24,housing_manager_name=$25,referring_user_id=$26,referring_user_name=$27,custom_text1=$28,custom_text2=$29,custom_text3=$30,custom_text4=$31,custom_text5=$32,custom_float1=$33,custom_float2=$34,custom_float3=$35,custom_int1=$36,custom_int2=$37,custom_date1=$38,custom_text_block1=$39,correlation_id=$40,is_deleted=$41,raw_json=$42::jsonb,synced_at=NOW()
     `,
     paramsFn: function (t) {
-      return [t.id,t.candidate_id,t.candidate_name,t.job_id,t.job_title,t.client_id,t.client_name,t.status,t.employment_type,t.date_begin,t.date_end,t.date_added,t.date_last_modified,t.pay_rate,t.client_bill_rate,t.salary,t.salary_unit,t.fee,t.overtime_rate,t.client_overtime_rate,t.double_time_rate,t.hours_per_day,t.days_per_week,t.housing_manager_id,t.housing_manager_name,t.referring_user_id,t.referring_user_name,t.custom_text1,t.custom_text2,t.custom_text3,t.custom_text4,t.custom_text5,t.custom_float1,t.custom_float2,t.custom_float3,t.custom_int1,t.custom_int2,t.custom_date1,t.custom_text_block1,t.correlation_id,t.raw_json];
+      return [t.id,t.candidate_id,t.candidate_name,t.job_id,t.job_title,t.client_id,t.client_name,t.status,t.employment_type,t.date_begin,t.date_end,t.date_added,t.date_last_modified,t.pay_rate,t.client_bill_rate,t.salary,t.salary_unit,t.fee,t.overtime_rate,t.client_overtime_rate,t.double_time_rate,t.hours_per_day,t.days_per_week,t.housing_manager_id,t.housing_manager_name,t.referring_user_id,t.referring_user_name,t.custom_text1,t.custom_text2,t.custom_text3,t.custom_text4,t.custom_text5,t.custom_float1,t.custom_float2,t.custom_float3,t.custom_int1,t.custom_int2,t.custom_date1,t.custom_text_block1,t.correlation_id,t.is_deleted,t.raw_json];
     },
   },
 
@@ -1280,7 +1323,7 @@ var SYNC_ENTITIES = {
         status: safeStr(r.status),
         company_url: safeStr(r.companyURL),
         phone: safeStr(r.phone),
-        fax_phone: safeStr(r.faxPhone),
+        fax_phone: safeStr(r.fax),
         industry_list: safeStr(r.industryList),
         num_employees: safeNum(r.numEmployees),
         revenue: safeStr(r.revenue),
@@ -1305,9 +1348,9 @@ var SYNC_ENTITIES = {
         custom_float1: safeNum(r.customFloat1),
         custom_date1: safeNum(r.customDate1),
         custom_text_block1: safeStr(r.customTextBlock1),
-        owner_id: r.owner ? r.owner.id : null,
-        owner_name: ownerName(r.owner),
-        owner_email: r.owner ? safeStr(r.owner.email) : "",
+        owner_id: null,
+        owner_name: "",
+        owner_email: "",
         date_added: safeNum(r.dateAdded),
         date_last_modified: safeNum(r.dateLastModified),
         date_founded: safeStr(r.dateFounded),
@@ -1384,23 +1427,20 @@ var SYNC_ENTITIES = {
   },
 
   notes: {
-    endpoint: "query/Note",
-    queryField: "where",
-    baseQuery: "isDeleted=false",
+    endpoint: "search/Note",
+    queryField: "query",
+    baseQuery: "isDeleted:0",
     fields: NOTE_FIELDS,
     sortField: "-dateLastModified",
     transform: function (r) {
       var pr = r.personReference || {};
-      var cc = r.clientCorporation || {};
-      var jo = r.jobOrder || {};
-      var pl = r.placement || {};
       var cp = r.commentingPerson || {};
       return {
         id: r.id,
         person_id: pr.id || null,
-        client_id: cc.id || null,
-        job_order_id: jo.id || null,
-        placement_id: pl.id || null,
+        client_id: null,
+        job_order_id: null,
+        placement_id: null,
         action: safeStr(r.action),
         comments_text: safeStr(r.comments),
         date_added: safeNum(r.dateAdded),
@@ -1423,9 +1463,9 @@ var SYNC_ENTITIES = {
   },
 
   opportunities: {
-    endpoint: "query/Opportunity",
-    queryField: "where",
-    baseQuery: "id IS NOT NULL",
+    endpoint: "search/Opportunity",
+    queryField: "query",
+    baseQuery: "isDeleted:0",
     fields: OPPORTUNITY_FIELDS,
     sortField: "-dateLastModified",
     transform: function (r) {
@@ -1435,14 +1475,14 @@ var SYNC_ENTITIES = {
         client_id: cc.id || null, client_name: safeStr(cc.name),
         owner_id: r.owner ? r.owner.id : null, owner_name: ownerName(r.owner),
         estimated_start: safeNum(r.estimatedStartDate), estimated_end: safeNum(r.estimatedEndDate),
-        estimated_hours: safeNum(r.estimatedHoursPerWeek),
-        estimated_bill_rate: safeNum(r.estimatedBillRate), estimated_pay_rate: safeNum(r.estimatedPayRate),
+        estimated_hours: null,
+        estimated_bill_rate: null, estimated_pay_rate: null,
         estimated_revenue: null, salary: safeNum(r.salary),
         num_openings: safeNum(r.numOpenings), win_probability: safeNum(r.winProbabilityPercent),
         weighted_deal_value: safeNum(r.weightedDealValue), deal_value: safeNum(r.dealValue),
-        commission: safeNum(r.commission),
+        commission: null,
         date_added: safeNum(r.dateAdded), date_last_modified: safeNum(r.dateLastModified),
-        description: safeStr(r.description), lead: null, source: safeStr(r.source),
+        description: safeStr(r.description), lead: null, source: null,
         reason_closed: null,
         custom_text1: safeStr(r.customText1), custom_text2: safeStr(r.customText2),
         custom_text3: safeStr(r.customText3), custom_text4: safeStr(r.customText4),
@@ -1999,6 +2039,9 @@ async function dbSearchCandidates(filters) {
       lastModified: c.date_last_modified ? fmtDate(c.date_last_modified) : "",
       source: c.source || "",
       owner: c.owner_name || "",
+      lastContactedAt: c.last_contacted_at || null,
+      lastContactedBy: c.last_contacted_by || "",
+      lastContactedType: c.last_contacted_type || "",
     };
   });
 
@@ -2773,7 +2816,7 @@ async function dbGetStarredWithPlacements() {
 }
 
 /* ═══ SOURCING BOARD ═══ */
-var SOURCING_STAGES = ["identified", "reached_out", "talking", "interviewing", "collecting_refs", "in_pipeline", "submitted", "passed"];
+var SOURCING_STAGES = ["identified", "reached_out", "talking", "interested", "no_response", "declined_internal", "candidate_declined"];
 
 async function dbGetSourcingForJob(jobId) {
   if (!dbReady) return [];
@@ -2836,7 +2879,6 @@ async function dbBulkAddSourcing(jobId, candidates, addedBy, addedByName) {
   var skipped = 0;
   for (var i = 0; i < candidates.length; i++) {
     var c = candidates[i];
-    // Skip duplicates: same job + (same candidate_id OR same linkedin_url OR same name)
     var existing = null;
     if (c.candidateId) {
       existing = await getOne("SELECT id FROM sourcing_candidates WHERE job_id=$1 AND candidate_id=$2", [jobId, c.candidateId]);
@@ -2849,7 +2891,6 @@ async function dbBulkAddSourcing(jobId, candidates, addedBy, addedByName) {
         [jobId, (c.firstName || "").toLowerCase(), (c.lastName || "").toLowerCase()]);
     }
     if (existing) { skipped++; continue; }
-
     await dbAddSourcingCandidate(jobId, Object.assign({}, c, { addedBy: addedBy, addedByName: addedByName }));
     added++;
   }
@@ -2861,8 +2902,8 @@ async function dbUpdateSourcingCandidate(id, updates) {
   var sets = [];
   var vals = [];
   var idx = 1;
-  var allowed = ["stage","first_name","last_name","title","company","email","phone","linkedin_url","certs","epic_role","grade","location","notes","is_selected"];
-  var camelToSnake = {firstName:"first_name",lastName:"last_name",linkedinUrl:"linkedin_url",epicRole:"epic_role",isSelected:"is_selected"};
+  var allowed = ["stage","first_name","last_name","title","company","email","phone","linkedin_url","certs","epic_role","grade","location","notes","is_selected","candidate_id","source"];
+  var camelToSnake = {firstName:"first_name",lastName:"last_name",linkedinUrl:"linkedin_url",epicRole:"epic_role",isSelected:"is_selected",candidateId:"candidate_id"};
   Object.keys(updates).forEach(function(k) {
     var col = camelToSnake[k] || k;
     if (allowed.indexOf(col) >= 0) {
@@ -2905,6 +2946,83 @@ async function dbBulkToggleSelected(ids, isSelected) {
   var placeholders = ids.map(function(_, i) { return "$" + (i + 2); }).join(",");
   var result = await query("UPDATE sourcing_candidates SET is_selected=$1, updated_at=NOW() WHERE id IN (" + placeholders + ")", [isSelected].concat(ids));
   return result.rowCount || 0;
+}
+
+/* ═══ SOURCING OUTREACH ═══ */
+
+var OUTREACH_CHANNELS = ["linkedin_message", "linkedin_inmail", "email", "phone", "text", "other"];
+
+async function dbGetOutreachForSourcing(sourcingId) {
+  if (!dbReady) throw new Error("Database not enabled");
+  var rows = await getAll("SELECT * FROM sourcing_outreach WHERE sourcing_id=$1 ORDER BY contacted_at DESC", [sourcingId]);
+  return rows;
+}
+
+async function dbGetOutreachForJob(jobId) {
+  if (!dbReady) throw new Error("Database not enabled");
+  var rows = await getAll(
+    "SELECT o.*, sc.first_name, sc.last_name FROM sourcing_outreach o JOIN sourcing_candidates sc ON o.sourcing_id=sc.id WHERE sc.job_id=$1 ORDER BY o.contacted_at DESC",
+    [jobId]
+  );
+  return rows;
+}
+
+async function dbAddOutreach(sourcingId, data) {
+  if (!dbReady) throw new Error("Database not enabled");
+  var result = await query(
+    "INSERT INTO sourcing_outreach (sourcing_id, channel, contacted_by, contacted_by_name, note) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+    [sourcingId, data.channel || "linkedin_message", data.contactedBy || null, data.contactedByName || null, data.note || ""]
+  );
+  return result.rows[0];
+}
+
+async function dbDeleteOutreach(id) {
+  if (!dbReady) throw new Error("Database not enabled");
+  await query("DELETE FROM sourcing_outreach WHERE id=$1", [id]);
+}
+
+/* ═══ LAST-CONTACTED TRACKING ═══ */
+
+async function dbUpdateLastContacted(candidateId, contactedBy, contactType) {
+  if (!dbReady) return;
+  await query(
+    "UPDATE candidates SET last_contacted_at = NOW(), last_contacted_by = $2, last_contacted_type = $3 WHERE id = $1",
+    [candidateId, contactedBy || "Unknown", contactType || "Unknown"]
+  );
+}
+
+async function dbGetLastContacted(candidateId) {
+  if (!dbReady) return null;
+  var row = await getOne(
+    "SELECT last_contacted_at, last_contacted_by, last_contacted_type FROM candidates WHERE id = $1",
+    [candidateId]
+  );
+  return row ? { at: row.last_contacted_at, by: row.last_contacted_by, type: row.last_contacted_type } : null;
+}
+
+/* ═══ EMAIL TEMPLATES ═══ */
+
+async function dbListEmailTemplates() {
+  if (!dbReady) return [];
+  var result = await query("SELECT * FROM email_templates ORDER BY created_at DESC");
+  return result.rows.map(function(r) {
+    return { id: r.id, name: r.name, subject: r.subject, body: r.body, createdBy: r.created_by, createdAt: r.created_at };
+  });
+}
+
+async function dbSaveEmailTemplate(tmpl) {
+  if (!dbReady) throw new Error("Database not enabled");
+  var id = tmpl.id || ("custom-" + Date.now().toString(36));
+  await query(
+    "INSERT INTO email_templates (id, name, subject, body, created_by) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO UPDATE SET name=$2, subject=$3, body=$4, updated_at=NOW()",
+    [id, tmpl.name, tmpl.subject || "", tmpl.body || "", tmpl.createdBy || ""]
+  );
+  return id;
+}
+
+async function dbDeleteEmailTemplate(id) {
+  if (!dbReady) throw new Error("Database not enabled");
+  await query("DELETE FROM email_templates WHERE id=$1", [id]);
 }
 
 /* ═══ EXPORTS ═══ */
@@ -2964,5 +3082,18 @@ module.exports = {
   bulkUpdateSourcingStage: dbBulkUpdateSourcingStage,
   bulkToggleSelected: dbBulkToggleSelected,
   SOURCING_STAGES: SOURCING_STAGES,
+  // Sourcing outreach
+  getOutreachForSourcing: dbGetOutreachForSourcing,
+  getOutreachForJob: dbGetOutreachForJob,
+  addOutreach: dbAddOutreach,
+  deleteOutreach: dbDeleteOutreach,
+  OUTREACH_CHANNELS: OUTREACH_CHANNELS,
+  // Last-contacted tracking
+  updateLastContacted: dbUpdateLastContacted,
+  getLastContacted: dbGetLastContacted,
+  // Email templates
+  listEmailTemplates: dbListEmailTemplates,
+  saveEmailTemplate: dbSaveEmailTemplate,
+  deleteEmailTemplate: dbDeleteEmailTemplate,
   get ready() { return dbReady; },
 };

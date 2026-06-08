@@ -14,7 +14,7 @@ aside .logo-icon img{width:100%;height:100%;object-fit:cover}
 aside .logo-text{font-size:16px;font-weight:700;color:#fff}
 aside .logo-sub{font-size:11px;color:#64748b;font-weight:500}
 aside nav{flex:1;padding:8px 10px;overflow-y:auto}
-aside nav button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 14px;border-radius:8px;border:none;margin-bottom:1px;font-size:13px;cursor:pointer;font-family:inherit;transition:background .15s}
+aside nav button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 14px;border-radius:8px;border:none;margin-bottom:1px;font-size:13px;cursor:pointer;font-family:inherit;transition:background .15s;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 aside nav button.active{background:#176087;color:#fff;font-weight:600}
 aside nav button:not(.active){background:transparent;color:#94a3b8;font-weight:400}
 aside nav button:not(.active):hover{background:#163a56}
@@ -476,6 +476,62 @@ tbody tr:hover{background:#eff6ff}
   .detail-section h4{font-size:11px}
 }
 
+/* ═══ MULTI-SELECT FILTER ═══ */
+.ms-filter { position:relative; display:inline-block; }
+.ms-filter-btn {
+  display:flex; align-items:center; gap:4px; padding:5px 10px; border:1px solid #d1d5db;
+  border-radius:6px; font-size:12px; background:white; cursor:pointer; white-space:nowrap;
+  color:#374151; min-height:30px; transition:border-color .15s;
+}
+.ms-filter-btn:hover { border-color:#9ca3af; }
+.ms-filter-btn.has-values { border-color:#176087; background:#f0f7ff; }
+.ms-filter-btn .ms-arrow { font-size:9px; color:#9ca3af; margin-left:2px; }
+.ms-filter-btn .ms-count {
+  background:#176087; color:white; font-size:10px; font-weight:700;
+  padding:0 5px; border-radius:8px; min-width:16px; text-align:center; line-height:16px;
+}
+.ms-dropdown {
+  position:absolute; top:100%; left:0; margin-top:4px; background:white;
+  border:1px solid #d1d5db; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,.12);
+  z-index:200; min-width:200px; max-height:280px; display:flex; flex-direction:column;
+}
+.ms-search {
+  padding:8px; border-bottom:1px solid #f1f5f9; flex-shrink:0;
+}
+.ms-search input {
+  width:100%; padding:5px 8px; border:1px solid #e5e7eb; border-radius:4px;
+  font-size:12px; box-sizing:border-box; outline:none;
+}
+.ms-search input:focus { border-color:#176087; }
+.ms-options { overflow-y:auto; flex:1; padding:4px 0; }
+.ms-option {
+  display:flex; align-items:center; gap:8px; padding:5px 10px; cursor:pointer;
+  font-size:12px; color:#374151; transition:background .1s;
+}
+.ms-option:hover { background:#f1f5f9; }
+.ms-option input[type="checkbox"] { accent-color:#176087; flex-shrink:0; }
+.ms-option .ms-opt-count { color:#94a3b8; font-size:11px; margin-left:auto; }
+.ms-actions {
+  display:flex; justify-content:space-between; padding:6px 10px; border-top:1px solid #f1f5f9;
+  flex-shrink:0;
+}
+.ms-actions button {
+  background:none; border:none; color:#176087; font-size:11px; cursor:pointer;
+  padding:2px 4px; font-weight:600;
+}
+.ms-actions button:hover { text-decoration:underline; }
+.src-filter-bar {
+  display:flex; gap:8px; align-items:center; margin:10px 0; flex-wrap:wrap;
+}
+.src-filter-bar .ms-clear-all {
+  font-size:11px; color:#dc2626; cursor:pointer; padding:4px 8px;
+  border:1px solid #fecaca; border-radius:4px; background:#fef2f2;
+}
+.src-filter-bar .ms-clear-all:hover { background:#fee2e2; }
+.src-filter-bar .src-filter-count {
+  font-size:11px; color:#6b7280; margin-left:auto;
+}
+
 /* ═══ PRINT ═══ */
 @media print{aside,.mobile-menu-btn,.top-btns{display:none !important} main{width:100%;overflow:visible} .content{padding:0}}
 </style>
@@ -916,6 +972,29 @@ function pipelineStat(num, label, color) {
   return '<div class="pipeline-stat"><div class="ps-num" style="color:' + color + '">' + num + '</div><div class="ps-lbl">' + label + '</div></div>';
 }
 
+function renderLastContactedBanner(lcAt, lcBy, lcType) {
+  if (lcAt) {
+    var lcDate = new Date(lcAt);
+    var lcAgo = Math.floor((Date.now() - lcDate.getTime()) / 86400000);
+    var lcStr = lcDate.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+    var byStr = lcBy ? " by <strong>"+esc(lcBy)+"</strong>" : "";
+    var typeStr = lcType ? " via "+esc(lcType) : "";
+    var lcColor = lcAgo > 30 ? "#fef2f2;border-color:#fca5a5" : lcAgo > 14 ? "#fffbeb;border-color:#fcd34d" : "#f0fdf4;border-color:#86efac";
+    var lcIcon = lcAgo > 30 ? "🔴" : lcAgo > 14 ? "🟡" : "🟢";
+    var lcAgoText = lcAgo === 0 ? "today" : lcAgo === 1 ? "yesterday" : lcAgo + " days ago";
+    return '<div style="padding:10px 14px;margin:0 0 4px;background:'+lcColor+';border:1px solid;border-radius:10px;display:flex;align-items:center;gap:10px;font-size:13px"><span style="font-size:18px">'+lcIcon+'</span><div><strong>Last Contacted:</strong> '+lcStr+' <span style="color:#64748b">('+lcAgoText+')</span>'+byStr+typeStr+'</div></div>';
+  } else {
+    return '<div style="padding:10px 14px;margin:0 0 4px;background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;display:flex;align-items:center;gap:10px;font-size:13px"><span style="font-size:18px">🔴</span><div><strong>Last Contacted:</strong> <span style="color:#ef4444">No outreach logged</span> — this candidate needs attention</div></div>';
+  }
+}
+
+function refreshLastContactedBanner(candidateId) {
+  apiFetch("candidates/" + candidateId).then(function(d) {
+    var el = document.getElementById("last-contacted-banner");
+    if (el) el.innerHTML = renderLastContactedBanner(d.lastContactedAt, d.lastContactedBy, d.lastContactedType);
+  }).catch(function(){});
+}
+
 function loadEmailHistory(candidateId, inlineEmails) {
   // Try Outlook integration first, fall back to Bullhorn notes (inline emails from detail endpoint)
   apiFetch("outlook/history/candidate/" + candidateId).then(function(r) {
@@ -935,8 +1014,14 @@ function loadEmailHistory(candidateId, inlineEmails) {
       all.push({ type: "email", messageId: e.message_id || "", subject: e.subject, from: e.from_name || e.from_email, to: e.to_emails, date: e.received_at, preview: e.body_preview, logged: e.logged_to_bullhorn, user: e.outlook_user });
     });
     notes.forEach(function(n) {
-      if (n.action === "Email") {
-        all.push({ type: "note", messageId: "", subject: "", from: n.commenting_person_name, to: "", date: n.date_added ? new Date(Number(n.date_added)).toISOString() : "", preview: (n.comments_text || "").substring(0, 200), fullText: n.comments_text || "", logged: true, user: n.commenting_person_name });
+      if (n.action) {
+        var act = (n.action || "").toLowerCase();
+        var icon = "✉️";
+        if (act.indexOf("call") !== -1 || act.indexOf("phone") !== -1 || act.indexOf("left message") !== -1) icon = "📞";
+        else if (act.indexOf("meeting") !== -1 || act.indexOf("visit") !== -1) icon = "🤝";
+        else if (act.indexOf("text") !== -1 || act.indexOf("sms") !== -1) icon = "💬";
+        else if (act.indexOf("note") !== -1) icon = "📝";
+        all.push({ type: "note", messageId: "", subject: "", from: n.commenting_person_name, to: "", date: n.date_added ? new Date(Number(n.date_added)).toISOString() : "", preview: (n.comments_text || "").substring(0, 200), fullText: n.comments_text || "", logged: true, user: n.commenting_person_name, actionType: n.action || "Note", actionIcon: icon });
       }
     });
     all.sort(function(a, b) { return (b.date || "").localeCompare(a.date || ""); });
@@ -944,6 +1029,9 @@ function loadEmailHistory(candidateId, inlineEmails) {
     // Store for search filtering
     window._emailCorrespondence = all;
     renderEmailList(el, all, total);
+
+    // Refresh last-contacted banner (server auto-stamps from email history)
+    refreshLastContactedBanner(candidateId);
   }).catch(function(e) {
     // Outlook failed — use inline Bullhorn email notes
     var el = document.getElementById("detail-email-history");
@@ -951,22 +1039,22 @@ function loadEmailHistory(candidateId, inlineEmails) {
     if (inlineEmails && inlineEmails.length > 0) {
       renderInlineEmails(el, inlineEmails);
     } else {
-      el.innerHTML = '<h4>Email Correspondence</h4><div style="color:#94a3b8;font-size:12px">No email correspondence found</div>';
+      el.innerHTML = '<h4>Activity & Correspondence</h4><div style="color:#94a3b8;font-size:12px">No activity or correspondence found</div>';
     }
   });
 }
 
 function renderEmailList(el, all, total) {
   var h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-  h += '<h4 style="margin:0">Email Correspondence (' + total + ')</h4>';
+  h += '<h4 style="margin:0">Activity & Correspondence (' + total + ')</h4>';
   h += '</div>';
   if (total === 0) {
-    h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No email correspondence found for this candidate</div>';
+    h += '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No activity or correspondence found for this candidate</div>';
     el.innerHTML = h;
     return;
   }
   // Search bar
-  h += '<div style="margin-bottom:8px"><input type="text" id="email-search-input" placeholder="Search emails by keyword..." style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;outline:none" oninput="filterEmails()" /></div>';
+  h += '<div style="margin-bottom:8px"><input type="text" id="email-search-input" placeholder="Search activity by keyword..." style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;outline:none" oninput="filterEmails()" /></div>';
   h += '<div id="email-list-container" style="max-height:400px;overflow-y:auto">';
   h += buildEmailRows(all);
   h += '</div>';
@@ -982,17 +1070,33 @@ function buildEmailRows(items) {
     var arrow = isSent ? "\u2192 Sent" : "\u2190 Received";
     var arrowColor = isSent ? "#16a34a" : "#176087";
     var clickable = e.messageId || e.type === "note";
+    // For notes, show action type badge
+    var actionLabel = "";
+    var actionIcon = e.actionIcon || "\u2709\ufe0f";
+    if (e.type === "note" && e.actionType) {
+      var actColors = {"Email":"#176087","Phone Call":"#7c3aed","Left Message":"#9333ea","Call":"#7c3aed","Meeting":"#0891b2","SMS":"#ea580c","Text":"#ea580c","Correspondence":"#176087"};
+      var actColor = actColors[e.actionType] || "#64748b";
+      actionLabel = '<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:' + actColor + '15;color:' + actColor + ';font-weight:600;margin-right:4px">' + actionIcon + ' ' + esc(e.actionType) + '</span>';
+    }
     h += '<div class="email-row" data-idx="' + idx + '" style="padding:10px 0;border-bottom:1px solid #f1f5f9;' + (clickable ? 'cursor:pointer' : '') + '" ' + (clickable ? 'onclick="expandEmail(this,' + idx + ')"' : '') + '>';
     h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">';
     h += '<div style="flex:1;min-width:0">';
-    h += '<div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.subject || "(no subject)");
+    if (e.type === "note") {
+      h += '<div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + actionLabel + esc(e.subject || e.preview || "(no subject)");
+    } else {
+      h += '<div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.subject || "(no subject)");
+    }
     if (clickable) h += ' <span style="font-size:10px;color:#94a3b8;font-weight:400">click to read</span>';
     h += '</div>';
     h += '<div style="font-size:12px;color:#64748b;margin-top:2px">';
-    h += '<span style="color:' + arrowColor + ';font-weight:600">' + arrow + '</span> ';
-    h += esc(e.from || "") + (e.to ? " \u2192 " + esc(e.to) : "");
+    if (e.type === "note") {
+      h += '<span style="font-weight:600;color:#64748b">by </span>' + esc(e.from || "");
+    } else {
+      h += '<span style="color:' + arrowColor + ';font-weight:600">' + arrow + '</span> ';
+      h += esc(e.from || "") + (e.to ? " \u2192 " + esc(e.to) : "");
+    }
     h += '</div>';
-    if (e.preview) h += '<div style="font-size:12px;color:#94a3b8;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.preview.substring(0, 120)) + '</div>';
+    if (e.preview && e.type !== "note") h += '<div style="font-size:12px;color:#94a3b8;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.preview.substring(0, 120)) + '</div>';
     h += '</div>';
     h += '<div style="flex-shrink:0;text-align:right">';
     h += '<div style="font-size:11px;color:#94a3b8">' + dateStr + '</div>';
@@ -1068,18 +1172,19 @@ function filterEmails() {
            (e.from || "").toLowerCase().indexOf(q) >= 0 ||
            (e.to || "").toLowerCase().indexOf(q) >= 0 ||
            (e.preview || "").toLowerCase().indexOf(q) >= 0 ||
-           (e.fullText || "").toLowerCase().indexOf(q) >= 0;
+           (e.fullText || "").toLowerCase().indexOf(q) >= 0 ||
+           (e.actionType || "").toLowerCase().indexOf(q) >= 0;
   });
   window._emailCorrespondenceFiltered = filtered;
   if (filtered.length === 0) {
-    container.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:12px 0">No emails matching "' + esc(q) + '"</div>';
+    container.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:12px 0">No activity matching "' + esc(q) + '"</div>';
   } else {
     container.innerHTML = buildEmailRows(filtered);
   }
 }
 
 function renderInlineEmails(el, emails) {
-  var h = '<h4>Email Correspondence (' + emails.length + ')</h4>';
+  var h = '<h4>Activity & Correspondence (' + emails.length + ')</h4>';
   h += '<div style="max-height:400px;overflow-y:auto">';
   emails.forEach(function(e) {
     h += '<div style="padding:10px 0;border-bottom:1px solid #f1f5f9">';
@@ -2509,6 +2614,9 @@ function renderDetailContent(c) {
   h += '</div>';
   h += '<button class="detail-close" onclick="closeDetail()">✕</button></div>';
 
+  // ── LAST CONTACTED BANNER ──
+  h += '<div id="last-contacted-banner">' + renderLastContactedBanner(c.lastContactedAt, c.lastContactedBy, c.lastContactedType) + '</div>';
+
   // ── CONTACT INFORMATION ──
   h += '<div class="detail-section"><h4>Contact Information</h4><div class="detail-grid">';
   var bestPhone = c.mobile || c.phone || "";
@@ -2612,7 +2720,7 @@ function renderDetailContent(c) {
   h += '<div class="detail-section" id="detail-submissions"><h4>Submissions</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading submissions…</div></div>';
 
   // ── EMAIL CORRESPONDENCE (loaded async) ──
-  h += '<div class="detail-section" id="detail-email-history"><h4>Email Correspondence</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading email history…</div></div>';
+  h += '<div class="detail-section" id="detail-email-history"><h4>Activity & Correspondence</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading activity history…</div></div>';
 
   // ── ACTIVITY NOTES ──
   if(c.notes && Array.isArray(c.notes) && c.notes.length) {
@@ -2908,8 +3016,32 @@ function submitNote() {
     btn.textContent = "Saved!";
     btn.style.background = "#16a34a";
     document.getElementById("note-comments-input").value = "";
-    // Refresh the detail panel after a beat
-    setTimeout(function() { openDetail(c.id, c); }, 800);
+    document.getElementById("detail-add-note").style.display = "none";
+
+    // Optimistic UI update — show the note immediately without waiting for Bullhorn re-query
+    var newNote = { action: action, comments: comments, date: new Date().toLocaleDateString(), by: "You" };
+    if (!c.notes || !Array.isArray(c.notes)) c.notes = [];
+    c.notes.unshift(newNote);
+    window._lastDetailCandidate = c;
+
+    // Find the notes section and update it in-place
+    var noteSections = document.querySelectorAll(".detail-section h4");
+    for (var i = 0; i < noteSections.length; i++) {
+      if (noteSections[i].textContent.indexOf("Recent Notes") !== -1) {
+        var parent = noteSections[i].parentNode;
+        parent.innerHTML = '<h4>Recent Notes (' + c.notes.length + ')</h4>';
+        c.notes.forEach(function(n) {
+          parent.innerHTML += '<div class="note-card"><div class="note-meta">' +
+            (n.action ? '<span class="note-action">' + esc(n.action) + '</span> • ' : '') +
+            esc(n.by || "") + ' • ' + esc(n.date || "") +
+            '</div><div class="note-text">' + esc(n.comments) + '</div></div>';
+        });
+        break;
+      }
+    }
+
+    // Also do a full refresh after delay so Bullhorn-synced data replaces the optimistic update
+    setTimeout(function() { openDetail(c.id, c); }, 3000);
   }).catch(function(e) {
     btn.textContent = "Error";
     btn.style.background = "#dc2626";
@@ -5366,7 +5498,168 @@ var _srcStages = [];
 var _srcStageLabels = {};
 var _srcView = "board"; // "board" | "table" | "report"
 var _srcChecked = {}; // id → true for bulk actions
-var _srcFilter = "all"; // stage filter for table view
+var _srcFilters = { stage:[], certs:[], role:[], source:[], grade:[], location:[] };
+var _srcOpenDropdown = null; // which ms-filter is currently open
+
+/* ── Multi-select filter component ── */
+function msFilterHTML(key, label, options) {
+  var sel = _srcFilters[key] || [];
+  var hasVals = sel.length > 0;
+  var id = "ms-" + key;
+  var html = '<div class="ms-filter" id="' + id + '-wrap">';
+  html += '<div class="ms-filter-btn' + (hasVals ? " has-values" : "") + '" onclick="msToggle(\'' + key + '\')">';
+  html += '<span>' + esc(label) + '</span>';
+  if (hasVals) html += '<span class="ms-count">' + sel.length + '</span>';
+  html += '<span class="ms-arrow">▼</span>';
+  html += '</div>';
+  if (_srcOpenDropdown === key) {
+    html += '<div class="ms-dropdown" id="' + id + '-dd" onclick="event.stopPropagation()">';
+    if (options.length > 6) {
+      html += '<div class="ms-search"><input type="text" placeholder="Search..." oninput="msSearch(\'' + key + '\',this.value)"></div>';
+    }
+    html += '<div class="ms-options" id="' + id + '-opts">';
+    options.forEach(function(opt) {
+      var checked = sel.indexOf(opt.value) !== -1 ? " checked" : "";
+      html += '<label class="ms-option" data-val="' + esc(opt.value).toLowerCase() + '">';
+      html += '<input type="checkbox"' + checked + ' onchange="msToggleOpt(\'' + key + '\',\'' + esc(opt.value).replace(/'/g, "\\'") + '\',this.checked)">';
+      html += '<span>' + esc(opt.label) + '</span>';
+      if (opt.count !== undefined) html += '<span class="ms-opt-count">' + opt.count + '</span>';
+      html += '</label>';
+    });
+    html += '</div>';
+    html += '<div class="ms-actions">';
+    html += '<button onclick="msClearOne(\'' + key + '\')">Clear</button>';
+    html += '<button onclick="msSelectAllOpts(\'' + key + '\')">Select All</button>';
+    html += '</div>';
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function msToggle(key) {
+  _srcOpenDropdown = (_srcOpenDropdown === key) ? null : key;
+  srcRerender();
+}
+function msToggleOpt(key, val, checked) {
+  var arr = _srcFilters[key];
+  var idx = arr.indexOf(val);
+  if (checked && idx === -1) arr.push(val);
+  if (!checked && idx !== -1) arr.splice(idx, 1);
+  // Light re-render: update only the board content + filter count badge
+  // Do NOT rebuild the whole page — that destroys the open dropdown mid-click
+  srcLightRerender();
+}
+function srcLightRerender() {
+  // Update the board/table/report area
+  var area = document.getElementById("src-board-area");
+  if (area) area.innerHTML = renderSrcContent();
+  // Update the filter count badge without rebuilding the dropdown
+  var filtered = srcFilteredData();
+  var countEl = document.querySelector(".src-filter-count");
+  if (countEl) countEl.textContent = filtered.length + " of " + (_srcData||[]).length + " candidates";
+  // Update each filter button's count badge
+  ["stage","certs","role","source","grade","location"].forEach(function(key) {
+    var sel = _srcFilters[key] || [];
+    var btn = document.querySelector("#ms-" + key + "-wrap .ms-filter-btn");
+    if (!btn) return;
+    var countBadge = btn.querySelector(".ms-count");
+    if (sel.length > 0) {
+      btn.classList.add("has-values");
+      if (countBadge) { countBadge.textContent = sel.length; }
+      else { var span = document.createElement("span"); span.className = "ms-count"; span.textContent = sel.length; btn.insertBefore(span, btn.querySelector(".ms-arrow")); }
+    } else {
+      btn.classList.remove("has-values");
+      if (countBadge) countBadge.remove();
+    }
+  });
+}
+function msClearOne(key) {
+  _srcFilters[key] = [];
+  _srcOpenDropdown = null;
+  srcRerender();
+}
+function msSelectAllOpts(key) {
+  var opts = srcGetFilterOptions(key);
+  _srcFilters[key] = opts.map(function(o) { return o.value; });
+  // Check all boxes in the open dropdown without destroying it
+  var ddOpts = document.querySelectorAll("#ms-" + key + "-opts .ms-option input[type='checkbox']");
+  ddOpts.forEach(function(cb) { cb.checked = true; });
+  srcLightRerender();
+}
+function msClearAllFilters() {
+  _srcFilters = { stage:[], certs:[], role:[], source:[], grade:[], location:[] };
+  _srcOpenDropdown = null;
+  srcRerender();
+}
+function msSearch(key, q) {
+  var opts = document.querySelectorAll("#ms-" + key + "-opts .ms-option");
+  var ql = q.toLowerCase();
+  opts.forEach(function(el) {
+    el.style.display = (el.getAttribute("data-val") || "").indexOf(ql) !== -1 ? "" : "none";
+  });
+}
+
+/* Close dropdown when clicking outside */
+document.addEventListener("click", function(e) {
+  if (_srcOpenDropdown && !e.target.closest(".ms-filter")) {
+    _srcOpenDropdown = null;
+    srcRerender();
+  }
+});
+
+/* ── Build filter option lists from data ── */
+function srcGetFilterOptions(key) {
+  var counts = {};
+  var allData = _srcData || [];
+  allData.forEach(function(c) {
+    var vals = [];
+    if (key === "stage") vals = [c.stage || ""];
+    else if (key === "certs") vals = (c.certs || "").split(",").map(function(s){return s.trim();}).filter(Boolean);
+    else if (key === "role") vals = [c.epicRole || c.role || ""];
+    else if (key === "source") vals = [c.source || ""];
+    else if (key === "grade") vals = [c.grade || ""];
+    else if (key === "location") {
+      var loc = c.location || c.state || "";
+      // Extract state from "City, ST" format
+      var stMatch = loc.match(/,\s*([A-Z]{2})\b/);
+      vals = [stMatch ? stMatch[1] : loc];
+    }
+    vals.forEach(function(v) { if (v) counts[v] = (counts[v] || 0) + 1; });
+  });
+  var opts = Object.keys(counts).sort().map(function(v) {
+    var lbl = v;
+    if (key === "stage") lbl = _srcStageLabels[v] || v;
+    else if (key === "source") lbl = v === "linkedin" ? "LinkedIn" : v === "bullhorn" ? "Bullhorn" : v === "manual" ? "Manual" : v;
+    return { value: v, label: lbl, count: counts[v] };
+  });
+  return opts;
+}
+
+/* ── Apply all active filters ── */
+function srcFilteredData() {
+  var data = _srcData || [];
+  var f = _srcFilters;
+  if (f.stage.length) data = data.filter(function(c) { return f.stage.indexOf(c.stage) !== -1; });
+  if (f.certs.length) data = data.filter(function(c) {
+    var cands = (c.certs || "").split(",").map(function(s){return s.trim();});
+    return f.certs.some(function(fc) { return cands.indexOf(fc) !== -1; });
+  });
+  if (f.role.length) data = data.filter(function(c) { return f.role.indexOf(c.epicRole || c.role || "") !== -1; });
+  if (f.source.length) data = data.filter(function(c) { return f.source.indexOf(c.source || "") !== -1; });
+  if (f.grade.length) data = data.filter(function(c) { return f.grade.indexOf(c.grade || "") !== -1; });
+  if (f.location.length) data = data.filter(function(c) {
+    var loc = c.location || c.state || "";
+    var stMatch = loc.match(/,\s*([A-Z]{2})\b/);
+    var val = stMatch ? stMatch[1] : loc;
+    return f.location.indexOf(val) !== -1;
+  });
+  return data;
+}
+
+function srcHasActiveFilters() {
+  return Object.keys(_srcFilters).some(function(k) { return _srcFilters[k].length > 0; });
+}
 
 function renderSourcingBoard() {
   var html = '<div class="src-top">';
@@ -5385,6 +5678,20 @@ function renderSourcingBoard() {
     html += '<button class="btn-sm" onclick="srcShowImportModal()">📥 Import CSV</button>';
     html += '<button class="btn-sm" onclick="srcAutoPopulate()">🎯 Auto-Populate</button>';
     html += '</div>';
+    html += '</div>';
+    // ── Multi-select filter bar ──
+    html += '<div class="src-filter-bar">';
+    html += msFilterHTML("stage", "Stage", srcGetFilterOptions("stage"));
+    html += msFilterHTML("certs", "Certs", srcGetFilterOptions("certs"));
+    html += msFilterHTML("role", "Role", srcGetFilterOptions("role"));
+    html += msFilterHTML("source", "Source", srcGetFilterOptions("source"));
+    html += msFilterHTML("grade", "Grade", srcGetFilterOptions("grade"));
+    html += msFilterHTML("location", "Location", srcGetFilterOptions("location"));
+    if (srcHasActiveFilters()) {
+      html += '<span class="ms-clear-all" onclick="msClearAllFilters()">✕ Clear All</span>';
+    }
+    var filtered = srcFilteredData();
+    html += '<span class="src-filter-count">' + filtered.length + ' of ' + (_srcData||[]).length + ' candidates</span>';
     html += '</div>';
   }
   html += '</div>';
@@ -5414,7 +5721,8 @@ function renderSrcBoard() {
 
   var grouped = {};
   stages.forEach(function(s) { grouped[s] = []; });
-  _srcData.forEach(function(c) {
+  var filteredBoard = srcFilteredData();
+  filteredBoard.forEach(function(c) {
     if (grouped[c.stage]) grouped[c.stage].push(c);
     else if (grouped.identified) grouped.identified.push(c);
   });
@@ -5450,18 +5758,11 @@ function renderSrcBoard() {
 }
 
 function renderSrcTable() {
-  var data = _srcData;
-  if (_srcFilter && _srcFilter !== "all") data = data.filter(function(c) { return c.stage === _srcFilter; });
+  var data = srcFilteredData();
 
   var anyChecked = Object.keys(_srcChecked).some(function(k) { return _srcChecked[k]; });
 
   var html = '<div style="display:flex;gap:8px;align-items:center;margin:12px 0;flex-wrap:wrap">';
-  html += '<select onchange="srcFilterStage(this.value)" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">';
-  html += '<option value="all"' + (_srcFilter==="all"?" selected":"") + '>All Stages</option>';
-  _srcStages.forEach(function(s) {
-    html += '<option value="' + s + '"' + (_srcFilter===s?" selected":"") + '>' + esc(_srcStageLabels[s]||s) + '</option>';
-  });
-  html += '</select>';
   if (anyChecked) {
     var checkedIds = Object.keys(_srcChecked).filter(function(k) { return _srcChecked[k]; });
     html += '<span style="color:#6b7280;font-size:12px">' + checkedIds.length + ' selected</span>';
@@ -5508,7 +5809,7 @@ function renderSrcTable() {
 }
 
 function renderSrcReport() {
-  var selected = _srcData.filter(function(c) { return c.isSelected; });
+  var selected = srcFilteredData().filter(function(c) { return c.isSelected; });
   var html = '<div style="margin:16px 0;display:flex;gap:8px;align-items:center">';
   html += '<span style="font-weight:600">' + selected.length + ' candidates selected</span>';
   html += '<button class="btn-sm" onclick="srcPrintReport()">🖨️ Print Report</button>';
@@ -5556,7 +5857,7 @@ function srcSearchJobs(q) {
   var results = document.getElementById("src-job-results");
   if (!q || q.length < 2) { results.style.display = "none"; return; }
   _srcJobSearchTimer = setTimeout(function() {
-    apiFetch("jobs", { q: q, status: "Open" }).then(function(r) {
+    apiFetch("jobs", { q: q }).then(function(r) {
       var jobs = (r.data || []).slice(0, 15);
       if (jobs.length === 0) { results.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px">No jobs found</div>'; results.style.display = "block"; return; }
       var h = "";
@@ -5574,6 +5875,8 @@ function srcSearchJobs(q) {
 function srcSelectJob(id, label) {
   _srcJobId = id;
   _srcChecked = {};
+  _srcFilters = { stage:[], certs:[], role:[], source:[], grade:[], location:[] };
+  _srcOpenDropdown = null;
   document.getElementById("src-job-results").style.display = "none";
   var inp = document.getElementById("src-job-search");
   if (inp) inp.value = label;
@@ -5600,7 +5903,6 @@ function srcRerender() {
   if (content) content.innerHTML = renderSourcingBoard();
 }
 function srcSetView(v) { _srcView = v; srcRerender(); }
-function srcFilterStage(s) { _srcFilter = s; srcRerender(); }
 
 // Inline updates
 function srcUpdateField(id, field, value) {
