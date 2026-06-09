@@ -8883,6 +8883,48 @@ app.get("/api/touch-report", async (req, res) => {
   }
 });
 
+// ── Debug: touch-report client contact diagnostics (temporary) ──
+app.get("/api/debug-touch-clients", async (req, res) => {
+  try {
+    const clientStatus = req.query.clientStatus || "Active Account";
+    var corpStatusQuery;
+    if (clientStatus === "All") {
+      corpStatusQuery = `isDeleted:0 AND status:("Active Account" OR "Proposal" OR "Passive Account")`;
+    } else {
+      corpStatusQuery = `isDeleted:0 AND status:"${clientStatus}"`;
+    }
+    const corpData = await bhFetchAll("search/ClientCorporation", {
+      query: corpStatusQuery,
+      fields: "id,name,status",
+      sort: "name",
+    });
+    var corpIds = (corpData.data || []).map(function(c) { return c.id; });
+    var step2 = { contactsFound: 0, errors: [] };
+    if (corpIds.length > 0) {
+      var batch = corpIds.slice(0, 20); // just test first 20
+      try {
+        var contactData = await bhFetchAll("query/ClientContact", {
+          where: `isDeleted=false AND clientCorporation.id IN (${batch.join(",")})`,
+          fields: "id,firstName,lastName,clientCorporation(id,name)",
+          orderBy: "-dateLastModified",
+        });
+        step2.contactsFound = (contactData.data || []).length;
+        step2.contactTotal = contactData.total;
+        step2.sampleContacts = (contactData.data || []).slice(0, 3).map(function(c) {
+          return { id: c.id, name: (c.firstName||"")+" "+(c.lastName||""), corp: c.clientCorporation };
+        });
+      } catch(e) { step2.errors.push(e.message); }
+    }
+    res.json({
+      query: corpStatusQuery,
+      corpsFound: corpData.total || (corpData.data || []).length,
+      sampleCorps: (corpData.data || []).slice(0, 5).map(function(c) { return { id: c.id, name: c.name, status: c.status }; }),
+      corpIdsSample: corpIds.slice(0, 10),
+      step2: step2,
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Ask Anura: natural language data queries ─────
 // ── Custom Sheets ─────────────────────────────────
 app.get("/api/sheets", async (req, res) => {
