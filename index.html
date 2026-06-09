@@ -7172,14 +7172,23 @@ function renderAskMessages() {
 /* ═══ TOUCHES PAGE ═══ */
 var _touchTab = "candidates";
 var _touchDays = 14;
+var _touchClientStatus = "Active Account";
 function renderTouches(report) {
-  var html = '<div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">';
+  var html = '<div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap">';
   html += '<label style="font-size:14px;color:#64748b">Show untouched in past</label>';
   html += '<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:14px;font-family:inherit" onchange="_touchDays=parseInt(this.value);loadPage()">';
   [7, 14, 21, 30, 60, 90].forEach(function(d) {
     html += '<option value="' + d + '"' + (d === _touchDays ? ' selected' : '') + '>' + d + ' days</option>';
   });
   html += '</select>';
+  if (_touchTab === "clients") {
+    html += '<label style="font-size:14px;color:#64748b;margin-left:8px">Company Status</label>';
+    html += '<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:14px;font-family:inherit" onchange="_touchClientStatus=this.value;loadPage()">';
+    ["Active Account","Proposal","All"].forEach(function(s) {
+      html += '<option value="' + s + '"' + (s === _touchClientStatus ? ' selected' : '') + '>' + s + '</option>';
+    });
+    html += '</select>';
+  }
   html += '<button class="btn-export" onclick="exportTouches()">\uD83D\uDCE5 Export CSV</button>';
   html += '</div>';
 
@@ -7235,17 +7244,18 @@ function renderTouches(report) {
       html += '</tr>';
     });
   } else {
-    html += '<th>Contact Name</th><th>Title</th><th>Health System</th><th>Owner</th><th>Email</th><th>Last Touch</th><th>Touch Type</th><th>Days</th><th>Urgency</th>';
+    html += '<th>Contact Name</th><th>Title</th><th>Health System</th><th>Company Status</th><th>Owner</th><th>Last Touch</th><th>Touch Type</th><th>Days</th><th>Urgency</th>';
     html += '</tr></thead><tbody>';
     (report.clients.data || []).forEach(function(c) {
       var urg = c.daysSince >= 60 ? "high" : c.daysSince >= 30 ? "med" : "low";
       var touchColor = c.lastTouchType === "No outreach logged" ? "#dc2626" : "#64748b";
+      var statusColor = (c.companyStatus||"") === "Active Account" ? "#16a34a" : (c.companyStatus||"") === "Proposal" ? "#d97706" : "#64748b";
       html += '<tr>';
       html += '<td class="fw600">' + esc(c.name) + '</td>';
       html += '<td>' + esc(c.title||"") + '</td>';
-      html += '<td>' + esc(c.company||"") + '</td>';
+      html += '<td>' + esc(c.healthSystem||c.company||"") + '</td>';
+      html += '<td><span style="color:'+statusColor+';font-size:12px;font-weight:600">' + esc(c.companyStatus||"") + '</span></td>';
       html += '<td>' + esc(c.owner||"") + '</td>';
-      html += '<td>' + esc(c.email||"") + '</td>';
       html += '<td>' + esc(c.lastTouched) + '</td>';
       html += '<td style="color:'+touchColor+';font-size:11px">' + esc(c.lastTouchType||"") + '</td>';
       html += '<td class="fw600">' + c.daysSince + 'd</td>';
@@ -10331,7 +10341,7 @@ async function loadPage(){
         var clr=await loadClients(q,sf);
         h=renderClients(clr.data,clr.total);break;
       case "touches":
-        var touchR=await apiFetch("touch-report",{days:_touchDays});
+        var touchR=await apiFetch("touch-report",{days:_touchDays,clientStatus:_touchClientStatus});
         h=renderTouches(touchR);break;
       case "ask":
         h=renderAsk();break;

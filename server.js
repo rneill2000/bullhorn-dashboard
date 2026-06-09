@@ -8664,7 +8664,7 @@ app.get("/api/touch-report", async (req, res) => {
 
     // Fetch stale candidates (active, with owner assigned — excludes unassigned leads)
     const candData = await bhFetchAll("search/Candidate", {
-      query: `isDeleted:0 AND status:"Active" AND owner.id:[1 TO *]`,
+      query: `isDeleted:0 AND (status:"Active" OR status:"Active-Reviewed") AND owner.id:[1 TO *]`,
       fields:
         "id,firstName,lastName,occupation,status,dateLastModified,customText1,customText6,email,phone,owner",
       sort: "dateLastModified",
@@ -8723,7 +8723,7 @@ app.get("/api/touch-report", async (req, res) => {
 
     // Fetch active placements (consultants currently placed)
     const placData = await bhFetchAll("query/Placement", {
-      where: `(status = 'Approved' OR status = 'Actively On Contract') AND dateEnd >= ${nowMs}`,
+      where: `status = 'Actively On Contract' AND dateEnd >= ${nowMs}`,
       fields:
         "id,candidate,jobOrder,dateEnd,dateLastModified,payRate,clientBillRate",
       orderBy: "dateLastModified",
@@ -8780,20 +8780,47 @@ app.get("/api/touch-report", async (req, res) => {
     });
     const staleConsultants = consultants.filter(function(c) { return c.daysSince >= days; });
 
-    // Fetch stale client contacts (active, assigned to health system, with owner)
-    const clientData = await bhFetchAll("search/ClientContact", {
-      query: `isDeleted:0 AND status:"Active" AND clientCorporation.id:[1 TO *] AND owner.id:[1 TO *]`,
-      fields: "id,firstName,lastName,occupation,status,dateLastModified,email,phone,owner,clientCorporation",
-      sort: "dateLastModified",
+    // Fetch client contacts — filter by COMPANY status (not contact status)
+    const clientStatus = req.query.clientStatus || "Active Account";
+    // Step 1: get companies matching the requested status
+    var corpStatusQuery;
+    if (clientStatus === "All") {
+      corpStatusQuery = `isDeleted:0 AND status:("Active Account" OR "Proposal" OR "Passive Account")`;
+    } else {
+      corpStatusQuery = `isDeleted:0 AND status:"${clientStatus}"`;
+    }
+    const corpData = await bhFetchAll("search/ClientCorporation", {
+      query: corpStatusQuery,
+      fields: "id,name,status",
+      sort: "name",
     });
+    var corpMap = {}; // corpId -> { name, status }
+    (corpData.data || []).forEach(function(corp) { corpMap[corp.id] = { name: corp.name || "", status: corp.status || "" }; });
+    var corpIds = Object.keys(corpMap);
+
+    // Step 2: fetch contacts at those companies using query API (supports IN syntax on nested IDs)
+    var clientDataAll = [];
+    if (corpIds.length > 0) {
+      for (var gi = 0; gi < corpIds.length; gi += 100) {
+        var corpBatch = corpIds.slice(gi, gi + 100);
+        try {
+          var contactData = await bhFetchAll("query/ClientContact", {
+            where: `isDeleted=false AND clientCorporation.id IN (${corpBatch.join(",")})`,
+            fields: "id,firstName,lastName,occupation,status,dateLastModified,email,phone,owner(firstName,lastName),clientCorporation(id,name)",
+            orderBy: "-dateLastModified",
+          });
+          clientDataAll = clientDataAll.concat(contactData.data || []);
+        } catch (contactErr) { console.log("[Touch Report] Contact query error:", contactErr.message); }
+      }
+    }
+    // Cap at 500 contacts to prevent timeout on note fetching
+    if (clientDataAll.length > 500) clientDataAll = clientDataAll.slice(0, 500);
 
     // For each client contact, check notes for real touches
-    var clientContactIds = (clientData.data || []).map(function(c) { return c.id; });
+    var clientContactIds = clientDataAll.map(function(c) { return c.id; });
     var clientTouchMap = {};
     if (clientContactIds.length > 0) {
-      // Batch fetch notes for these contacts
       var TOUCH_ACTIONS_BH = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
-      var touchActionQuery = TOUCH_ACTIONS_BH.map(function(a) { return '"' + a + '"'; }).join(" OR ");
       for (var ci = 0; ci < clientContactIds.length; ci += 50) {
         var batch = clientContactIds.slice(ci, ci + 50);
         var personQuery = "personReference.id IN (" + batch.join(",") + ")";
@@ -8821,9 +8848,11 @@ app.get("/api/touch-report", async (req, res) => {
       }
     }
 
-    const clients = (clientData.data || []).map(function(c) {
+    const clients = clientDataAll.map(function(c) {
       var touch = clientTouchMap[c.id];
       var lastTouchDate = touch ? touch.date : c.dateLastModified;
+      var corpId = c.clientCorporation ? (typeof c.clientCorporation === "object" ? c.clientCorporation.id : c.clientCorporation) : null;
+      var corp = corpId && corpMap[corpId] ? corpMap[corpId] : null;
       return {
         id: c.id,
         type: "ClientContact",
@@ -8832,7 +8861,8 @@ app.get("/api/touch-report", async (req, res) => {
         status: c.status || "",
         email: c.email || "",
         phone: c.phone || "",
-        healthSystem: c.clientCorporation ? (c.clientCorporation.name || "") : "",
+        healthSystem: corp ? corp.name : (c.clientCorporation ? (c.clientCorporation.name || "") : ""),
+        companyStatus: corp ? corp.status : "",
         owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
         lastTouched: lastTouchDate ? new Date(lastTouchDate).toLocaleDateString() : "Never",
         lastTouchType: touch ? touch.type : "No outreach logged",
@@ -8842,9 +8872,10 @@ app.get("/api/touch-report", async (req, res) => {
 
     res.json({
       days,
+      clientStatus: clientStatus,
       candidates: { data: candidates, total: candData.total || candidates.length },
       consultants: { data: staleConsultants, total: staleConsultants.length },
-      clients: { data: clients, total: clientData.total || clients.length },
+      clients: { data: clients, total: clients.length },
     });
   } catch (e) {
     console.error("[Touch Report]", e.message);
