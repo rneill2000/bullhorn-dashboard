@@ -7175,10 +7175,16 @@ function renderAskMessages() {
 var _touchTab = "candidates";
 var _touchDays = 14;
 var _touchClientStatus = "Active Account";
-var _btOwner="All";
+var _btOwner=null;
 function renderBhTasks(d) {
   var tasks = d.data || [];
-  var c = d.counts || {};
+  if (_btOwner === null) {
+    _btOwner = (typeof currentUser !== "undefined" && currentUser && currentUser.name) ? currentUser.name : "All";
+  }
+  var mine = tasks.filter(function(t){ return _btOwner === "All" || t.owner === _btOwner; });
+  var c = { overdue: 0, today: 0, thisweek: 0, upcoming: 0 };
+  mine.forEach(function(t){ c[t.bucket] = (c[t.bucket] || 0) + 1; });
+  d = { data: tasks, total: mine.length, counts: c };
   var html = '<div class="stats-row">';
   html += '<div class="stat-card"><div class="stat-icon" style="background:#fef2f2">🔴</div><div><div class="stat-label">Overdue</div><div class="stat-value" style="color:' + (c.overdue ? '#dc2626' : '#16a34a') + '">' + (c.overdue || 0) + '</div></div></div>';
   html += '<div class="stat-card"><div class="stat-icon" style="background:#fff7ed">📍</div><div><div class="stat-label">Due Today</div><div class="stat-value">' + (c.today || 0) + '</div></div></div>';
@@ -7188,6 +7194,7 @@ function renderBhTasks(d) {
 
   var owners = {};
   tasks.forEach(function(t){ if (t.owner) owners[t.owner] = true; });
+  if (_btOwner !== "All") owners[_btOwner] = true;
   html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">';
   html += '<label style="font-size:14px;color:#64748b">Owner</label>';
   html += '<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:14px;font-family:inherit" onchange="_btOwner=this.value;loadPage()">';
