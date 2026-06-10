@@ -2624,6 +2624,129 @@ app.get("/api/opportunities", async (req, res) => {
   }
 });
 
+/* ═══ DUX-SOUP WEBHOOK — LinkedIn outreach feedback loop ═══
+   Configure in Dux-Soup Options -> Connect -> Webhooks, target URL:
+   https://dashboard.anuraconnect.com/api/dux-webhook/<DUX_WEBHOOK_TOKEN>
+   Events stored in Postgres (dux_events); replies & accepted connects also logged to Bullhorn as Notes. */
+const DUX_WEBHOOK_TOKEN = process.env.DUX_WEBHOOK_TOKEN || "anrx-dux-7c2f91e4";
+let _duxTablesReady = false;
+async function ensureDuxTables() {
+  if (_duxTablesReady || !db.isEnabled()) return;
+  await db.query(`CREATE TABLE IF NOT EXISTS dux_events (
+    id SERIAL PRIMARY KEY,
+    received_at TIMESTAMPTZ DEFAULT now(),
+    event_type TEXT,
+    profile_url TEXT,
+    message_id TEXT,
+    lead_id INTEGER,
+    payload JSONB
+  )`);
+  await db.query(`CREATE TABLE IF NOT EXISTS dux_profile_map (
+    profile_url TEXT PRIMARY KEY,
+    lead_id INTEGER,
+    lead_name TEXT,
+    company TEXT,
+    added_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  _duxTablesReady = true;
+}
+function duxNormalizeProfile(u) {
+  return (u || "").toLowerCase().replace(/^https?:\/\/(www\.)?/, "https://www.").split("?")[0].replace(/\/$/, "");
+}
+async function duxMatchLead(profileUrl, data) {
+  // 1) explicit map
+  if (db.isEnabled() && profileUrl) {
+    const row = await db.getOne("SELECT lead_id, lead_name FROM dux_profile_map WHERE profile_url = $1", [duxNormalizeProfile(profileUrl)]);
+    if (row && row.lead_id) return { id: row.lead_id, name: row.lead_name };
+  }
+  // 2) name match from event data (Dux visit/scan payloads carry First/Last Name)
+  const first = data && (data["First Name"] || data.firstName);
+  const last = data && (data["Last Name"] || data.lastName);
+  if (first && last) {
+    try {
+      const r = await bhFetch("search/Lead", { query: `firstName:"${first}" AND lastName:"${last}" AND isDeleted:0`, fields: "id,firstName,lastName", count: 2 });
+      if (r.data && r.data.length === 1) return { id: r.data[0].id, name: first + " " + last };
+    } catch (e) { /* non-fatal */ }
+  }
+  return null;
+}
+app.post("/api/dux-webhook/:token", async (req, res) => {
+  try {
+    if (req.params.token !== DUX_WEBHOOK_TOKEN) return res.status(403).json({ error: "bad token" });
+    await ensureDuxTables();
+    const events = Array.isArray(req.body) ? req.body : [req.body];
+    for (const ev of events) {
+      if (!ev || typeof ev !== "object") continue;
+      const type = ev.type || ev.event || "unknown";
+      const profile = duxNormalizeProfile(ev.profile || (ev.data && (ev.data.Profile || ev.data.profile)) || "");
+      const matched = await duxMatchLead(profile, ev.data || ev);
+      if (db.isEnabled()) {
+        await db.query("INSERT INTO dux_events (event_type, profile_url, message_id, lead_id, payload) VALUES ($1,$2,$3,$4,$5)",
+          [type, profile, ev.messageid || null, matched ? matched.id : null, JSON.stringify(ev)]);
+      }
+      // Log meaningful events to Bullhorn
+      try {
+        if (matched && type === "message") {
+          const text = (ev.data && (ev.data.Text || ev.data.text || ev.data.Message)) || "";
+          await bhWrite("entity/Note", {
+            personReference: { id: matched.id },
+            action: "LinkedIn Reply",
+            comments: "LINKEDIN REPLY received (via Dux-Soup webhook): " + String(text).substring(0, 800),
+          }, "PUT");
+          console.log("[Dux Webhook] Reply logged for lead", matched.id);
+        } else if (matched && (type === "rcfinished" || type === "action")) {
+          const cmd = (ev.data && (ev.data.command || ev.data.Command)) || ev.command || "action";
+          await bhWrite("entity/Note", {
+            personReference: { id: matched.id },
+            action: "LinkedIn Touch",
+            comments: "Dux-Soup executed: " + cmd + " (" + profile + ")",
+          }, "PUT");
+        }
+      } catch (e) { console.error("[Dux Webhook] BH note failed:", e.message); }
+    }
+    res.json({ ok: true, received: events.length });
+  } catch (e) {
+    console.error("[Dux Webhook]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+// Seed/maintain profile->lead mappings (POST [{profile, leadId, name, company}])
+app.post("/api/dux-webhook/:token/map", async (req, res) => {
+  try {
+    if (req.params.token !== DUX_WEBHOOK_TOKEN) return res.status(403).json({ error: "bad token" });
+    if (!db.isEnabled()) return res.status(503).json({ error: "db disabled" });
+    await ensureDuxTables();
+    const rows = Array.isArray(req.body) ? req.body : [req.body];
+    let n = 0;
+    for (const r of rows) {
+      if (!r.profile || !r.leadId) continue;
+      await db.query(
+        "INSERT INTO dux_profile_map (profile_url, lead_id, lead_name, company) VALUES ($1,$2,$3,$4) ON CONFLICT (profile_url) DO UPDATE SET lead_id=$2, lead_name=$3, company=$4",
+        [duxNormalizeProfile(r.profile), r.leadId, r.name || null, r.company || null]
+      );
+      n++;
+    }
+    res.json({ ok: true, mapped: n });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+// Recent LinkedIn activity (for digest/agent)
+app.get("/api/dux-events", async (req, res) => {
+  try {
+    if (!db.isEnabled()) return res.json({ data: [] });
+    await ensureDuxTables();
+    const days = parseInt(req.query.days) || 7;
+    const rows = await db.getAll(
+      "SELECT received_at, event_type, profile_url, lead_id, payload FROM dux_events WHERE received_at > now() - ($1 || ' days')::interval ORDER BY received_at DESC LIMIT 200",
+      [days]
+    );
+    res.json({ data: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/sales-pipeline", async (req, res) => {
   try {
     const r = await bhFetchAll("search/Lead", {
