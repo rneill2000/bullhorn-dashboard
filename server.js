@@ -2747,6 +2747,55 @@ app.get("/api/dux-events", async (req, res) => {
   }
 });
 
+/* ═══ BULLHORN TASKS VIEW ═══ */
+app.get("/api/bh-tasks", async (req, res) => {
+  try {
+    const showCompleted = req.query.completed === "true";
+    const r = await bhFetchAll("query/Task", {
+      where: showCompleted ? "isCompleted=true" : "isCompleted=false",
+      fields: "id,subject,description,dateBegin,isCompleted,owner,dateAdded",
+      orderBy: "dateBegin",
+      count: 200,
+    });
+    const now = Date.now();
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
+    const tasks = (r.data || []).map(function (t) {
+      const due = t.dateBegin || null;
+      let bucket = "upcoming";
+      if (due) {
+        if (due < startOfToday.getTime()) bucket = "overdue";
+        else if (due <= endOfToday.getTime()) bucket = "today";
+        else if (due < now + 7 * 86400000) bucket = "thisweek";
+      }
+      return {
+        id: t.id,
+        subject: t.subject || "",
+        description: (t.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().substring(0, 300),
+        due: due,
+        bucket: bucket,
+        owner: t.owner ? (t.owner.firstName + " " + t.owner.lastName) : "",
+        dateAdded: t.dateAdded || null,
+        isCompleted: !!t.isCompleted,
+      };
+    });
+    const counts = { overdue: 0, today: 0, thisweek: 0, upcoming: 0 };
+    tasks.forEach(function (t) { counts[t.bucket] = (counts[t.bucket] || 0) + 1; });
+    res.json({ data: tasks, total: tasks.length, counts: counts });
+  } catch (e) {
+    console.error("[BH Tasks]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+app.post("/api/bh-tasks/:id/complete", async (req, res) => {
+  try {
+    const result = await bhWrite("entity/Task/" + parseInt(req.params.id), { isCompleted: true }, "POST");
+    res.json({ ok: true, result: result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/sales-pipeline", async (req, res) => {
   try {
     const r = await bhFetchAll("search/Lead", {

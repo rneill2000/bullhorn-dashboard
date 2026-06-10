@@ -3349,6 +3349,7 @@ var NAV_GROUPS=[
   {section:null, items:[
     {key:"home",label:"Home",emoji:"\uD83C\uDFE0"},
     {key:"bizdev",label:"BizDev",emoji:"\uD83D\uDCC5"},
+    {key:"bhtasks",label:"Tasks",emoji:"\u2705"},
     {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
   ]},
   {section:"Candidates", items:[
@@ -7174,6 +7175,57 @@ function renderAskMessages() {
 var _touchTab = "candidates";
 var _touchDays = 14;
 var _touchClientStatus = "Active Account";
+var _btOwner="All";
+function renderBhTasks(d) {
+  var tasks = d.data || [];
+  var c = d.counts || {};
+  var html = '<div class="stats-row">';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#fef2f2">🔴</div><div><div class="stat-label">Overdue</div><div class="stat-value" style="color:' + (c.overdue ? '#dc2626' : '#16a34a') + '">' + (c.overdue || 0) + '</div></div></div>';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#fff7ed">📍</div><div><div class="stat-label">Due Today</div><div class="stat-value">' + (c.today || 0) + '</div></div></div>';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#eff6ff">📅</div><div><div class="stat-label">This Week</div><div class="stat-value">' + (c.thisweek || 0) + '</div></div></div>';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#f0fdf4">📋</div><div><div class="stat-label">Total Open</div><div class="stat-value">' + (d.total || 0) + '</div></div></div>';
+  html += '</div>';
+
+  var owners = {};
+  tasks.forEach(function(t){ if (t.owner) owners[t.owner] = true; });
+  html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">';
+  html += '<label style="font-size:14px;color:#64748b">Owner</label>';
+  html += '<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:14px;font-family:inherit" onchange="_btOwner=this.value;loadPage()">';
+  ["All"].concat(Object.keys(owners).sort()).forEach(function(o){
+    html += '<option value="' + esc(o) + '"' + (o === _btOwner ? ' selected' : '') + '>' + esc(o) + '</option>';
+  });
+  html += '</select></div>';
+
+  var rows = tasks.filter(function(t){ return _btOwner === "All" || t.owner === _btOwner; });
+  var bucketOrder = { overdue: 0, today: 1, thisweek: 2, upcoming: 3 };
+  rows.sort(function(a,b){ return (bucketOrder[a.bucket] - bucketOrder[b.bucket]) || ((a.due||0) - (b.due||0)); });
+
+  html += '<div class="table-wrap"><table><thead><tr>';
+  html += '<th>Task</th><th>Owner</th><th>Due</th><th>Status</th><th></th>';
+  html += '</tr></thead><tbody>';
+  if (!rows.length) html += '<tr><td colspan="5" style="text-align:center;padding:32px;color:#64748b">No open tasks 🎉</td></tr>';
+  rows.forEach(function(t){
+    var colors = { overdue: "#dc2626", today: "#d97706", thisweek: "#176087", upcoming: "#64748b" };
+    var labels = { overdue: "Overdue", today: "Due today", thisweek: "This week", upcoming: "Upcoming" };
+    html += '<tr>';
+    html += '<td style="max-width:420px"><div class="fw600">' + esc(t.subject) + '</div>' + (t.description ? '<div style="font-size:12px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px" title="' + esc(t.description) + '">' + esc(t.description) + '</div>' : '') + '</td>';
+    html += '<td>' + esc(t.owner || "—") + '</td>';
+    html += '<td style="white-space:nowrap">' + (t.due ? new Date(t.due).toLocaleDateString() : "—") + '</td>';
+    html += '<td><span style="font-size:12px;font-weight:600;color:' + colors[t.bucket] + '">' + labels[t.bucket] + '</span></td>';
+    html += '<td><button class="btn-export" style="padding:4px 12px" onclick="completeBhTask(' + t.id + ')">✓ Done</button></td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+async function completeBhTask(id) {
+  if (!confirm("Mark task #" + id + " complete?")) return;
+  try {
+    await fetch("/api/bh-tasks/" + id + "/complete", { method: "POST" });
+    loadPage();
+  } catch (e) { alert("Failed: " + e.message); }
+}
+
 var _salesStage="All", _salesSort="urgency";
 function renderSalesPipeline(d) {
   var leads = d.data || [];
@@ -10426,6 +10478,9 @@ async function loadPage(){
       case "salespipeline":
         var spData=await apiFetch("sales-pipeline");
         h=renderSalesPipeline(spData);break;
+      case "bhtasks":
+        var btData=await apiFetch("bh-tasks");
+        h=renderBhTasks(btData);break;
       case "ask":
         h=renderAsk();break;
       case "dataquality":
