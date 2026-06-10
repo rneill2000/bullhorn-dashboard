@@ -3373,6 +3373,7 @@ var NAV_GROUPS=[
     {key:"clients",label:"Clients",emoji:"\uD83C\uDFE2"},
     {key:"jobs",label:"Jobs",emoji:"\uD83D\uDCBC"},
     {key:"msapipeline",label:"MSA Pipeline",emoji:"\uD83D\uDCDD"},
+    {key:"salespipeline",label:"Sales Pipeline",emoji:"\uD83D\uDCC8"},
     {key:"golives",label:"Go-Lives",emoji:"\uD83C\uDFE5"},
   ]},
   {section:"Reporting", items:[
@@ -7173,6 +7174,84 @@ function renderAskMessages() {
 var _touchTab = "candidates";
 var _touchDays = 14;
 var _touchClientStatus = "Active Account";
+var _salesStage="All", _salesSort="urgency";
+function renderSalesPipeline(d) {
+  var leads = d.data || [];
+  var stages = d.stages || {};
+  // Summary numbers
+  var active = leads.length;
+  var cold = leads.filter(function(l){ return l.daysSince !== null && l.daysSince >= 10; }).length;
+  var never = leads.filter(function(l){ return l.lastTouchType === "No outreach logged"; }).length;
+  var fresh = leads.filter(function(l){ return l.dateAdded && (Date.now() - l.dateAdded) < 7*86400000; }).length;
+
+  var html = '<div class="stats-row">';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#eff6ff">📈</div><div><div class="stat-label">Open Leads</div><div class="stat-value">' + active + '</div></div></div>';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#fef2f2">🥶</div><div><div class="stat-label">Going Cold (10d+)</div><div class="stat-value" style="color:' + (cold ? '#dc2626' : '#16a34a') + '">' + cold + '</div></div></div>';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#fff7ed">📭</div><div><div class="stat-label">No Outreach Yet</div><div class="stat-value">' + never + '</div></div></div>';
+  html += '<div class="stat-card"><div class="stat-icon" style="background:#f0fdf4">🆕</div><div><div class="stat-label">New This Week</div><div class="stat-value">' + fresh + '</div></div></div>';
+  html += '</div>';
+
+  // Stage distribution bar
+  var stageNames = Object.keys(stages);
+  if (stageNames.length) {
+    var palette = ["#176087","#0e7490","#f59e0b","#8b5cf6","#16a34a","#dc2626","#64748b","#db2777"];
+    html += '<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:16px">';
+    html += '<div style="display:flex;height:14px;border-radius:7px;overflow:hidden;margin-bottom:10px">';
+    stageNames.forEach(function(s, i){
+      var pct = Math.max(2, Math.round(stages[s] / active * 100));
+      html += '<div style="width:' + pct + '%;background:' + palette[i % palette.length] + '" title="' + esc(s) + ': ' + stages[s] + '"></div>';
+    });
+    html += '</div><div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#64748b">';
+    stageNames.forEach(function(s, i){
+      html += '<span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:' + palette[i % palette.length] + ';margin-right:5px"></span>' + esc(s) + ' (' + stages[s] + ')</span>';
+    });
+    html += '</div></div>';
+  }
+
+  // Controls
+  html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">';
+  html += '<label style="font-size:14px;color:#64748b">Stage</label>';
+  html += '<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:14px;font-family:inherit" onchange="_salesStage=this.value;loadPage()">';
+  ["All"].concat(stageNames).forEach(function(s){
+    html += '<option value="' + esc(s) + '"' + (s === _salesStage ? ' selected' : '') + '>' + esc(s) + '</option>';
+  });
+  html += '</select>';
+  html += '<label style="font-size:14px;color:#64748b">Sort</label>';
+  html += '<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:14px;font-family:inherit" onchange="_salesSort=this.value;loadPage()">';
+  [["urgency","Most stale first"],["recent","Recently touched first"],["newest","Newest leads first"]].forEach(function(o){
+    html += '<option value="' + o[0] + '"' + (o[0] === _salesSort ? ' selected' : '') + '>' + o[1] + '</option>';
+  });
+  html += '</select></div>';
+
+  // Filter + sort
+  var rows = leads.filter(function(l){ return _salesStage === "All" || l.status === _salesStage; });
+  if (_salesSort === "urgency") rows.sort(function(a,b){ return (b.daysSince||0) - (a.daysSince||0); });
+  if (_salesSort === "recent") rows.sort(function(a,b){ return (a.daysSince||9999) - (b.daysSince||9999); });
+  if (_salesSort === "newest") rows.sort(function(a,b){ return (b.dateAdded||0) - (a.dateAdded||0); });
+
+  // Table
+  html += '<div class="table-wrap"><table><thead><tr>';
+  html += '<th>Name</th><th>Title</th><th>Company</th><th>Stage</th><th>Owner</th><th>Last Touch</th><th>Days</th><th>Latest Note</th>';
+  html += '</tr></thead><tbody>';
+  if (!rows.length) html += '<tr><td colspan="8" style="text-align:center;padding:32px;color:#64748b">No leads' + (_salesStage !== "All" ? ' in this stage' : '') + ' — ask the sales agent to add some.</td></tr>';
+  rows.forEach(function(l){
+    var dotColor = l.daysSince === null ? "#64748b" : l.daysSince < 5 ? "#16a34a" : l.daysSince < 10 ? "#f59e0b" : "#dc2626";
+    var touchColor = l.lastTouchType === "No outreach logged" ? "#dc2626" : "#64748b";
+    html += '<tr>';
+    html += '<td><span class="fw600">' + esc(l.name || "—") + '</span></td>';
+    html += '<td>' + esc(l.title || "—") + '</td>';
+    html += '<td>' + esc(l.company || "—") + '</td>';
+    html += '<td><span style="font-size:12px;background:#f1f5f9;border-radius:12px;padding:3px 10px">' + esc(l.status) + '</span></td>';
+    html += '<td>' + esc(l.owner || "—") + '</td>';
+    html += '<td style="color:' + touchColor + ';font-size:13px">' + esc(l.lastTouchType) + (l.lastTouch ? ' · ' + new Date(l.lastTouch).toLocaleDateString() : '') + '</td>';
+    html += '<td><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' + dotColor + ';margin-right:6px"></span>' + (l.daysSince === null ? "—" : l.daysSince + "d") + '</td>';
+    html += '<td style="font-size:12px;color:#64748b;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(l.lastNote) + '">' + esc(l.lastNote || "—") + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
 function renderTouches(report) {
   var html = '<div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap">';
   html += '<label style="font-size:14px;color:#64748b">Show untouched in past</label>';
@@ -10343,6 +10422,9 @@ async function loadPage(){
       case "touches":
         var touchR=await apiFetch("touch-report",{days:_touchDays,clientStatus:_touchClientStatus});
         h=renderTouches(touchR);break;
+      case "salespipeline":
+        var spData=await apiFetch("sales-pipeline");
+        h=renderSalesPipeline(spData);break;
       case "ask":
         h=renderAsk();break;
       case "dataquality":

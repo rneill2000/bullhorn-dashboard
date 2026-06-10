@@ -2624,6 +2624,69 @@ app.get("/api/opportunities", async (req, res) => {
   }
 });
 
+app.get("/api/sales-pipeline", async (req, res) => {
+  try {
+    const r = await bhFetchAll("search/Lead", {
+      query: "isDeleted:0",
+      fields: "id,firstName,lastName,occupation,status,owner,clientCorporation,companyName,dateAdded,dateLastModified,email,phone",
+      sort: "-dateLastModified",
+    });
+    var leads = (r.data || []).map(function (l) {
+      return {
+        id: l.id,
+        name: ((l.firstName || "") + " " + (l.lastName || "")).trim(),
+        title: l.occupation || "",
+        company: l.clientCorporation ? l.clientCorporation.name : (l.companyName || ""),
+        status: l.status || "New Lead",
+        owner: l.owner ? (l.owner.firstName + " " + l.owner.lastName) : "",
+        email: l.email || "",
+        phone: l.phone || "",
+        dateAdded: l.dateAdded || null,
+        dateLastModified: l.dateLastModified || null,
+        lastTouch: null,
+        lastTouchType: "No outreach logged",
+        lastNote: "",
+      };
+    });
+    // Latest note per lead (batched like the clients endpoint)
+    const ids = leads.map(function (l) { return l.id; });
+    const latest = {};
+    for (let i = 0; i < ids.length; i += 20) {
+      const batch = ids.slice(i, i + 20);
+      try {
+        const nr = await bhFetch("query/Note", {
+          where: "personReference.id IN (" + batch.join(",") + ") AND isDeleted=false",
+          fields: "id,action,dateAdded,comments,personReference",
+          count: 200,
+          orderBy: "-dateAdded",
+        });
+        (nr.data || []).forEach(function (n) {
+          const pid = n.personReference && n.personReference.id;
+          if (pid && !latest[pid]) latest[pid] = n;
+        });
+      } catch (e) { console.error("[Sales Pipeline] note batch failed:", e.message); }
+    }
+    const now = Date.now();
+    leads.forEach(function (l) {
+      const n = latest[l.id];
+      if (n) {
+        l.lastTouch = n.dateAdded;
+        l.lastTouchType = n.action || "Note";
+        l.lastNote = (n.comments || "").replace(/<[^>]*>/g, "").substring(0, 140);
+      }
+      const basis = l.lastTouch || l.dateAdded;
+      l.daysSince = basis !== null && basis !== undefined ? Math.floor((now - basis) / 86400000) : null;
+    });
+    // Stage counts
+    const stages = {};
+    leads.forEach(function (l) { stages[l.status] = (stages[l.status] || 0) + 1; });
+    res.json({ data: leads, total: leads.length, stages: stages });
+  } catch (e) {
+    console.error("[Sales Pipeline]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/opportunities/:id", async (req, res) => {
   try {
     const data = await bhFetch("entity/Opportunity/" + req.params.id, {
