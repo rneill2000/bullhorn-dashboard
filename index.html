@@ -4321,7 +4321,7 @@ function renderSubmissionPipeline(result) {
   });
 
   if (sorted.length === 0) {
-    h += '<tr><td colspan="8" style="text-align:center;padding:32px;color:#94a3b8">No submissions found</td></tr>';
+    h += '<tr><td colspan="9" style="text-align:center;padding:32px;color:#94a3b8">No submissions found</td></tr>';
   } else {
     sorted.forEach(function(s) {
       var colors = subPipeStatusColor(s.status);
@@ -7231,9 +7231,9 @@ function renderSalesPipeline(d) {
 
   // Table
   html += '<div class="table-wrap"><table><thead><tr>';
-  html += '<th>Name</th><th>Title</th><th>Company</th><th>Stage</th><th>Owner</th><th>Last Touch</th><th>Days</th><th>Latest Note</th>';
+  html += '<th>Name</th><th>Title</th><th>Company</th><th>Stage</th><th>Owner</th><th>Last Touch</th><th>Days</th><th>Touches</th><th>Latest Note</th>';
   html += '</tr></thead><tbody>';
-  if (!rows.length) html += '<tr><td colspan="8" style="text-align:center;padding:32px;color:#64748b">No leads' + (_salesStage !== "All" ? ' in this stage' : '') + ' — ask the sales agent to add some.</td></tr>';
+  if (!rows.length) html += '<tr><td colspan="9" style="text-align:center;padding:32px;color:#64748b">No leads' + (_salesStage !== "All" ? ' in this stage' : '') + ' — ask the sales agent to add some.</td></tr>';
   rows.forEach(function(l){
     var dotColor = l.daysSince === null ? "#64748b" : l.daysSince < 5 ? "#16a34a" : l.daysSince < 10 ? "#f59e0b" : "#dc2626";
     var touchColor = l.lastTouchType === "No outreach logged" ? "#dc2626" : "#64748b";
@@ -7245,6 +7245,7 @@ function renderSalesPipeline(d) {
     html += '<td>' + esc(l.owner || "—") + '</td>';
     html += '<td style="color:' + touchColor + ';font-size:13px">' + esc(l.lastTouchType) + (l.lastTouch ? ' · ' + new Date(l.lastTouch).toLocaleDateString() : '') + '</td>';
     html += '<td><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' + dotColor + ';margin-right:6px"></span>' + (l.daysSince === null ? "—" : l.daysSince + "d") + '</td>';
+    html += '<td>' + (l.touchCount || 0) + '</td>';
     html += '<td style="font-size:12px;color:#64748b;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(l.lastNote) + '">' + esc(l.lastNote || "—") + '</td>';
     html += '</tr>';
   });

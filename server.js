@@ -2771,23 +2771,26 @@ app.get("/api/sales-pipeline", async (req, res) => {
         lastNote: "",
       };
     });
-    // Latest note per lead (batched like the clients endpoint)
-    const ids = leads.map(function (l) { return l.id; });
+    // Latest note per lead — query/Note returns 400 on this instance; the
+    // entity association endpoint works (same fix as candidate notes, commit 72028b8).
     const latest = {};
-    for (let i = 0; i < ids.length; i += 20) {
-      const batch = ids.slice(i, i + 20);
-      try {
-        const nr = await bhFetch("query/Note", {
-          where: "personReference.id IN (" + batch.join(",") + ") AND isDeleted=false",
-          fields: "id,action,dateAdded,comments,personReference",
-          count: 200,
-          orderBy: "-dateAdded",
-        });
-        (nr.data || []).forEach(function (n) {
-          const pid = n.personReference && n.personReference.id;
-          if (pid && !latest[pid]) latest[pid] = n;
-        });
-      } catch (e) { console.error("[Sales Pipeline] note batch failed:", e.message); }
+    const CONCURRENCY = 6;
+    for (let i = 0; i < leads.length; i += CONCURRENCY) {
+      const chunk = leads.slice(i, i + CONCURRENCY);
+      await Promise.all(chunk.map(async function (l) {
+        try {
+          const nr = await bhFetch("entity/Lead/" + l.id + "/notes", {
+            fields: "id,action,dateAdded,comments",
+            count: 15,
+          });
+          const notes = (nr.data || []).filter(function (n) { return n && n.dateAdded; });
+          notes.sort(function (a, b) { return b.dateAdded - a.dateAdded; });
+          if (notes.length) latest[l.id] = notes[0];
+          l.touchCount = notes.length;
+        } catch (e) {
+          l.touchCount = 0;
+        }
+      }));
     }
     const now = Date.now();
     leads.forEach(function (l) {
@@ -6043,7 +6046,7 @@ app.get("/api/bizdev", async (req, res) => {
     topConsultants.forEach(function(c) {
       if (c.owner) ownerSet[c.owner] = true;
       if (c.primaryCert) {
-        c.primaryCert.split(",").forEach(function(cert) { var t = cert.trim(); if (t) certSet[t] = true; });
+        String(c.primaryCert).split(",").forEach(function(cert) { var t = String(cert).trim(); if (t) certSet[t] = true; });
       }
     });
     expiringPlacements.forEach(function(p) { if (p.client) clientSet[p.client] = true; });
