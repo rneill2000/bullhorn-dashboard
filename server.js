@@ -2787,6 +2787,41 @@ app.get("/api/bh-tasks", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+app.get("/api/sales-lead/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const lr = await bhFetch("entity/Lead/" + id, {
+      fields: "id,firstName,lastName,occupation,status,email,phone,clientCorporation,owner,dateAdded,dateLastModified",
+    });
+    const l = lr.data || lr;
+    let notes = [];
+    try {
+      const nr = await bhFetch("entity/Lead/" + id + "/notes", { fields: "id,action,dateAdded,comments", count: 50 });
+      notes = (nr.data || []).filter(function (n) { return n && n.dateAdded; });
+      notes.sort(function (a, b) { return b.dateAdded - a.dateAdded; });
+      notes = notes.map(function (n) {
+        return { id: n.id, action: n.action || "Note", when: n.dateAdded, text: (n.comments || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() };
+      });
+    } catch (e) { /* notes optional */ }
+    res.json({
+      lead: {
+        id: l.id,
+        name: ((l.firstName || "") + " " + (l.lastName || "")).trim(),
+        title: l.occupation || "",
+        status: l.status || "",
+        email: l.email || "",
+        phone: l.phone || "",
+        company: l.clientCorporation ? l.clientCorporation.name : "",
+        owner: l.owner ? (l.owner.firstName + " " + l.owner.lastName) : "",
+        dateAdded: l.dateAdded || null,
+      },
+      notes: notes,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/bh-tasks/:id/complete", async (req, res) => {
   try {
     const result = await bhWrite("entity/Task/" + parseInt(req.params.id), { isCompleted: true }, "POST");
@@ -2823,6 +2858,7 @@ app.get("/api/sales-pipeline", async (req, res) => {
     // Latest note per lead — query/Note returns 400 on this instance; the
     // entity association endpoint works (same fix as candidate notes, commit 72028b8).
     const latest = {};
+    const activity = [];
     const CONCURRENCY = 6;
     for (let i = 0; i < leads.length; i += CONCURRENCY) {
       const chunk = leads.slice(i, i + CONCURRENCY);
@@ -2836,11 +2872,45 @@ app.get("/api/sales-pipeline", async (req, res) => {
           notes.sort(function (a, b) { return b.dateAdded - a.dateAdded; });
           if (notes.length) latest[l.id] = notes[0];
           l.touchCount = notes.length;
+          notes.forEach(function (n) {
+            activity.push({
+              when: n.dateAdded,
+              who: l.name,
+              company: l.company,
+              action: n.action || "Note",
+              detail: (n.comments || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().substring(0, 200),
+              source: "bullhorn",
+            });
+          });
         } catch (e) {
           l.touchCount = 0;
         }
       }));
     }
+    // Merge executed LinkedIn touches from the Dux-Soup webhook log
+    try {
+      if (db.isEnabled()) {
+        await ensureDuxTables();
+        const dux = await db.getAll(
+          "SELECT received_at, event_type, profile_url, lead_id, payload FROM dux_events WHERE received_at > now() - interval '14 days' ORDER BY received_at DESC LIMIT 100", []
+        );
+        const leadById = {};
+        leads.forEach(function (l) { leadById[l.id] = l; });
+        (dux || []).forEach(function (ev) {
+          const l = ev.lead_id ? leadById[ev.lead_id] : null;
+          activity.push({
+            when: new Date(ev.received_at).getTime(),
+            who: l ? l.name : (ev.profile_url || "").split("/in/")[1] || "unknown",
+            company: l ? l.company : "",
+            action: "LinkedIn: " + (ev.event_type || "event"),
+            detail: ev.payload && ev.payload.data && (ev.payload.data.command || ev.payload.data.Text) ? String(ev.payload.data.command || ev.payload.data.Text).substring(0, 200) : "",
+            source: "duxsoup",
+          });
+        });
+      }
+    } catch (e) { console.error("[Sales Pipeline] dux activity merge failed:", e.message); }
+    activity.sort(function (a, b) { return b.when - a.when; });
+    if (activity.length > 80) activity.length = 80;
     const now = Date.now();
     leads.forEach(function (l) {
       const n = latest[l.id];
@@ -2855,7 +2925,7 @@ app.get("/api/sales-pipeline", async (req, res) => {
     // Stage counts
     const stages = {};
     leads.forEach(function (l) { stages[l.status] = (stages[l.status] || 0) + 1; });
-    res.json({ data: leads, total: leads.length, stages: stages });
+    res.json({ data: leads, total: leads.length, stages: stages, activity: activity });
   } catch (e) {
     console.error("[Sales Pipeline]", e.message);
     res.status(500).json({ error: e.message });

@@ -7233,9 +7233,83 @@ async function completeBhTask(id) {
   } catch (e) { alert("Failed: " + e.message); }
 }
 
-var _salesStage="All", _salesSort="urgency";
+var _salesStage="All", _salesSort="urgency", _spView="pipeline";
+function timeAgo(ts) {
+  var s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 3600) return Math.max(1, Math.floor(s / 60)) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+function renderSalesActivity(activity) {
+  var html = '<div style="max-width:860px">';
+  if (!activity.length) html += '<div style="text-align:center;padding:40px;color:#64748b">No activity yet — touches will appear here as they happen.</div>';
+  var lastDay = "";
+  activity.forEach(function(a) {
+    var day = new Date(a.when).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    if (day !== lastDay) {
+      html += '<div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin:18px 0 8px">' + day + '</div>';
+      lastDay = day;
+    }
+    var icon = a.source === "duxsoup" ? "💼" : (a.action === "Outbound Email" ? "📧" : a.action === "LinkedIn Reply" ? "💬" : a.action === "LinkedIn Touch" ? "👋" : a.action === "Research" ? "🔍" : "📝");
+    var accent = a.action === "LinkedIn Reply" ? "#16a34a" : "#176087";
+    html += '<div style="background:white;border:1px solid #e2e8f0;border-left:3px solid ' + accent + ';border-radius:0 10px 10px 0;padding:10px 14px;margin-bottom:8px">';
+    html += '<div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline">';
+    html += '<div><span style="margin-right:6px">' + icon + '</span><span class="fw600">' + esc(a.who) + '</span>' + (a.company ? ' <span style="color:#64748b">· ' + esc(a.company) + '</span>' : '') + ' <span style="font-size:12px;background:#f1f5f9;border-radius:10px;padding:2px 8px;margin-left:6px">' + esc(a.action) + '</span></div>';
+    html += '<div style="font-size:12px;color:#94a3b8;white-space:nowrap">' + timeAgo(a.when) + '</div></div>';
+    if (a.detail) html += '<div style="font-size:13px;color:#475569;margin-top:4px">' + esc(a.detail) + '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+async function openSalesLead(id) {
+  var old = document.getElementById("sales-lead-modal");
+  if (old) old.remove();
+  var overlay = document.createElement("div");
+  overlay.id = "sales-lead-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:120;display:flex;justify-content:flex-end";
+  overlay.innerHTML = '<div style="background:white;width:520px;max-width:92vw;height:100%;overflow-y:auto;padding:24px;box-shadow:-8px 0 30px rgba(0,0,0,.15)"><div style="padding:40px;text-align:center;color:#64748b"><span class="loading-spinner"></span> Loading…</div></div>';
+  overlay.addEventListener("click", function(e){ if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  try {
+    var r = await fetch("/api/sales-lead/" + id);
+    var d = await r.json();
+    var l = d.lead, notes = d.notes || [];
+    var h = '<div style="background:white;width:520px;max-width:92vw;height:100%;overflow-y:auto;padding:24px;box-shadow:-8px 0 30px rgba(0,0,0,.15)">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px"><h2 style="font-size:20px;margin:0">' + esc(l.name) + '</h2><button onclick="document.getElementById(\'sales-lead-modal\').remove()" style="border:none;background:none;font-size:22px;cursor:pointer;color:#64748b">&times;</button></div>';
+    h += '<div style="color:#475569;margin-bottom:2px">' + esc(l.title || "—") + '</div>';
+    h += '<div style="color:#64748b;font-size:14px;margin-bottom:12px">' + esc(l.company || "") + '</div>';
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">';
+    h += '<span style="font-size:12px;background:#f1f5f9;border-radius:12px;padding:3px 10px">' + esc(l.status) + '</span>';
+    if (l.owner) h += '<span style="font-size:12px;background:#f1f5f9;border-radius:12px;padding:3px 10px">Owner: ' + esc(l.owner) + '</span>';
+    h += '</div>';
+    if (l.email) h += '<div style="font-size:14px;margin-bottom:4px">📧 <a href="mailto:' + esc(l.email) + '" style="color:#176087">' + esc(l.email) + '</a></div>';
+    if (l.phone) h += '<div style="font-size:14px;margin-bottom:4px">📞 ' + esc(l.phone) + '</div>';
+    if (l.dateAdded) h += '<div style="font-size:13px;color:#94a3b8;margin-bottom:16px">Added ' + new Date(l.dateAdded).toLocaleDateString() + '</div>';
+    h += '<h3 style="font-size:15px;margin:18px 0 10px">Touch history (' + notes.length + ')</h3>';
+    if (!notes.length) h += '<div style="color:#64748b;font-size:14px">No touches logged yet.</div>';
+    notes.forEach(function(n){
+      var accent = n.action === "LinkedIn Reply" ? "#16a34a" : n.action === "Outbound Email" ? "#176087" : "#94a3b8";
+      h += '<div style="border-left:3px solid ' + accent + ';padding:8px 12px;margin-bottom:10px;background:#f8fafc;border-radius:0 8px 8px 0">';
+      h += '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span style="font-weight:600;color:' + accent + '">' + esc(n.action) + '</span><span style="color:#94a3b8">' + new Date(n.when).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) + '</span></div>';
+      h += '<div style="font-size:13px;color:#334155">' + esc(n.text) + '</div></div>';
+    });
+    h += '</div>';
+    overlay.innerHTML = h;
+    overlay.addEventListener("click", function(e){ if (e.target === overlay) overlay.remove(); });
+  } catch (e) {
+    overlay.remove();
+    alert("Could not load lead: " + e.message);
+  }
+}
 function renderSalesPipeline(d) {
   var leads = d.data || [];
+  var viewBtn = function(key, label) {
+    var on = _spView === key;
+    return '<button class="touch-tab' + (on ? ' on' : '') + '" onclick="_spView=\'' + key + '\';loadPage()">' + label + '</button>';
+  };
+  var toggle = '<div class="touch-tabs" style="margin-bottom:16px">' + viewBtn("pipeline", "Pipeline (" + leads.length + ")") + viewBtn("activity", "Recent Activity (" + ((d.activity || []).length) + ")") + '</div>';
+  if (_spView === "activity") return toggle + renderSalesActivity(d.activity || []);
   var stages = d.stages || {};
   // Summary numbers
   var active = leads.length;
@@ -7243,7 +7317,7 @@ function renderSalesPipeline(d) {
   var never = leads.filter(function(l){ return l.lastTouchType === "No outreach logged"; }).length;
   var fresh = leads.filter(function(l){ return l.dateAdded && (Date.now() - l.dateAdded) < 7*86400000; }).length;
 
-  var html = '<div class="stats-row">';
+  var html = toggle + '<div class="stats-row">';
   html += '<div class="stat-card"><div class="stat-icon" style="background:#eff6ff">📈</div><div><div class="stat-label">Open Leads</div><div class="stat-value">' + active + '</div></div></div>';
   html += '<div class="stat-card"><div class="stat-icon" style="background:#fef2f2">🥶</div><div><div class="stat-label">Going Cold (10d+)</div><div class="stat-value" style="color:' + (cold ? '#dc2626' : '#16a34a') + '">' + cold + '</div></div></div>';
   html += '<div class="stat-card"><div class="stat-icon" style="background:#fff7ed">📭</div><div><div class="stat-label">No Outreach Yet</div><div class="stat-value">' + never + '</div></div></div>';
@@ -7297,7 +7371,7 @@ function renderSalesPipeline(d) {
     var dotColor = l.daysSince === null ? "#64748b" : l.daysSince < 5 ? "#16a34a" : l.daysSince < 10 ? "#f59e0b" : "#dc2626";
     var touchColor = l.lastTouchType === "No outreach logged" ? "#dc2626" : "#64748b";
     html += '<tr>';
-    html += '<td><span class="fw600">' + esc(l.name || "—") + '</span></td>';
+    html += '<td><span class="name-link fw600" style="cursor:pointer;color:#176087" onclick="openSalesLead(' + l.id + ')">' + esc(l.name || "—") + '</span></td>';
     html += '<td>' + esc(l.title || "—") + '</td>';
     html += '<td>' + esc(l.company || "—") + '</td>';
     html += '<td><span style="font-size:12px;background:#f1f5f9;border-radius:12px;padding:3px 10px">' + esc(l.status) + '</span></td>';
