@@ -1767,13 +1767,36 @@ async function syncEntity(entityType, syncType) {
 
     // Upsert into Postgres in batches
     var synced = 0;
+    var seenIds = [];
     for (var i = 0; i < records.length; i++) {
       try {
         var transformed = config.transform(records[i]);
         await query(config.upsertSql, config.paramsFn(transformed));
+        if (records[i] && records[i].id != null) seenIds.push(records[i].id);
         synced++;
       } catch (recErr) {
         console.error("[Sync] Error upserting " + entityType + " #" + records[i].id + ":", recErr.message);
+      }
+    }
+
+    // Reconciliation (full sync only): the live pull above represents the COMPLETE
+    // current set of records for this entity. Any row still in Postgres whose id was
+    // NOT seen has been deleted or merged away in Bullhorn — incremental syncs can never
+    // catch those (a deleted record stops matching the baseQuery), so they accumulate as
+    // stale orphans and inflate counts (e.g. candidates stuck at status='Active').
+    // Remove them here. Guarded so a transient/empty API response can't wipe the table.
+    if (syncType === "full" && seenIds.length > 0) {
+      try {
+        var delRes = await query(
+          "DELETE FROM " + entityType + " WHERE id <> ALL($1::int[])",
+          [seenIds]
+        );
+        var removed = delRes && delRes.rowCount ? delRes.rowCount : 0;
+        if (removed > 0) {
+          console.log("[Sync] Reconcile " + entityType + ": removed " + removed + " orphaned row(s) no longer in Bullhorn");
+        }
+      } catch (reconErr) {
+        console.error("[Sync] Reconcile " + entityType + " failed (non-fatal):", reconErr.message);
       }
     }
 
@@ -2123,8 +2146,16 @@ async function dbSearchPlacements(filters) {
     conditions.push("(candidate_name ILIKE $" + n + " OR job_title ILIKE $" + n + " OR client_name ILIKE $" + n + ")");
     params.push(q);
   }
-  if (filters.status && filters.status !== "All") {
+  // Status filtering — match the Bullhorn-path behavior:
+  //   "All"            → no status filter
+  //   specific status  → filter to that status
+  //   "" / undefined   → default to "Actively On Contract" (active engagements only)
+  if (filters.status === "All") {
+    // no filter
+  } else if (filters.status && filters.status !== "") {
     n++; conditions.push("status = $" + n); params.push(filters.status);
+  } else {
+    n++; conditions.push("status = $" + n); params.push("Actively On Contract");
   }
   if (filters.type === "Direct Hire") {
     conditions.push("employment_type = 'Direct Hire'");
@@ -2177,8 +2208,16 @@ async function dbSearchClients(filters) {
   if (filters.q) {
     n++; conditions.push("name ILIKE $" + n); params.push("%" + filters.q + "%");
   }
-  if (filters.status && filters.status !== "All") {
+  // Status filtering — match the Bullhorn-path behavior:
+  //   "All"            → no status filter (return everything)
+  //   specific status  → filter to that status
+  //   "" / undefined   → default to "Active Account"
+  if (filters.status === "All") {
+    // no filter
+  } else if (filters.status && filters.status !== "") {
     n++; conditions.push("status = $" + n); params.push(filters.status);
+  } else {
+    n++; conditions.push("status = $" + n); params.push("Active Account");
   }
 
   var sql = "SELECT * FROM clients WHERE " + conditions.join(" AND ") + " ORDER BY date_last_modified DESC NULLS LAST";
@@ -2191,7 +2230,7 @@ async function dbSearchClients(filters) {
   // Get active placement counts per client from local DB
   var placByClient = {};
   try {
-    var placRows = await getAll("SELECT client_id, candidate_name FROM placements WHERE status = 'Approved' OR status = 'Actively On Contract'");
+    var placRows = await getAll("SELECT client_id, candidate_name FROM placements WHERE status = 'Actively On Contract'");
     placRows.forEach(function (p) {
       if (p.client_id) {
         if (!placByClient[p.client_id]) placByClient[p.client_id] = [];
@@ -2227,8 +2266,8 @@ async function dbGetDashboard() {
   var future14 = now + 14 * 86400000;
 
   // Stats
-  var activeCands = await getOne("SELECT COUNT(*) as count FROM candidates WHERE status = 'Active'");
-  var openJobs = await getOne("SELECT COUNT(*) as count FROM jobs WHERE status = 'Accepting Candidates'");
+  var activeCands = await getOne("SELECT COUNT(*) as count FROM candidates WHERE status = 'Active' AND (is_deleted IS NULL OR is_deleted = false)");
+  var openJobs = await getOne("SELECT COUNT(*) as count FROM jobs WHERE status = 'Accepting Candidates' AND is_open = true AND (is_deleted IS NULL OR is_deleted = false)");
 
   // Urgent/Hot jobs (type 1 or 2)
   var urgentRows = (await query(

@@ -3306,12 +3306,14 @@ app.get("/api/stats", async (req, res) => {
         count: 1,
       }),
       bhFetch("search/JobOrder", {
-        query: 'isDeleted:0 AND status:"Accepting Candidates"',
+        query: 'isDeleted:0 AND status:"Accepting Candidates" AND isOpen:true',
         fields: "id",
         count: 1,
       }),
+      // Only count placements that are actually active engagements,
+      // not completed/terminated/dropped/submitted ones.
       bhFetchAll("query/Placement", {
-        where: "id IS NOT NULL",
+        where: "status = 'Actively On Contract'",
         fields: "id,employmentType,fee,payRate,clientBillRate,status",
       }),
     ]);
@@ -6222,7 +6224,7 @@ app.get("/api/dashboard", async (req, res) => {
       (async () => {
         const [c, j] = await Promise.all([
           bhFetch("search/Candidate", { query: 'isDeleted:0 AND status:"Active"', fields: "id", count: 1 }),
-          bhFetch("search/JobOrder", { query: 'isDeleted:0 AND status:"Accepting Candidates"', fields: "id", count: 1 }),
+          bhFetch("search/JobOrder", { query: 'isDeleted:0 AND status:"Accepting Candidates" AND isOpen:true', fields: "id", count: 1 }),
         ]);
         return { activeCandidates: c.total || 0, openJobs: j.total || 0 };
       })(),
