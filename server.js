@@ -6040,7 +6040,7 @@ app.get("/api/bizdev", async (req, res) => {
     try {
       var jobData = await bhFetchAll("search/JobOrder", {
         query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open" OR status:"Closed" OR status:"Filled" OR status:"Placed")',
-        fields: "id,title,clientCorporation,status,employmentType,salary,clientBillRate,payRate,onSite,numOpenings,submissions,dateAdded,type,address,owner,publicDescription,description",
+        fields: "id,title,clientCorporation,status,employmentType,salary,clientBillRate,payRate,numOpenings,submissions,dateAdded,type,address,owner,publicDescription,description",
         sort: "-dateAdded",
       });
       var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
@@ -6049,12 +6049,6 @@ app.get("/api/bizdev", async (req, res) => {
       allJobs = (jobData.data || []).map(function(j) {
         var daysOpen = j.dateAdded ? Math.floor((now - j.dateAdded) / 86400000) : null;
         var prio = PRIORITY_LABELS[j.type] || "";
-        // Remote / onsite indicator from Bullhorn onSite field
-        var onSiteRaw = (j.onSite || "").toLowerCase();
-        var remote = "—";
-        if (onSiteRaw.indexOf("off") >= 0 || onSiteRaw.indexOf("remote") >= 0) remote = "Remote";
-        else if (onSiteRaw.indexOf("hybrid") >= 0) remote = "Hybrid";
-        else if (onSiteRaw.indexOf("on") >= 0) remote = "On-Site";
         return {
           id: j.id, title: j.title || "", client: j.clientCorporation ? j.clientCorporation.name : "",
           clientId: j.clientCorporation ? j.clientCorporation.id : null,
@@ -6063,7 +6057,6 @@ app.get("/api/bizdev", async (req, res) => {
           billRate: j.clientBillRate ? "$" + j.clientBillRate + "/hr" : "—",
           payRate: j.payRate ? "$" + j.payRate + "/hr" : "—",
           salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
-          remote: remote,
           openings: j.numOpenings || 0,
           submissions: j.submissions ? j.submissions.total : 0,
           clientSubs: 0, // populated below from JobSubmission data

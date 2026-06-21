@@ -5000,17 +5000,15 @@ function renderBizDevTables(d, flt) {
       html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No new jobs this week</div>';
     } else {
       html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
-      html+='<th>Job Title</th><th>Client</th><th>Owner</th><th>Type</th><th>Bill Rate</th><th>Remote</th><th>Added</th>';
+      html+='<th>Job Title</th><th>Client</th><th>Owner</th><th>Type</th><th>Bill Rate</th><th>Added</th>';
       html+='</tr></thead><tbody>';
       newFiltered.forEach(function(j){
-        var remoteColor=j.remote==="Remote"?"#16a34a":j.remote==="Hybrid"?"#8b5cf6":j.remote==="On-Site"?"#64748b":"#cbd5e1";
         html+='<tr style="cursor:pointer" onclick="openJobSlide('+j.id+')">';
         html+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
         html+='<td>'+esc(j.client)+'</td>';
         html+='<td>'+esc(j.owner||"\u2014")+'</td>';
         html+='<td>'+esc(j.type||"\u2014")+'</td>';
         html+='<td>'+esc(j.billRate||"\u2014")+'</td>';
-        html+='<td><span style="color:'+remoteColor+';font-weight:600">'+esc(j.remote||"\u2014")+'</span></td>';
         html+='<td>'+esc(j.dateAdded)+'</td>';
         html+='</tr>';
       });
@@ -5110,13 +5108,12 @@ function renderJobTable(jobs, showDaysOpen, sortable) {
     return '<th style="cursor:pointer;user-select:none;white-space:nowrap'+(align?';text-align:'+align:'')+(active?';color:#176087':'')+'" onclick="bdSortBy(\''+col+'\')">'+label+arrow+'</th>';
   }
   var h = '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
-  h+=th('Job Title','title')+th('Client','client')+th('Owner','owner')+th('Priority','priority')+'<th>Status</th>'+th('Type','type')+th('Bill Rate',null,'right')+th('Remote',null)+th('Subs','subs','center');
+  h+=th('Job Title','title')+th('Client','client')+th('Owner','owner')+th('Priority','priority')+'<th>Status</th>'+th('Type','type')+th('Bill Rate',null,'right')+th('Subs','subs','center');
   if (showDaysOpen) h+=th('Days Open','daysOpen','center');
   h+='</tr></thead><tbody>';
   jobs.forEach(function(j){
     var prioColor=j.priority==="Urgent"?"#dc2626":j.priority==="Hot"?"#f59e0b":j.priority==="Warm"?"#f97316":"#64748b";
     var statusColor=j.status==="Closed"||j.status==="Filled"?"#64748b":j.status==="Accepting Candidates"?"#16a34a":"#176087";
-    var remoteColor=j.remote==="Remote"?"#16a34a":j.remote==="Hybrid"?"#8b5cf6":j.remote==="On-Site"?"#64748b":"#cbd5e1";
     h+='<tr style="cursor:pointer" onclick="openJobSlide('+j.id+')">';
     h+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
     h+='<td>'+esc(j.client)+'</td>';
@@ -5125,7 +5122,6 @@ function renderJobTable(jobs, showDaysOpen, sortable) {
     h+='<td><span class="badge" style="color:'+statusColor+'">'+esc(j.status)+'</span></td>';
     h+='<td>'+esc(j.type||"\u2014")+'</td>';
     h+='<td style="text-align:right">'+esc(j.billRate||"\u2014")+'</td>';
-    h+='<td><span style="color:'+remoteColor+';font-weight:600">'+esc(j.remote||"\u2014")+'</span></td>';
     h+='<td style="text-align:center">'+(j.clientSubs!=null?j.clientSubs:j.submissions)+'</td>';
     if (showDaysOpen) {
       var doColor=j.daysOpen>30?"#dc2626":j.daysOpen>14?"#f59e0b":"#64748b";
@@ -5144,7 +5140,6 @@ function openJobSlide(jobId){
   var j = all.filter(function(x){ return x.id===jobId; })[0];
   if (!j) { setPage('jobs'); return; }
   var prioColor=j.priority==="Urgent"?"#dc2626":j.priority==="Hot"?"#f59e0b":j.priority==="Warm"?"#f97316":"#64748b";
-  var remoteColor=j.remote==="Remote"?"#16a34a":j.remote==="Hybrid"?"#8b5cf6":"#64748b";
   function row(label,val){ return '<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #f1f5f9"><span style="color:#64748b;font-size:12px;font-weight:600">'+label+'</span><span style="font-size:13px;color:#0f172a;text-align:right">'+val+'</span></div>'; }
   var body='';
   body+='<div style="margin-bottom:14px">';
@@ -5159,7 +5154,6 @@ function openJobSlide(jobId){
   body+=row('Client Submissions', String(j.clientSubs!=null?j.clientSubs:j.submissions));
   body+=row('Bill Rate', esc(j.billRate||"\u2014"));
   body+=row('Pay Rate', esc(j.payRate||"\u2014"));
-  body+=row('Remote', '<span style="color:'+remoteColor+';font-weight:600">'+esc(j.remote||"\u2014")+'</span>');
   body+=row('Location', esc(j.location||"\u2014"));
   body+=row('Days Open', j.daysOpen!=null?j.daysOpen+' days':"\u2014");
   body+=row('Date Added', esc(j.dateAdded||"\u2014"));
