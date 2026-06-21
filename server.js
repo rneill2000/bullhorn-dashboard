@@ -6020,26 +6020,58 @@ app.get("/api/bizdev", async (req, res) => {
     const days35 = 35 * 86400000;
     const days7 = 7 * 86400000;
 
+    // Safe date formatter — returns "—" instead of "Invalid Date" for bad/missing values
+    function fmtDate(v) {
+      if (v === null || v === undefined || v === "" || v === 0) return "—";
+      var t = typeof v === "number" ? v : Date.parse(v);
+      if (!t || isNaN(t)) return "—";
+      var d = new Date(t);
+      if (isNaN(d.getTime())) return "—";
+      return d.toLocaleDateString();
+    }
+    function toMs(v) {
+      if (v === null || v === undefined || v === "" || v === 0) return null;
+      var t = typeof v === "number" ? v : Date.parse(v);
+      return (!t || isNaN(t)) ? null : t;
+    }
+
     // 1. All Jobs — Open, Accepting Candidates, Closed, Filled
     var allJobs = [];
     try {
       var jobData = await bhFetchAll("search/JobOrder", {
         query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open" OR status:"Closed" OR status:"Filled" OR status:"Placed")',
-        fields: "id,title,clientCorporation,status,employmentType,salary,numOpenings,submissions,dateAdded,type,address,owner",
+        fields: "id,title,clientCorporation,status,employmentType,salary,clientBillRate,payRate,onSite,numOpenings,submissions,dateAdded,type,address,owner,publicDescription,description",
         sort: "-dateAdded",
       });
       var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
+      // PRIORITY_RANK: higher = more urgent, for dynamic sorting on the front end
+      var PRIORITY_RANK = { "Urgent": 4, "Hot": 3, "Warm": 2, "Cold": 1, "": 0 };
       allJobs = (jobData.data || []).map(function(j) {
         var daysOpen = j.dateAdded ? Math.floor((now - j.dateAdded) / 86400000) : null;
+        var prio = PRIORITY_LABELS[j.type] || "";
+        // Remote / onsite indicator from Bullhorn onSite field
+        var onSiteRaw = (j.onSite || "").toLowerCase();
+        var remote = "—";
+        if (onSiteRaw.indexOf("off") >= 0 || onSiteRaw.indexOf("remote") >= 0) remote = "Remote";
+        else if (onSiteRaw.indexOf("hybrid") >= 0) remote = "Hybrid";
+        else if (onSiteRaw.indexOf("on") >= 0) remote = "On-Site";
         return {
           id: j.id, title: j.title || "", client: j.clientCorporation ? j.clientCorporation.name : "",
           clientId: j.clientCorporation ? j.clientCorporation.id : null,
-          priority: PRIORITY_LABELS[j.type] || "", type: j.employmentType || "",
+          priority: prio, priorityRank: PRIORITY_RANK[prio] || 0,
+          type: j.employmentType || "",
+          billRate: j.clientBillRate ? "$" + j.clientBillRate + "/hr" : "—",
+          payRate: j.payRate ? "$" + j.payRate + "/hr" : "—",
           salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
-          openings: j.numOpenings || 0, submissions: j.submissions ? j.submissions.total : 0,
+          remote: remote,
+          openings: j.numOpenings || 0,
+          submissions: j.submissions ? j.submissions.total : 0,
+          clientSubs: 0, // populated below from JobSubmission data
           location: j.address ? [j.address.city, j.address.state].filter(Boolean).join(", ") : "",
           daysOpen: daysOpen, dateAdded: j.dateAdded ? new Date(j.dateAdded).toLocaleDateString() : "",
+          dateAddedRaw: j.dateAdded || 0,
           status: j.status || "",
+          description: (j.publicDescription || j.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 600),
           owner: j.owner ? ((j.owner.firstName || "") + " " + (j.owner.lastName || "")).trim() : "",
           ownerId: j.owner ? j.owner.id : null,
         };
@@ -6047,6 +6079,28 @@ app.get("/api/bizdev", async (req, res) => {
     } catch(e) { console.log("[BizDev] Jobs error:", e.message); }
     var activeJobs = allJobs.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
     var closedJobs = allJobs.filter(function(j) { return j.status === "Closed" || j.status === "Filled" || j.status === "Placed"; });
+
+    // 1b. Client-facing submission counts — count JobSubmissions per active job
+    // that have advanced past the internal stage ("Internally Submitted").
+    try {
+      var activeJobIds = activeJobs.map(function(j) { return j.id; }).filter(Boolean);
+      if (activeJobIds.length) {
+        var subData = await bhFetchAll("query/JobSubmission", {
+          where: "isDeleted=false AND jobOrder.id IN (" + activeJobIds.join(",") + ")",
+          fields: "id,status,jobOrder(id)",
+        });
+        var clientSubCounts = {};
+        (subData.data || []).forEach(function(s) {
+          var jid = s.jobOrder ? s.jobOrder.id : null;
+          if (!jid) return;
+          var st = (s.status || "").toLowerCase();
+          // Exclude purely-internal stage; everything client-facing or beyond counts.
+          if (st === "internally submitted" || st === "internal submission") return;
+          clientSubCounts[jid] = (clientSubCounts[jid] || 0) + 1;
+        });
+        activeJobs.forEach(function(j) { j.clientSubs = clientSubCounts[j.id] || 0; });
+      }
+    } catch(e) { console.log("[BizDev] Client subs error:", e.message); }
 
     // 2. Top Consultants — Available/Active candidates, grade A or B
     var topConsultants = [];
@@ -6064,7 +6118,7 @@ app.get("/api/bizdev", async (req, res) => {
           title: c.occupation || "", grade: c.customText6 || "", urgency: c.customText7 || "",
           primaryCert: c.customText1 || "", secondaryCert: c.customText2 || "",
           epicRole: c.customText5 || "", status: c.status || "",
-          available: avail ? avail.toLocaleDateString() : "—", availSoon: availSoon,
+          available: fmtDate(c.dateAvailable), availSoon: availSoon,
           location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
           email: c.email || "", phone: c.phone || "",
           owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
@@ -6085,14 +6139,15 @@ app.get("/api/bizdev", async (req, res) => {
           [now, now + days35]
         );
         expiringPlacements = expRows.map(function(p) {
-          var daysLeft = p.date_end ? Math.ceil((p.date_end - now) / 86400000) : null;
+          var endMs = toMs(p.date_end);
+          var daysLeft = endMs ? Math.ceil((endMs - now) / 86400000) : null;
           return {
             id: p.id, candidate: p.candidate_name || "", candidateId: p.candidate_id || null,
             job: p.job_title || "", client: p.client_name || "", status: p.status || "",
-            endDate: p.date_end ? new Date(p.date_end).toLocaleDateString() : "",
+            endDate: fmtDate(p.date_end),
             daysLeft: daysLeft, billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : "—",
             payRate: p.pay_rate ? "$" + p.pay_rate + "/hr" : "—",
-            urgency: daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
+            urgency: daysLeft === null ? "info" : daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
           };
         });
       } else {
@@ -6102,16 +6157,17 @@ app.get("/api/bizdev", async (req, res) => {
           orderBy: "dateEnd",
         });
         expiringPlacements = (expData.data || []).map(function(p) {
-          var daysLeft = p.dateEnd ? Math.ceil((p.dateEnd - now) / 86400000) : null;
+          var endMs = toMs(p.dateEnd);
+          var daysLeft = endMs ? Math.ceil((endMs - now) / 86400000) : null;
           return {
             id: p.id,
             candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
             candidateId: p.candidate ? p.candidate.id : null,
             job: p.jobOrder ? p.jobOrder.title : "", status: p.status || "",
-            endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : "",
+            endDate: fmtDate(p.dateEnd),
             daysLeft: daysLeft, billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
             payRate: p.payRate ? "$" + p.payRate + "/hr" : "—",
-            urgency: daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
+            urgency: daysLeft === null ? "info" : daysLeft <= 14 ? "critical" : daysLeft <= 30 ? "warning" : "info",
           };
         });
       }
@@ -6130,7 +6186,7 @@ app.get("/api/bizdev", async (req, res) => {
           return {
             id: p.id, candidate: p.candidate_name || "", candidateId: p.candidate_id || null,
             job: p.job_title || "", client: p.client_name || "", status: p.status || "",
-            startDate: p.date_begin ? new Date(p.date_begin).toLocaleDateString() : "",
+            startDate: fmtDate(p.date_begin),
             daysUntil: daysUntil, billRate: p.client_bill_rate ? "$" + p.client_bill_rate + "/hr" : "—",
             type: p.employment_type || "",
           };
@@ -6148,7 +6204,7 @@ app.get("/api/bizdev", async (req, res) => {
             candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
             candidateId: p.candidate ? p.candidate.id : null,
             job: p.jobOrder ? p.jobOrder.title : "", status: p.status || "",
-            startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString() : "",
+            startDate: fmtDate(p.dateBegin),
             daysUntil: daysUntil, billRate: p.clientBillRate ? "$" + p.clientBillRate + "/hr" : "—",
             type: p.employmentType || "",
           };

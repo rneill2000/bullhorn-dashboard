@@ -4834,10 +4834,10 @@ function renderBizDev(d){
   // Date Range
   html+='<label style="display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:#64748b;letter-spacing:.03em">Date Range';
   html+='<select id="bd-filter-date" onchange="applyBizDevFilters()" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;min-width:120px">';
-  html+='<option value="">All Time</option>';
+  html+='<option value="" selected>All Time</option>';
   html+='<option value="7">Last 7 Days</option>';
   html+='<option value="14">Last 14 Days</option>';
-  html+='<option value="30" selected>Last 30 Days</option>';
+  html+='<option value="30">Last 30 Days</option>';
   html+='<option value="60">Last 60 Days</option>';
   html+='<option value="90">Last 90 Days</option>';
   html+='</select></label>';
@@ -4850,7 +4850,7 @@ function renderBizDev(d){
   html+=bdKpi("\uD83D\uDCBC","Active Jobs",s.totalActiveJobs||0,"Open opportunities","#176087","activeJobs");
   html+=bdKpi("\uD83D\uDD25","Urgent/Hot",s.urgentJobs||0,"Need attention","#dc2626","urgentJobs");
   html+=bdKpi("\uD83C\uDD95","New This Week",s.newThisWeek||0,"Jobs added","#10b981","newJobs");
-  html+=bdKpi("\u2B50","Top Consultants",s.topConsultantCount||0,"Grade A & B","#f59e0b","topConsultants");
+  html+=bdKpi("\u2B50","Available Talent",s.topConsultantCount||0,"Grade A & B","#f59e0b","topConsultants");
   html+=bdKpi("\u26A0\uFE0F","Coming Off",s.expiringCount||0,(s.criticalExpiring||0)+" within 14 days","#ef4444","expiring");
   html+=bdKpi("\uD83D\uDE80","Upcoming Starts",s.upcomingStartCount||0,"Next 30 days","#8b5cf6","starts");
   html+=bdKpi("\u2705","Closed/Filled",s.closedJobs||0,"Completed jobs","#64748b","closedJobs");
@@ -4893,8 +4893,39 @@ function resetBizDevFilters() {
   ["bd-filter-owner","bd-filter-client","bd-filter-cert","bd-filter-status"].forEach(function(id){
     var el=document.getElementById(id); if(el) el.value="";
   });
-  var dateEl=document.getElementById("bd-filter-date"); if(dateEl) dateEl.value="30";
+  var dateEl=document.getElementById("bd-filter-date"); if(dateEl) dateEl.value="";
+  _bdSort = { col: "priority", dir: "desc" };
   applyBizDevFilters();
+}
+
+// Sort state for the Active Opportunities table (default: priority, highest first)
+var _bdSort = { col: "priority", dir: "desc" };
+function bdSortBy(col){
+  if (_bdSort.col === col) { _bdSort.dir = (_bdSort.dir === "asc" ? "desc" : "asc"); }
+  else { _bdSort.col = col; _bdSort.dir = (col === "title" || col === "client" || col === "owner" ? "asc" : "desc"); }
+  applyBizDevFilters();
+}
+function bdApplySort(jobs){
+  var col = _bdSort.col, dir = _bdSort.dir === "asc" ? 1 : -1;
+  var arr = jobs.slice();
+  arr.sort(function(a,b){
+    var av, bv;
+    switch(col){
+      case "priority": av=a.priorityRank||0; bv=b.priorityRank||0; break;
+      case "openings": av=a.openings||0; bv=b.openings||0; break;
+      case "subs": av=a.clientSubs||0; bv=b.clientSubs||0; break;
+      case "daysOpen": av=a.daysOpen||0; bv=b.daysOpen||0; break;
+      case "client": av=(a.client||"").toLowerCase(); bv=(b.client||"").toLowerCase(); break;
+      case "owner": av=(a.owner||"").toLowerCase(); bv=(b.owner||"").toLowerCase(); break;
+      case "type": av=(a.type||"").toLowerCase(); bv=(b.type||"").toLowerCase(); break;
+      case "title": av=(a.title||"").toLowerCase(); bv=(b.title||"").toLowerCase(); break;
+      default: av=a.priorityRank||0; bv=b.priorityRank||0;
+    }
+    if (av<bv) return -1*dir;
+    if (av>bv) return 1*dir;
+    return 0;
+  });
+  return arr;
 }
 
 function bdFilterJobs(jobs, flt) {
@@ -4946,7 +4977,7 @@ function renderBizDevTables(d, flt) {
     if(activeFiltered.length===0){
       html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No active opportunities match filters</div>';
     } else {
-      html+=renderJobTable(activeFiltered, true);
+      html+=renderJobTable(bdApplySort(activeFiltered), true, true);
     }
     html+='</div>';
   }
@@ -4969,16 +5000,17 @@ function renderBizDevTables(d, flt) {
       html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No new jobs this week</div>';
     } else {
       html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
-      html+='<th>Job Title</th><th>Client</th><th>Owner</th><th>Type</th><th>Salary</th><th>Location</th><th>Added</th>';
+      html+='<th>Job Title</th><th>Client</th><th>Owner</th><th>Type</th><th>Bill Rate</th><th>Remote</th><th>Added</th>';
       html+='</tr></thead><tbody>';
       newFiltered.forEach(function(j){
-        html+='<tr style="cursor:pointer" onclick="setPage(\'jobs\')">';
+        var remoteColor=j.remote==="Remote"?"#16a34a":j.remote==="Hybrid"?"#8b5cf6":j.remote==="On-Site"?"#64748b":"#cbd5e1";
+        html+='<tr style="cursor:pointer" onclick="openJobSlide('+j.id+')">';
         html+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
         html+='<td>'+esc(j.client)+'</td>';
         html+='<td>'+esc(j.owner||"\u2014")+'</td>';
         html+='<td>'+esc(j.type||"\u2014")+'</td>';
-        html+='<td>'+esc(j.salary)+'</td>';
-        html+='<td>'+esc(j.location||"\u2014")+'</td>';
+        html+='<td>'+esc(j.billRate||"\u2014")+'</td>';
+        html+='<td><span style="color:'+remoteColor+';font-weight:600">'+esc(j.remote||"\u2014")+'</span></td>';
         html+='<td>'+esc(j.dateAdded)+'</td>';
         html+='</tr>';
       });
@@ -4991,9 +5023,9 @@ function renderBizDevTables(d, flt) {
   html+='<div class="chart-grid">';
 
   // ── Top Consultants ──
-  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u2B50 Top Consultants <span style="font-size:12px;font-weight:400;color:#94a3b8">Grade A & B ('+topFiltered.length+')</span></h3>';
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u2B50 Available Talent <span style="font-size:12px;font-weight:400;color:#94a3b8">Grade A & B ('+topFiltered.length+')</span></h3>';
   if(topFiltered.length===0){
-    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No top-grade consultants match filters</div>';
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No top-grade candidates match filters</div>';
   } else {
     var gradeColors={"A":"#16a34a","B":"#f59e0b"};
     topFiltered.slice(0,25).forEach(function(c){
@@ -5008,7 +5040,7 @@ function renderBizDevTables(d, flt) {
       html+='</div>';
       html+='</div>';
       html+='<div style="text-align:right;flex-shrink:0;font-size:12px">';
-      html+='<div style="color:'+(c.availSoon?"#16a34a":"#94a3b8")+'">'+esc(c.available)+'</div>';
+      html+='<div style="color:'+(c.availSoon?"#16a34a":"#94a3b8")+'" title="Date available to start">'+(c.available&&c.available!=="—"?'Avail: '+esc(c.available):'—')+'</div>';
       if(c.location) html+='<div style="color:#94a3b8">'+esc(c.location)+'</div>';
       html+='</div>';
       html+='</div>';
@@ -5069,25 +5101,32 @@ function renderBizDevTables(d, flt) {
   return html;
 }
 
-function renderJobTable(jobs, showDaysOpen) {
+function renderJobTable(jobs, showDaysOpen, sortable) {
+  // Sortable header helper \u2014 shows arrow on active column
+  function th(label, col, align){
+    if (!sortable || !col) return '<th'+(align?' style="text-align:'+align+'"':'')+'>'+label+'</th>';
+    var arrow = _bdSort.col===col ? (_bdSort.dir==="asc"?' \u2191':' \u2193') : '';
+    var active = _bdSort.col===col;
+    return '<th style="cursor:pointer;user-select:none;white-space:nowrap'+(align?';text-align:'+align:'')+(active?';color:#176087':'')+'" onclick="bdSortBy(\''+col+'\')">'+label+arrow+'</th>';
+  }
   var h = '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
-  h+='<th>Job Title</th><th>Client</th><th>Owner</th><th>Priority</th><th>Status</th><th>Type</th><th>Salary</th><th>Location</th><th>Openings</th><th>Subs</th>';
-  if (showDaysOpen) h+='<th>Days Open</th>';
+  h+=th('Job Title','title')+th('Client','client')+th('Owner','owner')+th('Priority','priority')+'<th>Status</th>'+th('Type','type')+th('Bill Rate',null,'right')+th('Remote',null)+th('Subs','subs','center');
+  if (showDaysOpen) h+=th('Days Open','daysOpen','center');
   h+='</tr></thead><tbody>';
   jobs.forEach(function(j){
     var prioColor=j.priority==="Urgent"?"#dc2626":j.priority==="Hot"?"#f59e0b":j.priority==="Warm"?"#f97316":"#64748b";
     var statusColor=j.status==="Closed"||j.status==="Filled"?"#64748b":j.status==="Accepting Candidates"?"#16a34a":"#176087";
-    h+='<tr style="cursor:pointer" onclick="setPage(\'jobs\')">';
+    var remoteColor=j.remote==="Remote"?"#16a34a":j.remote==="Hybrid"?"#8b5cf6":j.remote==="On-Site"?"#64748b":"#cbd5e1";
+    h+='<tr style="cursor:pointer" onclick="openJobSlide('+j.id+')">';
     h+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
     h+='<td>'+esc(j.client)+'</td>';
     h+='<td>'+esc(j.owner||"\u2014")+'</td>';
     h+='<td>'+(j.priority?'<span class="badge" style="background:'+prioColor+'14;color:'+prioColor+';border:1px solid '+prioColor+'40;font-weight:600">'+esc(j.priority)+'</span>':'\u2014')+'</td>';
     h+='<td><span class="badge" style="color:'+statusColor+'">'+esc(j.status)+'</span></td>';
     h+='<td>'+esc(j.type||"\u2014")+'</td>';
-    h+='<td>'+esc(j.salary)+'</td>';
-    h+='<td>'+esc(j.location||"\u2014")+'</td>';
-    h+='<td style="text-align:center">'+j.openings+'</td>';
-    h+='<td style="text-align:center">'+j.submissions+'</td>';
+    h+='<td style="text-align:right">'+esc(j.billRate||"\u2014")+'</td>';
+    h+='<td><span style="color:'+remoteColor+';font-weight:600">'+esc(j.remote||"\u2014")+'</span></td>';
+    h+='<td style="text-align:center">'+(j.clientSubs!=null?j.clientSubs:j.submissions)+'</td>';
     if (showDaysOpen) {
       var doColor=j.daysOpen>30?"#dc2626":j.daysOpen>14?"#f59e0b":"#64748b";
       h+='<td style="text-align:center;color:'+doColor+';font-weight:600">'+(j.daysOpen!==null?j.daysOpen:"\u2014")+'</td>';
@@ -5096,6 +5135,64 @@ function renderJobTable(jobs, showDaysOpen) {
   });
   h+='</tbody></table></div>';
   return h;
+}
+
+// \u2500\u2500 Job Slide-Out Panel \u2500\u2500
+function openJobSlide(jobId){
+  if (!_bizDevData) return;
+  var all = (_bizDevData.activeOpportunities||[]).concat(_bizDevData.closedOpportunities||[]);
+  var j = all.filter(function(x){ return x.id===jobId; })[0];
+  if (!j) { setPage('jobs'); return; }
+  var prioColor=j.priority==="Urgent"?"#dc2626":j.priority==="Hot"?"#f59e0b":j.priority==="Warm"?"#f97316":"#64748b";
+  var remoteColor=j.remote==="Remote"?"#16a34a":j.remote==="Hybrid"?"#8b5cf6":"#64748b";
+  function row(label,val){ return '<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #f1f5f9"><span style="color:#64748b;font-size:12px;font-weight:600">'+label+'</span><span style="font-size:13px;color:#0f172a;text-align:right">'+val+'</span></div>'; }
+  var body='';
+  body+='<div style="margin-bottom:14px">';
+  body+='<div style="font-size:17px;font-weight:700;color:#0f172a;margin-bottom:4px">'+esc(j.title)+'</div>';
+  body+='<div style="font-size:13px;color:#64748b">'+esc(j.client)+'</div>';
+  body+='</div>';
+  body+=row('Priority', j.priority?'<span class="badge" style="background:'+prioColor+'14;color:'+prioColor+';border:1px solid '+prioColor+'40;font-weight:600">'+esc(j.priority)+'</span>':'\u2014');
+  body+=row('Status', esc(j.status));
+  body+=row('Type', esc(j.type||"\u2014"));
+  body+=row('Owner', esc(j.owner||"\u2014"));
+  body+=row('Openings', String(j.openings));
+  body+=row('Client Submissions', String(j.clientSubs!=null?j.clientSubs:j.submissions));
+  body+=row('Bill Rate', esc(j.billRate||"\u2014"));
+  body+=row('Pay Rate', esc(j.payRate||"\u2014"));
+  body+=row('Remote', '<span style="color:'+remoteColor+';font-weight:600">'+esc(j.remote||"\u2014")+'</span>');
+  body+=row('Location', esc(j.location||"\u2014"));
+  body+=row('Days Open', j.daysOpen!=null?j.daysOpen+' days':"\u2014");
+  body+=row('Date Added', esc(j.dateAdded||"\u2014"));
+  if (j.description) body+='<div style="margin-top:14px"><div style="color:#64748b;font-size:12px;font-weight:600;margin-bottom:6px">Description</div><div style="font-size:13px;color:#334155;line-height:1.5">'+esc(j.description)+'</div></div>';
+  body+='<div style="margin-top:18px;display:flex;gap:8px">';
+  body+='<button class="btn-primary" onclick="closeJobSlide();setPage(\'jobs\')" style="flex:1">Open in Jobs \u2192</button>';
+  body+='<button class="btn-outline" onclick="closeJobSlide()">Close</button>';
+  body+='</div>';
+
+  var overlay=document.getElementById('job-slide-overlay');
+  if(!overlay){
+    overlay=document.createElement('div');
+    overlay.id='job-slide-overlay';
+    overlay.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:9998;opacity:0;transition:opacity .2s';
+    overlay.onclick=function(e){ if(e.target===overlay) closeJobSlide(); };
+    var panel=document.createElement('div');
+    panel.id='job-slide-panel';
+    panel.style.cssText='position:absolute;top:0;right:0;height:100%;width:420px;max-width:92vw;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.12);padding:24px;overflow-y:auto;transform:translateX(100%);transition:transform .25s';
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('job-slide-panel').innerHTML=body;
+  requestAnimationFrame(function(){
+    overlay.style.opacity='1';
+    document.getElementById('job-slide-panel').style.transform='translateX(0)';
+  });
+}
+function closeJobSlide(){
+  var overlay=document.getElementById('job-slide-overlay');
+  if(!overlay) return;
+  overlay.style.opacity='0';
+  document.getElementById('job-slide-panel').style.transform='translateX(100%)';
+  setTimeout(function(){ if(overlay&&overlay.parentNode) overlay.parentNode.removeChild(overlay); },250);
 }
 
 // ── BizDev KPI Drill-Down Modal ──
@@ -5120,7 +5217,7 @@ function openBdModal(key) {
     bodyHtml = renderJobTable((d.closedOpportunities||[]).slice(0,100), false);
   } else if (key === "topConsultants") {
     var tc = d.topConsultants || [];
-    title = "\u2B50 Top Consultants (" + tc.length + ")";
+    title = "\u2B50 Available Talent (" + tc.length + ")";
     bodyHtml = '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
     bodyHtml += '<th>Name</th><th>Grade</th><th>Primary Cert</th><th>Epic Role</th><th>Available</th><th>Location</th><th>Owner</th>';
     bodyHtml += '</tr></thead><tbody>';
