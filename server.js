@@ -2367,6 +2367,17 @@ app.post("/api/jobs/:id/update", async (req, res) => {
         safeUpdates[key] = updates[key];
       }
     }
+    // Handle priority label → Bullhorn 'type' integer
+    if (updates.priority !== undefined) {
+      const PRIORITY_MAP = { "Urgent": 1, "Hot": 2, "Warm": 3, "Cold": 4, "": 0 };
+      const pv = PRIORITY_MAP[updates.priority];
+      if (pv !== undefined) safeUpdates.type = pv;
+    }
+    // Handle client bill rate (BizDev "Bill Rate" column → clientBillRate)
+    if (updates.clientBillRate !== undefined) {
+      const br = parseFloat(String(updates.clientBillRate).replace(/[^0-9.]/g, ""));
+      safeUpdates.clientBillRate = isNaN(br) ? null : br;
+    }
     // Handle owner as association
     if (updates.owner && typeof updates.owner === "object" && updates.owner.id) {
       safeUpdates.owner = { id: parseInt(updates.owner.id) };
@@ -6054,6 +6065,7 @@ app.get("/api/bizdev", async (req, res) => {
           clientId: j.clientCorporation ? j.clientCorporation.id : null,
           priority: prio, priorityRank: PRIORITY_RANK[prio] || 0,
           type: j.employmentType || "",
+          rawBillRate: j.clientBillRate != null ? j.clientBillRate : "",
           billRate: j.clientBillRate ? "$" + j.clientBillRate + "/hr" : "—",
           payRate: j.payRate ? "$" + j.payRate + "/hr" : "—",
           salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",

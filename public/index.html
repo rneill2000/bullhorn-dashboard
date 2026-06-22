@@ -5007,8 +5007,8 @@ function renderBizDevTables(d, flt) {
         html+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
         html+='<td>'+esc(j.client)+'</td>';
         html+='<td>'+esc(j.owner||"\u2014")+'</td>';
-        html+='<td>'+esc(j.type||"\u2014")+'</td>';
-        html+='<td>'+esc(j.billRate||"\u2014")+'</td>';
+        html+='<td>'+bdEditSelect(j.id,"type",j.type||"",BD_TYPES)+'</td>';
+        html+='<td>'+bdEditText(j.id,"billRate",j.rawBillRate,"rate")+'</td>';
         html+='<td>'+esc(j.dateAdded)+'</td>';
         html+='</tr>';
       });
@@ -5099,6 +5099,90 @@ function renderBizDevTables(d, flt) {
   return html;
 }
 
+// ── Inline-edit helpers for BizDev job tables ──
+var BD_PRIORITIES = ["", "Urgent", "Hot", "Warm", "Cold"];
+var BD_STATUSES = ["Accepting Candidates", "Open", "Closed", "Filled", "Placed"];
+var BD_TYPES = ["", "Contract", "Temp", "Temp to Hire", "Direct Hire", "Permanent"];
+
+// Build an editable <select> cell
+function bdEditSelect(jobId, field, value, options) {
+  var h = '<select class="bd-edit" data-job="'+jobId+'" data-field="'+field+'" data-prev="'+esc(value)+'" onchange="bdSaveCell(this)" onclick="event.stopPropagation()" style="font-family:inherit;font-size:12px;padding:3px 5px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;max-width:140px">';
+  options.forEach(function(opt){
+    var label = opt === "" ? "—" : opt;
+    h += '<option value="'+esc(opt)+'"'+(opt===value?' selected':'')+'>'+esc(label)+'</option>';
+  });
+  h += '</select>';
+  return h;
+}
+
+// Build an editable text cell (used for Bill Rate)
+function bdEditText(jobId, field, rawValue, placeholder) {
+  var v = rawValue!=null?String(rawValue):"";
+  return '<input class="bd-edit" type="text" data-job="'+jobId+'" data-field="'+field+'" data-prev="'+esc(v)+'" value="'+esc(v)+'" placeholder="'+(placeholder||"")+'" onclick="event.stopPropagation()" onblur="bdSaveCell(this)" onkeydown="if(event.key===\'Enter\'){this.blur();}" style="font-family:inherit;font-size:12px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:5px;width:70px;text-align:right">';
+}
+
+// Persist a single edited cell to Bullhorn
+function bdSaveCell(el) {
+  var jobId = el.getAttribute("data-job");
+  var field = el.getAttribute("data-field");
+  var val = el.value;
+  var prev = el.getAttribute("data-prev");
+  if (prev === null) prev = "";
+  if (val === prev) return; // no change
+
+  var body = {};
+  if (field === "priority") body.priority = val;
+  else if (field === "status") body.status = val;
+  else if (field === "type") body.employmentType = val;
+  else if (field === "billRate") body.clientBillRate = val;
+
+  el.disabled = true;
+  el.style.opacity = "0.6";
+  apiFetch("jobs/" + jobId + "/update", { method: "POST", body: body }).then(function(res){
+    el.disabled = false;
+    el.style.opacity = "1";
+    if (res && res.success) {
+      el.setAttribute("data-prev", val);
+      el.style.borderColor = "#16a34a";
+      el.style.background = "#f0fdf4";
+      setTimeout(function(){ el.style.borderColor="#e2e8f0"; el.style.background="#fff"; }, 1200);
+      // keep in-memory data fresh so re-renders/sorts reflect the edit
+      bdUpdateLocal(jobId, field, val);
+    } else {
+      el.style.borderColor = "#dc2626";
+      el.style.background = "#fef2f2";
+      alert("Could not save: " + ((res && res.error) || "unknown error"));
+    }
+  }).catch(function(e){
+    el.disabled = false;
+    el.style.opacity = "1";
+    el.style.borderColor = "#dc2626";
+    el.style.background = "#fef2f2";
+    alert("Save failed: " + e.message);
+  });
+}
+
+// Update the cached _bizDevData so sorting/filtering stays consistent after an edit
+function bdUpdateLocal(jobId, field, val) {
+  if (!_bizDevData) return;
+  var id = parseInt(jobId);
+  var lists = [_bizDevData.activeOpportunities, _bizDevData.closedOpportunities, _bizDevData.newOpportunities];
+  var PR = { "Urgent":4, "Hot":3, "Warm":2, "Cold":1, "":0 };
+  lists.forEach(function(list){
+    (list||[]).forEach(function(j){
+      if (j.id !== id) return;
+      if (field === "priority") { j.priority = val; j.priorityRank = PR[val]||0; }
+      else if (field === "status") j.status = val;
+      else if (field === "type") j.type = val;
+      else if (field === "billRate") {
+        var n = parseFloat(String(val).replace(/[^0-9.]/g,""));
+        j.rawBillRate = isNaN(n) ? "" : n;
+        j.billRate = isNaN(n) ? "—" : "$" + n + "/hr";
+      }
+    });
+  });
+}
+
 function renderJobTable(jobs, showDaysOpen, sortable) {
   // Sortable header helper \u2014 shows arrow on active column
   function th(label, col, align){
@@ -5118,10 +5202,10 @@ function renderJobTable(jobs, showDaysOpen, sortable) {
     h+='<td style="font-weight:600;color:#176087">'+esc(j.title)+'</td>';
     h+='<td>'+esc(j.client)+'</td>';
     h+='<td>'+esc(j.owner||"\u2014")+'</td>';
-    h+='<td>'+(j.priority?'<span class="badge" style="background:'+prioColor+'14;color:'+prioColor+';border:1px solid '+prioColor+'40;font-weight:600">'+esc(j.priority)+'</span>':'\u2014')+'</td>';
-    h+='<td><span class="badge" style="color:'+statusColor+'">'+esc(j.status)+'</span></td>';
-    h+='<td>'+esc(j.type||"\u2014")+'</td>';
-    h+='<td style="text-align:right">'+esc(j.billRate||"\u2014")+'</td>';
+    h+='<td>'+bdEditSelect(j.id,"priority",j.priority||"",BD_PRIORITIES)+'</td>';
+    h+='<td>'+bdEditSelect(j.id,"status",j.status||"",BD_STATUSES)+'</td>';
+    h+='<td>'+bdEditSelect(j.id,"type",j.type||"",BD_TYPES)+'</td>';
+    h+='<td style="text-align:right">'+bdEditText(j.id,"billRate",j.rawBillRate,"rate")+'</td>';
     h+='<td style="text-align:center">'+(j.clientSubs!=null?j.clientSubs:j.submissions)+'</td>';
     if (showDaysOpen) {
       var doColor=j.daysOpen>30?"#dc2626":j.daysOpen>14?"#f59e0b":"#64748b";
