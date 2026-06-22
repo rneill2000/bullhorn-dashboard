@@ -2344,6 +2344,44 @@ app.put("/api/client-contacts", async (req, res) => {
 });
 
 // ── Job Update ────────────────────────────────
+// ── Submittals for a single job (used by BizDev "Subs" drill-down) ──
+app.get("/api/jobs/:id/submissions", async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.id);
+    if (!jobId) return res.status(400).json({ error: "Invalid job id" });
+    const data = await bhFetchAll("query/JobSubmission", {
+      where: `isDeleted=false AND jobOrder.id=${jobId}`,
+      fields: "id,candidate(id,firstName,lastName,customText1,customText5),status,dateAdded,dateLastModified,sendingUser(id,firstName,lastName),comments",
+      orderBy: "-dateLastModified",
+    });
+    const subs = (data.data || []).map(s => {
+      const c = s.candidate || {};
+      const candName = ((c.firstName || "") + " " + (c.lastName || "")).trim();
+      const submittedBy = s.sendingUser ? ((s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "")).trim() : "";
+      const st = (s.status || "").toLowerCase();
+      const isInternal = st === "internally submitted" || st === "internal submission";
+      return {
+        id: s.id,
+        candidateId: c.id || null,
+        candidateName: candName || "(unknown)",
+        primaryCert: c.customText1 || "",
+        epicRole: c.customText5 || "",
+        status: s.status || "Submitted",
+        isInternal: isInternal,
+        submittedBy: submittedBy,
+        dateAdded: s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "",
+        dateAddedRaw: s.dateAdded || 0,
+        dateModified: s.dateLastModified ? new Date(s.dateLastModified).toLocaleDateString() : "",
+        comments: (s.comments || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300),
+      };
+    });
+    res.json({ jobId, count: subs.length, submissions: subs });
+  } catch (e) {
+    console.error("[Job Submissions]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/jobs/:id/update", async (req, res) => {
   try {
     const jobId = parseInt(req.params.id);
@@ -2372,11 +2410,6 @@ app.post("/api/jobs/:id/update", async (req, res) => {
       const PRIORITY_MAP = { "Urgent": 1, "Hot": 2, "Warm": 3, "Cold": 4, "": 0 };
       const pv = PRIORITY_MAP[updates.priority];
       if (pv !== undefined) safeUpdates.type = pv;
-    }
-    // Handle client bill rate (BizDev "Bill Rate" column → clientBillRate)
-    if (updates.clientBillRate !== undefined) {
-      const br = parseFloat(String(updates.clientBillRate).replace(/[^0-9.]/g, ""));
-      safeUpdates.clientBillRate = isNaN(br) ? null : br;
     }
     // Handle owner as association
     if (updates.owner && typeof updates.owner === "object" && updates.owner.id) {
@@ -6051,7 +6084,7 @@ app.get("/api/bizdev", async (req, res) => {
     try {
       var jobData = await bhFetchAll("search/JobOrder", {
         query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open" OR status:"Closed" OR status:"Filled" OR status:"Placed")',
-        fields: "id,title,clientCorporation,status,employmentType,salary,clientBillRate,payRate,numOpenings,submissions,dateAdded,type,address,owner,publicDescription,description",
+        fields: "id,title,clientCorporation,status,employmentType,salary,clientBillRate,payRate,numOpenings,submissions,dateAdded,type,address,owner,publicDescription,description,customText1",
         sort: "-dateAdded",
       });
       var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
@@ -6065,8 +6098,11 @@ app.get("/api/bizdev", async (req, res) => {
           clientId: j.clientCorporation ? j.clientCorporation.id : null,
           priority: prio, priorityRank: PRIORITY_RANK[prio] || 0,
           type: j.employmentType || "",
-          rawBillRate: j.clientBillRate != null ? j.clientBillRate : "",
-          billRate: j.clientBillRate ? "$" + j.clientBillRate + "/hr" : "—",
+          // Bill Rate — reflect Bullhorn exactly: numeric clientBillRate first,
+          // else free-text rate note (customText1, may be a range or notes), else blank.
+          billRate: (j.clientBillRate != null && j.clientBillRate !== 0)
+            ? String(j.clientBillRate)
+            : (j.customText1 ? String(j.customText1).trim() : ""),
           payRate: j.payRate ? "$" + j.payRate + "/hr" : "—",
           salary: j.salary ? "$" + Number(j.salary).toLocaleString() : "—",
           openings: j.numOpenings || 0,

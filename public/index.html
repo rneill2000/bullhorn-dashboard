@@ -5000,7 +5000,7 @@ function renderBizDevTables(d, flt) {
       html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No new jobs this week</div>';
     } else {
       html+='<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
-      html+='<th>Job Title</th><th>Client</th><th>Owner</th><th>Type</th><th>Bill Rate</th><th>Added</th>';
+      html+='<th>Job Title</th><th>Client</th><th>Owner</th><th>Type</th><th>Added</th>';
       html+='</tr></thead><tbody>';
       newFiltered.forEach(function(j){
         html+='<tr style="cursor:pointer" onclick="openJobSlide('+j.id+')">';
@@ -5008,7 +5008,6 @@ function renderBizDevTables(d, flt) {
         html+='<td>'+esc(j.client)+'</td>';
         html+='<td>'+esc(j.owner||"\u2014")+'</td>';
         html+='<td>'+bdEditSelect(j.id,"type",j.type||"",BD_TYPES)+'</td>';
-        html+='<td>'+bdEditText(j.id,"billRate",j.rawBillRate,"rate")+'</td>';
         html+='<td>'+esc(j.dateAdded)+'</td>';
         html+='</tr>';
       });
@@ -5115,12 +5114,6 @@ function bdEditSelect(jobId, field, value, options) {
   return h;
 }
 
-// Build an editable text cell (used for Bill Rate)
-function bdEditText(jobId, field, rawValue, placeholder) {
-  var v = rawValue!=null?String(rawValue):"";
-  return '<input class="bd-edit" type="text" data-job="'+jobId+'" data-field="'+field+'" data-prev="'+esc(v)+'" value="'+esc(v)+'" placeholder="'+(placeholder||"")+'" onclick="event.stopPropagation()" onblur="bdSaveCell(this)" onkeydown="if(event.key===\'Enter\'){this.blur();}" style="font-family:inherit;font-size:12px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:5px;width:70px;text-align:right">';
-}
-
 // Persist a single edited cell to Bullhorn
 function bdSaveCell(el) {
   var jobId = el.getAttribute("data-job");
@@ -5134,7 +5127,6 @@ function bdSaveCell(el) {
   if (field === "priority") body.priority = val;
   else if (field === "status") body.status = val;
   else if (field === "type") body.employmentType = val;
-  else if (field === "billRate") body.clientBillRate = val;
 
   el.disabled = true;
   el.style.opacity = "0.6";
@@ -5174,11 +5166,6 @@ function bdUpdateLocal(jobId, field, val) {
       if (field === "priority") { j.priority = val; j.priorityRank = PR[val]||0; }
       else if (field === "status") j.status = val;
       else if (field === "type") j.type = val;
-      else if (field === "billRate") {
-        var n = parseFloat(String(val).replace(/[^0-9.]/g,""));
-        j.rawBillRate = isNaN(n) ? "" : n;
-        j.billRate = isNaN(n) ? "—" : "$" + n + "/hr";
-      }
     });
   });
 }
@@ -5192,7 +5179,7 @@ function renderJobTable(jobs, showDaysOpen, sortable) {
     return '<th style="cursor:pointer;user-select:none;white-space:nowrap'+(align?';text-align:'+align:'')+(active?';color:#176087':'')+'" onclick="bdSortBy(\''+col+'\')">'+label+arrow+'</th>';
   }
   var h = '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
-  h+=th('Job Title','title')+th('Client','client')+th('Owner','owner')+th('Priority','priority')+'<th>Status</th>'+th('Type','type')+th('Bill Rate',null,'right')+th('Subs','subs','center');
+  h+=th('Job Title','title')+th('Client','client')+th('Owner','owner')+th('Priority','priority')+'<th>Status</th>'+th('Type','type')+th('Subs','subs','center');
   if (showDaysOpen) h+=th('Days Open','daysOpen','center');
   h+='</tr></thead><tbody>';
   jobs.forEach(function(j){
@@ -5205,8 +5192,8 @@ function renderJobTable(jobs, showDaysOpen, sortable) {
     h+='<td>'+bdEditSelect(j.id,"priority",j.priority||"",BD_PRIORITIES)+'</td>';
     h+='<td>'+bdEditSelect(j.id,"status",j.status||"",BD_STATUSES)+'</td>';
     h+='<td>'+bdEditSelect(j.id,"type",j.type||"",BD_TYPES)+'</td>';
-    h+='<td style="text-align:right">'+bdEditText(j.id,"billRate",j.rawBillRate,"rate")+'</td>';
-    h+='<td style="text-align:center">'+(j.clientSubs!=null?j.clientSubs:j.submissions)+'</td>';
+    var subCount=(j.clientSubs!=null?j.clientSubs:j.submissions);
+    h+='<td style="text-align:center"><span onclick="event.stopPropagation();bdShowSubmittals('+j.id+',\''+esc((j.title||"").replace(/'/g,"\\\x27"))+'\')" style="cursor:pointer;color:#176087;font-weight:600;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" title="View submittals">'+subCount+'</span></td>';
     if (showDaysOpen) {
       var doColor=j.daysOpen>30?"#dc2626":j.daysOpen>14?"#f59e0b":"#64748b";
       h+='<td style="text-align:center;color:'+doColor+';font-weight:600">'+(j.daysOpen!==null?j.daysOpen:"\u2014")+'</td>';
@@ -5235,7 +5222,8 @@ function openJobSlide(jobId){
   body+=row('Type', esc(j.type||"\u2014"));
   body+=row('Owner', esc(j.owner||"\u2014"));
   body+=row('Openings', String(j.openings));
-  body+=row('Client Submissions', String(j.clientSubs!=null?j.clientSubs:j.submissions));
+  var subN=(j.clientSubs!=null?j.clientSubs:j.submissions);
+  body+=row('Client Submissions', '<span onclick="bdShowSubmittals('+j.id+',\''+esc((j.title||"").replace(/'/g,"\\\x27"))+'\')" style="cursor:pointer;color:#176087;font-weight:600;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px">'+subN+' \u2192</span>');
   body+=row('Bill Rate', esc(j.billRate||"\u2014"));
   body+=row('Pay Rate', esc(j.payRate||"\u2014"));
   body+=row('Location', esc(j.location||"\u2014"));
@@ -5371,6 +5359,59 @@ function openBdModal(key) {
 function closeBdModal() {
   var overlay = document.getElementById("bd-modal-overlay");
   if (overlay) overlay.style.display = "none";
+}
+
+// ── Show submittals for a job in the BizDev modal ──
+function bdShowSubmittals(jobId, jobTitle) {
+  bdRenderModalShell("📤 Submittals — " + esc(jobTitle || ""),
+    '<div style="padding:24px;text-align:center;color:#94a3b8;font-size:13px">Loading submittals…</div>');
+  apiFetch("jobs/" + jobId + "/submissions").then(function(res){
+    var subs = (res && res.submissions) || [];
+    var title = "📤 Submittals — " + esc(jobTitle || "") + " (" + subs.length + ")";
+    var body = "";
+    if (subs.length === 0) {
+      body = '<div style="padding:24px;text-align:center;color:#94a3b8;font-size:13px">No submittals on this job yet</div>';
+    } else {
+      body = '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:13px"><thead><tr>';
+      body += '<th>Candidate</th><th>Primary Cert</th><th>Status</th><th>Submitted By</th><th>Last Update</th>';
+      body += '</tr></thead><tbody>';
+      subs.forEach(function(s){
+        var stColor = s.isInternal ? "#94a3b8" : (/(placed|offer|client)/i.test(s.status) ? "#16a34a" : "#176087");
+        body += '<tr>';
+        body += '<td style="font-weight:600;'+(s.candidateId?"cursor:pointer;color:#176087":"")+'"'+(s.candidateId?' onclick="closeBdModal();openDetail('+s.candidateId+',{})"':'')+'>'+esc(s.candidateName)+(s.epicRole?'<div style="font-weight:400;color:#94a3b8;font-size:11px">'+esc(s.epicRole)+'</div>':'')+'</td>';
+        body += '<td>'+esc(s.primaryCert||"—")+'</td>';
+        body += '<td><span class="badge" style="color:'+stColor+'">'+esc(s.status)+(s.isInternal?' <span style="color:#cbd5e1">(internal)</span>':'')+'</span></td>';
+        body += '<td>'+esc(s.submittedBy||"—")+'</td>';
+        body += '<td style="white-space:nowrap;color:#64748b">'+esc(s.dateModified||s.dateAdded||"—")+'</td>';
+        body += '</tr>';
+      });
+      body += '</tbody></table></div>';
+    }
+    bdRenderModalShell(title, body);
+  }).catch(function(e){
+    bdRenderModalShell("📤 Submittals",
+      '<div style="padding:24px;text-align:center;color:#dc2626;font-size:13px">Could not load submittals: '+esc(e.message)+'</div>');
+  });
+}
+
+// Render content into the shared BizDev modal shell (extracted so it can be reused/updated)
+function bdRenderModalShell(title, bodyHtml) {
+  var overlay = document.getElementById("bd-modal-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "bd-modal-overlay";
+    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px";
+    overlay.onclick = function(e) { if (e.target === overlay) closeBdModal(); };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:900px;width:100%;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">'
+    + '<div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between">'
+    + '<h3 style="margin:0;font-size:16px;color:#0f172a">' + title + '</h3>'
+    + '<button onclick="closeBdModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8;padding:4px 8px">✕</button>'
+    + '</div>'
+    + '<div style="padding:16px 20px;overflow-y:auto;flex:1">' + bodyHtml + '</div>'
+    + '</div>';
+  overlay.style.display = "flex";
 }
 
 /* ═══ SMART MATCH ═══ */
