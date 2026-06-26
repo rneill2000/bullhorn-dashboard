@@ -2976,6 +2976,100 @@ app.get("/api/sales-pipeline", async (req, res) => {
   }
 });
 
+// ── Sales Funnel (Client Development Activity) ─────────────────
+// Combines Leads (top of funnel) + Opportunities (MSA pipeline) into the
+// 4-tier funnel shown on the Sales tab, broken out per rep with totals.
+const FUNNEL_TIERS = [
+  { key: "activities", label: "Activities", sub: "LI & Email", color: "#5fa9c4" },
+  { key: "meetings",   label: "Meetings",   sub: "Call, Video, In Person", color: "#2d7d9a" },
+  { key: "expansion",  label: "Expansion / Contracting", sub: "Negotiating", color: "#3a6ea5" },
+  { key: "partners",   label: "New Client Partners", sub: "MSA / NCP", color: "#a8c6e0" },
+];
+// Map a record's status to a funnel tier key (or null to exclude)
+function funnelTierForLead() { return "activities"; } // every open lead = an activity
+function funnelTierForOpp(status) {
+  var s = (status || "").toLowerCase();
+  if (s === "identified" || s === "qualifying") return "meetings";
+  if (s === "negotiating" || s === "legal review") return "expansion";
+  if (s === "executed" || s === "closed") return "partners";
+  return null; // Burner, Dead, etc. excluded from the funnel
+}
+// Reps shown as their own column; everyone else rolls into "Other"
+const FUNNEL_REPS = ["Melissa", "Nicole", "Peter", "Rachel"];
+function repBucket(firstName) {
+  return FUNNEL_REPS.indexOf(firstName) !== -1 ? firstName : "Other";
+}
+
+app.get("/api/sales-funnel", async (req, res) => {
+  try {
+    const repCols = FUNNEL_REPS.concat(["Other"]);
+    // Scaffold: matrix[tierKey][rep] = { count, value }
+    const matrix = {};
+    FUNNEL_TIERS.forEach(function (t) {
+      matrix[t.key] = {};
+      repCols.forEach(function (r) { matrix[t.key][r] = { count: 0, value: 0 }; });
+    });
+
+    // 1) Leads → Activities tier (exclude Dead/closed-lost statuses)
+    const leadRes = await bhFetchAll("search/Lead", {
+      query: "isDeleted:0",
+      fields: "id,firstName,lastName,status,owner,dateAdded",
+      sort: "-dateAdded",
+    });
+    (leadRes.data || []).forEach(function (l) {
+      var st = (l.status || "").toLowerCase();
+      if (st.indexOf("dead") !== -1 || st.indexOf("converted") !== -1) return;
+      var rep = repBucket(l.owner ? l.owner.firstName : "");
+      matrix.activities[rep].count += 1;
+    });
+
+    // 2) Opportunities → Meetings / Expansion / Partners tiers
+    const oppRes = await bhFetchAll("search/Opportunity", {
+      query: "isDeleted:0",
+      fields: "id,title,status,dealValue,owner,dateAdded",
+      sort: "-dateAdded",
+    });
+    (oppRes.data || []).forEach(function (o) {
+      var tier = funnelTierForOpp(o.status);
+      if (!tier) return;
+      var rep = repBucket(o.owner ? o.owner.firstName : "");
+      matrix[tier][rep].count += 1;
+      matrix[tier][rep].value += (o.dealValue || 0);
+    });
+
+    // Tier totals (across reps) and rep totals (across tiers)
+    const tierTotals = {};
+    FUNNEL_TIERS.forEach(function (t) {
+      var c = 0, v = 0;
+      repCols.forEach(function (r) { c += matrix[t.key][r].count; v += matrix[t.key][r].value; });
+      tierTotals[t.key] = { count: c, value: v };
+    });
+    const repTotals = {};
+    repCols.forEach(function (r) {
+      var c = 0, v = 0;
+      FUNNEL_TIERS.forEach(function (t) { c += matrix[t.key][r].count; v += matrix[t.key][r].value; });
+      repTotals[r] = { count: c, value: v };
+    });
+
+    // Stage→tier mapping surfaced so the UI can explain what's counted
+    res.json({
+      tiers: FUNNEL_TIERS,
+      reps: repCols,
+      matrix: matrix,
+      tierTotals: tierTotals,
+      repTotals: repTotals,
+      sources: {
+        leads: (leadRes.data || []).length,
+        opportunities: (oppRes.data || []).length,
+      },
+      generatedAt: Date.now(),
+    });
+  } catch (e) {
+    console.error("[Sales Funnel]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/opportunities/:id", async (req, res) => {
   try {
     const data = await bhFetch("entity/Opportunity/" + req.params.id, {

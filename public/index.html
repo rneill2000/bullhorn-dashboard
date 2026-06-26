@@ -7449,7 +7449,7 @@ async function completeBhTask(id) {
   } catch (e) { alert("Failed: " + e.message); }
 }
 
-var _salesStage="All", _salesSort="urgency", _spView="pipeline";
+var _salesStage="All", _salesSort="urgency", _spView="funnel";
 function timeAgo(ts) {
   var s = Math.floor((Date.now() - ts) / 1000);
   if (s < 3600) return Math.max(1, Math.floor(s / 60)) + "m ago";
@@ -7518,13 +7518,77 @@ async function openSalesLead(id) {
     alert("Could not load lead: " + e.message);
   }
 }
+function fmtMoney(v){ if(!v) return ""; if(v>=1000000) return "$"+(v/1000000).toFixed(1)+"M"; if(v>=1000) return "$"+Math.round(v/1000)+"k"; return "$"+v; }
+function renderSalesFunnel(d) {
+  var tiers = d.tiers || [], reps = d.reps || [], matrix = d.matrix || {}, tierTotals = d.tierTotals || {}, repTotals = d.repTotals || {};
+  // Shared view toggle (matches renderSalesPipeline so tabs work from here too)
+  var viewBtn = function(key, label){ var on=_spView===key; return '<button class="touch-tab'+(on?' on':'')+'" onclick="_spView=\''+key+'\';loadPage()">'+label+'</button>'; };
+  var toggle = '<div class="touch-tabs" style="margin-bottom:16px">'+viewBtn("funnel","Funnel")+viewBtn("pipeline","Pipeline")+viewBtn("activity","Recent Activity")+'</div>';
+
+  var html = toggle;
+  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:4px">';
+  html += '<h2 style="font-size:22px;margin:0">Client Development Activity</h2>';
+  html += '<span style="font-size:12px;color:#94a3b8">Live from Bullhorn · '+(d.sources?d.sources.leads:0)+' leads · '+(d.sources?d.sources.opportunities:0)+' opportunities</span>';
+  html += '</div>';
+  html += '<div style="font-size:13px;color:#64748b;margin-bottom:20px">Partner growth funnel — leads &amp; MSA pipeline by team member</div>';
+
+  // ── Funnel visualization (tapered bars, widest at top) ──
+  var maxCount = 1;
+  tiers.forEach(function(t){ maxCount = Math.max(maxCount, tierTotals[t.key] ? tierTotals[t.key].count : 0); });
+  html += '<div style="background:#0f2740;border-radius:14px;padding:24px 28px;margin-bottom:24px">';
+  tiers.forEach(function(t, i){
+    var tot = tierTotals[t.key] || {count:0,value:0};
+    var widthPct = 30 + 70 * (tot.count / maxCount); // never thinner than 30%
+    html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:'+(i<tiers.length-1?'10px':'0')+'">';
+    html += '<div style="width:26px;color:#64a7c9;font-weight:700;font-size:15px;text-align:center">'+(i+1)+'</div>';
+    html += '<div style="flex:1;display:flex;justify-content:center">';
+    html += '<div style="width:'+widthPct.toFixed(1)+'%;min-width:200px;background:'+t.color+';border-radius:10px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;transition:width .5s ease;box-shadow:0 2px 8px rgba(0,0,0,.2)">';
+    html += '<div><div style="font-weight:700;font-size:16px;color:#fff">'+esc(t.label)+'</div><div style="font-size:11px;color:rgba(255,255,255,.85)">'+esc(t.sub)+'</div></div>';
+    html += '<div style="text-align:right"><div style="font-size:24px;font-weight:800;color:#fff;line-height:1">'+tot.count+'</div>'+(tot.value?'<div style="font-size:11px;color:rgba(255,255,255,.85)">'+fmtMoney(tot.value)+'</div>':'')+'</div>';
+    html += '</div></div></div>';
+  });
+  html += '</div>';
+
+  // ── Per-rep matrix ──
+  html += '<div class="table-wrap"><table style="min-width:560px"><thead><tr>';
+  html += '<th style="text-align:left">Stage</th>';
+  reps.forEach(function(r){ html += '<th style="text-align:center">'+esc(r)+'</th>'; });
+  html += '<th style="text-align:center;background:#f8fafc">Total</th>';
+  html += '</tr></thead><tbody>';
+  tiers.forEach(function(t){
+    html += '<tr>';
+    html += '<td><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:'+t.color+';margin-right:8px"></span><span class="fw600">'+esc(t.label)+'</span></td>';
+    reps.forEach(function(r){
+      var cell = (matrix[t.key] && matrix[t.key][r]) || {count:0,value:0};
+      var shade = cell.count ? '' : 'color:#cbd5e1';
+      html += '<td style="text-align:center;'+shade+'">'+(cell.count||0)+(cell.value?'<div style="font-size:10px;color:#94a3b8">'+fmtMoney(cell.value)+'</div>':'')+'</td>';
+    });
+    var tt = tierTotals[t.key] || {count:0,value:0};
+    html += '<td style="text-align:center;background:#f8fafc;font-weight:700">'+tt.count+'</td>';
+    html += '</tr>';
+  });
+  // Totals row
+  html += '<tr style="border-top:2px solid #e2e8f0">';
+  html += '<td class="fw600" style="color:#176087">TOTAL</td>';
+  reps.forEach(function(r){
+    var rt = repTotals[r] || {count:0,value:0};
+    html += '<td style="text-align:center;font-weight:700;color:#176087">'+rt.count+'</td>';
+  });
+  var grand = 0; reps.forEach(function(r){ grand += (repTotals[r]?repTotals[r].count:0); });
+  html += '<td style="text-align:center;background:#e0f2fe;font-weight:800;color:#176087">'+grand+'</td>';
+  html += '</tr>';
+  html += '</tbody></table></div>';
+
+  html += '<div style="font-size:11px;color:#94a3b8;margin-top:12px;line-height:1.5">Activities = open Leads · Meetings = Identified/Qualifying opportunities · Expansion = Negotiating/Legal Review · New Client Partners = Executed/Closed. Burner &amp; Dead records excluded. Ben &amp; Bill roll into "Other".</div>';
+  return html;
+}
 function renderSalesPipeline(d) {
   var leads = d.data || [];
   var viewBtn = function(key, label) {
     var on = _spView === key;
     return '<button class="touch-tab' + (on ? ' on' : '') + '" onclick="_spView=\'' + key + '\';loadPage()">' + label + '</button>';
   };
-  var toggle = '<div class="touch-tabs" style="margin-bottom:16px">' + viewBtn("pipeline", "Pipeline (" + leads.length + ")") + viewBtn("activity", "Recent Activity (" + ((d.activity || []).length) + ")") + '</div>';
+  var toggle = '<div class="touch-tabs" style="margin-bottom:16px">' + viewBtn("funnel", "Funnel") + viewBtn("pipeline", "Pipeline (" + leads.length + ")") + viewBtn("activity", "Recent Activity (" + ((d.activity || []).length) + ")") + '</div>';
   if (_spView === "activity") return toggle + renderSalesActivity(d.activity || []);
   var stages = d.stages || {};
   // Summary numbers
@@ -10773,8 +10837,14 @@ async function loadPage(){
         var touchR=await apiFetch("touch-report",{days:_touchDays,clientStatus:_touchClientStatus});
         h=renderTouches(touchR);break;
       case "salespipeline":
-        var spData=await apiFetch("sales-pipeline");
-        h=renderSalesPipeline(spData);break;
+        if(_spView==="funnel"){
+          var sfData=await apiFetch("sales-funnel");
+          h=renderSalesFunnel(sfData);
+        } else {
+          var spData=await apiFetch("sales-pipeline");
+          h=renderSalesPipeline(spData);
+        }
+        break;
       case "bhtasks":
         var btData=await apiFetch("bh-tasks");
         h=renderBhTasks(btData);break;
