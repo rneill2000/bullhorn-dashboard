@@ -6237,6 +6237,18 @@ app.get("/api/bizdev", async (req, res) => {
       }
     } catch(e) { console.log("[BizDev] Client subs error:", e.message); }
 
+    // 1c. Needs Review — active jobs that look stale: open past STALE_DAYS with
+    // zero client-facing submissions. These are likely closed/abandoned and should
+    // be surfaced separately so they don't clutter (or inflate) Active Opportunities.
+    var STALE_DAYS = 90;
+    var staleJobs = activeJobs.filter(function(j) {
+      return j.daysOpen !== null && j.daysOpen >= STALE_DAYS && (j.clientSubs || 0) === 0;
+    });
+    var staleIds = {};
+    staleJobs.forEach(function(j) { staleIds[j.id] = true; });
+    // Remove stale jobs from the active list so each job appears in exactly one section.
+    activeJobs = activeJobs.filter(function(j) { return !staleIds[j.id]; });
+
     // 2. Top Consultants — Available/Active candidates, grade A or B
     var topConsultants = [];
     try {
@@ -6367,6 +6379,7 @@ app.get("/api/bizdev", async (req, res) => {
     res.json({
       generatedAt: new Date().toLocaleString(),
       activeOpportunities: activeJobs,
+      staleOpportunities: staleJobs,
       closedOpportunities: closedJobs,
       newOpportunities: newOpportunities,
       topConsultants: topConsultants,
@@ -6379,6 +6392,7 @@ app.get("/api/bizdev", async (req, res) => {
       },
       summary: {
         totalActiveJobs: activeJobs.length,
+        staleJobs: staleJobs.length,
         closedJobs: closedJobs.length,
         urgentJobs: activeJobs.filter(function(j) { return j.priority === "Urgent" || j.priority === "Hot"; }).length,
         topConsultantCount: topConsultants.length,

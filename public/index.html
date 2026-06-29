@@ -4982,6 +4982,19 @@ function renderBizDevTables(d, flt) {
     html+='</div>';
   }
 
+  // ── Needs Review ── stale active jobs (open 90+ days, 0 client subs)
+  if (showActive) {
+    var staleFiltered = bdFilterJobs(d.staleOpportunities || [], flt);
+    html+='<div class="chart-card" style="border:1px solid #fde68a;background:#fffbeb"><h3 style="display:flex;align-items:center;justify-content:space-between">⚠️ Needs Review <span style="font-size:12px;font-weight:400;color:#94a3b8">'+staleFiltered.length+' jobs • open 90+ days, 0 submissions</span></h3>';
+    if(staleFiltered.length===0){
+      html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">✅ Nothing needs review</div>';
+    } else {
+      html+='<div style="font-size:12px;color:#92400e;margin-bottom:8px">These are still marked active but have been open a long time with no submissions — likely closed or stale. Update the status to clear them.</div>';
+      html+=renderJobTable(bdApplySort(staleFiltered), true, true);
+    }
+    html+='</div>';
+  }
+
   // ── Closed/Filled Jobs ──
   if (showClosed || !flt.status) {
     html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\u2705 Closed / Filled Jobs <span style="font-size:12px;font-weight:400;color:#94a3b8">'+closedFiltered.length+' jobs</span></h3>';
@@ -5103,6 +5116,21 @@ var BD_PRIORITIES = ["", "Urgent", "Hot", "Warm", "Cold"];
 var BD_STATUSES = ["Accepting Candidates", "Open", "Closed", "Filled", "Placed"];
 var BD_TYPES = ["", "Contract", "Temp", "Temp to Hire", "Direct Hire", "Permanent"];
 
+// Colored status pill — makes a job's category (open vs filled/placed) obvious at a glance
+function bdStatusBadge(status) {
+  var s = status || "";
+  var map = {
+    "Accepting Candidates": "#16a34a",
+    "Open": "#16a34a",
+    "Closed": "#64748b",
+    "Filled": "#64748b",
+    "Placed": "#7c3aed"
+  };
+  var c = map[s] || "#176087";
+  var label = s || "—";
+  return '<span style="display:inline-block;font-size:10px;font-weight:700;color:'+c+';background:'+c+'14;border:1px solid '+c+'33;border-radius:4px;padding:1px 6px;margin-right:6px;vertical-align:middle;white-space:nowrap">'+esc(label)+'</span>';
+}
+
 // Build an editable <select> cell
 function bdEditSelect(jobId, field, value, options) {
   var h = '<select class="bd-edit" data-job="'+jobId+'" data-field="'+field+'" data-prev="'+esc(value)+'" onchange="bdSaveCell(this)" onclick="event.stopPropagation()" style="font-family:inherit;font-size:12px;padding:3px 5px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;max-width:140px">';
@@ -5158,7 +5186,7 @@ function bdSaveCell(el) {
 function bdUpdateLocal(jobId, field, val) {
   if (!_bizDevData) return;
   var id = parseInt(jobId);
-  var lists = [_bizDevData.activeOpportunities, _bizDevData.closedOpportunities, _bizDevData.newOpportunities];
+  var lists = [_bizDevData.activeOpportunities, _bizDevData.staleOpportunities, _bizDevData.closedOpportunities, _bizDevData.newOpportunities];
   var PR = { "Urgent":4, "Hot":3, "Warm":2, "Cold":1, "":0 };
   lists.forEach(function(list){
     (list||[]).forEach(function(j){
@@ -5190,7 +5218,7 @@ function renderJobTable(jobs, showDaysOpen, sortable) {
     h+='<td>'+esc(j.client)+'</td>';
     h+='<td>'+esc(j.owner||"\u2014")+'</td>';
     h+='<td>'+bdEditSelect(j.id,"priority",j.priority||"",BD_PRIORITIES)+'</td>';
-    h+='<td>'+bdEditSelect(j.id,"status",j.status||"",BD_STATUSES)+'</td>';
+    h+='<td>'+bdStatusBadge(j.status)+bdEditSelect(j.id,"status",j.status||"",BD_STATUSES)+'</td>';
     h+='<td>'+bdEditSelect(j.id,"type",j.type||"",BD_TYPES)+'</td>';
     var subCount=(j.clientSubs!=null?j.clientSubs:j.submissions);
     h+='<td style="text-align:center"><span onclick="event.stopPropagation();bdShowSubmittals('+j.id+',\''+esc((j.title||"").replace(/'/g,"\\\x27"))+'\')" style="cursor:pointer;color:#176087;font-weight:600;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" title="View submittals">'+subCount+'</span></td>';
@@ -5207,7 +5235,7 @@ function renderJobTable(jobs, showDaysOpen, sortable) {
 // \u2500\u2500 Job Slide-Out Panel \u2500\u2500
 function openJobSlide(jobId){
   if (!_bizDevData) return;
-  var all = (_bizDevData.activeOpportunities||[]).concat(_bizDevData.closedOpportunities||[]);
+  var all = (_bizDevData.activeOpportunities||[]).concat(_bizDevData.staleOpportunities||[]).concat(_bizDevData.closedOpportunities||[]);
   var j = all.filter(function(x){ return x.id===jobId; })[0];
   if (!j) { setPage('jobs'); return; }
   var prioColor=j.priority==="Urgent"?"#dc2626":j.priority==="Hot"?"#f59e0b":j.priority==="Warm"?"#f97316":"#64748b";
