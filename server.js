@@ -18,6 +18,31 @@ const db = require("./db");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 
+/**
+ * Extract text from a PDF buffer.
+ * Tries pdf-parse first (fast, but its bundled pdf.js is from 2018 and fails on
+ * modern PDFs with "bad XRef entry"), then falls back to pdfjs-dist (modern engine).
+ */
+async function extractPdfText(buf) {
+  try {
+    const pdfData = await pdfParse(buf);
+    if (pdfData && pdfData.text && pdfData.text.trim()) return String(pdfData.text);
+    throw new Error("pdf-parse returned empty text");
+  } catch (e1) {
+    console.log("[PDF Extract] pdf-parse failed (" + e1.message + ") — falling back to pdfjs-dist");
+    const pdfjs = require("pdfjs-dist/legacy/build/pdf.js");
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true, isEvalSupported: false }).promise;
+    let text = "";
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const tc = await page.getTextContent();
+      text += tc.items.map((it) => it.str).join(" ") + "\n";
+    }
+    try { await doc.destroy(); } catch (dErr) {}
+    return text;
+  }
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -7830,10 +7855,9 @@ app.post("/api/resume/parse", async (req, res) => {
 
         if (ext === "pdf") {
           try {
-            const pdfData = await pdfParse(filePart.data);
-            resumeText = (pdfData && pdfData.text) ? String(pdfData.text) : "";
+            resumeText = await extractPdfText(filePart.data);
           } catch (pdfErr) {
-            console.error("[Resume Parser] pdf-parse failed:", pdfErr.message);
+            console.error("[Resume Parser] PDF extraction failed:", pdfErr.message);
             return res.status(400).json({ error: "Could not read this PDF. It may be scanned, encrypted, or in an unsupported format. Try saving as a new PDF or converting to DOCX." });
           }
         } else if (ext === "docx" || ext === "doc") {
@@ -7872,7 +7896,7 @@ app.post("/api/resume/parse", async (req, res) => {
       try {
         const searchResult = await bhFetch("search/Candidate", {
           query: `email:"${parsedEmail}" AND isDeleted:0`,
-          fields: "id,firstName,lastName,name,email,phone,address,occupation,status,source,customText1,customText2,customText5,customText6,skillList,dateAdded",
+          fields: "id,firstName,lastName,name,email,phone,address,occupation,status,source,customText1,customText2,customText5,customText6,dateAdded",
           count: 1,
         });
         if (searchResult && searchResult.data && searchResult.data.length > 0) {
@@ -7893,7 +7917,7 @@ app.post("/api/resume/parse", async (req, res) => {
             secondaryCerts: ec.customText2 || "",
             epicRole: ec.customText5 || "",
             grade: ec.customText6 || "",
-            skills: ec.skillList || "",
+            skills: "",
             dateAdded: ec.dateAdded || null,
           };
           console.log("[Resume Parser] Found existing candidate:", ec.firstName, ec.lastName, "ID:", ec.id);
