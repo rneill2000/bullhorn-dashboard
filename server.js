@@ -1905,6 +1905,226 @@ app.get("/api/placements", async (req, res) => {
   }
 });
 
+// ── Placement Detail ────────────────────────────
+app.get("/api/placements/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const data = await bhFetch(`entity/Placement/${id}`, {
+      fields: "id,candidate(id,firstName,lastName),jobOrder(id,title),status,dateBegin,dateEnd,payRate,clientBillRate,salary,fee,employmentType,dateAdded,dateLastModified",
+    });
+    const p = data.data || data;
+
+    // Resolve client via jobOrder → clientCorporation (two-step, same as list endpoint)
+    let clientId = null, clientName = "";
+    if (p.jobOrder && p.jobOrder.id) {
+      try {
+        const jr = await bhFetch(`entity/JobOrder/${p.jobOrder.id}`, { fields: "id,clientCorporation" });
+        const jd = jr.data || jr;
+        if (jd.clientCorporation) {
+          clientId = typeof jd.clientCorporation === "object" ? jd.clientCorporation.id : jd.clientCorporation;
+          if (typeof jd.clientCorporation === "object" && jd.clientCorporation.name) {
+            clientName = jd.clientCorporation.name;
+          } else if (clientId) {
+            const cr = await bhFetch(`entity/ClientCorporation/${clientId}`, { fields: "id,name" });
+            clientName = (cr.data || cr).name || "";
+          }
+        }
+      } catch (jcErr) { console.log("[Placement Detail] Client lookup failed:", jcErr.message); }
+    }
+
+    const isDH = p.employmentType === "Direct Hire" || p.employmentType === "Permanent";
+    const payRate = p.payRate || 0;
+    const billRate = p.clientBillRate || 0;
+    res.json({
+      id: p.id,
+      candidateId: p.candidate ? p.candidate.id : null,
+      candidate: p.candidate ? ((p.candidate.firstName || "") + " " + (p.candidate.lastName || "")).trim() : "",
+      jobId: p.jobOrder ? p.jobOrder.id : null,
+      job: p.jobOrder ? p.jobOrder.title : "",
+      clientId: clientId,
+      client: clientName,
+      status: p.status || "Unknown",
+      employmentType: p.employmentType || "",
+      pt: isDH ? "Direct Hire" : "Consultant",
+      rawDateBegin: p.dateBegin || null,
+      rawDateEnd: p.dateEnd || null,
+      startDate: p.dateBegin ? new Date(p.dateBegin).toLocaleDateString() : "",
+      endDate: p.dateEnd ? new Date(p.dateEnd).toLocaleDateString() : null,
+      payRate: payRate,
+      billRate: billRate,
+      margin: billRate > 0 ? Math.round(((billRate - payRate) / billRate) * 100) : null,
+      salary: p.salary || 0,
+      fee: p.fee || 0,
+      dateAdded: p.dateAdded ? new Date(p.dateAdded).toLocaleDateString() : "",
+      lastModified: p.dateLastModified ? new Date(p.dateLastModified).toLocaleDateString() : "",
+    });
+  } catch (e) {
+    console.error("[Placement Detail]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Update Placement ────────────────────────────
+app.post("/api/placements/:id/update", async (req, res) => {
+  try {
+    const placementId = parseInt(req.params.id);
+    const updates = req.body;
+    const ALLOWED_FIELDS = [
+      "status", "employmentType", "dateBegin", "dateEnd",
+      "payRate", "clientBillRate", "salary", "fee",
+    ];
+    const safeUpdates = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_FIELDS.includes(key)) {
+        safeUpdates[key] = updates[key];
+      }
+    }
+    if (Object.keys(safeUpdates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+    const result = await bhWrite(`entity/Placement/${placementId}`, safeUpdates, "POST");
+    console.log("[Update Placement]", placementId, "→", Object.keys(safeUpdates), result);
+    res.json({ success: true, message: "Placement updated", changedFields: Object.keys(safeUpdates) });
+  } catch (e) {
+    console.error("[Update Placement]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Job Notes (read + add) ──────────────────────
+app.get("/api/jobs/:id/notes", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    // Entity association endpoint works reliably (same fix as candidate/lead notes)
+    const nr = await bhFetch(`entity/JobOrder/${id}/notes`, {
+      fields: "id,action,comments,dateAdded,commentingPerson(id,firstName,lastName)",
+      count: 100,
+    });
+    const notes = (nr.data || [])
+      .filter((n) => n && n.dateAdded)
+      .sort((a, b) => b.dateAdded - a.dateAdded)
+      .map((n) => ({
+        id: n.id,
+        action: n.action || "",
+        comments: n.comments || "",
+        date: n.dateAdded ? new Date(n.dateAdded).toLocaleDateString() : "",
+        by: n.commentingPerson ? ((n.commentingPerson.firstName || "") + " " + (n.commentingPerson.lastName || "")).trim() : "",
+      }));
+    res.json({ data: notes, total: notes.length });
+  } catch (e) {
+    console.error("[Job Notes]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/jobs/:id/notes", async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.id);
+    const { action, comments } = req.body;
+    if (!comments || !comments.trim()) {
+      return res.status(400).json({ error: "Comments are required" });
+    }
+    // Create the Note, then associate it to the JobOrder
+    const noteBody = {
+      action: action || "General Note",
+      comments: comments.trim(),
+      dateAdded: Date.now(),
+    };
+    const result = await bhWrite("entity/Note", noteBody, "PUT");
+    const noteId = result.changedEntityId;
+    try {
+      await bhWrite(`entity/Note/${noteId}/jobOrders/${jobId}`, {}, "PUT");
+    } catch (assocErr) {
+      // Fallback: legacy NoteEntity association
+      console.log("[Add Job Note] Association endpoint failed, trying NoteEntity:", assocErr.message);
+      await bhWrite("entity/NoteEntity", { note: { id: noteId }, targetEntityName: "JobOrder", targetEntityID: jobId }, "PUT");
+    }
+    console.log("[Add Job Note] Created note", noteId, "for job", jobId);
+    res.json({ success: true, noteId: noteId, message: "Note added successfully" });
+  } catch (e) {
+    console.error("[Add Job Note]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Client Notes (read + add) ───────────────────
+// Client notes live on the client's contacts (personReference), so aggregate across contacts.
+app.get("/api/clients/:id/notes", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const contactsResult = await bhFetchAll("query/ClientContact", {
+      where: `clientCorporation.id=${id} AND isDeleted=false`,
+      fields: "id,firstName,lastName",
+      count: 100,
+    });
+    const contacts = (contactsResult.data || []).slice(0, 15); // cap lookups
+    const allNotes = [];
+    await Promise.all(contacts.map(function (ct) {
+      return bhFetch(`entity/ClientContact/${ct.id}/notes`, {
+        fields: "id,action,comments,dateAdded,commentingPerson(id,firstName,lastName)",
+        count: 50,
+      }).then(function (nr) {
+        (nr.data || []).forEach(function (n) {
+          if (n && n.dateAdded) {
+            allNotes.push({
+              id: n.id,
+              action: n.action || "",
+              comments: n.comments || "",
+              date: new Date(n.dateAdded).toLocaleDateString(),
+              dateRaw: n.dateAdded,
+              by: n.commentingPerson ? ((n.commentingPerson.firstName || "") + " " + (n.commentingPerson.lastName || "")).trim() : "",
+              contact: ((ct.firstName || "") + " " + (ct.lastName || "")).trim(),
+              contactId: ct.id,
+            });
+          }
+        });
+      }).catch(function () {});
+    }));
+    allNotes.sort((a, b) => b.dateRaw - a.dateRaw);
+    res.json({ data: allNotes.slice(0, 100), total: allNotes.length });
+  } catch (e) {
+    console.error("[Client Notes]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/clients/:id/notes", async (req, res) => {
+  try {
+    const clientId = parseInt(req.params.id);
+    const { contactId, action, comments } = req.body;
+    if (!comments || !comments.trim()) {
+      return res.status(400).json({ error: "Comments are required" });
+    }
+    // Notes attach to a person — use the given contact, or default to the client's first contact
+    let personId = contactId ? parseInt(contactId) : null;
+    if (!personId) {
+      const contactsResult = await bhFetchAll("query/ClientContact", {
+        where: `clientCorporation.id=${clientId} AND isDeleted=false`,
+        fields: "id",
+        count: 1,
+      });
+      if (contactsResult.data && contactsResult.data.length > 0) {
+        personId = contactsResult.data[0].id;
+      }
+    }
+    if (!personId) {
+      return res.status(400).json({ error: "This client has no contacts — add a contact first, then attach the note to them." });
+    }
+    const noteBody = {
+      personReference: { id: personId },
+      action: action || "General Note",
+      comments: comments.trim(),
+      dateAdded: Date.now(),
+    };
+    const result = await bhWrite("entity/Note", noteBody, "PUT");
+    console.log("[Add Client Note] Created note for client", clientId, "via contact", personId);
+    res.json({ success: true, noteId: result.changedEntityId, message: "Note added successfully" });
+  } catch (e) {
+    console.error("[Add Client Note]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Clients ─────────────────────────────────────
 app.get("/api/clients", async (req, res) => {
   try {

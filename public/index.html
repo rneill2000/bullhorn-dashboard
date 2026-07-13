@@ -745,6 +745,41 @@ function ptBadge(t){var d=t==="Direct Hire";return '<span class="badge" style="b
 function stars(n){var s="";for(var i=1;i<=5;i++)s+='<span style="color:'+(i<=n?"#f59e0b":"#d1d5db")+'">'+(i<=n?"\u2605":"\u2606")+'</span>';return '<span class="stars">'+s+'</span>';}
 function esc(s){return s==null?"":String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 
+/* ═══ INLINE STATUS CHANGE ═══ */
+var STATUS_OPTS={
+  candidates:["New Lead","Active","Active-Reviewed","Available","Not Screened","Placed","Submitted","Interview","Shortlisted","On Assignment","Inactive","Do Not Contact"],
+  jobs:["Accepting Candidates","Open","Placed","Covered","Filled","Closed","Paused","Lost","Cancelled","On Hold"],
+  placements:["Actively On Contract","Submitted","Approved","Completed","Contract Completed","Direct Hire Completed","Terminated","Drop Out"]
+};
+function statusSelHtml(kind,id,current){
+  var opts=STATUS_OPTS[kind]||[];
+  var c=SC[current]||"#94a3b8";
+  var h='<select class="badge" style="background:'+c+'18;color:'+c+';border:1px solid '+c+'40;cursor:pointer;font-family:inherit;font-weight:600;appearance:none;-webkit-appearance:none;padding-right:14px;background-image:url(\'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%228%22 height=%225%22><path d=%22M0 0l4 5 4-5z%22 fill=%22%2394a3b8%22/></svg>\');background-repeat:no-repeat;background-position:right 3px center" onclick="event.stopPropagation()" onchange="quickStatusChange(\''+kind+'\','+id+',this)" title="Change status">';
+  var found=false;
+  opts.forEach(function(s){if(s===current)found=true;h+='<option value="'+esc(s)+'"'+(s===current?' selected':'')+'>'+esc(s)+'</option>';});
+  if(!found&&current)h+='<option value="'+esc(current)+'" selected>'+esc(current)+'</option>';
+  h+='</select>';
+  return h;
+}
+function quickStatusChange(kind,id,sel){
+  var url=kind+"/"+id+"/update";
+  sel.disabled=true;sel.style.opacity="0.5";
+  apiFetch(url,{method:"POST",body:{status:sel.value}})
+  .then(function(){
+    sel.disabled=false;sel.style.opacity="1";
+    var c=SC[sel.value]||"#94a3b8";
+    sel.style.background=c+"18";sel.style.color=c;sel.style.borderColor=c+"40";
+    sel.style.boxShadow="0 0 0 2px #16a34a66";
+    setTimeout(function(){sel.style.boxShadow="";},1200);
+    var list=_lastData[kind]||[];
+    for(var i=0;i<list.length;i++){if(String(list[i].id)===String(id)){list[i].status=sel.value;break;}}
+  })
+  .catch(function(e){
+    alert("Status update failed: "+e.message);
+    sel.disabled=false;sel.style.opacity="1";
+  });
+}
+
 var _sortCol=null,_sortDir="asc";
 function sortTable(colKey){
   if(_sortCol===colKey){_sortDir=_sortDir==="asc"?"desc":"asc";}else{_sortCol=colKey;_sortDir="asc";}
@@ -1501,6 +1536,7 @@ function renderClientDetail(d) {
   h += '<button class="cd-tab active" onclick="switchClientTab(\'contacts\')">Contacts (' + d.contacts.length + ')</button>';
   h += '<button class="cd-tab" onclick="switchClientTab(\'jobs\')">Jobs (' + d.jobs.length + ')</button>';
   h += '<button class="cd-tab" onclick="switchClientTab(\'placements\')">Placements (' + d.placements.length + ')</button>';
+  h += '<button class="cd-tab" onclick="switchClientTab(\'notes\')">Notes</button>';
   h += '<button class="cd-tab" onclick="switchClientTab(\'info\')">Info</button>';
   h += '</div>';
 
@@ -1516,13 +1552,14 @@ function switchClientTab(tab) {
   // Update tab active states
   var tabs = document.querySelectorAll("#cd-tabs .cd-tab");
   tabs.forEach(function(t) { t.classList.remove("active"); });
-  var labels = { contacts: "Contacts", jobs: "Jobs", placements: "Placements", info: "Info" };
+  var labels = { contacts: "Contacts", jobs: "Jobs", placements: "Placements", notes: "Notes", info: "Info" };
   tabs.forEach(function(t) { if (t.textContent.indexOf(labels[tab]) >= 0) t.classList.add("active"); });
   var el = document.getElementById("cd-tab-content");
   if (!el) return;
   if (tab === "contacts") el.innerHTML = renderClientContacts(d.contacts);
   else if (tab === "jobs") el.innerHTML = renderClientJobs(d.jobs);
   else if (tab === "placements") el.innerHTML = renderClientPlacements(d.placements);
+  else if (tab === "notes") { el.innerHTML = renderNotesSection("client", d.id, d.contacts || []); loadEntityNotes("client", d.id); }
   else if (tab === "info") el.innerHTML = renderClientInfo(d);
 }
 
@@ -1953,6 +1990,7 @@ function renderJobDetail(d) {
   h += '<button class="cd-tab active" onclick="switchJobTab(\'details\')">Details</button>';
   h += '<button class="cd-tab" onclick="switchJobTab(\'submissions\')">Submissions (' + d.submissions.length + ')</button>';
   h += '<button class="cd-tab" onclick="switchJobTab(\'placements\')">Placements (' + d.placements.length + ')</button>';
+  h += '<button class="cd-tab" onclick="switchJobTab(\'notes\')">Notes</button>';
   h += '</div>';
 
   h += '<div id="jd-tab-content">';
@@ -1966,13 +2004,76 @@ function switchJobTab(tab) {
   if (!d) return;
   var tabs = document.querySelectorAll("#jd-tabs .cd-tab");
   tabs.forEach(function(t) { t.classList.remove("active"); });
-  var labels = { details: "Details", submissions: "Submissions", placements: "Placements" };
+  var labels = { details: "Details", submissions: "Submissions", placements: "Placements", notes: "Notes" };
   tabs.forEach(function(t) { if (t.textContent.indexOf(labels[tab]) >= 0) t.classList.add("active"); });
   var el = document.getElementById("jd-tab-content");
   if (!el) return;
   if (tab === "details") el.innerHTML = renderJobDetails(d);
   else if (tab === "submissions") el.innerHTML = renderJobSubmissions(d.submissions);
   else if (tab === "placements") el.innerHTML = renderJobPlacements(d.placements);
+  else if (tab === "notes") { el.innerHTML = renderNotesSection("job", d.id, null); loadEntityNotes("job", d.id); }
+}
+
+/* ═══ SHARED NOTES SECTION (jobs & clients) ═══ */
+function renderNotesSection(kind, id, contacts) {
+  var h = '<div class="cd-section">';
+  // Add-note box
+  h += '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:14px">';
+  h += '<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">';
+  h += '<select id="en-action" style="padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit">';
+  ["General Note","Call","Email","Meeting","Left Message","Client Visit","Other"].forEach(function(a){ h += '<option value="' + a + '">' + a + '</option>'; });
+  h += '</select>';
+  if (contacts && contacts.length) {
+    h += '<select id="en-contact" style="padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;max-width:200px">';
+    contacts.forEach(function(c, i){ h += '<option value="' + c.id + '"' + (i === 0 ? ' selected' : '') + '>re: ' + esc(c.name || "Contact " + c.id) + '</option>'; });
+    h += '</select>';
+  }
+  h += '</div>';
+  h += '<textarea id="en-comments" rows="3" placeholder="Add a note..." style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;resize:vertical;font-family:inherit"></textarea>';
+  h += '<div style="text-align:right;margin-top:8px"><button id="en-add-btn" style="padding:6px 16px;border-radius:6px;border:none;background:#176087;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="addEntityNote(\'' + kind + '\',' + id + ')">+ Add Note</button></div>';
+  h += '</div>';
+  h += '<div id="en-notes-list"><div style="color:#94a3b8;font-size:13px;padding:8px 0"><span class="loading-spinner"></span> Loading notes…</div></div>';
+  h += '</div>';
+  return h;
+}
+function loadEntityNotes(kind, id) {
+  var endpoint = (kind === "job" ? "jobs/" : "clients/") + id + "/notes";
+  apiFetch(endpoint).then(function(r) {
+    var el = document.getElementById("en-notes-list");
+    if (!el) return;
+    var notes = r.data || [];
+    if (!notes.length) { el.innerHTML = '<div style="font-size:13px;color:#94a3b8;padding:8px 0">No notes found</div>'; return; }
+    var h = '';
+    notes.forEach(function(n) {
+      h += '<div class="note-card"><div class="note-meta">';
+      if (n.action) h += '<span class="note-action">' + esc(n.action) + '</span> • ';
+      h += esc(n.by || "") + ' • ' + esc(n.date || "");
+      if (n.contact) h += ' • re: ' + esc(n.contact);
+      h += '</div><div class="note-text">' + esc(n.comments) + '</div></div>';
+    });
+    el.innerHTML = h;
+  }).catch(function(e) {
+    var el = document.getElementById("en-notes-list");
+    if (el) el.innerHTML = '<div style="font-size:13px;color:#dc2626;padding:8px 0">Could not load notes: ' + esc(e.message) + '</div>';
+  });
+}
+function addEntityNote(kind, id) {
+  var ta = document.getElementById("en-comments");
+  var btn = document.getElementById("en-add-btn");
+  if (!ta || !ta.value.trim()) { if (ta) ta.focus(); return; }
+  var actionEl = document.getElementById("en-action");
+  var contactEl = document.getElementById("en-contact");
+  var body = { action: actionEl ? actionEl.value : "General Note", comments: ta.value.trim() };
+  if (contactEl && contactEl.value) body.contactId = contactEl.value;
+  if (btn) { btn.textContent = "Saving..."; btn.disabled = true; }
+  var endpoint = (kind === "job" ? "jobs/" : "clients/") + id + "/notes";
+  apiFetch(endpoint, { method: "POST", body: body }).then(function() {
+    ta.value = "";
+    if (btn) { btn.textContent = "✓ Added!"; setTimeout(function(){ btn.textContent = "+ Add Note"; btn.disabled = false; }, 1500); }
+    loadEntityNotes(kind, id);
+  }).catch(function(e) {
+    if (btn) { btn.textContent = "Error: " + e.message; setTimeout(function(){ btn.textContent = "+ Add Note"; btn.disabled = false; }, 3000); }
+  });
 }
 
 function renderJobDetails(d) {
@@ -2033,6 +2134,143 @@ function renderJobPlacements(placements) {
   });
   h += '</div>';
   return h;
+}
+
+/* ═══ PLACEMENT DETAIL PANEL ═══ */
+function openPlacementDetail(placementId) {
+  var p = document.getElementById("detail-panel");
+  var o = document.getElementById("detail-overlay");
+  var dc = document.getElementById("detail-content");
+  dc.innerHTML = '<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading placement details...</div>';
+  p.classList.add("open");
+  o.classList.add("open");
+  apiFetch("placements/" + placementId).then(function(d) {
+    window._lastPlacementDetail = d;
+    dc.innerHTML = renderPlacementDetail(d);
+  }).catch(function(e) {
+    dc.innerHTML = '<div style="padding:48px;text-align:center;color:#dc2626">Could not load placement: ' + esc(e.message) + '</div>';
+  });
+}
+
+function renderPlacementDetail(d) {
+  var h = '<div class="cd-header" style="display:flex;align-items:start;justify-content:space-between">';
+  h += '<div><h2 style="cursor:pointer;color:#176087" onclick="openDetail(' + d.candidateId + ',{})" title="Open candidate">' + esc(d.candidate || "Placement #" + d.id) + '</h2>';
+  h += '<div class="cd-sub">';
+  if (d.job) h += '<span style="cursor:pointer;color:#176087;font-weight:600" onclick="openJobDetail(' + d.jobId + ')">💼 ' + esc(d.job) + '</span>';
+  if (d.client) h += ' • <span style="cursor:pointer;color:#176087;font-weight:600" onclick="openClientDetail(' + d.clientId + ')">🏢 ' + esc(d.client) + '</span>';
+  h += ' • ' + ptBadge(d.pt) + ' ' + statusSelHtml("placements", d.id, d.status);
+  h += '</div></div>';
+  h += '<div style="display:flex;align-items:center;gap:8px">';
+  h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editPlacementProfile()">✏️ Edit</button>';
+  h += '<button class="detail-close" onclick="closeDetail()">✕</button>';
+  h += '</div></div>';
+
+  // KPI row
+  h += '<div class="cd-section" style="padding-bottom:0"><div class="cd-kpi-row">';
+  if (d.pt === "Consultant") {
+    h += '<div class="cd-kpi"><div class="kv" style="color:#176087">' + (d.payRate ? "$" + d.payRate + "/hr" : "—") + '</div><div class="kl">Pay Rate</div></div>';
+    h += '<div class="cd-kpi"><div class="kv" style="color:#db2777">' + (d.billRate ? "$" + d.billRate + "/hr" : "—") + '</div><div class="kl">Bill Rate</div></div>';
+    h += '<div class="cd-kpi"><div class="kv" style="color:#10b981">' + (d.margin !== null ? d.margin + "%" : "—") + '</div><div class="kl">Margin</div></div>';
+  } else {
+    h += '<div class="cd-kpi"><div class="kv" style="color:#176087">' + (d.salary ? "$" + Number(d.salary).toLocaleString() : "—") + '</div><div class="kl">Salary</div></div>';
+    h += '<div class="cd-kpi"><div class="kv" style="color:#10b981">' + (d.fee ? "$" + Number(d.fee).toLocaleString() : "—") + '</div><div class="kl">Fee</div></div>';
+  }
+  h += '</div></div>';
+
+  // Details
+  h += '<div class="cd-section"><div class="detail-grid">';
+  h += dField("Type", d.employmentType || d.pt || "—");
+  h += dField("Status", d.status || "—");
+  h += dField("Start Date", d.startDate || "—");
+  h += dField("End Date", d.endDate || "Open-ended");
+  h += dField("Date Added", d.dateAdded || "—");
+  h += dField("Last Modified", d.lastModified || "—");
+  h += '</div></div>';
+
+  // Link to Bullhorn
+  h += '<div class="cd-section" style="text-align:center;padding:16px 0">';
+  h += '<a href="https://cls91.bullhornstaffing.com/BullhornSTAFFING/OpenWindow.cfm?entity=Placement&id=' + d.id + '" target="_blank" style="color:#176087;font-size:12px;text-decoration:underline">Open in Bullhorn →</a>';
+  h += '</div>';
+  return h;
+}
+
+/* ═══ PLACEMENT EDIT FORM ═══ */
+function editPlacementProfile() {
+  var d = window._lastPlacementDetail;
+  if (!d) return;
+  var dc = document.getElementById("detail-content");
+  if (!dc) return;
+
+  var h = '<div style="padding:24px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  h += '<div><div style="font-size:20px;font-weight:700;color:#0f172a">Edit Placement</div>';
+  h += '<div style="font-size:13px;color:#94a3b8">' + esc(d.candidate) + (d.job ? ' — ' + esc(d.job) : '') + '</div></div>';
+  h += '<button class="detail-close" onclick="openPlacementDetail(' + d.id + ')" style="position:static">✕</button>';
+  h += '</div>';
+
+  h += '<div class="edit-form-grid">';
+  h += '<div class="edit-section-title">Placement Information</div>';
+  h += eFieldSelect("pl-status", "Status", d.status, STATUS_OPTS.placements.concat([""]));
+  h += eFieldSelect("pl-employmentType", "Employment Type", d.employmentType, ["Contract","Direct Hire","Permanent","Temp","Temp to Hire",""]);
+
+  h += '<div class="edit-section-title">Dates</div>';
+  h += eField("pl-dateBegin", "Start Date", d.rawDateBegin ? formatDateForInput(new Date(d.rawDateBegin).toLocaleDateString()) : "", "date");
+  h += eField("pl-dateEnd", "End Date", d.rawDateEnd ? formatDateForInput(new Date(d.rawDateEnd).toLocaleDateString()) : "", "date");
+
+  h += '<div class="edit-section-title">Rates & Fees</div>';
+  h += eField("pl-payRate", "Pay Rate ($/hr)", d.payRate || "", "number");
+  h += eField("pl-clientBillRate", "Bill Rate ($/hr)", d.billRate || "", "number");
+  h += eField("pl-salary", "Salary (Direct Hire)", d.salary || "", "number");
+  h += eField("pl-fee", "Fee (Direct Hire)", d.fee || "", "number");
+  h += '</div>';
+
+  h += '</div>';
+  h += '<div class="edit-save-bar">';
+  h += '<button class="btn-cancel" onclick="openPlacementDetail(' + d.id + ')">Cancel</button>';
+  h += '<button class="btn-save" id="pl-edit-save-btn" onclick="savePlacementProfile(' + d.id + ')">Save Changes</button>';
+  h += '</div>';
+
+  dc.innerHTML = h;
+  dc.scrollTop = 0;
+}
+
+function savePlacementProfile(placementId) {
+  var btn = document.getElementById("pl-edit-save-btn");
+  if (!btn) return;
+  btn.textContent = "Saving...";
+  btn.disabled = true;
+
+  var fieldMap = {
+    "pl-status": "status", "pl-employmentType": "employmentType",
+    "pl-dateBegin": "dateBegin", "pl-dateEnd": "dateEnd",
+    "pl-payRate": "payRate", "pl-clientBillRate": "clientBillRate",
+    "pl-salary": "salary", "pl-fee": "fee",
+  };
+  var updates = {};
+  for (var editId in fieldMap) {
+    var el = document.getElementById("edit-" + editId);
+    if (el && el.value.trim() !== "") updates[fieldMap[editId]] = el.value.trim();
+  }
+  ["payRate", "clientBillRate", "salary", "fee"].forEach(function(f) {
+    if (updates[f]) updates[f] = Number(updates[f]) || 0;
+  });
+  ["dateBegin", "dateEnd"].forEach(function(f) {
+    if (updates[f]) updates[f] = new Date(updates[f]).getTime();
+  });
+
+  apiFetch("placements/" + placementId + "/update", {
+    method: "POST",
+    body: updates,
+  }).then(function(r) {
+    btn.textContent = "✓ Saved!";
+    btn.style.background = "#16a34a";
+    setTimeout(function() { openPlacementDetail(placementId); }, 800);
+  }).catch(function(e) {
+    btn.textContent = "Error: " + e.message;
+    btn.style.background = "#dc2626";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Save Changes"; btn.style.background = "#16a34a"; }, 3000);
+  });
 }
 
 /* ═══ JOB EDIT FORM ═══ */
@@ -3482,7 +3720,7 @@ function renderCandidates(data,bhTotal){
     {key:"available",label:"Available",render:function(r){return r.available&&r.available!=="\u2014"?'\uD83D\uDD52 '+esc(r.available):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.available||"";}},
     {key:"location",label:"Location",render:function(r){return r.location?'\uD83D\uDCCD '+esc(r.location):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.location||"";}},
     {key:"email",label:"Email",render:function(r){return r.email?'<a href="mailto:'+esc(r.email)+'" style="color:#176087;font-size:13px" onclick="event.stopPropagation()">'+esc(r.email)+'</a>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.email||"";}},
-    {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}}
+    {key:"status",label:"Status",render:function(r){return statusSelHtml("candidates",r.id,r.status);},exportVal:function(r){return r.status||"";}}
   ];
 
   var hasAdvFilters = !!(filters.location||filters.cert||filters.avail||filters.grade||filters.epicRole);
@@ -3728,7 +3966,7 @@ function renderJobs(data,bhTotal){
     {key:"salary",label:"Bill Rate",render:function(r){return '<span class="fw600">'+esc(r.salary)+'</span>';},exportVal:function(r){return r.salary||"";}},
     {key:"openings",label:"Openings",render:function(r){return '<span class="fw600" style="color:'+(r.openings>0?"#10b981":"#94a3b8")+'">'+r.openings+'</span>';},exportVal:function(r){return String(r.openings||0);}},
     {key:"submissions",label:"Subs",exportVal:function(r){return String(r.submissions||0);}},
-    {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}},
+    {key:"status",label:"Status",render:function(r){return statusSelHtml("jobs",r.id,r.status);},exportVal:function(r){return r.status||"";}},
     {key:"dateAdded",label:"Date Created",render:function(r){return r.dateAdded?'\uD83D\uDCC5 '+esc(r.dateAdded):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.dateAdded||"";}},
     {key:"daysOpen",label:"Days Open",render:function(r){if(r.daysOpen===null||r.daysOpen===undefined)return '<span class="muted">\u2014</span>';var c=r.daysOpen>60?"#dc2626":r.daysOpen>30?"#f59e0b":"#10b981";return '<span class="fw600" style="color:'+c+'">'+r.daysOpen+'d</span>';},exportVal:function(r){return r.daysOpen!==null&&r.daysOpen!==undefined?String(r.daysOpen):"";}}
   ];
@@ -4487,7 +4725,7 @@ function renderPlacements(data,bhTotal){
     {key:"billRate",label:"Bill Rate",render:function(r){return r.pt==="Consultant"?'<span class="fw600">'+esc(r.billRate)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.billRate||"";}},
     {key:"margin",label:"Margin",render:function(r){return r.pt==="Consultant"?'<span class="fw600 green">'+esc(r.margin)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.margin||"";}},
     {key:"fee",label:"Fee",render:function(r){return r.pt==="Direct Hire"?'<span class="fw600 green">'+esc(r.fee)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.fee||"";}},
-    {key:"status",label:"Status",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}}
+    {key:"status",label:"Status",render:function(r){return statusSelHtml("placements",r.id,r.status);},exportVal:function(r){return r.status||"";}}
   ];
   var html='<div class="stats-row">';
   html+=statCard("\u2705","Direct Hire",dhC,"Permanent roles","#2563eb");
@@ -4502,9 +4740,14 @@ function renderPlacements(data,bhTotal){
   html+='</div></div>';
   html+='<div class="count-line"><span>'+displayTotal+' placement'+(displayTotal!==1?'s':'')+' found (showing '+f.length+')</span>';
   html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'placements.csv\',placCols,_lastData.placements)">\uD83D\uDCE5 Export CSV</button></div>';
-  html+='<div class="table-wrap">'+makeTable(cols,f)+'</div>';
+  html+='<div class="table-wrap">'+makeTable(cols,f,"placRowClick")+'</div>';
   window.placCols=cols;
   return html;
+}
+function placRowClick(idx){
+  var f=_lastData.placements||[];
+  var r=f[idx];
+  if(r&&r.id) openPlacementDetail(r.id);
 }
 
 function renderClients(data,bhTotal){
@@ -9414,6 +9657,7 @@ function showMSADetail(id){
   panel.style.display="block";
   panel.innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading MSA details\u2026</div>';
   apiFetch("opportunities/"+id).then(function(d){
+    window._lastMSADetail=d;
     var stageColors={"Identified":"#f59e0b","Qualifying":"#8b5cf6","Negotiating":"#3b82f6","Legal Review":"#16a34a"};
     var color=stageColors[d.status]||"#64748b";
     var h='<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:20px">';
@@ -9424,7 +9668,10 @@ function showMSADetail(id){
     });
     h+='</select>';
     h+='</div>';
+    h+='<div style="display:flex;align-items:center;gap:8px">';
+    h+='<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editMSAProfile()">\u270f\ufe0f Edit</button>';
     h+='<button onclick="closeDetail()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8">\u2715</button>';
+    h+='</div>';
     h+='</div>';
 
     // Key info grid
@@ -9489,6 +9736,91 @@ function updateMSAStatus(oppId, newStatus) {
   }).catch(function(e) {
     alert("Failed to update status: " + e.message);
     if (sel) { sel.disabled = false; sel.style.opacity = "1"; }
+  });
+}
+
+/* ═══ MSA / OPPORTUNITY EDIT FORM ═══ */
+function editMSAProfile() {
+  var d = window._lastMSADetail;
+  if (!d) return;
+  var panel = document.getElementById("detail");
+  if (!panel) return;
+
+  var h = '<div style="padding:4px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  h += '<div><div style="font-size:18px;font-weight:700;color:#0f172a">Edit Opportunity</div>';
+  h += '<div style="font-size:13px;color:#94a3b8">' + esc(d.title) + '</div></div>';
+  h += '<button onclick="showMSADetail(' + d.id + ')" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8">✕</button>';
+  h += '</div>';
+
+  h += '<div class="edit-form-grid">';
+  h += '<div class="edit-section-title">Opportunity Details</div>';
+  h += eField("om-title", "Title", d.title);
+  h += eFieldSelect("om-status", "Stage", d.status, ["Identified","Qualifying","Negotiating","Legal Review","Closed","Won",""]);
+  h += eField("om-type", "Type", d.type);
+  h += eField("om-dealValue", "Deal Value ($)", d.dealValue || "", "number");
+  h += eField("om-winProbabilityPercent", "Win Probability (%)", d.winProbability || "", "number");
+  h += '<div class="edit-section-title">Timeline</div>';
+  h += eField("om-estimatedStartDate", "Estimated Start", d.estimatedStart ? formatDateForInput(new Date(d.estimatedStart).toLocaleDateString()) : "", "date");
+  h += eField("om-estimatedEndDate", "Estimated End", d.estimatedEnd ? formatDateForInput(new Date(d.estimatedEnd).toLocaleDateString()) : "", "date");
+  h += '</div>';
+
+  h += '<div style="margin-top:16px">';
+  h += '<div class="edit-section-title" style="grid-column:unset">Description</div>';
+  h += '<div class="edit-field full-width" style="margin-bottom:12px"><textarea id="edit-om-description" rows="4">' + esc(d.description || "") + '</textarea></div>';
+  h += '<div class="edit-section-title" style="grid-column:unset">Notes</div>';
+  h += '<div class="edit-field full-width"><textarea id="edit-om-notes" rows="4">' + esc(d.notes || "") + '</textarea></div>';
+  h += '</div>';
+
+  h += '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">';
+  h += '<button class="btn-cancel" onclick="showMSADetail(' + d.id + ')">Cancel</button>';
+  h += '<button class="btn-save" id="om-edit-save-btn" onclick="saveMSAProfile(' + d.id + ')">Save Changes</button>';
+  h += '</div>';
+  h += '</div>';
+
+  panel.innerHTML = h;
+  panel.scrollTop = 0;
+}
+
+function saveMSAProfile(oppId) {
+  var btn = document.getElementById("om-edit-save-btn");
+  if (!btn) return;
+  btn.textContent = "Saving...";
+  btn.disabled = true;
+
+  var fieldMap = {
+    "om-title": "title", "om-status": "status", "om-type": "type",
+    "om-dealValue": "dealValue", "om-winProbabilityPercent": "winProbabilityPercent",
+    "om-estimatedStartDate": "estimatedStartDate", "om-estimatedEndDate": "estimatedEndDate",
+  };
+  var updates = {};
+  for (var editId in fieldMap) {
+    var el = document.getElementById("edit-" + editId);
+    if (el && el.value.trim() !== "") updates[fieldMap[editId]] = el.value.trim();
+  }
+  var descEl = document.getElementById("edit-om-description");
+  if (descEl) updates.description = descEl.value;
+  var notesEl = document.getElementById("edit-om-notes");
+  if (notesEl) updates.notes = notesEl.value;
+  ["dealValue", "winProbabilityPercent"].forEach(function(f) {
+    if (updates[f]) updates[f] = Number(updates[f]) || 0;
+  });
+  ["estimatedStartDate", "estimatedEndDate"].forEach(function(f) {
+    if (updates[f]) updates[f] = new Date(updates[f]).getTime();
+  });
+
+  apiFetch("opportunities/" + oppId + "/update", {
+    method: "POST",
+    body: updates,
+  }).then(function() {
+    btn.textContent = "✓ Saved!";
+    btn.style.background = "#16a34a";
+    setTimeout(function() { showMSADetail(oppId); loadPage(); }, 800);
+  }).catch(function(e) {
+    btn.textContent = "Error: " + e.message;
+    btn.style.background = "#dc2626";
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = "Save Changes"; btn.style.background = "#16a34a"; }, 3000);
   });
 }
 
