@@ -745,6 +745,76 @@ function ptBadge(t){var d=t==="Direct Hire";return '<span class="badge" style="b
 function stars(n){var s="";for(var i=1;i<=5;i++)s+='<span style="color:'+(i<=n?"#f59e0b":"#d1d5db")+'">'+(i<=n?"\u2605":"\u2606")+'</span>';return '<span class="stars">'+s+'</span>';}
 function esc(s){return s==null?"":String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 
+/* ═══ PREFERENCES (localStorage) ═══ */
+function _prefGet(k,d){try{var v=localStorage.getItem("bhdash_"+k);return v?JSON.parse(v):d;}catch(e){return d;}}
+function _prefSet(k,v){try{localStorage.setItem("bhdash_"+k,JSON.stringify(v));}catch(e){}}
+var _savedSorts=_prefGet("sorts",{});
+var _savedFilters=_prefGet("filters",{});
+
+/* ═══ TOASTS ═══ */
+function showToast(msg,type){
+  var off=document.querySelectorAll(".bh-toast").length;
+  var t=document.createElement("div");
+  t.className="bh-toast";
+  t.textContent=msg;
+  t.style.cssText="position:fixed;right:24px;z-index:99999;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;font-family:inherit;box-shadow:0 4px 16px rgba(0,0,0,.18);color:#fff;opacity:0;transform:translateY(8px);transition:all .25s ease;max-width:340px";
+  t.style.bottom=(24+off*48)+"px";
+  t.style.background=type==="error"?"#dc2626":type==="info"?"#176087":"#16a34a";
+  document.body.appendChild(t);
+  requestAnimationFrame(function(){t.style.opacity="1";t.style.transform="translateY(0)";});
+  setTimeout(function(){t.style.opacity="0";t.style.transform="translateY(8px)";setTimeout(function(){t.remove();},300);},type==="error"?5000:2600);
+}
+
+/* ═══ DETAIL PANEL BACK NAVIGATION ═══ */
+var _detailStack=[];
+function _detailPush(kind,id){
+  var top=_detailStack[_detailStack.length-1];
+  if(top&&top.kind===kind&&String(top.id)===String(id))return;
+  _detailStack.push({kind:kind,id:id});
+  if(_detailStack.length>20)_detailStack.shift();
+}
+function _detailOpenByKind(kind,id){
+  if(kind==="candidate")openDetail(id,{});
+  else if(kind==="job")openJobDetail(id);
+  else if(kind==="client")openClientDetail(id);
+  else if(kind==="placement")openPlacementDetail(id);
+}
+function detailBack(){
+  if(_detailStack.length<2)return;
+  _detailStack.pop();
+  var prev=_detailStack.pop(); // re-pushed by the open fn
+  _detailOpenByKind(prev.kind,prev.id);
+}
+function detailBackBtn(){
+  if(_detailStack.length<2)return"";
+  return '<button style="padding:4px 10px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="detailBack()" title="Back to previous">← Back</button>';
+}
+
+/* ═══ HASH ROUTING / DEEP LINKS ═══ */
+var _hashGuard=false;
+function setHash(h){
+  if(("#"+h)===location.hash)return;
+  _hashGuard=true;
+  location.hash=h;
+  setTimeout(function(){_hashGuard=false;},50);
+}
+function isValidPage(pg){
+  var ok=false;
+  try{getNavGroups().forEach(function(g){g.items.forEach(function(n){if(n.key===pg)ok=true;});});}catch(e){}
+  return ok;
+}
+function applyHash(){
+  var h=(location.hash||"").replace(/^#/,"");
+  if(!h)return;
+  var m=h.match(/^(candidate|job|client|placement)\/(\d+)$/);
+  if(m){_detailOpenByKind(m[1],parseInt(m[2]));return;}
+  if(isValidPage(h)&&h!==currentPage){closeDetail();setPage(h);}
+}
+window.addEventListener("hashchange",function(){
+  if(_hashGuard)return;
+  applyHash();
+});
+
 /* ═══ INLINE STATUS CHANGE ═══ */
 var STATUS_OPTS={
   candidates:["New Lead","Active","Active-Reviewed","Available","Not Screened","Placed","Submitted","Interview","Shortlisted","On Assignment","Inactive","Do Not Contact"],
@@ -754,7 +824,7 @@ var STATUS_OPTS={
 function statusSelHtml(kind,id,current){
   var opts=STATUS_OPTS[kind]||[];
   var c=SC[current]||"#94a3b8";
-  var h='<select class="badge" style="background:'+c+'18;color:'+c+';border:1px solid '+c+'40;cursor:pointer;font-family:inherit;font-weight:600;appearance:none;-webkit-appearance:none;padding-right:14px;background-image:url(\'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%228%22 height=%225%22><path d=%22M0 0l4 5 4-5z%22 fill=%22%2394a3b8%22/></svg>\');background-repeat:no-repeat;background-position:right 3px center" onclick="event.stopPropagation()" onchange="quickStatusChange(\''+kind+'\','+id+',this)" title="Change status">';
+  var h='<select class="badge" data-prev="'+esc(current||"")+'" style="background:'+c+'18;color:'+c+';border:1px solid '+c+'40;cursor:pointer;font-family:inherit;font-weight:600;appearance:none;-webkit-appearance:none;padding-right:14px;background-image:url(\'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%228%22 height=%225%22><path d=%22M0 0l4 5 4-5z%22 fill=%22%2394a3b8%22/></svg>\');background-repeat:no-repeat;background-position:right 3px center" onclick="event.stopPropagation()" onchange="quickStatusChange(\''+kind+'\','+id+',this)" title="Change status">';
   var found=false;
   opts.forEach(function(s){if(s===current)found=true;h+='<option value="'+esc(s)+'"'+(s===current?' selected':'')+'>'+esc(s)+'</option>';});
   if(!found&&current)h+='<option value="'+esc(current)+'" selected>'+esc(current)+'</option>';
@@ -763,26 +833,41 @@ function statusSelHtml(kind,id,current){
 }
 function quickStatusChange(kind,id,sel){
   var url=kind+"/"+id+"/update";
+  var prev=sel.getAttribute("data-prev")||"";
   sel.disabled=true;sel.style.opacity="0.5";
   apiFetch(url,{method:"POST",body:{status:sel.value}})
   .then(function(){
     sel.disabled=false;sel.style.opacity="1";
     var c=SC[sel.value]||"#94a3b8";
     sel.style.background=c+"18";sel.style.color=c;sel.style.borderColor=c+"40";
-    sel.style.boxShadow="0 0 0 2px #16a34a66";
-    setTimeout(function(){sel.style.boxShadow="";},1200);
+    sel.setAttribute("data-prev",sel.value);
     var list=_lastData[kind]||[];
-    for(var i=0;i<list.length;i++){if(String(list[i].id)===String(id)){list[i].status=sel.value;break;}}
+    var row=null;
+    for(var i=0;i<list.length;i++){if(String(list[i].id)===String(id)){list[i].status=sel.value;row=list[i];break;}}
+    showToast('Status updated to "'+sel.value+'"');
+    // Auto-log the change as a note (audit trail, like Bullhorn)
+    var noteMsg="Status changed"+(prev?' from "'+prev+'"':"")+' to "'+sel.value+'" via dashboard';
+    var notePost=null;
+    if(kind==="candidates")notePost=apiFetch("candidates/"+id+"/notes",{method:"POST",body:{action:"Status Change",comments:noteMsg}});
+    else if(kind==="jobs")notePost=apiFetch("jobs/"+id+"/notes",{method:"POST",body:{action:"Status Change",comments:noteMsg}});
+    else if(kind==="placements"){
+      var candId=row&&row.candidateId?row.candidateId:(window._lastPlacementDetail&&String(window._lastPlacementDetail.id)===String(id)?window._lastPlacementDetail.candidateId:null);
+      if(candId)notePost=apiFetch("candidates/"+candId+"/notes",{method:"POST",body:{action:"Status Change",comments:"Placement #"+id+": "+noteMsg}});
+    }
+    if(notePost)notePost.catch(function(){});
   })
   .catch(function(e){
-    alert("Status update failed: "+e.message);
+    showToast("Status update failed: "+e.message,"error");
     sel.disabled=false;sel.style.opacity="1";
+    if(prev)sel.value=prev;
   });
 }
 
 var _sortCol=null,_sortDir="asc";
 function sortTable(colKey){
   if(_sortCol===colKey){_sortDir=_sortDir==="asc"?"desc":"asc";}else{_sortCol=colKey;_sortDir="asc";}
+  _savedSorts[currentPage]={col:_sortCol,dir:_sortDir};
+  _prefSet("sorts",_savedSorts);
   render();
 }
 function applySorting(rows,cols){
@@ -799,7 +884,7 @@ function applySorting(rows,cols){
   });
   return sorted;
 }
-var _hiddenCols={};
+var _hiddenCols=_prefGet("hiddenCols",{});
 function isColVisible(key){
   var hidden=_hiddenCols[currentPage]||{};
   return !hidden[key];
@@ -807,6 +892,7 @@ function isColVisible(key){
 function toggleColVisibility(key){
   if(!_hiddenCols[currentPage])_hiddenCols[currentPage]={};
   _hiddenCols[currentPage][key]=!_hiddenCols[currentPage][key];
+  _prefSet("hiddenCols",_hiddenCols);
   loadPage();
 }
 function makeColToggle(cols){
@@ -845,7 +931,7 @@ function makeTable(cols,rows,onRowClick){
   setTimeout(function(){initColResize(tid);},50);
   return h;
 }
-var _savedColWidths={};
+var _savedColWidths=_prefGet("colWidths",{});
 function initColResize(tableId){
   var tbl=document.getElementById(tableId);
   if(!tbl)return;
@@ -883,7 +969,7 @@ function initColResize(tableId){
         if(!_savedColWidths[tableId])_savedColWidths[tableId]={};
         _savedColWidths[tableId][colIdx]=newW;
       }
-      function onUp(){handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);}
+      function onUp(){handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);_prefSet("colWidths",_savedColWidths);}
       document.addEventListener('mousemove',onMove);
       document.addEventListener('mouseup',onUp);
     });
@@ -901,7 +987,7 @@ function initColResize(tableId){
         if(!_savedColWidths[tableId])_savedColWidths[tableId]={};
         _savedColWidths[tableId][colIdx]=newW;
       }
-      function onTouchEnd(){handle.classList.remove('active');document.removeEventListener('touchmove',onTouchMove);document.removeEventListener('touchend',onTouchEnd);}
+      function onTouchEnd(){handle.classList.remove('active');document.removeEventListener('touchmove',onTouchMove);document.removeEventListener('touchend',onTouchEnd);_prefSet("colWidths",_savedColWidths);}
       document.addEventListener('touchmove',onTouchMove,{passive:false});
       document.addEventListener('touchend',onTouchEnd);
     },{passive:false});
@@ -932,6 +1018,8 @@ function exportCSV(filename, cols, rows) {
 
 /* ═══ DETAIL PANEL ═══ */
 function openDetail(candidateId, candidateData) {
+  _detailPush("candidate",candidateId);
+  setHash("candidate/"+candidateId);
   var p = document.getElementById("detail-panel");
   var o = document.getElementById("detail-overlay");
   var dc = document.getElementById("detail-content");
@@ -1493,10 +1581,14 @@ function loadCandidateRefs(candidateId, inlineRefs) {
 function closeDetail() {
   document.getElementById("detail-panel").classList.remove("open");
   document.getElementById("detail-overlay").classList.remove("open");
+  _detailStack=[];
+  if(/^#(candidate|job|client|placement)\//.test(location.hash))setHash(currentPage);
 }
 
 /* ═══ CLIENT DETAIL PANEL ═══ */
 function openClientDetail(clientId) {
+  _detailPush("client",clientId);
+  setHash("client/"+clientId);
   var p = document.getElementById("detail-panel");
   var o = document.getElementById("detail-overlay");
   var dc = document.getElementById("detail-content");
@@ -1516,6 +1608,7 @@ function renderClientDetail(d) {
   h += '<div><h2>🏢 ' + esc(d.name) + '</h2>';
   h += '<div class="cd-sub">' + esc(d.location) + (d.industry ? ' • ' + esc(d.industry) : '') + ' • ' + badge(d.status) + '</div></div>';
   h += '<div style="display:flex;align-items:center;gap:8px">';
+  h += detailBackBtn();
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editClientProfile()">✏️ Edit</button>';
   h += '<button class="detail-close" onclick="closeDetail()">✕</button>';
   h += '</div></div>';
@@ -1941,6 +2034,8 @@ function createClientContact(clientCorpId) {
 
 /* ═══ JOB DETAIL PANEL ═══ */
 function openJobDetail(jobId) {
+  _detailPush("job",jobId);
+  setHash("job/"+jobId);
   var p = document.getElementById("detail-panel");
   var o = document.getElementById("detail-overlay");
   var dc = document.getElementById("detail-content");
@@ -1965,6 +2060,7 @@ function renderJobDetail(d) {
   if (d.priority && pColor) h += ' <span class="badge" style="background:' + pColor + '18;color:' + pColor + ';border:1px solid ' + pColor + '40;font-weight:700">' + esc(d.priority) + '</span>';
   h += '</div></div>';
   h += '<div style="display:flex;align-items:center;gap:8px">';
+  h += detailBackBtn();
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editJobProfile()">✏️ Edit</button>';
   h += '<button class="detail-close" onclick="closeDetail()">✕</button>';
   h += '</div></div>';
@@ -2138,6 +2234,8 @@ function renderJobPlacements(placements) {
 
 /* ═══ PLACEMENT DETAIL PANEL ═══ */
 function openPlacementDetail(placementId) {
+  _detailPush("placement",placementId);
+  setHash("placement/"+placementId);
   var p = document.getElementById("detail-panel");
   var o = document.getElementById("detail-overlay");
   var dc = document.getElementById("detail-content");
@@ -2161,6 +2259,7 @@ function renderPlacementDetail(d) {
   h += ' • ' + ptBadge(d.pt) + ' ' + statusSelHtml("placements", d.id, d.status);
   h += '</div></div>';
   h += '<div style="display:flex;align-items:center;gap:8px">';
+  h += detailBackBtn();
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editPlacementProfile()">✏️ Edit</button>';
   h += '<button class="detail-close" onclick="closeDetail()">✕</button>';
   h += '</div></div>';
@@ -2840,6 +2939,7 @@ function renderDetailContent(c) {
   h += '</div>';
   // Action buttons row
   h += '<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">';
+  h += detailBackBtn();
   var _starredDetail = isStarred(c.id);
   h += '<button class="star-btn '+(_starredDetail?"starred":"unstarred")+'" data-cid="'+c.id+'" onclick="toggleStar('+c.id+',\'\',event)" title="'+(_starredDetail?"Unstar":"Star")+' this candidate" style="font-size:20px;padding:2px 6px">'+(_starredDetail?'&#9733;':'&#9734;')+'</button>';
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #176087;background:#fff;color:#176087;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="openTearsheet()">📄 Tearsheet</button>';
@@ -3525,7 +3625,14 @@ var savedSearches = JSON.parse(localStorage.getItem("bh_saved_searches")||"[]");
 var filters = {};
 var advOpen = false;
 
-function setPage(pg){ currentPage=pg; filters={}; advOpen=false; _sortCol=null; _sortDir="asc"; if(pg==="jobs") filters.status="Accepting Candidates"; if(pg==="consultants") filters.status="Placed"; if(pg==="clients") filters.status="Active Account"; loadPage(); }
+function setPage(pg){
+  currentPage=pg; advOpen=false;
+  var sv=_savedSorts[pg]; _sortCol=sv?sv.col:null; _sortDir=(sv&&sv.dir)?sv.dir:"asc";
+  var df={}; if(pg==="jobs") df.status="Accepting Candidates"; if(pg==="consultants") df.status="Placed"; if(pg==="clients") df.status="Active Account";
+  filters=_savedFilters[pg]||df;
+  setHash(pg);
+  loadPage();
+}
 function getQ(){ return (filters.q||"").toLowerCase(); }
 function matchQ(text){ return text.toLowerCase().indexOf(getQ())>=0; }
 function toggleAdv(){ advOpen=!advOpen; loadPage(); }
@@ -9733,8 +9840,9 @@ function updateMSAStatus(oppId, newStatus) {
     var stageColors = {"Identified":"#f59e0b","Qualifying":"#8b5cf6","Negotiating":"#3b82f6","Legal Review":"#16a34a","Won":"#16a34a","Closed":"#94a3b8"};
     var c = stageColors[newStatus] || "#64748b";
     if (sel) { sel.style.background = c + "18"; sel.style.color = c; sel.style.borderColor = c + "40"; }
+    showToast('Stage updated to "' + newStatus + '"');
   }).catch(function(e) {
-    alert("Failed to update status: " + e.message);
+    showToast("Failed to update stage: " + e.message, "error");
     if (sel) { sel.disabled = false; sel.style.opacity = "1"; }
   });
 }
@@ -11141,6 +11249,8 @@ function render(){
 async function loadPage(){
   renderNav();
   document.getElementById("page-title").textContent=getPageLabel();
+  _savedFilters[currentPage]=filters;
+  _prefSet("filters",_savedFilters);
   if(!apiConnected){document.getElementById("content").innerHTML=showConnectionError();return;}
   // Show loading state
   document.getElementById("content").innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading from Bullhorn\u2026</div>';
@@ -11298,7 +11408,16 @@ checkConnection().then(function(){
   loadStarredIds();
   // If logged in, default to My Dashboard
   if(currentUser && currentPage==="home") currentPage="mydash";
+  // Deep link: honor #page or #kind/id in the URL
+  var _hh=(location.hash||"").replace(/^#/,"");
+  var _dm=_hh.match(/^(candidate|job|client|placement)\/(\d+)$/);
+  if(!_dm&&_hh&&isValidPage(_hh)){
+    currentPage=_hh;
+    var _sv=_savedSorts[_hh];_sortCol=_sv?_sv.col:null;_sortDir=(_sv&&_sv.dir)?_sv.dir:"asc";
+    if(_savedFilters[_hh])filters=_savedFilters[_hh];
+  }
   loadPage();
+  if(_dm)setTimeout(function(){_detailOpenByKind(_dm[1],parseInt(_dm[2]));},600);
 });
 </script>
 </body>
