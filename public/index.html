@@ -4863,10 +4863,10 @@ var _ivTab="upcoming";
 function setIvTab(t){ _ivTab=t; render(); }
 function renderInterviews(d){
   if(!d) return showConnectionError();
-  var upcoming=d.upcoming||[], past=d.past||[];
+  var upcoming=d.upcoming||[], past=d.past||[], stage=d.interviewStage||[];
   var now=Date.now(), weekMs=now+7*86400000;
   var thisWeek=upcoming.filter(function(r){return r.dateBegin<=weekMs;}).length;
-  var rows=_ivTab==="past"?past:upcoming;
+  var rows=_ivTab==="past"?past:_ivTab==="stage"?stage:upcoming;
   var q=(filters.q||"").toLowerCase();
   if(q){
     rows=rows.filter(function(r){
@@ -4874,6 +4874,40 @@ function renderInterviews(d){
     });
   }
   _lastData.interviews=rows;
+  if(_ivTab==="stage"){
+    var stCols=[
+      {key:"candidate",label:"Candidate",render:function(r){return '<span class="name-link">'+esc(r.candidate)+'</span>';},exportVal:function(r){return r.candidate||"";}},
+      {key:"status",label:"Interview Stage",render:function(r){return badge(r.status);},exportVal:function(r){return r.status||"";}},
+      {key:"job",label:"Job",exportVal:function(r){return r.job||"";}},
+      {key:"client",label:"Client",render:function(r){return r.client?'🏢 '+esc(r.client):'<span class="muted">—</span>';},exportVal:function(r){return r.client||"";}},
+      {key:"owner",label:"Owner",exportVal:function(r){return r.owner||"";}},
+      {key:"since",label:"In Stage Since",render:function(r){
+        var c=r.daysInStage>14?"#dc2626":r.daysInStage>7?"#f59e0b":"#64748b";
+        return esc(r.since)+' <span style="font-size:11px;color:'+c+'">('+r.daysInStage+'d)</span>';
+      },exportVal:function(r){return r.since||"";}}
+    ];
+    var sh='<div class="stats-row">';
+    sh+=statCard("🗓","Upcoming Scheduled",upcoming.length,"BH Appointments","#176087");
+    sh+=statCard("🎤","In Interview Stage",stage.length,"By submission status","#8b5cf6");
+    sh+=statCard("✅","Past 30 Days",past.length,"Completed appointments","#10b981");
+    sh+='</div>';
+    sh+='<div class="toolbar">';
+    sh+='<div class="search-wrap"><span class="ico">🔍</span><input type="text" placeholder="Search by candidate, job, or client…" value="'+esc(filters.q||"")+'" oninput="filters.q=this.value;render()"></div>';
+    sh+='<div class="chips">';
+    sh+='<button class="chip" onclick="setIvTab(\'upcoming\')">Upcoming</button>';
+    sh+='<button class="chip on" onclick="setIvTab(\'stage\')">Interview Stage</button>';
+    sh+='<button class="chip" onclick="setIvTab(\'past\')">Past 30 Days</button>';
+    sh+='</div></div>';
+    sh+='<div class="count-line"><span>'+rows.length+' submission'+(rows.length!==1?'s':'')+' in an interview stage</span>';
+    sh+=makeColToggle(stCols)+' <button class="btn-export" onclick="exportCSV(\'interview-stage.csv\',ivCols,_lastData.interviews)">📥 Export CSV</button></div>';
+    if(rows.length===0){
+      sh+='<div style="padding:48px;text-align:center;color:#94a3b8">No submissions currently in an interview stage</div>';
+    } else {
+      sh+='<div class="table-wrap">'+makeTable(stCols,rows,"ivRowClick")+'</div>';
+    }
+    window.ivCols=stCols;
+    return sh;
+  }
   var cols=[
     {key:"date",label:"Date",render:function(r){
       var c=r.urgency==="critical"?"#dc2626":r.urgency==="warning"?"#f59e0b":r.urgency==="past"?"#94a3b8":"#176087";
@@ -4890,14 +4924,16 @@ function renderInterviews(d){
     {key:"subject",label:"Subject",exportVal:function(r){return r.subject||"";}}
   ];
   var html='<div class="stats-row">';
-  html+=statCard("🗓","Upcoming",upcoming.length,"Scheduled interviews","#176087");
+  html+=statCard("🗓","Upcoming Scheduled",upcoming.length,"BH Appointments","#176087");
   html+=statCard("⏰","This Week",thisWeek,"Next 7 days","#f59e0b");
-  html+=statCard("✅","Past 30 Days",past.length,"Completed","#10b981");
+  html+=statCard("🎤","In Interview Stage",stage.length,"By submission status","#8b5cf6");
+  html+=statCard("✅","Past 30 Days",past.length,"Completed appointments","#10b981");
   html+='</div>';
   html+='<div class="toolbar">';
   html+='<div class="search-wrap"><span class="ico">🔍</span><input type="text" placeholder="Search by candidate, job, or client…" value="'+esc(filters.q||"")+'" oninput="filters.q=this.value;render()"></div>';
   html+='<div class="chips">';
   html+='<button class="chip'+(_ivTab==="upcoming"?" on":"")+'" onclick="setIvTab(\'upcoming\')">Upcoming</button>';
+  html+='<button class="chip'+(_ivTab==="stage"?" on":"")+'" onclick="setIvTab(\'stage\')">Interview Stage</button>';
   html+='<button class="chip'+(_ivTab==="past"?" on":"")+'" onclick="setIvTab(\'past\')">Past 30 Days</button>';
   html+='</div></div>';
   html+='<div class="count-line"><span>'+rows.length+' interview'+(rows.length!==1?'s':'')+' '+(_ivTab==="past"?'in the last 30 days':'scheduled')+'</span>';
@@ -5128,8 +5164,9 @@ function renderHome(d){
   // Upcoming Interviews
   html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83D\uDDD3\uFE0F Upcoming Interviews <span style="font-size:12px;font-weight:400;color:#94a3b8;cursor:pointer" onclick="setPage(\'interviews\')">View all \u2192</span></h3>';
   var ivList=d.upcomingInterviews||[];
-  if(ivList.length===0){
-    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No interviews scheduled</div>';
+  var stList=d.interviewStage||[];
+  if(ivList.length===0&&stList.length===0){
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No interviews scheduled or in progress</div>';
   } else {
     ivList.forEach(function(iv){
       var ivc=iv.urgency==="critical"?"#dc2626":iv.urgency==="warning"?"#f59e0b":"#176087";
@@ -5139,6 +5176,14 @@ function renderHome(d){
       html+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(iv.candidate||iv.subject)+'</div>';
       html+='<div style="font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(iv.job||"")+(iv.client?' \u2022 '+esc(iv.client):'')+'</div></div>';
       html+='<div style="text-align:right;flex-shrink:0"><div style="font-size:12px;font-weight:600;color:#176087">'+esc(iv.date)+'</div><div style="font-size:11px;color:#94a3b8">'+esc(iv.time)+'</div></div>';
+      html+='</div>';
+    });
+    stList.forEach(function(st){
+      html+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="'+(st.candidateId?'openDetail('+st.candidateId+',{})':'setPage(\'interviews\')')+'">';
+      html+='<div style="width:40px;height:40px;border-radius:10px;background:#8b5cf614;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">\ud83c\udfa4</div>';
+      html+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(st.candidate)+'</div>';
+      html+='<div style="font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(st.job||"")+(st.client?' \u2022 '+esc(st.client):'')+'</div></div>';
+      html+='<span class="badge" style="background:#8b5cf618;color:#8b5cf6;border:1px solid #8b5cf640;font-weight:700;flex-shrink:0">'+esc(st.status)+'</span>';
       html+='</div>';
     });
   }
@@ -11338,7 +11383,7 @@ async function loadPage(){
     switch(currentPage){
       case "home":
         var dash=await apiFetch("dashboard");
-        try{ var ivHome=await apiFetch("interviews"); dash.upcomingInterviews=(ivHome.upcoming||[]).slice(0,8); }catch(ivErr){ dash.upcomingInterviews=[]; }
+        try{ var ivHome=await apiFetch("interviews"); dash.upcomingInterviews=(ivHome.upcoming||[]).slice(0,8); dash.interviewStage=(ivHome.interviewStage||[]).slice(0,8); }catch(ivErr){ dash.upcomingInterviews=[]; dash.interviewStage=[]; }
         h=renderHome(dash);break;
       case "bizdev":
         var bdData=await apiFetch("bizdev");

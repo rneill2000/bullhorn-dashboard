@@ -3853,7 +3853,38 @@ app.get("/api/interviews", async (req, res) => {
 
     var upcoming = result.filter(function (r) { return r.isUpcoming; });
     var past = result.filter(function (r) { return !r.isUpcoming; }).reverse();
-    res.json({ data: result, upcoming: upcoming, past: past, total: result.length });
+
+    // Interview-stage submissions: interviews tracked by JobSubmission status
+    // (not always scheduled as BH Appointments — e.g. SSM)
+    var interviewStage = [];
+    try {
+      var stageStatuses = ["First Interview", "Second Interview", "Third Interview", "Final Interview", "Interview Scheduled", "Client Interview", "1st Interview", "2nd Interview"];
+      var stageWhere = "isDeleted=false AND status IN ('" + stageStatuses.join("','") + "')";
+      var subData = await bhFetchAll("query/JobSubmission", {
+        where: stageWhere,
+        fields: "id,status,dateAdded,dateLastModified,candidate(id,firstName,lastName),jobOrder(id,title,clientCorporation(id,name)),sendingUser(id,firstName,lastName)",
+        orderBy: "-dateLastModified",
+      });
+      interviewStage = (subData.data || []).map(function (s) {
+        var since = s.dateLastModified || s.dateAdded || 0;
+        return {
+          submissionId: s.id,
+          status: s.status || "",
+          candidate: s.candidate ? (s.candidate.firstName || "") + " " + (s.candidate.lastName || "") : "",
+          candidateId: s.candidate ? s.candidate.id : null,
+          job: s.jobOrder ? s.jobOrder.title : "",
+          jobId: s.jobOrder ? s.jobOrder.id : null,
+          client: s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.name : "",
+          owner: s.sendingUser ? (s.sendingUser.firstName || "") + " " + (s.sendingUser.lastName || "") : "",
+          since: since ? new Date(since).toLocaleDateString() : "",
+          daysInStage: since ? Math.floor((now - since) / 86400000) : null,
+        };
+      });
+    } catch (stageErr) {
+      console.log("[Interviews] Interview-stage submission query failed (non-blocking):", stageErr.message);
+    }
+
+    res.json({ data: result, upcoming: upcoming, past: past, interviewStage: interviewStage, total: result.length });
   } catch (e) {
     console.error("[Interviews]", e.message);
     res.status(500).json({ error: e.message });
