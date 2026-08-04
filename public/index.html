@@ -3712,6 +3712,7 @@ var NAV_GROUPS=[
   {section:"Consultants", items:[
     {key:"consultants",label:"Consultants",emoji:"\uD83D\uDC54"},
     {key:"submissions",label:"Submissions",emoji:"\uD83D\uDCE9"},
+    {key:"interviews",label:"Interviews",emoji:"\uD83D\uDDD3\uFE0F"},
     {key:"placements",label:"Placements",emoji:"\uD83D\uDCCB"},
     {key:"pipeline",label:"Pipeline",emoji:"\uD83D\uDD04"},
   ]},
@@ -4857,6 +4858,64 @@ function placRowClick(idx){
   if(r&&r.id) openPlacementDetail(r.id);
 }
 
+/* ═══ INTERVIEWS ═══ */
+var _ivTab="upcoming";
+function setIvTab(t){ _ivTab=t; render(); }
+function renderInterviews(d){
+  if(!d) return showConnectionError();
+  var upcoming=d.upcoming||[], past=d.past||[];
+  var now=Date.now(), weekMs=now+7*86400000;
+  var thisWeek=upcoming.filter(function(r){return r.dateBegin<=weekMs;}).length;
+  var rows=_ivTab==="past"?past:upcoming;
+  var q=(filters.q||"").toLowerCase();
+  if(q){
+    rows=rows.filter(function(r){
+      return (r.candidate||"").toLowerCase().indexOf(q)>=0||(r.job||"").toLowerCase().indexOf(q)>=0||(r.client||"").toLowerCase().indexOf(q)>=0||(r.subject||"").toLowerCase().indexOf(q)>=0;
+    });
+  }
+  _lastData.interviews=rows;
+  var cols=[
+    {key:"date",label:"Date",render:function(r){
+      var c=r.urgency==="critical"?"#dc2626":r.urgency==="warning"?"#f59e0b":r.urgency==="past"?"#94a3b8":"#176087";
+      var lbl=r.urgency==="past"?"":r.daysOut===0?" (Today)":r.daysOut===1?" (Tomorrow)":"";
+      return '<span class="fw600" style="color:'+c+'">'+esc(r.date)+lbl+'</span>';
+    },exportVal:function(r){return r.date||"";}},
+    {key:"time",label:"Time",exportVal:function(r){return r.time||"";}},
+    {key:"candidate",label:"Candidate",render:function(r){return r.candidate?'<span class="name-link">'+esc(r.candidate)+'</span>':'<span class="muted">—</span>';},exportVal:function(r){return r.candidate||"";}},
+    {key:"job",label:"Job",render:function(r){return r.job?esc(r.job):'<span class="muted">—</span>';},exportVal:function(r){return r.job||"";}},
+    {key:"client",label:"Client",render:function(r){return r.client?'🏢 '+esc(r.client):'<span class="muted">—</span>';},exportVal:function(r){return r.client||"";}},
+    {key:"clientContact",label:"Interviewer",render:function(r){return r.clientContact?'👤 '+esc(r.clientContact):'<span class="muted">—</span>';},exportVal:function(r){return r.clientContact||"";}},
+    {key:"method",label:"Method",render:function(r){return r.method?badge(r.method):'<span class="muted">—</span>';},exportVal:function(r){return r.method||"";}},
+    {key:"owner",label:"Owner",exportVal:function(r){return r.owner||"";}},
+    {key:"subject",label:"Subject",exportVal:function(r){return r.subject||"";}}
+  ];
+  var html='<div class="stats-row">';
+  html+=statCard("🗓","Upcoming",upcoming.length,"Scheduled interviews","#176087");
+  html+=statCard("⏰","This Week",thisWeek,"Next 7 days","#f59e0b");
+  html+=statCard("✅","Past 30 Days",past.length,"Completed","#10b981");
+  html+='</div>';
+  html+='<div class="toolbar">';
+  html+='<div class="search-wrap"><span class="ico">🔍</span><input type="text" placeholder="Search by candidate, job, or client…" value="'+esc(filters.q||"")+'" oninput="filters.q=this.value;render()"></div>';
+  html+='<div class="chips">';
+  html+='<button class="chip'+(_ivTab==="upcoming"?" on":"")+'" onclick="setIvTab(\'upcoming\')">Upcoming</button>';
+  html+='<button class="chip'+(_ivTab==="past"?" on":"")+'" onclick="setIvTab(\'past\')">Past 30 Days</button>';
+  html+='</div></div>';
+  html+='<div class="count-line"><span>'+rows.length+' interview'+(rows.length!==1?'s':'')+' '+(_ivTab==="past"?'in the last 30 days':'scheduled')+'</span>';
+  html+=makeColToggle(cols)+' <button class="btn-export" onclick="exportCSV(\'interviews.csv\',ivCols,_lastData.interviews)">📥 Export CSV</button></div>';
+  if(rows.length===0){
+    html+='<div style="padding:48px;text-align:center;color:#94a3b8">'+(_ivTab==="past"?'No interviews in the last 30 days':'🗓 No upcoming interviews scheduled')+'</div>';
+  } else {
+    html+='<div class="table-wrap">'+makeTable(cols,rows,"ivRowClick")+'</div>';
+  }
+  window.ivCols=cols;
+  return html;
+}
+function ivRowClick(idx){
+  var f=_lastData.interviews||[];
+  var r=f[idx];
+  if(r&&r.candidateId) openDetail(r.candidateId,{});
+}
+
 function renderClients(data,bhTotal){
   var sf=filters.status||"Active Account";
   var f=data||[];
@@ -5063,6 +5122,25 @@ function renderHome(d){
       html+='</div>';
     });
     html+='<div style="padding:10px 0;text-align:center"><button class="chip on" style="font-size:12px" onclick="showContractEndMatches()">Find Next Roles for Expiring Consultants</button></div>';
+  }
+  html+='</div>';
+
+  // Upcoming Interviews
+  html+='<div class="chart-card"><h3 style="display:flex;align-items:center;justify-content:space-between">\uD83D\uDDD3\uFE0F Upcoming Interviews <span style="font-size:12px;font-weight:400;color:#94a3b8;cursor:pointer" onclick="setPage(\'interviews\')">View all \u2192</span></h3>';
+  var ivList=d.upcomingInterviews||[];
+  if(ivList.length===0){
+    html+='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">No interviews scheduled</div>';
+  } else {
+    ivList.forEach(function(iv){
+      var ivc=iv.urgency==="critical"?"#dc2626":iv.urgency==="warning"?"#f59e0b":"#176087";
+      var when=iv.daysOut===0?"Today":iv.daysOut===1?"Tmrw":iv.daysOut+"d";
+      html+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="'+(iv.candidateId?'openDetail('+iv.candidateId+',{})':'setPage(\'interviews\')')+'">';
+      html+='<div style="width:40px;height:40px;border-radius:10px;background:'+ivc+'14;display:flex;align-items:center;justify-content:center;font-weight:700;color:'+ivc+';font-size:12px;flex-shrink:0">'+when+'</div>';
+      html+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(iv.candidate||iv.subject)+'</div>';
+      html+='<div style="font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(iv.job||"")+(iv.client?' \u2022 '+esc(iv.client):'')+'</div></div>';
+      html+='<div style="text-align:right;flex-shrink:0"><div style="font-size:12px;font-weight:600;color:#176087">'+esc(iv.date)+'</div><div style="font-size:11px;color:#94a3b8">'+esc(iv.time)+'</div></div>';
+      html+='</div>';
+    });
   }
   html+='</div>';
 
@@ -11260,6 +11338,7 @@ async function loadPage(){
     switch(currentPage){
       case "home":
         var dash=await apiFetch("dashboard");
+        try{ var ivHome=await apiFetch("interviews"); dash.upcomingInterviews=(ivHome.upcoming||[]).slice(0,8); }catch(ivErr){ dash.upcomingInterviews=[]; }
         h=renderHome(dash);break;
       case "bizdev":
         var bdData=await apiFetch("bizdev");
@@ -11289,6 +11368,9 @@ async function loadPage(){
         if(_stTo) stParams.to=_stTo;
         var stData=await apiFetch("submission-analytics",stParams);
         h=renderSubTracker(stData);break;
+      case "interviews":
+        var ivData=await apiFetch("interviews");
+        h=renderInterviews(ivData);break;
       case "smartmatch":
         h=renderSmartMatch();break;
       case "sourcing":

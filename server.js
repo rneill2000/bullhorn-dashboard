@@ -3812,6 +3812,54 @@ app.get("/api/expiring-placements", async (req, res) => {
   }
 });
 
+// ── Interviews: Scheduled interviews (Appointment entity, type = Interview) ──
+app.get("/api/interviews", async (req, res) => {
+  try {
+    const pastDays = parseInt(req.query.pastDays) || 30;
+    const now = Date.now();
+    const fromMs = now - pastDays * 86400000;
+
+    const data = await bhFetchAll("query/Appointment", {
+      where: `type='Interview' AND dateBegin >= ${fromMs} AND isDeleted = false`,
+      fields: "id,subject,dateBegin,dateEnd,candidateReference(id,firstName,lastName),jobOrder(id,title,clientCorporation(id,name)),clientContactReference(id,firstName,lastName),owner(id,firstName,lastName),communicationMethod,location,description",
+      orderBy: "dateBegin",
+    });
+
+    const result = (data.data || []).map(function (a) {
+      var startMs = a.dateBegin || 0;
+      var isUpcoming = startMs >= now;
+      var daysOut = startMs ? Math.round((startMs - now) / 86400000) : null;
+      var d = startMs ? new Date(startMs) : null;
+      return {
+        id: a.id,
+        subject: a.subject || "",
+        candidate: a.candidateReference ? (a.candidateReference.firstName || "") + " " + (a.candidateReference.lastName || "") : "",
+        candidateId: a.candidateReference ? a.candidateReference.id : null,
+        job: a.jobOrder ? a.jobOrder.title : "",
+        jobId: a.jobOrder ? a.jobOrder.id : null,
+        client: a.jobOrder && a.jobOrder.clientCorporation ? a.jobOrder.clientCorporation.name : "",
+        clientContact: a.clientContactReference ? (a.clientContactReference.firstName || "") + " " + (a.clientContactReference.lastName || "") : "",
+        owner: a.owner ? (a.owner.firstName || "") + " " + (a.owner.lastName || "") : "",
+        dateBegin: startMs,
+        date: d ? d.toLocaleDateString() : "",
+        time: d ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "",
+        method: a.communicationMethod || "",
+        location: a.location || "",
+        isUpcoming: isUpcoming,
+        daysOut: daysOut,
+        urgency: !isUpcoming ? "past" : daysOut <= 1 ? "critical" : daysOut <= 7 ? "warning" : "info",
+      };
+    });
+
+    var upcoming = result.filter(function (r) { return r.isUpcoming; });
+    var past = result.filter(function (r) { return !r.isUpcoming; }).reverse();
+    res.json({ data: result, upcoming: upcoming, past: past, total: result.length });
+  } catch (e) {
+    console.error("[Interviews]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Contract End Matching: Match expiring consultants to open jobs ──
 app.get("/api/contract-end-matches", async (req, res) => {
   try {
