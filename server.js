@@ -15,6 +15,23 @@ const path = require("path");
 const crypto = require("crypto");
 require("dotenv").config();
 const db = require("./db");
+
+/* ── Submission stages ───────────────────────────────────────────────
+   A "client submission" means the candidate actually reached the client.
+   Everything before that ("Reached Out", "Recruiter Screen", "Candidate",
+   "Internally Submitted", internal rejections) is pipeline activity, not a
+   submission to the client. Used by the client-sub counters and by
+   /api/ask's submission reporting. */
+const CLIENT_FACING_SUB_STATUSES = [
+  "Client Submission", "Client Rejected",
+  "First Interview", "Second Interview", "Third Interview", "Interview",
+  "Offer Out", "Offer Extended", "Offer Accepted", "Offer Rejected",
+  "Placed",
+];
+function isClientFacingSub(status) {
+  const st = String(status || "").trim().toLowerCase();
+  return CLIENT_FACING_SUB_STATUSES.some((v) => v.toLowerCase() === st);
+}
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 
@@ -1735,7 +1752,11 @@ app.get("/api/jobs", async (req, res) => {
       query += ` AND (title:${escaped}* OR clientCorporation.name:${escaped}*)`;
     }
     if (status && status !== "All") {
-      query += ` AND status:"${status}"`;
+      // Chips like "Closed" / "Lost" / "Paused" cover a GROUP of Bullhorn
+      // statuses (see JOB_STATUS_GROUPS in db.js) — matching the literal
+      // string only ever returned a single "Closed" job.
+      const wanted = db.jobStatusesFor(status) || [status];
+      query += ` AND (${wanted.map((st) => `status:"${st}"`).join(" OR ")})`;
     }
     if (priority && PRIORITY_MAP[priority] !== undefined) {
       query += ` AND type:${PRIORITY_MAP[priority]}`;
@@ -6552,9 +6573,10 @@ app.get("/api/bizdev", async (req, res) => {
         (subData.data || []).forEach(function(s) {
           var jid = s.jobOrder ? s.jobOrder.id : null;
           if (!jid) return;
-          var st = (s.status || "").toLowerCase();
-          // Exclude purely-internal stage; everything client-facing or beyond counts.
-          if (st === "internally submitted" || st === "internal submission") return;
+          // Only count submissions that actually reached the client —
+          // "Reached Out"/"Recruiter Screen"/"Candidate" are internal pipeline
+          // stages and were previously inflating this number.
+          if (!isClientFacingSub(s.status)) return;
           clientSubCounts[jid] = (clientSubCounts[jid] || 0) + 1;
         });
         activeJobs.forEach(function(j) { j.clientSubs = clientSubCounts[j.id] || 0; });
@@ -10377,6 +10399,126 @@ app.get("/api/ask", async (req, res) => {
         answer = `No active placements found with bill/pay rates set. Check that placements have rates entered in Bullhorn.`;
       }
 
+    } else if (
+      question.match(/submission|submittal|submitted/) &&
+      question.match(/percent|percentage|%|median|average|avg|mean|at least|per job|ratio|typical|how many.*(?:per|each)/)
+    ) {
+      // Reporting: submission coverage + distribution across a set of jobs.
+      // e.g. "What percentage of our closed jobs have at least one client
+      // submission? What is the median number of client submissions?"
+      const scopeLabel = question.match(/\bopen\b|accepting/) ? "open"
+        : question.match(/\ball\b|every/) ? "all"
+        : "closed"; // default — the usual question is about finished jobs
+      const wantedStatuses = scopeLabel === "open" ? db.JOB_OPEN_STATUSES
+        : scopeLabel === "closed" ? db.jobStatusesFor("Closed")
+        : null;
+      // "client submission" unless the question asks about all submissions
+      const clientOnly = !question.match(/all submissions|total submissions|any submission|internal/);
+
+      let jobRows = [];
+      let usedDb = false;
+      if (db.ready) {
+        try {
+          // Build params in order so every $n is actually referenced —
+          // Postgres rejects a bind that supplies an unused parameter.
+          const params = [];
+          let statusCond = "TRUE";
+          if (wantedStatuses) { params.push(wantedStatuses); statusCond = "j.status = ANY($1)"; }
+          params.push(CLIENT_FACING_SUB_STATUSES);
+          const subParam = "$" + params.length;
+          const rows = await db.getAll(
+            "SELECT j.id, j.title, j.client_name, j.status, " +
+            "  COUNT(s.id) FILTER (WHERE s.status = ANY(" + subParam + ")) AS client_subs, " +
+            "  COUNT(s.id) AS all_subs " +
+            "FROM jobs j " +
+            "LEFT JOIN submissions s ON s.job_id = j.id AND (s.is_deleted IS NULL OR s.is_deleted = false) " +
+            "WHERE " + statusCond + " AND (j.is_deleted IS NULL OR j.is_deleted = false) " +
+            "GROUP BY j.id, j.title, j.client_name, j.status",
+            params
+          );
+          jobRows = rows.map(function (r) {
+            return {
+              title: r.title || "",
+              client: r.client_name || "",
+              status: r.status || "",
+              subs: parseInt(clientOnly ? r.client_subs : r.all_subs) || 0,
+            };
+          });
+          usedDb = true;
+        } catch (dbErr) {
+          console.log("[Ask] submission report DB query failed:", dbErr.message);
+        }
+      }
+
+      if (!usedDb) {
+        // Bullhorn fallback — pull the jobs, then their submissions.
+        const jq = wantedStatuses
+          ? "isDeleted:0 AND (" + wantedStatuses.map((st) => `status:"${st}"`).join(" OR ") + ")"
+          : "isDeleted:0";
+        const jr = await bhFetchAll("search/JobOrder", {
+          query: jq, fields: "id,title,clientCorporation,status", sort: "-dateAdded",
+        });
+        const byId = {};
+        (jr.data || []).forEach(function (j) {
+          byId[j.id] = {
+            title: j.title || "",
+            client: j.clientCorporation ? j.clientCorporation.name : "",
+            status: j.status || "",
+            subs: 0,
+          };
+        });
+        const ids = Object.keys(byId);
+        for (let i = 0; i < ids.length; i += 100) {
+          const batch = ids.slice(i, i + 100);
+          const sr = await bhFetchAll("query/JobSubmission", {
+            where: "isDeleted=false AND jobOrder.id IN (" + batch.join(",") + ")",
+            fields: "id,status,jobOrder(id)",
+          });
+          (sr.data || []).forEach(function (sub) {
+            const jid = sub.jobOrder ? sub.jobOrder.id : null;
+            if (!jid || !byId[jid]) return;
+            if (clientOnly && !isClientFacingSub(sub.status)) return;
+            byId[jid].subs++;
+          });
+        }
+        jobRows = ids.map(function (id) { return byId[id]; });
+      }
+
+      const totalJobs = jobRows.length;
+      if (!totalJobs) {
+        answer = `I couldn't find any ${scopeLabel === "all" ? "" : scopeLabel + " "}jobs to report on.`;
+      } else {
+        const counts = jobRows.map(function (j) { return j.subs; }).sort(function (a, b) { return a - b; });
+        const withAny = counts.filter(function (c) { return c > 0; }).length;
+        const pct = (withAny / totalJobs) * 100;
+        const mid = Math.floor(counts.length / 2);
+        const median = counts.length % 2 ? counts[mid] : (counts[mid - 1] + counts[mid]) / 2;
+        const mean = counts.reduce(function (a, b) { return a + b; }, 0) / counts.length;
+        // Median among jobs that got at least one — usually the more useful number
+        const nz = counts.filter(function (c) { return c > 0; });
+        const nzMid = Math.floor(nz.length / 2);
+        const nzMedian = nz.length ? (nz.length % 2 ? nz[nzMid] : (nz[nzMid - 1] + nz[nzMid]) / 2) : 0;
+
+        const subLabel = clientOnly ? "client submission" : "submission";
+        const scopeWord = scopeLabel === "all" ? "job" : scopeLabel + " job";
+        answer =
+          `Across **${totalJobs}** ${scopeWord}s:\n` +
+          `- **${pct.toFixed(1)}%** (${withAny} of ${totalJobs}) had at least one ${subLabel}\n` +
+          `- Median ${subLabel}s per ${scopeWord}: **${median}**\n` +
+          `- Median among the ${withAny} ${scopeWord}s that got at least one: **${nzMedian}**\n` +
+          `- Average ${subLabel}s per ${scopeWord}: **${mean.toFixed(1)}**\n` +
+          `- Most on a single ${scopeWord}: **${counts[counts.length - 1]}**\n\n` +
+          `_"${clientOnly ? "Client submission" : "Submission"}" counts ${clientOnly ? "candidates who reached the client (Client Submission, Client Rejected, interview, offer or placed stages) — internal stages like Reached Out and Recruiter Screen are excluded" : "every submission record, internal stages included"}._`;
+
+        data = jobRows
+          .sort(function (a, b) { return b.subs - a.subs; })
+          .map(function (j) {
+            const row = { title: j.title, client: j.client, status: j.status };
+            row[clientOnly ? "clientSubs" : "submissions"] = j.subs;
+            return row;
+          });
+      }
+
     } else {
       // Fallback: try a general candidate search
       const r = await bhFetchAll("search/Candidate", {
@@ -10395,7 +10537,7 @@ app.get("/api/ask", async (req, res) => {
         }));
         answer = `Found **${r.total}** results for "${question}":`;
       } else {
-        answer = `I'm not sure how to answer that yet. Try questions like:\n- "How many active candidates?"\n- "Show urgent jobs"\n- "Who has PB certification?"\n- "Who hasn't been touched in 30 days?"\n- "Available now"\n- "Expiring placements"\n- "Grade A candidates"\n- "Revenue and margins"`;
+        answer = `I'm not sure how to answer that yet. Try questions like:\n- "How many active candidates?"\n- "Show urgent jobs"\n- "Who has PB certification?"\n- "Who hasn't been touched in 30 days?"\n- "Available now"\n- "Expiring placements"\n- "Grade A candidates"\n- "Revenue and margins"\n- "What percentage of closed jobs had at least one client submission?"\n- "Median client submissions per closed job"`;
       }
     }
 

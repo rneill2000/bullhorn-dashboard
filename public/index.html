@@ -7783,7 +7783,9 @@ function renderAsk() {
     "Who hasn\u2019t been touched in 30 days?",
     "Revenue and margins",
     "Hot jobs",
-    "How many open jobs?"
+    "How many open jobs?",
+    "What % of closed jobs had at least one client submission?",
+    "Median client submissions per closed job"
   ];
   suggestions.forEach(function(s) {
     html += '<button class="ask-sug" onclick="askQuestion(\'' + s.replace(/'/g, "\\'") + '\')">' + s + '</button>';

@@ -1966,6 +1966,38 @@ async function getSyncDetails() {
 var PRIORITY_LABELS = { 0: "", 1: "Urgent", 2: "Hot", 3: "Warm", 4: "Cold" };
 var PRIORITY_MAP = { "Urgent": 1, "Hot": 2, "Warm": 3, "Cold": 4 };
 
+/* ── Job status groups ───────────────────────────────────────────────
+   Bullhorn stores many terminal job statuses in this instance — "Lost",
+   "Lost -Competitor", "Lost - Filled Internal", "Covered", "Placed",
+   "Archive" — while only a single job carries the literal status "Closed".
+   Filtering a UI chip on the exact string therefore returned almost
+   nothing. The chips below map to a GROUP of statuses instead.
+   Chips not listed here keep matching their status exactly. */
+var JOB_STATUS_GROUPS = {
+  // "Closed" = the job is no longer being worked, whatever the outcome.
+  "Closed": [
+    "Closed", "Archive", "Archived", "Cancelled", "Canceled",
+    "Covered", "Filled", "Placed",
+    "Lost", "Lost -Competitor", "Lost - Competitor",
+    "Lost - Filled Internal", "Lost - Filled Internally",
+  ],
+  // Every flavour of loss, not just the bare "Lost" value.
+  "Lost": [
+    "Lost", "Lost -Competitor", "Lost - Competitor",
+    "Lost - Filled Internal", "Lost - Filled Internally",
+  ],
+  // Bullhorn calls this "On Hold"; the UI chip says "Paused".
+  "Paused": ["Paused", "On Hold"],
+};
+// Statuses that mean the job is still being actively worked.
+var JOB_OPEN_STATUSES = ["Accepting Candidates", "Open"];
+
+/* Returns the list of Bullhorn statuses a UI chip should match. */
+function jobStatusesFor(label) {
+  if (!label || label === "All") return null;
+  return JOB_STATUS_GROUPS[label] || [label];
+}
+
 function fmtDate(ms) {
   if (!ms) return "";
   var n = Number(ms);
@@ -2076,12 +2108,23 @@ async function dbSearchCandidates(filters) {
  */
 async function dbSearchJobs(filters) {
   if (!dbReady) return null;
-  var conditions = ["1=1"];
+  // Match the Bullhorn path, which always filters isDeleted:0.
+  var conditions = ["(is_deleted IS NULL OR is_deleted = false)"];
   var params = [];
   var n = 0;
 
   if (filters.status && filters.status !== "All") {
-    n++; conditions.push("status = $" + n); params.push(filters.status);
+    // Match a GROUP of statuses (see JOB_STATUS_GROUPS) rather than one
+    // literal string — "Closed" alone only ever matched a single job.
+    var wanted = jobStatusesFor(filters.status);
+    n++;
+    if (filters.status === "Closed" || filters.status === "Lost") {
+      // Also catch any future "Lost - ..." variant we haven't seen yet.
+      conditions.push("(status = ANY($" + n + ") OR status ILIKE 'Lost%')");
+    } else {
+      conditions.push("status = ANY($" + n + ")");
+    }
+    params.push(wanted);
   }
   if (filters.q) {
     n++; var q = "%" + filters.q + "%";
@@ -3083,6 +3126,9 @@ module.exports = {
   // Query functions — return data in frontend-ready shapes
   searchCandidates: dbSearchCandidates,
   searchJobs: dbSearchJobs,
+  JOB_STATUS_GROUPS: JOB_STATUS_GROUPS,
+  JOB_OPEN_STATUSES: JOB_OPEN_STATUSES,
+  jobStatusesFor: jobStatusesFor,
   searchPlacements: dbSearchPlacements,
   searchClients: dbSearchClients,
   getDashboard: dbGetDashboard,
