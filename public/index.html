@@ -4957,7 +4957,7 @@ function renderClients(data,bhTotal){
   var f=data||[];
   _lastData.clients=f;
   // Fixed status list — always show these regardless of current filter
-  var ss=["All","Active Account","Active","Prospect","Passive Account","Unqualified","Archive"];
+  var ss=["All","Active Account","Active","Prospect","Proposal","Passive Account","Unqualified","Archive"];
   var displayTotal=bhTotal||f.length;
   var totalPlaced=f.reduce(function(s,r){return s+(r.activePlacements||0);},0);
   var clientsWithPlaced=f.filter(function(r){return r.activePlacements>0;}).length;
@@ -8180,7 +8180,7 @@ function renderTouches(report) {
   if (_touchTab === "clients") {
     html += '<label style="font-size:14px;color:#64748b;margin-left:8px">Company Status</label>';
     html += '<select style="padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:14px;font-family:inherit" onchange="_touchClientStatus=this.value;loadPage()">';
-    ["Active Account","Proposal","All"].forEach(function(s) {
+    ["Active Account","Active","Prospect","Proposal","Passive Account","Unqualified","Archive","All"].forEach(function(s) {
       html += '<option value="' + s + '"' + (s === _touchClientStatus ? ' selected' : '') + '>' + s + '</option>';
     });
     html += '</select>';

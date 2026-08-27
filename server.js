@@ -585,6 +585,135 @@ app.get("/api/meta/Opportunity", async (req, res) => {
 });
 
 // Sync status — detailed view of database sync state
+/* ── Data health ─────────────────────────────────────────────────────
+   Every accuracy bug found on 2026-08-27 was invisible from the UI: a filter
+   that matched nothing, a sync that stored a fraction of the records, a note
+   query that 400'd into an empty array. All of them look like "no results",
+   which looks like "nothing to show". This endpoint makes them look like what
+   they are.
+
+   Two kinds of check:
+     counts  — cached row count vs the live Bullhorn count, per entity
+     signals — queries that should NEVER legitimately return zero
+   GET /api/health/accuracy         (10-minute cache)
+   GET /api/health/accuracy?refresh=1 */
+const ACCURACY_ENTITIES = [
+  { name: "candidates",      endpoint: "search/Candidate",        query: "isDeleted:0" },
+  { name: "jobs",            endpoint: "search/JobOrder",         query: "isDeleted:0" },
+  // Note wants a boolean literal — isDeleted:0 silently matches nothing here.
+  { name: "notes",           endpoint: "search/Note",             query: "isDeleted:false" },
+  { name: "opportunities",   endpoint: "search/Opportunity",      query: "isDeleted:0" },
+  { name: "clients",         endpoint: "query/ClientCorporation", where: "id IS NOT NULL" },
+  { name: "client_contacts", endpoint: "query/ClientContact",     where: "id IS NOT NULL" },
+  { name: "submissions",     endpoint: "query/JobSubmission",     where: "isDeleted=false" },
+  { name: "placements",      endpoint: "query/Placement",         where: "id IS NOT NULL" },
+  { name: "appointments",    endpoint: "query/Appointment",       where: "id IS NOT NULL" },
+  { name: "sendouts",        endpoint: "query/Sendout",           where: "id IS NOT NULL" },
+  { name: "tasks",           endpoint: "query/Task",              where: "id IS NOT NULL" },
+  { name: "leads",           endpoint: "query/Lead",              where: "id IS NOT NULL" },
+  { name: "corporate_users", endpoint: "query/CorporateUser",     where: "id IS NOT NULL" },
+];
+
+async function bhLiveCount(spec) {
+  if (spec.query) {
+    const r = await bhFetch(spec.endpoint, { query: spec.query, fields: "id", count: 1 });
+    return typeof r.total === "number" ? r.total : (r.data || []).length;
+  }
+  // query/ endpoints report no total — page through ids and count them.
+  const r = await bhFetchAll(spec.endpoint, { where: spec.where, fields: "id" });
+  return (r.data || []).length;
+}
+
+const _accuracyCache = { at: 0, data: null };
+
+app.get("/api/health/accuracy", async (req, res) => {
+  try {
+    if (!req.query.refresh && _accuracyCache.data && Date.now() - _accuracyCache.at < 10 * 60 * 1000) {
+      return res.json(Object.assign({}, _accuracyCache.data, { cached: true }));
+    }
+
+    const counts = [];
+    for (const spec of ACCURACY_ENTITIES) {
+      const row = { entity: spec.name, cached: null, live: null, drift: null, status: "unknown" };
+      try {
+        row.live = await bhLiveCount(spec);
+      } catch (e) {
+        row.status = "error";
+        row.detail = "Bullhorn count failed: " + e.message;
+        counts.push(row);
+        continue;
+      }
+      if (db.ready) {
+        try {
+          const c = await db.getOne("SELECT COUNT(*) AS count FROM " + spec.name);
+          row.cached = c ? parseInt(c.count) : 0;
+        } catch (e) { row.detail = "cache count failed: " + e.message; }
+      }
+      if (row.cached === null) {
+        row.status = "no-cache";
+      } else {
+        row.drift = row.cached - row.live;
+        const pct = row.live > 0 ? Math.abs(row.drift) / row.live : (row.cached > 0 ? 1 : 0);
+        // A little drift is normal — records change between a sync and this check.
+        row.status = row.drift === 0 ? "ok" : pct <= 0.02 ? "ok" : pct <= 0.1 ? "warn" : "error";
+        if (row.live > 0 && row.cached === 0) row.status = "error";
+      }
+      counts.push(row);
+    }
+
+    // Signals: things that should never legitimately be zero. Each of the bugs
+    // fixed on 2026-08-27 would have tripped one of these.
+    const signals = [];
+    async function signal(name, why, fn) {
+      try {
+        const n = await fn();
+        signals.push({ name, why, value: n, status: n > 0 ? "ok" : "error" });
+      } catch (e) {
+        signals.push({ name, why, value: null, status: "error", detail: e.message });
+      }
+    }
+    const jobsFor = async (label) => {
+      const r = await fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/jobs?status=${encodeURIComponent(label)}`);
+      const j = await r.json();
+      return j.total || (j.data || []).length;
+    };
+    await signal("jobs.Closed", "Closed matched only the literal status before 2026-08-27", () => jobsFor("Closed"));
+    await signal("jobs.Lost", "Lost missed the Lost -Competitor / Lost - Filled Internal variants", () => jobsFor("Lost"));
+    await signal("jobs.Paused", "Bullhorn calls this On Hold", () => jobsFor("Paused"));
+    await signal("jobs.AcceptingCandidates", "the core open-jobs list", () => jobsFor("Accepting Candidates"));
+    await signal("notes.total", "notes synced 0 of 3,270 while the sync queried isDeleted:0", async () => {
+      if (!db.ready) return (await bhFetch("search/Note", { query: "isDeleted:false", fields: "id", count: 1 })).total || 0;
+      const c = await db.getOne("SELECT COUNT(*) AS count FROM notes");
+      return c ? parseInt(c.count) : 0;
+    });
+    await signal("clients.ActiveAccount", "isDeleted is not searchable on ClientCorporation — including it returns zero", async () => {
+      const r = await bhFetch("search/ClientCorporation", { query: 'status:"Active Account"', fields: "id", count: 1 });
+      return typeof r.total === "number" ? r.total : 0;
+    });
+    await signal("touchReport.clients", "the Clients tab of Touches was empty for the reason above", async () => {
+      const r = await fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/touch-report?days=14&clientStatus=${encodeURIComponent("Active Account")}`);
+      const j = await r.json();
+      return ((j.clients && j.clients.data) || []).length;
+    });
+
+    const worst = ["error", "warn", "no-cache", "unknown", "ok"].find((lvl) =>
+      counts.some((c) => c.status === lvl) || signals.some((c) => c.status === lvl));
+    const payload = {
+      checkedAt: new Date().toISOString(),
+      overall: worst === "ok" ? "ok" : worst,
+      counts,
+      signals,
+      cached: false,
+    };
+    _accuracyCache.at = Date.now();
+    _accuracyCache.data = payload;
+    res.json(payload);
+  } catch (e) {
+    console.error("[Health/Accuracy]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/sync-status", async (req, res) => {
   try {
     const details = await db.getSyncDetails();
@@ -9732,11 +9861,16 @@ app.get("/api/touch-report", async (req, res) => {
     // Fetch client contacts — filter by COMPANY status (not contact status)
     const clientStatus = req.query.clientStatus || "Active Account";
     // Step 1: get companies matching the requested status
+    // NOTE: isDeleted is not searchable on ClientCorporation in this instance —
+    // including it (as this did) makes the query match ZERO companies, which is
+    // why the Clients tab of the Touch report was always empty. "All" also used
+    // to name three statuses by hand, two of which don't exist here; it now
+    // means all of them.
     var corpStatusQuery;
     if (clientStatus === "All") {
-      corpStatusQuery = `isDeleted:0 AND status:("Active Account" OR "Proposal" OR "Passive Account")`;
+      corpStatusQuery = `id:[1 TO *]`;
     } else {
-      corpStatusQuery = `isDeleted:0 AND status:"${clientStatus}"`;
+      corpStatusQuery = `status:"${clientStatus}"`;
     }
     const corpData = await bhFetchAll("search/ClientCorporation", {
       query: corpStatusQuery,
@@ -9812,11 +9946,16 @@ app.get("/api/touch-report", async (req, res) => {
 app.get("/api/debug-touch-clients", async (req, res) => {
   try {
     const clientStatus = req.query.clientStatus || "Active Account";
+    // NOTE: isDeleted is not searchable on ClientCorporation in this instance —
+    // including it (as this did) makes the query match ZERO companies, which is
+    // why the Clients tab of the Touch report was always empty. "All" also used
+    // to name three statuses by hand, two of which don't exist here; it now
+    // means all of them.
     var corpStatusQuery;
     if (clientStatus === "All") {
-      corpStatusQuery = `isDeleted:0 AND status:("Active Account" OR "Proposal" OR "Passive Account")`;
+      corpStatusQuery = `id:[1 TO *]`;
     } else {
-      corpStatusQuery = `isDeleted:0 AND status:"${clientStatus}"`;
+      corpStatusQuery = `status:"${clientStatus}"`;
     }
     const corpData = await bhFetchAll("search/ClientCorporation", {
       query: corpStatusQuery,
