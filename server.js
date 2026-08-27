@@ -374,24 +374,41 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
   const total = first.total || (first.data || []).length;
   let allData = [...(first.data || [])];
 
-  // If there are more pages, fetch them in parallel (resilient to partial failures)
-  if (total > pageSize) {
-    const pages = [];
-    for (let start = pageSize; start < total; start += pageSize) {
-      pages.push(bhFetch(endpoint, { ...params, [startKey]: start }));
-    }
-    const results = await Promise.allSettled(pages);
+  // Page by what the API ACTUALLY returned, not by what we asked for.
+  //
+  // Bullhorn silently shrinks the page when a request asks for many fields:
+  // search/JobOrder with count=500 and the full field list comes back with 50
+  // records. The old check compared `total` against the REQUESTED pageSize, so
+  // for anything under 500 records it concluded there was only one page and
+  // silently dropped the rest — the jobs sync was storing 50 of 238 job orders
+  // per run, and every count built on the cache read low.
+  const perPage = allData.length;
+  if (perPage > 0 && total > perPage) {
+    const starts = [];
+    for (let start = perPage; start < total; start += perPage) starts.push(start);
+
+    // Fetch in bounded batches — a small page size on a large entity can mean
+    // hundreds of requests, and firing them all at once invites rate limiting.
+    const MAX_CONCURRENT = 5;
     let failedPages = 0;
-    for (const r of results) {
-      if (r.status === "fulfilled") {
-        allData = allData.concat(r.value.data || []);
-      } else {
-        failedPages++;
-        console.warn("[Bullhorn] Page fetch failed (partial data returned):", r.reason?.message || r.reason);
+    let pageCount = 0;
+    for (let i = 0; i < starts.length; i += MAX_CONCURRENT) {
+      const batch = starts.slice(i, i + MAX_CONCURRENT);
+      const results = await Promise.allSettled(
+        batch.map((start) => bhFetch(endpoint, { ...params, [startKey]: start }))
+      );
+      pageCount += results.length;
+      for (const r of results) {
+        if (r.status === "fulfilled") {
+          allData = allData.concat(r.value.data || []);
+        } else {
+          failedPages++;
+          console.warn("[Bullhorn] Page fetch failed (partial data returned):", r.reason?.message || r.reason);
+        }
       }
     }
     if (failedPages > 0) {
-      console.warn(`[Bullhorn] ${failedPages}/${results.length} pages failed for ${endpoint} — returning ${allData.length}/${total} records`);
+      console.warn(`[Bullhorn] ${failedPages}/${pageCount} pages failed for ${endpoint} — returning ${allData.length}/${total} records`);
     }
   }
 
