@@ -371,8 +371,38 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
   params[startKey] = 0;
 
   const first = await bhFetch(endpoint, { ...params });
-  const total = first.total || (first.data || []).length;
   let allData = [...(first.data || [])];
+  const perPageFirst = allData.length;
+
+  // Bullhorn's two endpoint families report differently:
+  //   search/ → returns a real `total` for the whole result set
+  //   query/  → returns only `start` and `count` (records in THIS page)
+  // The old code did `first.total || data.length`, so for every query/ call it
+  // inferred that a full first page WAS the entire result set — clients synced
+  // 500 of 607, client_contacts 500 of 645. When there is no trustworthy total,
+  // page sequentially until a short page comes back instead.
+  const reportedTotal = typeof first.total === "number" && first.total > 0 ? first.total : null;
+
+  if (reportedTotal === null && perPageFirst > 0) {
+    const MAX_PAGES = 400; // runaway guard
+    let start = perPageFirst;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let batch;
+      try {
+        const r = await bhFetch(endpoint, { ...params, [startKey]: start });
+        batch = r.data || [];
+      } catch (err) {
+        console.warn("[Bullhorn] Page fetch failed at start=" + start + " (partial data returned):", err.message);
+        break;
+      }
+      allData = allData.concat(batch);
+      if (batch.length < perPageFirst) break; // short page → end of the set
+      start += batch.length;
+    }
+    return { data: allData, total: allData.length };
+  }
+
+  const total = reportedTotal || perPageFirst;
 
   // Page by what the API ACTUALLY returned, not by what we asked for.
   //
@@ -382,7 +412,7 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
   // for anything under 500 records it concluded there was only one page and
   // silently dropped the rest — the jobs sync was storing 50 of 238 job orders
   // per run, and every count built on the cache read low.
-  const perPage = allData.length;
+  const perPage = perPageFirst;
   if (perPage > 0 && total > perPage) {
     const starts = [];
     for (let start = perPage; start < total; start += perPage) starts.push(start);
