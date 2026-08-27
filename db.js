@@ -1787,6 +1787,17 @@ async function syncEntity(entityType, syncType) {
     // Remove them here. Guarded so a transient/empty API response can't wipe the table.
     if (syncType === "full" && seenIds.length > 0) {
       try {
+        // Extra guard: if the live pull came back with far fewer records than
+        // we already hold, treat it as a partial/degraded API response rather
+        // than a mass deletion in Bullhorn, and skip the reconcile.
+        var beforeRes = await getOne("SELECT COUNT(*) as count FROM " + entityType);
+        var before = beforeRes ? parseInt(beforeRes.count) : 0;
+        if (before > 0 && seenIds.length < before * 0.5) {
+          console.warn("[Sync] Reconcile " + entityType + " SKIPPED — pull returned " +
+            seenIds.length + " records but " + before + " rows are cached; " +
+            "looks like a partial response, not a deletion.");
+          throw new Error("reconcile-skipped");
+        }
         var delRes = await query(
           "DELETE FROM " + entityType + " WHERE id <> ALL($1::int[])",
           [seenIds]
@@ -1796,7 +1807,9 @@ async function syncEntity(entityType, syncType) {
           console.log("[Sync] Reconcile " + entityType + ": removed " + removed + " orphaned row(s) no longer in Bullhorn");
         }
       } catch (reconErr) {
-        console.error("[Sync] Reconcile " + entityType + " failed (non-fatal):", reconErr.message);
+        if (reconErr.message !== "reconcile-skipped") {
+          console.error("[Sync] Reconcile " + entityType + " failed (non-fatal):", reconErr.message);
+        }
       }
     }
 
@@ -1905,15 +1918,35 @@ async function startSyncLoop(intervalMs) {
   if (!dbReady) return;
   intervalMs = intervalMs || 5 * 60 * 1000; // default 5 minutes
 
-  // Check if we need a full sync (no sync state exists)
-  var stateCount = await getOne("SELECT COUNT(*) as count FROM sync_state");
-  var needsFull = !stateCount || parseInt(stateCount.count) === 0;
+  // Backfill any entity that has never completed a FULL sync.
+  //
+  // This check used to look at sync_state as a whole ("is the table empty?"),
+  // so as soon as ANY entity had a row, no entity was ever backfilled again.
+  // Incremental syncs only fetch records modified since the last run, so an
+  // entity that missed its initial full sync stayed permanently partial —
+  // jobs sat at 171 of the 238 job orders in Bullhorn, which under-counted
+  // every job list and report built on the cache.
+  var allEntities = Object.keys(SYNC_ENTITIES);
+  var fullRows = await getAll("SELECT entity_type FROM sync_state WHERE last_full_sync IS NOT NULL");
+  var haveFull = {};
+  fullRows.forEach(function (r) { haveFull[r.entity_type] = true; });
+  var needBackfill = allEntities.filter(function (e) { return !haveFull[e]; });
 
-  if (needsFull) {
-    console.log("[Sync] No previous sync found — running full sync");
+  if (needBackfill.length === allEntities.length) {
+    console.log("[Sync] No previous full sync found — running full sync");
     await fullSync();
+  } else if (needBackfill.length > 0) {
+    console.log("[Sync] Backfilling entities with no full sync on record: " + needBackfill.join(", "));
+    for (var bi = 0; bi < needBackfill.length; bi++) {
+      try {
+        await syncEntity(needBackfill[bi], "full");
+      } catch (err) {
+        console.error("[Sync] Backfill of " + needBackfill[bi] + " failed:", err.message);
+      }
+    }
+    await incrementalSync();
   } else {
-    console.log("[Sync] Previous sync found — running incremental");
+    console.log("[Sync] All entities have a full sync on record — running incremental");
     await incrementalSync();
   }
 
