@@ -445,6 +445,118 @@ async function bhFetchAll(endpoint, params = {}, pageSize = 500) {
   return { data: allData, total };
 }
 
+/* ── Notes access ────────────────────────────────────────────────────
+   Bullhorn refuses the two obvious ways to read notes in this instance:
+     query/Note                    → 400 "Query operation not supported for Note"
+     search/Note with isDeleted:0  → matches nothing (Note wants isDeleted:false)
+   Every query/Note call site in this file was therefore returning an empty
+   list through its catch block — silently. Candidate and client notes read as
+   blank, and the whole Touches page treated everyone as never-contacted.
+   These two helpers are the paths that actually work. */
+
+// Notes for ONE record — the entity association endpoint, valid for any type.
+async function fetchEntityNotes(entityType, id, count) {
+  try {
+    const r = await bhFetch(`entity/${entityType}/${id}/notes`, {
+      fields: "id,action,comments,dateAdded,commentingPerson(id,firstName,lastName)",
+      count: count || 200,
+    });
+    return r.data || [];
+  } catch (e) {
+    console.log(`[Notes] entity/${entityType}/${id}/notes failed:`, e.message);
+    return [];
+  }
+}
+
+// Notes for MANY people at once, keyed by person id. search/Note has no person
+// filter, so read the synced notes table when it has rows; otherwise pull the
+// whole note set once (a few thousand records) and index it in memory.
+let _allNotesCache = { at: 0, byPerson: null };
+async function fetchNotesByPerson(personIds) {
+  const ids = (personIds || []).map(Number).filter(Boolean);
+  const out = {};
+  if (!ids.length) return out;
+
+  if (db.ready) {
+    try {
+      const rows = await db.getAll(
+        "SELECT id, person_id, action, comments_text, date_added FROM notes " +
+        "WHERE person_id = ANY($1) AND (is_deleted IS NULL OR is_deleted = false) " +
+        "ORDER BY date_added DESC NULLS LAST",
+        [ids]
+      );
+      if (rows.length) {
+        rows.forEach(function (r) {
+          (out[r.person_id] = out[r.person_id] || []).push({
+            id: r.id,
+            action: r.action,
+            comments: r.comments_text,
+            dateAdded: Number(r.date_added) || 0,
+            personReference: { id: r.person_id },
+          });
+        });
+        return out;
+      }
+    } catch (e) {
+      console.log("[Notes] DB lookup failed, falling back to Bullhorn:", e.message);
+    }
+  }
+
+  if (!_allNotesCache.byPerson || Date.now() - _allNotesCache.at > 5 * 60 * 1000) {
+    try {
+      const r = await bhFetchAll("search/Note", {
+        query: "isDeleted:false",
+        fields: "id,action,comments,dateAdded,personReference",
+        sort: "-dateAdded",
+      });
+      const byPerson = {};
+      (r.data || []).forEach(function (n) {
+        const pid = n.personReference ? n.personReference.id : null;
+        if (!pid) return;
+        (byPerson[pid] = byPerson[pid] || []).push(n);
+      });
+      _allNotesCache = { at: Date.now(), byPerson: byPerson };
+    } catch (e) {
+      console.log("[Notes] search/Note pull failed:", e.message);
+      return out;
+    }
+  }
+  ids.forEach(function (id) {
+    if (_allNotesCache.byPerson[id]) out[id] = _allNotesCache.byPerson[id];
+  });
+  return out;
+}
+
+// What counts as "we actually contacted this person".
+const TOUCH_ACTIONS = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
+const TOUCH_KEYWORDS = ["call","email","spoke","touch base","follow up","follow-up","reached out","meeting","check in","check-in","connected","left message","voicemail","scheduled"];
+
+// Last real touch per person id. Takes the LATEST qualifying note — the previous
+// per-batch code kept the first note it happened to see and depended on the
+// sort order holding across batches.
+async function buildTouchMap(personIds) {
+  const byPerson = await fetchNotesByPerson(personIds);
+  const map = {};
+  Object.keys(byPerson).forEach(function (pid) {
+    byPerson[pid].forEach(function (n) {
+      const actionMatch = n.action && TOUCH_ACTIONS.some(function (a) {
+        return a.toLowerCase() === String(n.action || "").toLowerCase();
+      });
+      let contentMatch = false;
+      if (!actionMatch && n.comments) {
+        const lower = String(n.comments).toLowerCase();
+        contentMatch = TOUCH_KEYWORDS.some(function (kw) { return lower.indexOf(kw) >= 0; });
+      }
+      if (!actionMatch && !contentMatch) return;
+      const d = n.dateAdded || 0;
+      if (!map[pid] || d > (map[pid].date || 0)) {
+        map[pid] = { date: n.dateAdded, action: n.action, type: n.action || "Note (outreach detected)" };
+      }
+    });
+  });
+  return map;
+}
+
 /* ═══ ROUTES ═══ */
 
 // Environment label for banner ("production" | "staging" | "development")
@@ -771,13 +883,8 @@ app.get("/api/candidates/:id", async (req, res) => {
       bhFetch(`entity/Candidate/${id}`, {
         fields: "id,firstName,lastName,middleName,nickName,occupation,status,address,salary,salaryLow,dayRate,dayRateLow,hourlyRate,hourlyRateLow,dateAvailable,email,email2,phone,phone2,phone3,mobile,fax,dateLastModified,dateLastComment,source,owner,dateAdded,description,companyName,educationDegree,employeeType,ethnicity,veteran,disability,willRelocate,travelLimit,dateOfBirth,customText1,customText2,customText3,customText4,customText5,customText6,customText7,customText8,customText9,customText10,customTextBlock1,customTextBlock2,customTextBlock3,customDate1,customDate2,customDate3,customFloat1,customFloat2,customInt1,customInt2,customInt3",
       }),
-      // Fetch notes via query/ (search/ can fail if notes aren't indexed)
-      bhFetchAll("query/Note", {
-        where: `personReference.id=${id} AND isDeleted=false`,
-        fields: "id,action,comments,dateAdded,commentingPerson(id,firstName,lastName)",
-        orderBy: "-dateAdded",
-        count: 200,
-      }).catch(function(e) { console.log("[Candidate Detail] Notes query error:", e.message); return { data: [] }; }),
+      // query/Note 400s on this instance — use the association endpoint.
+      fetchEntityNotes("Candidate", id, 200).then(function (n) { return { data: n }; }),
       bhFetch(`entity/Candidate/${id}/references`, {
         fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,customTextBlock1,dateAdded,status",
         count: 50,
@@ -2378,24 +2485,7 @@ app.get("/api/clients/:id", async (req, res) => {
       var touchMap = {};
       if (contactIds.length > 0) {
         var TOUCH_ACTIONS = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
-        for (var ci = 0; ci < contactIds.length; ci += 50) {
-          var batch = contactIds.slice(ci, ci + 50);
-          var personQuery = "personReference.id IN (" + batch.join(",") + ")";
-          try {
-            var noteData = await bhFetchAll("query/Note", {
-              where: "isDeleted=false AND " + personQuery,
-              fields: "id,personReference,action,dateAdded",
-              orderBy: "-dateAdded",
-              count: 500
-            });
-            (noteData.data || []).forEach(n => {
-              var pid = n.personReference ? n.personReference.id : null;
-              if (!pid || touchMap[pid]) return;
-              var isTouch = n.action && TOUCH_ACTIONS.some(a => a.toLowerCase() === (n.action || "").toLowerCase());
-              if (isTouch) touchMap[pid] = { date: n.dateAdded, action: n.action };
-            });
-          } catch(e) {}
-        }
+        touchMap = await buildTouchMap(contactIds);
       }
 
       contacts = (contactData.data || []).map(c => {
@@ -6569,7 +6659,11 @@ app.get("/api/bizdev", async (req, res) => {
     var allJobs = [];
     try {
       var jobData = await bhFetchAll("search/JobOrder", {
-        query: 'isDeleted:0 AND (status:"Accepting Candidates" OR status:"Open" OR status:"Closed" OR status:"Filled" OR status:"Placed")',
+        // Was a hand-written list of 5 statuses, which excluded every Lost
+        // variant, Covered and Archive — i.e. most finished jobs. Use the
+        // shared open + closed status groups so this page sees them all.
+        query: 'isDeleted:0 AND (' + db.JOB_OPEN_STATUSES.concat(db.jobStatusesFor("Closed"))
+          .map(function (st) { return 'status:"' + st + '"'; }).join(" OR ") + ')',
         fields: "id,title,clientCorporation,status,employmentType,salary,clientBillRate,payRate,numOpenings,submissions,dateAdded,type,address,owner,publicDescription,description,customText1",
         sort: "-dateAdded",
       });
@@ -6605,7 +6699,8 @@ app.get("/api/bizdev", async (req, res) => {
       });
     } catch(e) { console.log("[BizDev] Jobs error:", e.message); }
     var activeJobs = allJobs.filter(function(j) { return j.status === "Accepting Candidates" || j.status === "Open"; });
-    var closedJobs = allJobs.filter(function(j) { return j.status === "Closed" || j.status === "Filled" || j.status === "Placed"; });
+    var CLOSED_SET = db.jobStatusesFor("Closed");
+    var closedJobs = allJobs.filter(function(j) { return CLOSED_SET.indexOf(j.status) >= 0; });
 
     // 1b. Client-facing submission counts — count JobSubmissions per active job
     // that have advanced past the internal stage ("Internally Submitted").
@@ -9056,12 +9151,7 @@ app.get("/api/outlook/history/:entityType/:entityId", async (req, res) => {
     if (entityType === "candidate") {
       try {
         await authenticate();
-        var noteSearch = await bhFetchAll("query/Note", {
-          where: "personReference.id=" + entityId + " AND isDeleted=false",
-          fields: "id,action,comments,dateAdded,commentingPerson(id,firstName,lastName)",
-          orderBy: "-dateAdded",
-          count: 200,
-        });
+        var noteSearch = { data: await fetchEntityNotes("Candidate", entityId, 200) };
         var bhApiNotes = (noteSearch.data || []).map(function(n) {
           return {
             id: n.id,
@@ -9582,31 +9672,7 @@ app.get("/api/touch-report", async (req, res) => {
     var candTouchMap = {};
     if (candIds.length > 0) {
       var TOUCH_ACTIONS_BH2 = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
-      for (var bi = 0; bi < candIds.length; bi += 50) {
-        var cbatch = candIds.slice(bi, bi + 50);
-        var cpersonQuery = "personReference.id IN (" + cbatch.join(",") + ")";
-        try {
-          var cnoteData = await bhFetchAll("query/Note", {
-            where: "isDeleted=false AND " + cpersonQuery,
-            fields: "id,personReference,action,comments,dateAdded",
-            orderBy: "-dateAdded",
-            count: 500,
-          });
-          (cnoteData.data || []).forEach(function(n) {
-            var pid = n.personReference ? n.personReference.id : null;
-            if (!pid) return;
-            var actionMatch = n.action && TOUCH_ACTIONS_BH2.some(function(a) { return a.toLowerCase() === (n.action || "").toLowerCase(); });
-            var contentMatch = false;
-            if (!actionMatch && n.comments) {
-              var lower = (n.comments || "").toLowerCase();
-              contentMatch = ["call","email","spoke","touch base","follow up","follow-up","reached out","meeting","check in","check-in","connected","left message","voicemail","scheduled"].some(function(kw) { return lower.indexOf(kw) >= 0; });
-            }
-            if ((actionMatch || contentMatch) && !candTouchMap[pid]) {
-              candTouchMap[pid] = { date: n.dateAdded, type: n.action || "Note (outreach detected)" };
-            }
-          });
-        } catch (noteErr) { console.log("[Touch Report] Note fetch error for candidates:", noteErr.message); }
-      }
+      candTouchMap = await buildTouchMap(candIds);
     }
 
     const candidates = (candData.data || []).map(function(c) {
@@ -9640,31 +9706,7 @@ app.get("/api/touch-report", async (req, res) => {
     var consultTouchMap = {};
     if (consultCandIds.length > 0) {
       var TOUCH_ACTIONS_BH3 = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
-      for (var pi = 0; pi < consultCandIds.length; pi += 50) {
-        var pbatch = consultCandIds.slice(pi, pi + 50);
-        var ppersonQuery = "personReference.id IN (" + pbatch.join(",") + ")";
-        try {
-          var pnoteData = await bhFetchAll("query/Note", {
-            where: "isDeleted=false AND " + ppersonQuery,
-            fields: "id,personReference,action,comments,dateAdded",
-            orderBy: "-dateAdded",
-            count: 500,
-          });
-          (pnoteData.data || []).forEach(function(n) {
-            var pid = n.personReference ? n.personReference.id : null;
-            if (!pid) return;
-            var actionMatch = n.action && TOUCH_ACTIONS_BH3.some(function(a) { return a.toLowerCase() === (n.action || "").toLowerCase(); });
-            var contentMatch = false;
-            if (!actionMatch && n.comments) {
-              var lower = (n.comments || "").toLowerCase();
-              contentMatch = ["call","email","spoke","touch base","follow up","follow-up","reached out","meeting","check in","check-in","connected","left message","voicemail","scheduled"].some(function(kw) { return lower.indexOf(kw) >= 0; });
-            }
-            if ((actionMatch || contentMatch) && !consultTouchMap[pid]) {
-              consultTouchMap[pid] = { date: n.dateAdded, type: n.action || "Note (outreach detected)" };
-            }
-          });
-        } catch (noteErr) { console.log("[Touch Report] Note fetch error for consultants:", noteErr.message); }
-      }
+      consultTouchMap = await buildTouchMap(consultCandIds);
     }
 
     const consultants = (placData.data || []).map(function(p) {
@@ -9728,31 +9770,7 @@ app.get("/api/touch-report", async (req, res) => {
     var clientTouchMap = {};
     if (clientContactIds.length > 0) {
       var TOUCH_ACTIONS_BH = ["Email","Phone Call","Left Message","Call","Meeting","Appointment","Interview","Visit","Outreach","Follow Up","Follow-Up","Spoke With","Sent Email","Text","SMS"];
-      for (var ci = 0; ci < clientContactIds.length; ci += 50) {
-        var batch = clientContactIds.slice(ci, ci + 50);
-        var personQuery = "personReference.id IN (" + batch.join(",") + ")";
-        try {
-          var noteData = await bhFetchAll("query/Note", {
-            where: "isDeleted=false AND " + personQuery,
-            fields: "id,personReference,action,comments,dateAdded",
-            orderBy: "-dateAdded",
-            count: 500,
-          });
-          (noteData.data || []).forEach(function(n) {
-            var pid = n.personReference ? n.personReference.id : null;
-            if (!pid) return;
-            var actionMatch = n.action && TOUCH_ACTIONS_BH.some(function(a) { return a.toLowerCase() === (n.action || "").toLowerCase(); });
-            var contentMatch = false;
-            if (!actionMatch && n.comments) {
-              var lower = (n.comments || "").toLowerCase();
-              contentMatch = ["call","email","spoke","touch base","follow up","follow-up","reached out","meeting","check in","check-in","connected","left message","voicemail","scheduled"].some(function(kw) { return lower.indexOf(kw) >= 0; });
-            }
-            if ((actionMatch || contentMatch) && !clientTouchMap[pid]) {
-              clientTouchMap[pid] = { date: n.dateAdded, type: n.action || "Note (outreach detected)" };
-            }
-          });
-        } catch (noteErr) { console.log("[Touch Report] Note fetch error for client contacts:", noteErr.message); }
-      }
+      clientTouchMap = await buildTouchMap(clientContactIds);
     }
 
     const clients = clientDataAll.map(function(c) {
@@ -10756,13 +10774,12 @@ app.get("/api/portal/client-config/:clientId", async (req, res) => {
     await authenticate();
     const clientId = req.params.clientId;
 
-    // Search for a Note with action "PortalConfig" on this client
-    const notes = await bhFetchAll("query/Note", {
-      where: "action='PortalConfig' AND clientCorporation.id=" + clientId,
-      fields: "id,comments,dateAdded,dateLastModified",
-      orderBy: "-dateLastModified",
-      count: 1,
-    });
+    // The PortalConfig note is stored on the client corporation. query/Note 400s
+    // on this instance, so read it back off the association endpoint — this
+    // read had been failing outright, so saved portal configs never loaded.
+    const notes = { data: (await fetchEntityNotes("ClientCorporation", clientId, 200))
+      .filter(function (n) { return n.action === "PortalConfig"; })
+      .sort(function (a, b) { return (b.dateAdded || 0) - (a.dateAdded || 0); }) };
 
     if (notes.data && notes.data.length > 0) {
       try {
@@ -10795,12 +10812,12 @@ app.post("/api/portal/client-config/:clientId", async (req, res) => {
 
     const configJson = JSON.stringify(config);
 
-    // Check if a PortalConfig note already exists
-    const existing = await bhFetchAll("query/Note", {
-      where: "action='PortalConfig' AND clientCorporation.id=" + clientId,
-      fields: "id",
-      count: 1,
-    });
+    // Check if a PortalConfig note already exists (association endpoint —
+    // query/Note 400s here, so this check always said "no" and every save
+    // created a duplicate note instead of updating the existing one).
+    const existing = { data: (await fetchEntityNotes("ClientCorporation", clientId, 200))
+      .filter(function (n) { return n.action === "PortalConfig"; })
+      .sort(function (a, b) { return (b.dateAdded || 0) - (a.dateAdded || 0); }) };
 
     let noteId;
     if (existing.data && existing.data.length > 0) {

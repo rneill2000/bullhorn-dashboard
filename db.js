@@ -1429,7 +1429,11 @@ var SYNC_ENTITIES = {
   notes: {
     endpoint: "search/Note",
     queryField: "query",
-    baseQuery: "isDeleted:0",
+    // Note's search index wants a boolean literal here. "isDeleted:0" — which
+    // is correct for Candidate, JobOrder, Opportunity — matches NOTHING on
+    // Note, so this sync silently stored 0 records for months while Bullhorn
+    // held 3,270 notes. Every note-driven feature read empty as a result.
+    baseQuery: "isDeleted:false",
     fields: NOTE_FIELDS,
     sortField: "-dateLastModified",
     transform: function (r) {
