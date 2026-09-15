@@ -1,0 +1,265 @@
+/**
+ * Quick Capture — turn a raw dump of travel/meeting notes into Bullhorn
+ * Notes, ClientContacts, ClientCorporations and Opportunities.
+ *
+ * Flow:  POST /api/capture/parse   { text }          -> structured items + match candidates
+ *        GET  /api/capture/lookup  ?kind=&q=         -> manual re-match search
+ *        POST /api/capture/commit  { items }         -> writes to Bullhorn, per-item results
+ */
+module.exports = function registerCapture(app, deps) {
+  const { db, bhWrite, bhFetchAll, getUser } = deps;
+
+  const NOTE_ACTIONS = ["Meeting", "Phone Call", "Email", "Left Message", "Follow Up", "General Note", "Outreach", "Text"];
+  const OPP_STATUSES = ["Identified", "Qualifying", "Negotiating", "Legal Review"];
+
+  // ── Claude extraction ────────────────────────────────────────────────
+  async function aiParse(text, today) {
+    if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not set on the server");
+    const prompt = [
+      "You are converting a recruiter/BD leader's raw notes into Bullhorn CRM entries for Anura Connect, a boutique Epic healthcare IT consulting/staffing firm.",
+      "Today is " + today + ".",
+      "",
+      "Split the notes into ITEMS. Produce ONE note item per person interacted with (a person = client contact at a hospital/health system/vendor, OR a candidate/consultant).",
+      "If the notes describe a potential deal (an MSA, a project, a client wanting consultants, a go-live needing staff, a renewal), ALSO produce an opportunity item for that company — at most ONE opportunity per company per dump. If an MSA/agreement is needed, use the '<Company> MSA <year>' title and fold the staffing need into the description rather than making a second opportunity.",
+      "Keep the author's own wording and facts in `comments` — clean up typos and fragments into readable sentences, but do not invent details, do not summarize away specifics (names, dates, modules, numbers, rates).",
+      "",
+      "Return ONLY valid JSON, no prose, no markdown fences:",
+      "{\"items\":[",
+      " {\"kind\":\"note\",",
+      "  \"person\":{\"firstName\":\"\",\"lastName\":\"\",\"title\":\"\",\"email\":\"\",\"phone\":\"\"} or null,",
+      "  \"personType\":\"contact\"|\"candidate\"|\"unknown\",",
+      "  \"company\":\"organization name or null\",",
+      "  \"action\":one of " + JSON.stringify(NOTE_ACTIONS) + ",",
+      "  \"comments\":\"the note text\",",
+      "  \"followUp\":\"next step, or null\"},",
+      " {\"kind\":\"opportunity\",",
+      "  \"company\":\"organization name\",",
+      "  \"person\":{...} or null (the contact this deal is with),",
+      "  \"title\":\"<Company> MSA <year> for MSA/agreement deals, otherwise <Company> - <short deal name>\",",
+      "  \"status\":one of " + JSON.stringify(OPP_STATUSES) + " (default Identified),",
+      "  \"type\":\"New\"|\"Renewal\",",
+      "  \"description\":\"what the deal is, in the author's words\",",
+      "  \"nextStep\":\"next step or null\",",
+      "  \"estimatedStart\":\"YYYY-MM-DD or null\",",
+      "  \"dealValue\":number or null}",
+      "]}",
+      "",
+      "Rules: personType is 'contact' for anyone who works at a client/prospect/hospital/vendor, 'candidate' for consultants/job seekers. If only a first name is given, leave lastName empty. Never merge two people into one item. If the text mentions no person at all for a fact, attach it as a note to the company with person null.",
+      "",
+      "NOTES:\n" + text,
+    ].join("\n");
+
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 4000, messages: [{ role: "user", content: prompt }] }),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!resp.ok) throw new Error("Claude API error " + resp.status + ": " + (await resp.text()).slice(0, 300));
+    const data = await resp.json();
+    const raw = (data.content && data.content[0] && data.content[0].text) || "";
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error("Claude did not return JSON");
+    const parsed = JSON.parse(m[0]);
+    if (!parsed.items || !Array.isArray(parsed.items)) throw new Error("Claude returned no items");
+    return parsed.items;
+  }
+
+  // ── Matching against Postgres (Bullhorn fallback) ────────────────────
+  function norm(s) { return (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim(); }
+  function tokens(s) { return norm(s).split(" ").filter(function (t) { return t && !["the", "of", "and", "inc", "llc", "health", "system", "medical", "center", "hospital"].includes(t); }); }
+  function scoreName(target, cand) {
+    const a = norm(target), b = norm(cand);
+    if (!a || !b) return 0;
+    if (a === b) return 100;
+    const ta = tokens(target), tb = tokens(cand);
+    if (!ta.length || !tb.length) return 0;
+    const hit = ta.filter(function (t) { return tb.some(function (u) { return u === t || u.startsWith(t) || t.startsWith(u); }); }).length;
+    return Math.round(100 * hit / Math.max(ta.length, tb.length));
+  }
+
+  async function findContacts(first, last, company) {
+    if (!db.ready) return [];
+    const parts = [], vals = [];
+    if (last) { vals.push("%" + last + "%"); parts.push("last_name ILIKE $" + vals.length); }
+    if (first) { vals.push("%" + first + "%"); parts.push("first_name ILIKE $" + vals.length); }
+    if (!parts.length) return [];
+    const where = last && first ? "(" + parts.join(" AND ") + ")" + (company ? " OR (first_name ILIKE $2 AND client_name ILIKE $" + (vals.push("%" + company + "%")) + ")" : "") : parts.join(" AND ");
+    const rows = await db.getAll("SELECT id, first_name, last_name, name, occupation, email, client_id, client_name, status FROM client_contacts WHERE is_deleted IS NOT TRUE AND (" + where + ") ORDER BY date_last_modified DESC NULLS LAST LIMIT 8", vals);
+    return rows.map(function (r) {
+      let s = scoreName((first || "") + " " + (last || ""), (r.first_name || "") + " " + (r.last_name || ""));
+      if (company && r.client_name) s = Math.min(100, s + Math.round(scoreName(company, r.client_name) / 4));
+      return { kind: "contact", id: r.id, name: ((r.first_name || "") + " " + (r.last_name || "")).trim(), sub: [r.occupation, r.client_name].filter(Boolean).join(" · "), clientId: r.client_id, clientName: r.client_name, score: s };
+    }).sort(function (a, b) { return b.score - a.score; });
+  }
+
+  async function findCandidates(first, last) {
+    if (!db.ready) return [];
+    const parts = [], vals = [];
+    if (last) { vals.push("%" + last + "%"); parts.push("last_name ILIKE $" + vals.length); }
+    if (first) { vals.push("%" + first + "%"); parts.push("first_name ILIKE $" + vals.length); }
+    if (!parts.length) return [];
+    const rows = await db.getAll("SELECT id, first_name, last_name, occupation, email, status FROM candidates WHERE is_deleted IS NOT TRUE AND " + parts.join(" AND ") + " ORDER BY date_last_modified DESC NULLS LAST LIMIT 8", vals);
+    return rows.map(function (r) {
+      return { kind: "candidate", id: r.id, name: ((r.first_name || "") + " " + (r.last_name || "")).trim(), sub: [r.occupation, r.status].filter(Boolean).join(" · "), score: scoreName((first || "") + " " + (last || ""), (r.first_name || "") + " " + (r.last_name || "")) };
+    }).sort(function (a, b) { return b.score - a.score; });
+  }
+
+  async function findClients(company) {
+    if (!company) return [];
+    const toks = tokens(company);
+    if (!db.ready || !toks.length) return [];
+    const vals = toks.slice(0, 4).map(function (t) { return "%" + t + "%"; });
+    const where = vals.map(function (_, i) { return "name ILIKE $" + (i + 1); }).join(" OR ");
+    const rows = await db.getAll("SELECT id, name, status FROM clients WHERE (" + where + ") ORDER BY date_last_modified DESC NULLS LAST LIMIT 12", vals);
+    return rows.map(function (r) { return { kind: "client", id: r.id, name: r.name, sub: r.status || "", score: scoreName(company, r.name) }; })
+      .sort(function (a, b) { return b.score - a.score; }).slice(0, 6);
+  }
+
+  async function enrichItem(it) {
+    const p = it.person || null;
+    const first = p ? (p.firstName || "").trim() : "", last = p ? (p.lastName || "").trim() : "";
+    const out = Object.assign({}, it, { matches: { contacts: [], candidates: [], clients: [] }, suggested: {} });
+    try {
+      if (first || last) {
+        if (it.personType !== "candidate") out.matches.contacts = await findContacts(first, last, it.company);
+        if (it.personType !== "contact") out.matches.candidates = await findCandidates(first, last);
+      }
+      out.matches.clients = await findClients(it.company);
+    } catch (e) { out.matchError = e.message; }
+    const bestC = out.matches.contacts[0], bestK = out.matches.candidates[0], bestCl = out.matches.clients[0];
+    if (bestC && bestC.score >= 80 && (!bestK || bestC.score >= bestK.score)) { out.suggested.personType = "contact"; out.suggested.personId = bestC.id; if (bestC.clientId) out.suggested.clientId = bestC.clientId; }
+    else if (bestK && bestK.score >= 80) { out.suggested.personType = "candidate"; out.suggested.personId = bestK.id; }
+    if (!out.suggested.clientId && bestCl && bestCl.score >= 70) out.suggested.clientId = bestCl.id;
+    return out;
+  }
+
+  app.post("/api/capture/parse", async function (req, res) {
+    try {
+      const text = (req.body && req.body.text || "").trim();
+      if (text.length < 10) return res.status(400).json({ error: "Paste some notes first" });
+      const today = new Date().toISOString().slice(0, 10);
+      const items = await aiParse(text, today);
+      const enriched = [];
+      for (const it of items) enriched.push(await enrichItem(it));
+      res.json({ items: enriched, dbMatching: !!db.ready });
+    } catch (e) {
+      console.error("[Capture parse]", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/capture/lookup", async function (req, res) {
+    try {
+      const q = (req.query.q || "").trim(), kind = req.query.kind || "contact";
+      if (!q) return res.json({ data: [] });
+      const bits = q.split(/\s+/); const first = bits[0], last = bits.slice(1).join(" ");
+      let data = [];
+      if (kind === "contact") data = last ? await findContacts(first, last, "") : (await findContacts("", first, "")).concat(await findContacts(first, "", ""));
+      else if (kind === "candidate") data = last ? await findCandidates(first, last) : (await findCandidates("", first)).concat(await findCandidates(first, ""));
+      else data = await findClients(q);
+      const seen = {}; data = data.filter(function (d) { if (seen[d.id]) return false; seen[d.id] = 1; return true; });
+      res.json({ data: data.slice(0, 10) });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Commit to Bullhorn ───────────────────────────────────────────────
+  function ok(result, what) {
+    if (!result || !result.changedEntityId) throw new Error(what + " write returned no changedEntityId: " + JSON.stringify(result).slice(0, 200));
+    return result.changedEntityId;
+  }
+
+  app.post("/api/capture/commit", async function (req, res) {
+    const user = getUser(req);
+    const items = (req.body && req.body.items) || [];
+    if (!items.length) return res.status(400).json({ error: "Nothing to commit" });
+    const createdClients = {}, createdContacts = {};
+    const results = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const r = { index: i, kind: it.kind, created: [], ok: true };
+      if (it.skip) { r.skipped = true; results.push(r); continue; }
+      try {
+        // 1. client
+        let clientId = it.clientId ? parseInt(it.clientId) : null;
+        const newClientName = it.newClient && (it.newClient.name || "").trim();
+        if (!clientId && newClientName) {
+          const key = norm(newClientName);
+          if (createdClients[key]) clientId = createdClients[key];
+          else {
+            const body = { name: newClientName, status: "Prospect", isDeleted: false };
+            if (user) body.owner = { id: user.id };
+            clientId = ok(await bhWrite("entity/ClientCorporation", body, "PUT"), "Client");
+            createdClients[key] = clientId;
+            r.created.push({ type: "client", id: clientId, name: newClientName });
+          }
+        }
+        // 2. person
+        let personId = it.personId ? parseInt(it.personId) : null;
+        const personType = it.personType || "contact";
+        if (!personId && it.newPerson && (it.newPerson.firstName || it.newPerson.lastName)) {
+          const np = it.newPerson;
+          const key = personType + ":" + norm(np.firstName + " " + np.lastName) + ":" + (clientId || "");
+          if (createdContacts[key]) personId = createdContacts[key];
+          else if (personType === "candidate") {
+            const body = { firstName: np.firstName || "", lastName: np.lastName || "", name: ((np.firstName || "") + " " + (np.lastName || "")).trim(), status: "New Lead", isDeleted: false };
+            if (np.email) body.email = np.email; if (np.phone) body.phone = np.phone; if (np.title) body.occupation = np.title;
+            if (user) body.owner = { id: user.id };
+            personId = ok(await bhWrite("entity/Candidate", body, "PUT"), "Candidate");
+            createdContacts[key] = personId;
+            r.created.push({ type: "candidate", id: personId, name: body.name });
+          } else {
+            if (!clientId) throw new Error("A new contact needs a company — pick an existing client or enter a new company name");
+            const body = { firstName: np.firstName || "", lastName: np.lastName || "(unknown)", clientCorporation: { id: clientId }, status: "Active" };
+            if (np.email) body.email = np.email; if (np.phone) body.phone = np.phone; if (np.title) body.occupation = np.title;
+            if (user) body.owner = { id: user.id };
+            personId = ok(await bhWrite("entity/ClientContact", body, "PUT"), "Contact");
+            createdContacts[key] = personId;
+            r.created.push({ type: "contact", id: personId, name: (body.firstName + " " + body.lastName).trim() });
+          }
+        }
+        // 3. note
+        if (it.kind === "note") {
+          const comments = (it.comments || "").trim() + (it.followUp ? "\n\nNext step: " + it.followUp.trim() : "");
+          if (!comments) throw new Error("Note has no text");
+          if (!personId && !clientId) throw new Error("Note needs a person or a company to attach to");
+          if (!personId) {
+            // company-only note: attach to the client's most recently modified contact
+            const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id,firstName,lastName", orderBy: "-dateLastModified", count: 1 });
+            if (!c.data || !c.data.length) throw new Error("That company has no contacts yet — add a person so the note has somewhere to live");
+            personId = c.data[0].id; r.attachedTo = (c.data[0].firstName || "") + " " + (c.data[0].lastName || "");
+          }
+          const body = { personReference: { id: personId }, action: NOTE_ACTIONS.includes(it.action) ? it.action : "General Note", comments: comments, dateAdded: Date.now() };
+          if (user) body.commentingPerson = { id: user.id };
+          let result;
+          try { result = await bhWrite("entity/Note", body, "PUT"); }
+          catch (e) { if (body.commentingPerson) { delete body.commentingPerson; result = await bhWrite("entity/Note", body, "PUT"); } else throw e; }
+          const noteId = ok(result, "Note");
+          r.created.push({ type: "note", id: noteId, personId: personId });
+          if (db.ready) { try { await db.query("INSERT INTO notes (id, person_id, action, comments_text, date_added, commenting_person_id, commenting_person_name, is_deleted, synced_at) VALUES ($1,$2,$3,$4,$5,$6,$7,false,NOW()) ON CONFLICT (id) DO NOTHING", [noteId, personId, body.action, comments, Date.now(), user ? user.id : null, user ? user.name : null]); } catch (e) { console.log("[Capture] local note insert failed:", e.message); } }
+        }
+        // 4. opportunity
+        if (it.kind === "opportunity") {
+          if (!clientId) throw new Error("Opportunity needs a client — pick an existing one or enter a new company name");
+          const title = (it.title || "").trim(); if (!title) throw new Error("Opportunity needs a title");
+          const body = { title: title, status: OPP_STATUSES.includes(it.status) ? it.status : "Identified", type: it.type === "Renewal" ? "Renewal" : "New", clientCorporation: { id: clientId }, isDeleted: false };
+          if (it.description) body.description = it.description;
+          if (it.nextStep) body.customText1 = it.nextStep;
+          if (it.dealValue) body.dealValue = Number(it.dealValue) || 0;
+          if (it.estimatedStart) { const t = Date.parse(it.estimatedStart); if (!isNaN(t)) body.estimatedStartDate = t; }
+          if (personId && personType === "contact") body.clientContact = { id: personId };
+          if (user) body.owner = { id: user.id };
+          let result;
+          try { result = await bhWrite("entity/Opportunity", body, "PUT"); }
+          catch (e) { if (body.clientContact) { delete body.clientContact; result = await bhWrite("entity/Opportunity", body, "PUT"); } else throw e; }
+          r.created.push({ type: "opportunity", id: ok(result, "Opportunity"), title: title });
+        }
+      } catch (e) {
+        r.ok = false; r.error = e.message;
+        console.error("[Capture commit] item", i, e.message);
+      }
+      results.push(r);
+    }
+    res.json({ results: results, user: user ? user.name : null });
+  });
+};

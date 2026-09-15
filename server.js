@@ -6449,7 +6449,7 @@ async function aiExtractIntel(title, content) {
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 500,
         messages: [{
           role: "user",
@@ -11590,6 +11590,9 @@ app.get("/", (req, res) => {
 
 /* ═══ GLOBAL ERROR HANDLER ═══ */
 // Catch any unhandled errors in route handlers so they return 500 instead of crashing
+/* ═══ QUICK CAPTURE (notes dump → Bullhorn) ═══ */
+require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, getUser: getUser });
+
 app.use(function (err, req, res, next) {
   console.error("[Express] Unhandled route error:", err.message);
   console.error(err.stack);
