@@ -98,7 +98,7 @@ module.exports = function registerCapture(app, deps) {
     const rows = await db.getAll("SELECT id, first_name, last_name, name, occupation, email, client_id, client_name, status FROM client_contacts WHERE is_deleted IS NOT TRUE AND (" + where + ") ORDER BY date_last_modified DESC NULLS LAST LIMIT 8", vals);
     return rows.map(function (r) {
       let s = scoreName((first || "") + " " + (last || ""), (r.first_name || "") + " " + (r.last_name || ""));
-      if (company && r.client_name) s = Math.min(100, s + Math.round(scoreName(company, r.client_name) / 4));
+      if (company && r.client_name) s = s + Math.round(scoreName(company, r.client_name) / 4); // may exceed 100: company-confirmed beats a same-name stranger
       return { kind: "contact", id: r.id, name: ((r.first_name || "") + " " + (r.last_name || "")).trim(), sub: [r.occupation, r.client_name].filter(Boolean).join(" · "), clientId: r.client_id, clientName: r.client_name, score: s };
     }).sort(function (a, b) { return b.score - a.score; });
   }
@@ -138,8 +138,10 @@ module.exports = function registerCapture(app, deps) {
       out.matches.clients = await findClients(it.company);
     } catch (e) { out.matchError = e.message; }
     const bestC = out.matches.contacts[0], bestK = out.matches.candidates[0], bestCl = out.matches.clients[0];
-    if (bestC && bestC.score >= 80 && (!bestK || bestC.score >= bestK.score)) { out.suggested.personType = "contact"; out.suggested.personId = bestC.id; if (bestC.clientId) out.suggested.clientId = bestC.clientId; }
-    else if (bestK && bestK.score >= 80) { out.suggested.personType = "candidate"; out.suggested.personId = bestK.id; }
+    const tie = (list) => list.length > 1 && list[1].score >= list[0].score; // two equally good people → make the user choose
+    if (bestC && bestC.score >= 80 && (!bestK || bestC.score >= bestK.score) && !tie(out.matches.contacts)) { out.suggested.personType = "contact"; out.suggested.personId = bestC.id; if (bestC.clientId) out.suggested.clientId = bestC.clientId; }
+    else if (bestK && bestK.score >= 80 && !tie(out.matches.candidates)) { out.suggested.personType = "candidate"; out.suggested.personId = bestK.id; }
+    if (!out.suggested.personId && ((bestC && bestC.score >= 80) || (bestK && bestK.score >= 80))) out.needsChoice = true;
     if (!out.suggested.clientId && bestCl && bestCl.score >= 70) out.suggested.clientId = bestCl.id;
     return out;
   }
@@ -201,6 +203,11 @@ module.exports = function registerCapture(app, deps) {
           const key = norm(newClientName);
           if (createdClients[key]) clientId = createdClients[key];
           else {
+            if (!it.forceCreate) {
+              let dupC = null;
+              try { const d = await bhFetchAll("query/ClientCorporation", { where: "name='" + newClientName.replace(/'/g, "''") + "'", fields: "id,name,status", count: 1 }, 1); dupC = (d.data || [])[0]; } catch (e) { console.log("[Capture] client dup check failed:", e.message); }
+              if (dupC) throw new Error("\"" + dupC.name + "\" already exists in Bullhorn (#" + dupC.id + "). Pick it from the company matches instead of creating a new one.");
+            }
             const body = { name: newClientName, status: hasRole[key] ? "Active" : "Prospect", isDeleted: false };
             if (user) body.owner = { id: user.id };
             clientId = ok(await bhWrite("entity/ClientCorporation", body, "PUT"), "Client");
@@ -220,6 +227,14 @@ module.exports = function registerCapture(app, deps) {
         const personType = it.personType || "contact";
         if (!personId && it.newPerson && (it.newPerson.firstName || it.newPerson.lastName)) {
           const np = it.newPerson;
+          if (np.firstName && np.lastName && !it.forceCreate) {
+            // Live check against Bullhorn itself (not just the synced copy) so we never make a duplicate
+            const ent = personType === "candidate" ? "Candidate" : "ClientContact";
+            const q = "firstName:\"" + np.firstName.replace(/"/g, "") + "\" AND lastName:\"" + np.lastName.replace(/"/g, "") + "\" AND isDeleted:0";
+            let dup = null;
+            try { const d = await bhFetchAll("search/" + ent, { query: q, fields: "id,firstName,lastName" + (ent === "ClientContact" ? ",clientCorporation(name)" : ",occupation"), count: 5 }, 5); dup = (d.data || [])[0]; } catch (e) { console.log("[Capture] dup check failed:", e.message); }
+            if (dup) throw new Error(np.firstName + " " + np.lastName + " already exists in Bullhorn (#" + dup.id + (dup.clientCorporation ? ", " + dup.clientCorporation.name : "") + "). Pick that record instead of creating a new one.");
+          }
           const key = personType + ":" + norm(np.firstName + " " + np.lastName) + ":" + (clientId || "");
           if (createdContacts[key]) personId = createdContacts[key];
           else if (personType === "candidate") {

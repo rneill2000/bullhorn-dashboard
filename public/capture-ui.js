@@ -66,6 +66,7 @@ async function captureParse(){
         employmentType: it.employmentType||"Contract", numOpenings: it.numOpenings||1, startDate: it.startDate||"",
         title: it.title||"", status: it.status||"Identified", type: it.type||"New", description: it.description||"", nextStep: it.nextStep||"", estimatedStart: it.estimatedStart||"", dealValue: it.dealValue||"",
         matches: it.matches||{contacts:[],candidates:[],clients:[]},
+        needsChoice: !!it.needsChoice,
         dbMatching: r.dbMatching
       };
     });
@@ -116,6 +117,7 @@ function _capCard(it,i){
     h+='</div>';
     if(!it.personId){
       var alts=(it.personType==="candidate"?it.matches.candidates:it.matches.contacts)||[];
+      if(it.needsChoice) h+='<div class="cap-warn" style="margin-top:6px">More than one person in Bullhorn has this name \u2014 pick the right one below.</div>';
       if(alts.length){ h+='<div style="margin-top:6px;font-size:12px;color:#64748b">Possible matches:</div>'; alts.slice(0,4).forEach(function(m){ h+='<div style="margin-top:4px"><button class="btn-outline" style="padding:5px 9px;font-size:12px;text-align:left" onclick="_capPick('+i+','+m.id+',\''+esc(m.name+(m.sub?' \u2014 '+m.sub:'')).replace(/'/g,"\\'")+'\','+(m.clientId||'null')+',\''+esc(m.clientName||'').replace(/'/g,"\\'")+'\')">'+esc(m.name)+(m.sub?' <span style="color:#94a3b8">\u2014 '+esc(m.sub)+'</span>':'')+' <span style="color:#94a3b8">('+m.score+'%)</span></button></div>'; }); }
       h+='<div class="cap-lookup" style="margin-top:6px"><input class="cap-in" placeholder="Search Bullhorn by name\u2026" oninput="_capLookup(this,'+i+',\'person\')"><div class="cap-dd" id="cap-dd-p-'+i+'" style="display:none"></div></div>';
       h+='<div style="margin-top:8px;font-size:12px;color:#64748b">Or create new '+(it.personType==="candidate"?'candidate':'contact')+':</div>';
