@@ -13,7 +13,7 @@ module.exports = function registerCapture(app, deps) {
   const OPP_STATUSES = ["Identified", "Qualifying", "Negotiating", "Legal Review"];
 
   // ── Claude extraction ────────────────────────────────────────────────
-  async function aiParse(text, today) {
+  async function aiParse(text, today, clarifications) {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not set on the server");
     const prompt = [
       "You are converting a recruiter/BD leader's raw notes into Bullhorn CRM entries for Anura Connect, a boutique Epic healthcare IT consulting/staffing firm.",
@@ -52,11 +52,15 @@ module.exports = function registerCapture(app, deps) {
       "  \"nextStep\":\"next step or null\",",
       "  \"estimatedStart\":\"YYYY-MM-DD or null\",",
       "  \"dealValue\":number or null}",
-      "]}",
+      "],",
+      " \"questions\":[{\"itemIndex\":0,\"question\":\"...\"}]",
+      "}",
+      "",
+      "QUESTIONS: for anything you had to guess, add a short question aimed at the author (max one per item, only when truly unclear): a person with no last name, unclear whether someone is a client contact or a candidate, an organization you could not identify, a rate that could be bill or pay, a date with no year, a next step with no owner, or text that could belong to two people. Do not ask about things the notes make clear.",
       "",
       "Rules: personType is 'contact' for anyone who works at a client/prospect/hospital/vendor, 'candidate' for consultants/job seekers. Anura Connect's own team (Rachel Neill, Peter Oppermann, Ben Oppermann, Ben Gray, Dan, Suzie Hall, Melissa Alfiero) are colleagues — never make them the person; a conversation with a colleague about a client becomes a note on that client (person null unless a client contact is named). If only a first name is given, leave lastName empty. Never merge two people into one item. If the text mentions no person at all for a fact, attach it as a note to the company with person null.",
       "",
-      "NOTES:\n" + text,
+      "NOTES:\n" + text + (clarifications ? "\n\nCLARIFICATIONS FROM THE AUTHOR (these override anything ambiguous above):\n" + clarifications : ""),
     ].join("\n");
 
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -72,6 +76,7 @@ module.exports = function registerCapture(app, deps) {
     if (!m) throw new Error("Claude did not return JSON");
     const parsed = JSON.parse(m[0]);
     if (!parsed.items || !Array.isArray(parsed.items)) throw new Error("Claude returned no items");
+    (parsed.questions || []).forEach(function (q) { const it = parsed.items[q.itemIndex]; if (it && q.question) (it.aiQuestions = it.aiQuestions || []).push(String(q.question)); });
     return parsed.items;
   }
 
@@ -143,6 +148,28 @@ module.exports = function registerCapture(app, deps) {
     else if (bestK && bestK.score >= 80 && !tie(out.matches.candidates)) { out.suggested.personType = "candidate"; out.suggested.personId = bestK.id; }
     if (!out.suggested.personId && ((bestC && bestC.score >= 80) || (bestK && bestK.score >= 80))) out.needsChoice = true;
     if (!out.suggested.clientId && bestCl && bestCl.score >= 70) out.suggested.clientId = bestCl.id;
+
+    // Questions the tool needs answered before it will write anything
+    const qs = [];
+    const personName = ((first || "") + " " + (last || "")).trim();
+    const isPersonKind = it.kind === "note" || (it.person && (first || last));
+    if (isPersonKind && personName && !out.suggested.personId) {
+      const cands = out.matches.contacts.concat(out.matches.candidates).filter(function (m) { return m.score >= 50; }).slice(0, 4);
+      if (out.needsChoice) qs.push({ id: "who", text: "Several people in Bullhorn are named " + personName + ". Which one is this?", options: cands.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), personType: m.kind, personId: m.id, clientId: m.clientId || null }; }).concat([{ label: "None of these — create new", create: true }]) });
+      else if (cands.length) qs.push({ id: "who", text: "Is " + personName + " one of these existing records?", options: cands.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), personType: m.kind, personId: m.id, clientId: m.clientId || null }; }).concat([{ label: "No — create new " + (it.personType === "candidate" ? "candidate" : "contact"), create: true }]) });
+      else if (!last) qs.push({ id: "lastname", text: "What is " + first + "'s last name? (Needed to create or find the record.)", free: true });
+      else qs.push({ id: "new", text: personName + " isn't in Bullhorn. Create a new " + (it.personType === "candidate" ? "candidate" : "client contact") + "?", options: [{ label: "Yes, create as " + (it.personType === "candidate" ? "candidate" : "contact"), create: true }, { label: "No — it's a " + (it.personType === "candidate" ? "client contact" : "candidate"), flipType: true }, { label: "Skip this entry", skip: true }] });
+    }
+    if (isPersonKind && personName && it.personType === "unknown" && !out.suggested.personId) qs.push({ id: "type", text: "Is " + personName + " a client contact or a candidate?", options: [{ label: "Client contact", personType: "contact" }, { label: "Candidate", personType: "candidate" }] });
+    const needsCompany = (it.kind !== "note") || (it.personType !== "candidate" && !out.suggested.personId);
+    if (needsCompany && it.company && !out.suggested.clientId) {
+      const cl = out.matches.clients.slice(0, 4);
+      if (cl.length) qs.push({ id: "company", text: "Is \"" + it.company + "\" one of these existing clients?", options: cl.map(function (m) { return { label: m.name + (m.sub ? " (" + m.sub + ")" : ""), clientId: m.id }; }).concat([{ label: "No — create \"" + it.company + "\" as a new client", createClient: true }]) });
+      else qs.push({ id: "company", text: "\"" + it.company + "\" isn't in Bullhorn. Create it as a new client?", options: [{ label: "Yes, create it", createClient: true }, { label: "Skip this entry", skip: true }] });
+    }
+    if (needsCompany && !it.company && !out.suggested.clientId && (it.kind !== "note" || (personName && it.personType !== "candidate" && !out.suggested.personId))) qs.push({ id: "company", text: "Which company is " + (personName || "this") + " with?", free: true });
+    (it.aiQuestions || []).forEach(function (t, n) { qs.push({ id: "ai" + n, text: t, free: true }); });
+    out.questions = qs;
     return out;
   }
 
@@ -151,7 +178,7 @@ module.exports = function registerCapture(app, deps) {
       const text = (req.body && req.body.text || "").trim();
       if (text.length < 10) return res.status(400).json({ error: "Paste some notes first" });
       const today = new Date().toISOString().slice(0, 10);
-      const items = await aiParse(text, today);
+      const items = await aiParse(text, today, (req.body.clarifications || "").trim());
       const enriched = [];
       for (const it of items) enriched.push(await enrichItem(it));
       res.json({ items: enriched, dbMatching: !!db.ready });
@@ -203,7 +230,7 @@ module.exports = function registerCapture(app, deps) {
           const key = norm(newClientName);
           if (createdClients[key]) clientId = createdClients[key];
           else {
-            if (!it.forceCreate) {
+            if (!it.forceCreateClient) {
               let dupC = null;
               try { const d = await bhFetchAll("query/ClientCorporation", { where: "name='" + newClientName.replace(/'/g, "''") + "'", fields: "id,name,status", count: 1 }, 1); dupC = (d.data || [])[0]; } catch (e) { console.log("[Capture] client dup check failed:", e.message); }
               if (dupC) throw new Error("\"" + dupC.name + "\" already exists in Bullhorn (#" + dupC.id + "). Pick it from the company matches instead of creating a new one.");

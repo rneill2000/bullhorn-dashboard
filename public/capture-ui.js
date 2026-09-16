@@ -1,7 +1,7 @@
 /* Quick Capture UI — shared by the desktop dashboard (index.html) and the phone version (m.html).
    Expects globals: esc, apiFetch, showToast, loadPage. */
 /* ═══ QUICK CAPTURE ═══ */
-var _cap = { items: null, results: null, busy: false };
+var _cap = { items: null, results: null, busy: false, text: "", answers: {} };
 function _capDraftKey(){ return "capture_draft"; }
 function renderCapture(){
   var draft = ""; try{ draft = localStorage.getItem(_capDraftKey()) || ""; }catch(e){}
@@ -24,6 +24,14 @@ function renderCapture(){
     +'.cap-ok{font-size:13px;color:#166534;margin-top:8px}'
     +'.cap-actions{position:sticky;bottom:0;background:linear-gradient(transparent,#f8fafc 30%);padding:14px 0 6px;display:flex;gap:8px;flex-wrap:wrap}'
     +'.cap-actions .btn-primary,.cap-actions .btn-outline{padding:12px 18px;font-size:15px}'
+    +'.cap-q{background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px 16px;margin:14px 0}'
+    +'.cap-q h3{margin:0 0 4px;font-size:15px;color:#92400e}.cap-q .sub{font-size:13px;color:#b45309;margin-bottom:10px}'
+    +'.cap-qi{background:#fff;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;margin-top:8px}'
+    +'.cap-qi.done{opacity:.55}'
+    +'.cap-qi .qt{font-size:14px;font-weight:600;margin-bottom:8px}.cap-qi .qe{font-size:12px;color:#64748b;margin-bottom:6px}'
+    +'.cap-qi .opts{display:flex;flex-wrap:wrap;gap:6px}.cap-qi .opts button{padding:8px 12px;border-radius:999px;border:1.5px solid #e2e8f0;background:#fff;font-size:13px;font-family:inherit;text-align:left}'
+    +'.cap-qi .opts button.on{background:#0E2E47;border-color:#0E2E47;color:#fff}'
+    +'.cap-qi input{width:100%;padding:9px 11px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;font-family:inherit;box-sizing:border-box}'
     +'.cap-lookup{position:relative}'
     +'.cap-dd{position:absolute;left:0;right:0;top:100%;z-index:20;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow:auto}'
     +'.cap-dd div{padding:8px 10px;font-size:13px;cursor:pointer;border-bottom:1px solid #f1f5f9}.cap-dd div:hover{background:#f1f5f9}'
@@ -38,14 +46,15 @@ function renderCapture(){
   return h;
 }
 function _capSaveDraft(){ try{ localStorage.setItem(_capDraftKey(), document.getElementById("cap-text").value); }catch(e){} }
-function captureClear(){ if(_cap.items && !confirm("Clear the notes and parsed items?")) return; _cap.items=null; _cap.results=null; try{localStorage.removeItem(_capDraftKey());}catch(e){} loadPage(); }
+function captureClear(){ if(_cap.items && !confirm("Clear the notes and parsed items?")) return; _cap.items=null; _cap.results=null; _cap.answers={}; try{localStorage.removeItem(_capDraftKey());}catch(e){} loadPage(); }
 async function captureParse(){
   var text = document.getElementById("cap-text").value.trim();
   if(text.length<10){ showToast("Paste some notes first","error"); return; }
   var btn=document.getElementById("cap-parse-btn"); btn.disabled=true; btn.textContent="Reading your notes\u2026";
   document.getElementById("cap-items").innerHTML='<div style="padding:24px;text-align:center;color:#64748b"><span class="loading-spinner"></span> Splitting into entries and matching against Bullhorn\u2026</div>';
   try{
-    var r = await apiFetch("capture/parse",{method:"POST",body:{text:text}});
+    _cap.text = text;
+    var r = await apiFetch("capture/parse",{method:"POST",body:{text:text, clarifications:_capClarifications()}});
     _cap.items = (r.items||[]).map(function(it){
       var s = it.suggested||{};
       var p = it.person||{};
@@ -67,6 +76,7 @@ async function captureParse(){
         title: it.title||"", status: it.status||"Identified", type: it.type||"New", description: it.description||"", nextStep: it.nextStep||"", estimatedStart: it.estimatedStart||"", dealValue: it.dealValue||"",
         matches: it.matches||{contacts:[],candidates:[],clients:[]},
         needsChoice: !!it.needsChoice,
+        questions: (it.questions||[]).map(function(q){ q.answered=false; return q; }),
         dbMatching: r.dbMatching
       };
     });
@@ -92,9 +102,47 @@ function _capRenderItems(){
   var n=_cap.items.filter(function(i){return !i.skip;}).length;
   h+='<div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 10px"><div style="font-size:15px;font-weight:700;color:#0E2E47">'+_cap.items.length+' entr'+(_cap.items.length===1?'y':'ies')+' found</div>'
     +(!_cap.items[0].dbMatching?'<span class="cap-warn" style="margin:0">Local database is offline \u2014 no automatic matching. Use the search boxes to pick people/companies.</span>':'')+'</div>';
+  var open=_capOpenQuestions();
+  if(open.length){
+    h+='<div class="cap-q"><h3>Before I write anything \u2014 '+open.length+' question'+(open.length===1?'':'s')+'</h3><div class="sub">I wasn\'t sure about these. Tap an answer or type one; free-text answers re-run the parse with your clarification.</div>';
+    _cap.items.forEach(function(it,i){ (it.questions||[]).forEach(function(q,qi){ if(it.skip) return; h+=_capQuestion(it,i,q,qi); }); });
+    if(_capHasFreeAnswers()) h+='<div style="margin-top:10px"><button class="btn-primary" onclick="captureParse()">Apply answers &amp; re-check</button></div>';
+    h+='</div>';
+  }
   _cap.items.forEach(function(it,i){ h+=_capCard(it,i); });
-  h+='<div class="cap-actions"><button class="btn-primary" id="cap-commit-btn" onclick="captureCommit()">&#10003; Write '+n+' to Bullhorn</button><button class="btn-outline" onclick="_capScrollTop()">&#8593; Edit notes</button></div>';
+  h+='<div class="cap-actions"><button class="btn-primary" id="cap-commit-btn" onclick="captureCommit()" '+(open.length?'disabled title="Answer the questions above first"':'')+'>'+(open.length?'Answer '+open.length+' question'+(open.length===1?'':'s')+' to continue':'&#10003; Write '+n+' to Bullhorn')+'</button><button class="btn-outline" onclick="_capScrollTop()">&#8593; Edit notes</button></div>';
   document.getElementById("cap-items").innerHTML=h;
+}
+function _capOpenQuestions(){ var o=[]; (_cap.items||[]).forEach(function(it,i){ if(it.skip) return; (it.questions||[]).forEach(function(q){ if(!q.answered) o.push(q); }); }); return o; }
+function _capHasFreeAnswers(){ return Object.keys(_cap.answers).length>0; }
+function _capClarifications(){ return Object.keys(_cap.answers).map(function(k){ return "- Q: "+_cap.answers[k].q+"\n  A: "+_cap.answers[k].a; }).join("\n"); }
+function _capQuestion(it,i,q,qi){
+  var who=it.kind==="note"?"Note":(it.kind==="job"?"Job":"Opportunity"); var label=(it.newPerson&&(it.newPerson.firstName||it.newPerson.lastName))?(it.newPerson.firstName+" "+it.newPerson.lastName).trim():(it.title||it.newClient.name||"");
+  var h='<div class="cap-qi'+(q.answered?' done':'')+'"><div class="qe">Entry '+(i+1)+' \u2014 '+who+(label?': '+esc(label):'')+'</div><div class="qt">'+esc(q.text)+'</div>';
+  if(q.options){ h+='<div class="opts">'+q.options.map(function(o,oi){ return '<button class="'+(q.picked===oi?'on':'')+'" onclick="_capAnswer('+i+','+qi+','+oi+')">'+esc(o.label)+'</button>'; }).join('')+'</div>'; }
+  else { var key=i+":"+qi; var v=_cap.answers[key]?_cap.answers[key].a:""; h+='<input placeholder="Type your answer" value="'+esc(v)+'" onchange="_capAnswerFree('+i+','+qi+',this.value)">'; }
+  h+='</div>'; return h;
+}
+function _capAnswer(i,qi,oi){
+  var it=_cap.items[i], q=it.questions[qi], o=q.options[oi]; q.picked=oi; q.answered=true;
+  if(o.skip){ it.skip=true; }
+  if(o.personType){ it.personType=o.personType; }
+  if(o.personId){ it.personId=o.personId; it.personLabel=o.label; if(o.clientId&&!it.clientId){ it.clientId=o.clientId; it.clientLabel=_capClientLabel(it,o.clientId); } }
+  if(o.create){ it.personId=null; it.personLabel=""; it.forceCreate=true; }
+  if(o.flipType){ it.personType=it.personType==="candidate"?"contact":"candidate"; it.personId=null; it.personLabel=""; }
+  if(o.clientId&&!o.personId){ it.clientId=o.clientId; it.clientLabel=o.label.replace(/ \(.*\)$/,""); }
+  if(o.createClient){ it.clientId=null; it.forceCreateClient=true; }
+  // a company chosen for one entry applies to the other entries with the same company name
+  if(o.clientId){ var nm=(it.newClient.name||"").toLowerCase(); _cap.items.forEach(function(x){ if(x!==it && !x.clientId && (x.newClient.name||"").toLowerCase()===nm && nm){ x.clientId=o.clientId; x.clientLabel=it.clientLabel; (x.questions||[]).forEach(function(qq){ if(qq.id==="company") qq.answered=true; }); } }); }
+  _capRenderItems();
+}
+function _capAnswerFree(i,qi,val){
+  var it=_cap.items[i], q=it.questions[qi]; val=(val||"").trim(); var key=i+":"+qi;
+  if(!val){ delete _cap.answers[key]; q.answered=false; _capRenderItems(); return; }
+  _cap.answers[key]={q:q.text,a:val}; q.answered=true;
+  if(q.id==="lastname"){ it.newPerson.lastName=val; }
+  if(q.id==="company"){ it.newClient.name=val; }
+  _capRenderItems();
 }
 function _capScrollTop(){ document.getElementById("cap-text").scrollIntoView({behavior:"smooth"}); }
 function _capCard(it,i){
@@ -204,7 +252,7 @@ async function captureCommit(){
     return {
       kind:it.kind, skip: it.skip||!!done,
       personType:it.personType, personId:it.personId, newPerson: it.personId?null:it.newPerson,
-      clientId:it.clientId, newClient: it.clientId?null:it.newClient,
+      clientId:it.clientId, newClient: it.clientId?null:it.newClient, forceCreate: !!it.forceCreate, forceCreateClient: !!it.forceCreateClient,
       action:it.action, comments:it.comments, followUp:it.followUp,
       title:it.title, status:it.status, type:it.type, description:it.description, nextStep:it.nextStep, estimatedStart:it.estimatedStart, dealValue:it.dealValue,
       employmentType:it.employmentType, numOpenings:it.numOpenings, startDate:it.startDate
