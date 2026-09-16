@@ -63,6 +63,7 @@ async function extractPdfText(buf) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(function (req, res, next) { reqContext.run({ user: getUser(req) }, next); });
 app.use(express.urlencoded({ extended: true }));
 
 /* ═══ PROCESS STABILITY ═══ */
@@ -182,6 +183,11 @@ app.get("/auth/callback", async (req, res) => {
       username: user.username || "",
       name: ((user.firstName || "") + " " + (user.lastName || "")).trim(),
       loggedInAt: Date.now(),
+      // Per-user Bullhorn REST session — writes go through this so Bullhorn records who entered it
+      bhRestToken: loginData.BhRestToken,
+      restUrl: loginData.restUrl,
+      refreshToken: tokenData.refresh_token || null,
+      restExpiresAt: Date.now() + 55 * 60 * 1000,
     };
 
     console.log(`[SSO] User logged in: ${userSessions[sessionToken].name} (ID: ${user.id})`);
@@ -341,7 +347,55 @@ async function bhFetch(endpoint, params = {}, _retried) {
  * @param {object} body - JSON body to send
  * @param {string} method - "PUT" (create) or "POST" (update) per Bullhorn convention
  */
+/* ═══ WRITE-AS-USER ═══
+ * Every write goes through the signed-in user's own Bullhorn session when there is one,
+ * so Bullhorn's created-by / modified-by audit shows the real person. Reads stay on the
+ * service account. Falls back to the service account if the user session can't be used. */
+const { AsyncLocalStorage } = require("async_hooks");
+const reqContext = new AsyncLocalStorage();
+
+async function refreshUserRestSession(u) {
+  if (!u || !u.refreshToken) return false;
+  try {
+    const tokenParams = new URLSearchParams({ grant_type: "refresh_token", refresh_token: u.refreshToken, client_id: BH.clientId, client_secret: BH.clientSecret });
+    const tokenRes = await fetch(BH.authUrl + "/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: tokenParams.toString() });
+    if (!tokenRes.ok) { console.log("[WriteAs] refresh failed for", u.name, tokenRes.status); u.refreshToken = null; return false; }
+    const tokenData = await tokenRes.json();
+    const loginRes = await fetch(BH.restLoginUrl + "?" + new URLSearchParams({ version: "*", access_token: tokenData.access_token, ttl: "60" }), { method: "POST" });
+    if (!loginRes.ok) { console.log("[WriteAs] REST re-login failed for", u.name, loginRes.status); return false; }
+    const loginData = await loginRes.json();
+    u.bhRestToken = loginData.BhRestToken; u.restUrl = loginData.restUrl;
+    u.refreshToken = tokenData.refresh_token || u.refreshToken;
+    u.restExpiresAt = Date.now() + 55 * 60 * 1000;
+    return true;
+  } catch (e) { console.log("[WriteAs] refresh error:", e.message); return false; }
+}
+
+async function userRestSession(u) {
+  if (!u || !u.restUrl) return null;
+  if (u.bhRestToken && Date.now() < (u.restExpiresAt || 0)) return u;
+  return (await refreshUserRestSession(u)) ? u : null;
+}
+
 async function bhWrite(endpoint, body, method = "PUT") {
+  const ctx = reqContext.getStore();
+  const u = ctx && ctx.user;
+  if (u) {
+    let us = await userRestSession(u);
+    for (let attempt = 0; us && attempt < 2; attempt++) {
+      const res = await fetch(us.restUrl + endpoint + "?BhRestToken=" + us.bhRestToken, { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+      if (res.ok) return res.json();
+      const errText = await res.text();
+      if (res.status === 401 && attempt === 0) { us = (await refreshUserRestSession(u)) ? u : null; continue; }
+      if (res.status === 401 || res.status === 403) { console.log("[WriteAs] " + u.name + " not permitted (" + res.status + ") on " + method + " " + endpoint + " — falling back to service account"); break; }
+      throw new Error("Bullhorn API " + method + " error (" + res.status + "): " + errText);
+    }
+    if (!us) console.log("[WriteAs] no usable session for " + u.name + " — falling back to service account for " + method + " " + endpoint);
+  }
+  return bhWriteAsService(endpoint, body, method);
+}
+
+async function bhWriteAsService(endpoint, body, method = "PUT") {
   const s = await authenticate();
   const url = `${s.restUrl}${endpoint}?BhRestToken=${s.bhRestToken}`;
   const res = await fetch(url, {
