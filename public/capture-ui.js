@@ -105,7 +105,8 @@ function _capRenderItems(){
   var open=_capOpenQuestions();
   if(open.length){
     h+='<div class="cap-q"><h3>Before I write anything \u2014 '+open.length+' question'+(open.length===1?'':'s')+'</h3><div class="sub">I wasn\'t sure about these. Tap an answer or type one; free-text answers re-run the parse with your clarification.</div>';
-    _cap.items.forEach(function(it,i){ (it.questions||[]).forEach(function(q,qi){ if(it.skip) return; h+=_capQuestion(it,i,q,qi); }); });
+    var seen={};
+    _cap.items.forEach(function(it,i){ (it.questions||[]).forEach(function(q,qi){ if(it.skip) return; var k=_capQKey(it,q); if(k){ if(seen[k]) return; seen[k]=1; } h+=_capQuestion(it,i,q,qi); }); });
     if(_capHasFreeAnswers()) h+='<div style="margin-top:10px"><button class="btn-primary" onclick="captureParse()">Apply answers &amp; re-check</button></div>';
     h+='</div>';
   }
@@ -113,7 +114,8 @@ function _capRenderItems(){
   h+='<div class="cap-actions"><button class="btn-primary" id="cap-commit-btn" onclick="captureCommit()" '+(open.length?'disabled title="Answer the questions above first"':'')+'>'+(open.length?'Answer '+open.length+' question'+(open.length===1?'':'s')+' to continue':'&#10003; Write '+n+' to Bullhorn')+'</button><button class="btn-outline" onclick="_capScrollTop()">&#8593; Edit notes</button></div>';
   document.getElementById("cap-items").innerHTML=h;
 }
-function _capOpenQuestions(){ var o=[]; (_cap.items||[]).forEach(function(it,i){ if(it.skip) return; (it.questions||[]).forEach(function(q){ if(!q.answered) o.push(q); }); }); return o; }
+function _capQKey(it,q){ if(["who","new","type","lastname"].indexOf(q.id)<0) return null; var nm=((it.newPerson.firstName||"")+" "+(it.newPerson.lastName||"")).trim().toLowerCase(); return nm?q.id+":"+nm:null; }
+function _capOpenQuestions(){ var o=[],seen={}; (_cap.items||[]).forEach(function(it,i){ if(it.skip) return; (it.questions||[]).forEach(function(q){ if(q.answered) return; var k=_capQKey(it,q); if(k){ if(seen[k]) return; seen[k]=1; } o.push(q); }); }); return o; }
 function _capHasFreeAnswers(){ return Object.keys(_cap.answers).length>0; }
 function _capClarifications(){ return Object.keys(_cap.answers).map(function(k){ return "- Q: "+_cap.answers[k].q+"\n  A: "+_cap.answers[k].a; }).join("\n"); }
 function _capQuestion(it,i,q,qi){
@@ -132,6 +134,9 @@ function _capAnswer(i,qi,oi){
   if(o.flipType){ it.personType=it.personType==="candidate"?"contact":"candidate"; it.personId=null; it.personLabel=""; }
   if(o.clientId&&!o.personId){ it.clientId=o.clientId; it.clientLabel=o.label.replace(/ \(.*\)$/,""); }
   if(o.createClient){ it.clientId=null; it.forceCreateClient=true; }
+  // the same answer applies to every entry about this person
+  var pk=_capQKey(it,q);
+  if(pk){ _cap.items.forEach(function(x){ if(x===it) return; (x.questions||[]).forEach(function(qq){ if(_capQKey(x,qq)===pk && !qq.answered){ qq.answered=true; qq.picked=oi; if(o.skip) x.skip=true; if(o.personType) x.personType=o.personType; if(o.personId){ x.personId=o.personId; x.personLabel=o.label; if(o.clientId&&!x.clientId){ x.clientId=o.clientId; x.clientLabel=_capClientLabel(x,o.clientId); } } if(o.create){ x.personId=null; x.personLabel=""; x.forceCreate=true; } if(o.flipType){ x.personType=x.personType==="candidate"?"contact":"candidate"; x.personId=null; x.personLabel=""; } } }); }); }
   // a company chosen for one entry applies to the other entries with the same company name
   if(o.clientId){ var nm=(it.newClient.name||"").toLowerCase(); _cap.items.forEach(function(x){ if(x!==it && !x.clientId && (x.newClient.name||"").toLowerCase()===nm && nm){ x.clientId=o.clientId; x.clientLabel=it.clientLabel; (x.questions||[]).forEach(function(qq){ if(qq.id==="company") qq.answered=true; }); } }); }
   _capRenderItems();
@@ -140,7 +145,7 @@ function _capAnswerFree(i,qi,val){
   var it=_cap.items[i], q=it.questions[qi]; val=(val||"").trim(); var key=i+":"+qi;
   if(!val){ delete _cap.answers[key]; q.answered=false; _capRenderItems(); return; }
   _cap.answers[key]={q:q.text,a:val}; q.answered=true;
-  if(q.id==="lastname"){ it.newPerson.lastName=val; }
+  if(q.id==="lastname"){ var fn=(it.newPerson.firstName||"").toLowerCase(); _cap.items.forEach(function(x){ if((x.newPerson.firstName||"").toLowerCase()===fn && !x.newPerson.lastName){ x.newPerson.lastName=val; (x.questions||[]).forEach(function(qq){ if(qq.id==="lastname") qq.answered=true; }); } }); }
   if(q.id==="company"){ it.newClient.name=val; }
   _capRenderItems();
 }

@@ -56,7 +56,7 @@ module.exports = function registerCapture(app, deps) {
       " \"questions\":[{\"itemIndex\":0,\"question\":\"...\"}]",
       "}",
       "",
-      "QUESTIONS: for anything you had to guess, add a short question aimed at the author (max one per item, only when truly unclear): a person with no last name, unclear whether someone is a client contact or a candidate, an organization you could not identify, a rate that could be bill or pay, a date with no year, a next step with no owner, or text that could belong to two people. Do not ask about things the notes make clear.",
+      "QUESTIONS: for facts you had to guess, add a short question aimed at the author (max one per item, only when truly unclear): a rate that could be bill or pay, a date with no year, a next step with no owner, text that could belong to two people, or a role that could be contract or perm. Never ask who a person is, for a last name, or whether someone is a contact or candidate — matching against Bullhorn is handled separately. Do not ask about things the notes make clear.",
       "",
       "Rules: personType is 'contact' for anyone who works at a client/prospect/hospital/vendor, 'candidate' for consultants/job seekers. Anura Connect's own team (Rachel Neill, Peter Oppermann, Ben Oppermann, Ben Gray, Dan, Suzie Hall, Melissa Alfiero) are colleagues — never make them the person; a conversation with a colleague about a client becomes a note on that client (person null unless a client contact is named). If only a first name is given, leave lastName empty. Never merge two people into one item. If the text mentions no person at all for a fact, attach it as a note to the company with person null.",
       "",
@@ -154,7 +154,7 @@ module.exports = function registerCapture(app, deps) {
     const personName = ((first || "") + " " + (last || "")).trim();
     const isPersonKind = it.kind === "note" || (it.person && (first || last));
     if (isPersonKind && personName && !out.suggested.personId) {
-      const cands = out.matches.contacts.concat(out.matches.candidates).filter(function (m) { return m.score >= 50; }).slice(0, 4);
+      const cands = out.matches.contacts.concat(out.matches.candidates).filter(function (m) { return m.score >= 50 && !(it.company && m.kind === "contact" && m.clientName && scoreName(it.company, m.clientName) < 50); }).slice(0, 4);
       if (out.needsChoice) qs.push({ id: "who", text: "Several people in Bullhorn are named " + personName + ". Which one is this?", options: cands.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), personType: m.kind, personId: m.id, clientId: m.clientId || null }; }).concat([{ label: "None of these — create new", create: true }]) });
       else if (cands.length) qs.push({ id: "who", text: "Is " + personName + " one of these existing records?", options: cands.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), personType: m.kind, personId: m.id, clientId: m.clientId || null }; }).concat([{ label: "No — create new " + (it.personType === "candidate" ? "candidate" : "contact"), create: true }]) });
       else if (!last) qs.push({ id: "lastname", text: "What is " + first + "'s last name? (Needed to create or find the record.)", free: true });
