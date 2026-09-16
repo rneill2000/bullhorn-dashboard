@@ -9,7 +9,13 @@
 module.exports = function registerCapture(app, deps) {
   const { db, bhWrite, bhFetchAll, getUser } = deps;
 
-  const NOTE_ACTIONS = ["Meeting", "Phone Call", "Email", "Left Message", "Follow Up", "General Note", "Outreach", "Text"];
+  // Values below come from Anura's Bullhorn field configuration (meta=full) and what the team actually uses.
+  const NOTE_ACTIONS = ["Appointment", "Outbound Call", "Inbound Call", "Email", "Text Conversation", "Left Message", "Reached Out", "LinkedIn InMail", "Prescreen", "Reference"];
+  const CLIENT_STATUS_ACTIVE = "Active Account", CLIENT_STATUS_NEW = "Unqualified";
+  const DEPARTMENT_ID = 1000000; // "Anura Connect Inc." — the only department in use
+  const PURSUIT_SOURCES = ["Outbound", "Inbound", "Referral", "Event / conference", "Executive network", "Reactivation"];
+  const PREFERRED_ROLES = ["Analyst", "PM", "Trainer", "Manager", "Director (Rev Cycle)", "Director (Ancillary Apps)", "Director (Clinical)", "Director (Patient Access)"];
+  const YEARS_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7];
   const OPP_STATUSES = ["Identified", "Qualifying", "Negotiating", "Legal Review"];
 
   // ── Claude extraction ────────────────────────────────────────────────
@@ -27,10 +33,10 @@ module.exports = function registerCapture(app, deps) {
       "Return ONLY valid JSON, no prose, no markdown fences:",
       "{\"items\":[",
       " {\"kind\":\"note\",",
-      "  \"person\":{\"firstName\":\"\",\"lastName\":\"\",\"title\":\"\",\"email\":\"\",\"phone\":\"\"} or null,",
+      "  \"person\":{\"firstName\":\"\",\"lastName\":\"\",\"title\":\"\",\"email\":\"\",\"phone\":\"\",\"preferredRole\":one of " + JSON.stringify(PREFERRED_ROLES) + " or null (candidates only)} or null,",
       "  \"personType\":\"contact\"|\"candidate\"|\"unknown\",",
       "  \"company\":\"organization name or null\",",
-      "  \"action\":one of " + JSON.stringify(NOTE_ACTIONS) + ",",
+      "  \"action\":one of " + JSON.stringify(NOTE_ACTIONS) + " (in-person or video meeting = Appointment; a call the author made = Outbound Call; they called the author = Inbound Call),",
       "  \"comments\":\"the note text\",",
       "  \"followUp\":\"next step, or null\"},",
       " {\"kind\":\"job\",",
@@ -41,13 +47,16 @@ module.exports = function registerCapture(app, deps) {
       "  \"numOpenings\":number (default 1),",
       "  \"startDate\":\"YYYY-MM-DD or null\",",
       "  \"description\":\"the role as described, in the author's words, including rate/duration/remote details\",",
+      "  \"endDate\":\"YYYY-MM-DD or null (compute from start + duration if both are given)\",",
+      "  \"yearsRequired\":number or null,",
       "  \"nextStep\":\"next step or null\"},",
       " {\"kind\":\"opportunity\",",
       "  \"company\":\"organization name\",",
       "  \"person\":{...} or null (the contact this deal is with),",
       "  \"title\":\"<Company> MSA <year> for MSA/agreement deals, otherwise <Company> - <short deal name>\",",
       "  \"status\":one of " + JSON.stringify(OPP_STATUSES) + " (default Identified),",
-      "  \"type\":\"New\"|\"Renewal\",",
+      "  \"type\":\"New\"|\"Renewal\"|\"Amendment\",",
+      "  \"pursuitSource\":one of " + JSON.stringify(PURSUIT_SOURCES) + " or null (how this deal came about, if the notes say),",
       "  \"description\":\"what the deal is, in the author's words\",",
       "  \"nextStep\":\"next step or null\",",
       "  \"estimatedStart\":\"YYYY-MM-DD or null\",",
@@ -169,6 +178,15 @@ module.exports = function registerCapture(app, deps) {
       else qs.push({ id: "company", text: "\"" + it.company + "\" isn't in Bullhorn. Create it as a new client?", options: [{ label: "Yes, create it", createClient: true }, { label: "Skip this entry", skip: true }] });
     }
     if (needsCompany && !it.company && !out.suggested.clientId && (it.kind !== "note" || (personName && it.personType !== "candidate" && !out.suggested.personId))) qs.push({ id: "company", text: "Which company is " + (personName || "this") + " with?", free: true });
+    // Fields Bullhorn wants on a NEW record that the notes may not contain
+    const willCreatePerson = isPersonKind && personName && last && !out.suggested.personId;
+    if (willCreatePerson && !(p && p.email)) qs.push({ id: "email", text: "Email address for " + personName + "? (Bullhorn asks for one on every " + (it.personType === "candidate" ? "candidate" : "contact") + ")", free: true, options: [{ label: "Don't have it", none: true }] });
+    if (willCreatePerson && it.personType === "candidate" && !(p && p.preferredRole)) qs.push({ id: "prefrole", text: "Preferred role for " + personName + "?", options: PREFERRED_ROLES.map(function (r) { return { label: r, preferredRole: r }; }) });
+    if (it.kind === "job") {
+      if (!it.startDate) qs.push({ id: "start", text: "Start date for the " + (it.title || "role") + "?", free: true, options: [{ label: "ASAP (use today)", startToday: true }] });
+      if (it.yearsRequired == null) qs.push({ id: "years", text: "Minimum years of experience for the " + (it.title || "role") + "?", options: YEARS_OPTIONS.map(function (y) { return { label: y === 0 ? "Not specified (0)" : String(y), yearsRequired: y }; }) });
+    }
+    if (it.kind === "opportunity" && !it.pursuitSource) qs.push({ id: "pursuit", text: "How did the " + (it.company || "") + " opportunity come about?", options: PURSUIT_SOURCES.map(function (r) { return { label: r, pursuitSource: r }; }) });
     (it.aiQuestions || []).forEach(function (t, n) { qs.push({ id: "ai" + n, text: t, free: true }); });
     out.questions = qs;
     return out;
@@ -215,8 +233,8 @@ module.exports = function registerCapture(app, deps) {
     if (!items.length) return res.status(400).json({ error: "Nothing to commit" });
     const createdClients = {}, createdContacts = {};
     // Companies that have a role/opportunity in this batch get status Active, not Prospect
-    const hasRole = {};
-    items.forEach(function (x) { if ((x.kind === "opportunity" || x.kind === "job") && !x.skip) { if (x.clientId) hasRole["id:" + x.clientId] = true; if (x.newClient && x.newClient.name) hasRole[norm(x.newClient.name)] = true; } });
+    const hasRole = {}, hasOpp = {};
+    items.forEach(function (x) { if ((x.kind === "opportunity" || x.kind === "job") && !x.skip) { if (x.clientId) hasRole["id:" + x.clientId] = true; if (x.newClient && x.newClient.name) hasRole[norm(x.newClient.name)] = true; if (x.kind === "opportunity" && x.newClient && x.newClient.name) hasOpp[norm(x.newClient.name)] = true; } });
     const bumpedClients = {};
     const results = [];
     for (let i = 0; i < items.length; i++) {
@@ -236,7 +254,7 @@ module.exports = function registerCapture(app, deps) {
               try { const d = await bhFetchAll("query/ClientCorporation", { where: "name='" + newClientName.replace(/'/g, "''") + "'", fields: "id,name,status", count: 1 }, 1); dupC = (d.data || [])[0]; } catch (e) { console.log("[Capture] client dup check failed:", e.message); }
               if (dupC) throw new Error("\"" + dupC.name + "\" already exists in Bullhorn (#" + dupC.id + "). Pick it from the company matches instead of creating a new one.");
             }
-            const body = { name: newClientName, status: hasRole[key] ? "Active" : "Prospect", isDeleted: false };
+            const body = { name: newClientName, status: hasRole[key] ? CLIENT_STATUS_ACTIVE : CLIENT_STATUS_NEW, customText2: hasOpp[key] ? "MSA In Progress" : "No MSA", department: { id: DEPARTMENT_ID }, isDeleted: false };
             if (user) body.owner = { id: user.id };
             clientId = ok(await bhWrite("entity/ClientCorporation", body, "PUT"), "Client");
             createdClients[key] = clientId;
@@ -247,7 +265,7 @@ module.exports = function registerCapture(app, deps) {
           bumpedClients[clientId] = true;
           try {
             const cur = db.ready ? await db.getOne("SELECT status FROM clients WHERE id=$1", [clientId]) : null;
-            if (cur && cur.status === "Prospect") { await bhWrite("entity/ClientCorporation/" + clientId, { status: "Active" }, "POST"); r.clientStatus = "Prospect \u2192 Active"; try { await db.query("UPDATE clients SET status=$1 WHERE id=$2", ["Active", clientId]); } catch (e2) {} }
+            if (cur && ["Unqualified", "Proposal", "Prospect", "Active"].includes(cur.status)) { await bhWrite("entity/ClientCorporation/" + clientId, { status: CLIENT_STATUS_ACTIVE }, "POST"); r.clientStatus = cur.status + " \u2192 " + CLIENT_STATUS_ACTIVE; try { await db.query("UPDATE clients SET status=$1 WHERE id=$2", [CLIENT_STATUS_ACTIVE, clientId]); } catch (e2) {} }
           } catch (e) { console.log("[Capture] client status bump failed:", e.message); }
         }
         // 2. person
@@ -266,9 +284,9 @@ module.exports = function registerCapture(app, deps) {
           const key = personType + ":" + norm(np.firstName + " " + np.lastName) + ":" + (clientId || "");
           if (createdContacts[key]) personId = createdContacts[key];
           else if (personType === "candidate") {
-            const body = { firstName: np.firstName || "", lastName: np.lastName || "", name: ((np.firstName || "") + " " + (np.lastName || "")).trim(), status: "New Lead", isDeleted: false };
+            const body = { firstName: np.firstName || "", lastName: np.lastName || "", name: ((np.firstName || "") + " " + (np.lastName || "")).trim(), status: "Not Screened", customText3: [np.preferredRole || "Analyst"], isDeleted: false };
             if (np.email) body.email = np.email; if (np.phone) body.phone = np.phone; if (np.title) body.occupation = np.title;
-            if (user) body.owner = { id: user.id };
+            if (user) { body.owner = { id: user.id }; body.customText10 = user.name; }
             personId = ok(await bhWrite("entity/Candidate", body, "PUT"), "Candidate");
             createdContacts[key] = personId;
             r.created.push({ type: "candidate", id: personId, name: body.name });
@@ -312,9 +330,10 @@ module.exports = function registerCapture(app, deps) {
             if (c.data && c.data.length) { contactId = c.data[0].id; r.attachedTo = ((c.data[0].firstName || "") + " " + (c.data[0].lastName || "")).trim(); }
           }
           if (!contactId) throw new Error("Bullhorn requires a client contact on every job — add a person for this company");
-          const body = { title: title, clientCorporation: { id: clientId }, clientContact: { id: contactId }, status: "Accepting Candidates", employmentType: ["Contract", "Contract to Hire", "Direct Hire"].includes(it.employmentType) ? it.employmentType : "Contract", numOpenings: parseInt(it.numOpenings) || 1, isDeleted: false, isOpen: true };
-          if (it.description) body.description = it.description + (it.nextStep ? "\n\nNext step: " + it.nextStep : "");
-          if (it.startDate) { const t = Date.parse(it.startDate); if (!isNaN(t)) body.startDate = t; }
+          const body = { title: title, clientCorporation: { id: clientId }, clientContact: { id: contactId }, status: "Accepting Candidates", employmentType: ["Contract", "Contract to Hire", "Direct Hire", "Extension"].includes(it.employmentType) ? it.employmentType : "Contract", numOpenings: parseInt(it.numOpenings) || 1, type: 2, yearsRequired: YEARS_OPTIONS.includes(parseInt(it.yearsRequired)) ? parseInt(it.yearsRequired) : 3, isDeleted: false, isOpen: true };
+          body.description = (it.description || title) + (it.nextStep ? "\n\nNext step: " + it.nextStep : "");
+          const st = it.startDate ? Date.parse(it.startDate) : NaN; body.startDate = isNaN(st) ? Date.now() : st;
+          if (it.endDate) { const te = Date.parse(it.endDate); if (!isNaN(te)) body.dateEnd = te; }
           if (user) body.owner = { id: user.id };
           const jobId = ok(await bhWrite("entity/JobOrder", body, "PUT"), "Job");
           r.created.push({ type: "job", id: jobId, title: title });
@@ -323,8 +342,12 @@ module.exports = function registerCapture(app, deps) {
         if (it.kind === "opportunity") {
           if (!clientId) throw new Error("Opportunity needs a client — pick an existing one or enter a new company name");
           const title = (it.title || "").trim(); if (!title) throw new Error("Opportunity needs a title");
-          const body = { title: title, status: OPP_STATUSES.includes(it.status) ? it.status : "Identified", type: it.type === "Renewal" ? "Renewal" : "New", clientCorporation: { id: clientId }, isDeleted: false };
+          const body = { title: title, status: OPP_STATUSES.includes(it.status) ? it.status : "Identified", type: ["New", "Renewal", "Amendment"].includes(it.type) ? it.type : "New", clientCorporation: { id: clientId }, dealValue: Number(it.dealValue) || 0, branchCode: PURSUIT_SOURCES.includes(it.pursuitSource) ? it.pursuitSource : "Outbound", isDeleted: false };
           if (it.description) body.description = it.description;
+          if (!personId || personType !== "contact") {
+            const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id", orderBy: "-dateLastModified", count: 1 });
+            if (c.data && c.data.length) body.clientContact = { id: c.data[0].id };
+          }
           if (it.nextStep) body.customText1 = it.nextStep;
           if (it.dealValue) body.dealValue = Number(it.dealValue) || 0;
           if (it.estimatedStart) { const t = Date.parse(it.estimatedStart); if (!isNaN(t)) body.estimatedStartDate = t; }

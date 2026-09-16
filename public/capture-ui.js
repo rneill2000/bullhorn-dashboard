@@ -64,15 +64,15 @@ async function captureParse(){
         personType: s.personType || (it.personType==="candidate"?"candidate":"contact"),
         personId: s.personId||null,
         personLabel: s.personId ? _capMatchLabel(it, s) : "",
-        newPerson: { firstName:p.firstName||"", lastName:p.lastName||"", title:p.title||"", email:p.email||"", phone:p.phone||"" },
+        newPerson: { firstName:p.firstName||"", lastName:p.lastName||"", title:p.title||"", email:p.email||"", phone:p.phone||"", preferredRole:p.preferredRole||"" },
         hasPerson: !!(p.firstName||p.lastName),
         clientId: s.clientId||null,
         clientLabel: s.clientId ? _capClientLabel(it, s.clientId) : "",
         newClient: { name: it.company||"" },
-        action: it.action||"General Note",
+        action: it.action||"Outbound Call",
         comments: it.comments||"",
         followUp: it.followUp||"",
-        employmentType: it.employmentType||"Contract", numOpenings: it.numOpenings||1, startDate: it.startDate||"",
+        employmentType: it.employmentType||"Contract", numOpenings: it.numOpenings||1, startDate: it.startDate||"", endDate: it.endDate||"", yearsRequired: (it.yearsRequired==null?"":it.yearsRequired), pursuitSource: it.pursuitSource||"",
         title: it.title||"", status: it.status||"Identified", type: it.type||"New", description: it.description||"", nextStep: it.nextStep||"", estimatedStart: it.estimatedStart||"", dealValue: it.dealValue||"",
         matches: it.matches||{contacts:[],candidates:[],clients:[]},
         needsChoice: !!it.needsChoice,
@@ -122,7 +122,7 @@ function _capQuestion(it,i,q,qi){
   var who=it.kind==="note"?"Note":(it.kind==="job"?"Job":"Opportunity"); var label=(it.newPerson&&(it.newPerson.firstName||it.newPerson.lastName))?(it.newPerson.firstName+" "+it.newPerson.lastName).trim():(it.title||it.newClient.name||"");
   var h='<div class="cap-qi'+(q.answered?' done':'')+'"><div class="qe">Entry '+(i+1)+' \u2014 '+who+(label?': '+esc(label):'')+'</div><div class="qt">'+esc(q.text)+'</div>';
   if(q.options){ h+='<div class="opts">'+q.options.map(function(o,oi){ return '<button class="'+(q.picked===oi?'on':'')+'" onclick="_capAnswer('+i+','+qi+','+oi+')">'+esc(o.label)+'</button>'; }).join('')+'</div>'; }
-  else { var key=i+":"+qi; var v=_cap.answers[key]?_cap.answers[key].a:""; h+='<input placeholder="Type your answer" value="'+esc(v)+'" onchange="_capAnswerFree('+i+','+qi+',this.value)">'; }
+  if(q.free){ var key=i+":"+qi; var v=_cap.answers[key]?_cap.answers[key].a:""; h+='<input style="margin-top:'+(q.options?'8px':'0')+'" placeholder="'+(q.options?'Or type it here':'Type your answer')+'" value="'+esc(v)+'" onchange="_capAnswerFree('+i+','+qi+',this.value)">'; }
   h+='</div>'; return h;
 }
 function _capAnswer(i,qi,oi){
@@ -134,6 +134,11 @@ function _capAnswer(i,qi,oi){
   if(o.flipType){ it.personType=it.personType==="candidate"?"contact":"candidate"; it.personId=null; it.personLabel=""; }
   if(o.clientId&&!o.personId){ it.clientId=o.clientId; it.clientLabel=o.label.replace(/ \(.*\)$/,""); }
   if(o.createClient){ it.clientId=null; it.forceCreateClient=true; }
+  if(o.none){ /* no email — proceed without one */ }
+  if(o.preferredRole){ it.newPerson.preferredRole=o.preferredRole; }
+  if(o.startToday){ it.startDate=new Date().toISOString().slice(0,10); }
+  if(o.yearsRequired!=null){ it.yearsRequired=o.yearsRequired; }
+  if(o.pursuitSource){ it.pursuitSource=o.pursuitSource; }
   // the same answer applies to every entry about this person
   var pk=_capQKey(it,q);
   if(pk){ _cap.items.forEach(function(x){ if(x===it) return; (x.questions||[]).forEach(function(qq){ if(_capQKey(x,qq)===pk && !qq.answered){ qq.answered=true; qq.picked=oi; if(o.skip) x.skip=true; if(o.personType) x.personType=o.personType; if(o.personId){ x.personId=o.personId; x.personLabel=o.label; if(o.clientId&&!x.clientId){ x.clientId=o.clientId; x.clientLabel=_capClientLabel(x,o.clientId); } } if(o.create){ x.personId=null; x.personLabel=""; x.forceCreate=true; } if(o.flipType){ x.personType=x.personType==="candidate"?"contact":"candidate"; x.personId=null; x.personLabel=""; } } }); }); }
@@ -144,7 +149,11 @@ function _capAnswer(i,qi,oi){
 function _capAnswerFree(i,qi,val){
   var it=_cap.items[i], q=it.questions[qi]; val=(val||"").trim(); var key=i+":"+qi;
   if(!val){ delete _cap.answers[key]; q.answered=false; _capRenderItems(); return; }
-  _cap.answers[key]={q:q.text,a:val}; q.answered=true;
+  q.answered=true;
+  var direct=false;
+  if(q.id==="email"){ it.newPerson.email=val; direct=true; }
+  if(q.id==="start"){ var d=new Date(val); if(!isNaN(d)){ it.startDate=d.toISOString().slice(0,10); direct=true; } }
+  if(!direct) _cap.answers[key]={q:q.text,a:val}; else delete _cap.answers[key];
   if(q.id==="lastname"){ var fn=(it.newPerson.firstName||"").toLowerCase(); _cap.items.forEach(function(x){ if((x.newPerson.firstName||"").toLowerCase()===fn && !x.newPerson.lastName){ x.newPerson.lastName=val; (x.questions||[]).forEach(function(qq){ if(qq.id==="lastname") qq.answered=true; }); } }); }
   if(q.id==="company"){ it.newClient.name=val; }
   _capRenderItems();
@@ -187,25 +196,27 @@ function _capCard(it,i){
       var cl=it.matches.clients||[];
       if(cl.length){ h+='<div style="font-size:12px;color:#64748b">Possible matches:</div>'; cl.slice(0,4).forEach(function(m){ h+='<div style="margin-top:4px"><button class="btn-outline" style="padding:5px 9px;font-size:12px" onclick="_capPickClient('+i+','+m.id+',\''+esc(m.name).replace(/'/g,"\\'")+'\')">'+esc(m.name)+(m.sub?' <span style="color:#94a3b8">\u2014 '+esc(m.sub)+'</span>':'')+' <span style="color:#94a3b8">('+m.score+'%)</span></button></div>'; }); }
       h+='<div class="cap-lookup" style="margin-top:6px"><input class="cap-in" placeholder="Search existing clients\u2026" oninput="_capLookup(this,'+i+',\'client\')"><div class="cap-dd" id="cap-dd-c-'+i+'" style="display:none"></div></div>';
-      h+='<div style="margin-top:6px"><input class="cap-in" placeholder="Or new company name (created as Active if it has a role, else Prospect)" value="'+esc(it.newClient.name)+'" oninput="_cap.items['+i+'].newClient.name=this.value"></div>';
+      h+='<div style="margin-top:6px"><input class="cap-in" placeholder="Or new company name (Active Account if it has a role, else Unqualified)" value="'+esc(it.newClient.name)+'" oninput="_cap.items['+i+'].newClient.name=this.value"></div>';
     }
     h+='</div></div>';
   }
   if(isJob){
     h+='<div class="cap-row"><label>Job title</label><input class="cap-in" value="'+esc(it.title)+'" oninput="_capSet('+i+',\'title\',this.value)"></div>';
-    h+='<div class="cap-row"><label>Type / openings</label><div style="display:flex;gap:6px"><select class="cap-sel" onchange="_capSet('+i+',\'employmentType\',this.value)">'+["Contract","Contract to Hire","Direct Hire"].map(function(s){return '<option'+(it.employmentType===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select><input class="cap-in" type="number" min="1" style="width:90px" value="'+esc(it.numOpenings)+'" oninput="_capSet('+i+',\'numOpenings\',this.value)"></div></div>';
-    h+='<div class="cap-row"><label>Start date</label><input class="cap-in" type="date" value="'+esc(it.startDate)+'" oninput="_capSet('+i+',\'startDate\',this.value)"></div>';
+    h+='<div class="cap-row"><label>Type / openings</label><div style="display:flex;gap:6px"><select class="cap-sel" onchange="_capSet('+i+',\'employmentType\',this.value)">'+["Contract","Contract to Hire","Direct Hire","Extension"].map(function(s){return '<option'+(it.employmentType===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select><input class="cap-in" type="number" min="1" style="width:90px" value="'+esc(it.numOpenings)+'" oninput="_capSet('+i+',\'numOpenings\',this.value)"></div></div>';
+    h+='<div class="cap-row"><label>Start / end</label><div style="display:flex;gap:6px"><input class="cap-in" type="date" value="'+esc(it.startDate)+'" oninput="_capSet('+i+',\'startDate\',this.value)"><input class="cap-in" type="date" value="'+esc(it.endDate)+'" oninput="_capSet('+i+',\'endDate\',this.value)"></div></div>';
+    h+='<div class="cap-row"><label>Min. years</label><select class="cap-sel" style="width:auto" onchange="_capSet('+i+',\'yearsRequired\',this.value)">'+[0,1,2,3,4,5,6,7].map(function(y){return '<option value="'+y+'"'+(String(it.yearsRequired)===String(y)?' selected':'')+'>'+(y===0?'Not specified':y)+'</option>';}).join('')+'</select></div>';
     h+='<div class="cap-row"><label>Description</label><textarea class="cap-in cap-ta2" oninput="_capSet('+i+',\'description\',this.value)">'+esc(it.description)+'</textarea></div>';
     h+='<div class="cap-row"><label>Next step</label><input class="cap-in" value="'+esc(it.nextStep)+'" oninput="_capSet('+i+',\'nextStep\',this.value)"></div>';
     h+='<div class="cap-warn" style="margin-top:10px">Created as Accepting Candidates. Bullhorn needs a contact on every job \u2014 if none is picked, the company\'s most recent contact is used.</div>';
   } else if(isOpp){
     h+='<div class="cap-row"><label>Title</label><input class="cap-in" value="'+esc(it.title)+'" oninput="_capSet('+i+',\'title\',this.value)"></div>';
-    h+='<div class="cap-row"><label>Stage</label><div style="display:flex;gap:6px"><select class="cap-sel" onchange="_capSet('+i+',\'status\',this.value)">'+["Identified","Qualifying","Negotiating","Legal Review"].map(function(s){return '<option'+(it.status===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select><select class="cap-sel" onchange="_capSet('+i+',\'type\',this.value)"><option'+(it.type==="New"?' selected':'')+'>New</option><option'+(it.type==="Renewal"?' selected':'')+'>Renewal</option></select></div></div>';
+    h+='<div class="cap-row"><label>Stage</label><div style="display:flex;gap:6px"><select class="cap-sel" onchange="_capSet('+i+',\'status\',this.value)">'+["Identified","Qualifying","Negotiating","Legal Review"].map(function(s){return '<option'+(it.status===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select><select class="cap-sel" onchange="_capSet('+i+',\'type\',this.value)"><option'+(it.type==="New"?' selected':'')+'>New</option><option'+(it.type==="Renewal"?' selected':'')+'>Renewal</option><option'+(it.type==="Amendment"?' selected':'')+'>Amendment</option></select></div></div>';
+    h+='<div class="cap-row"><label>Pursuit source</label><select class="cap-sel" onchange="_capSet('+i+',\'pursuitSource\',this.value)">'+["Outbound","Inbound","Referral","Event / conference","Executive network","Reactivation"].map(function(s){return '<option'+(it.pursuitSource===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
     h+='<div class="cap-row"><label>Description</label><textarea class="cap-in cap-ta2" oninput="_capSet('+i+',\'description\',this.value)">'+esc(it.description)+'</textarea></div>';
     h+='<div class="cap-row"><label>Next step</label><input class="cap-in" value="'+esc(it.nextStep)+'" oninput="_capSet('+i+',\'nextStep\',this.value)"></div>';
     h+='<div class="cap-row"><label>Est. start / $</label><div style="display:flex;gap:6px"><input class="cap-in" type="date" value="'+esc(it.estimatedStart)+'" oninput="_capSet('+i+',\'estimatedStart\',this.value)"><input class="cap-in" type="number" placeholder="Deal value" value="'+esc(it.dealValue)+'" oninput="_capSet('+i+',\'dealValue\',this.value)"></div></div>';
   } else {
-    h+='<div class="cap-row"><label>Type</label><select class="cap-sel" onchange="_capSet('+i+',\'action\',this.value)">'+["Meeting","Phone Call","Email","Left Message","Follow Up","General Note","Outreach","Text"].map(function(s){return '<option'+(it.action===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
+    h+='<div class="cap-row"><label>Type</label><select class="cap-sel" onchange="_capSet('+i+',\'action\',this.value)">'+["Appointment","Outbound Call","Inbound Call","Email","Text Conversation","Left Message","Reached Out","LinkedIn InMail","Prescreen","Reference"].map(function(s){return '<option'+(it.action===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
     h+='<div class="cap-row"><label>Note</label><textarea class="cap-in cap-ta2" oninput="_capSet('+i+',\'comments\',this.value)">'+esc(it.comments)+'</textarea></div>';
     h+='<div class="cap-row"><label>Next step</label><input class="cap-in" value="'+esc(it.followUp)+'" placeholder="Optional \u2014 appended to the note" oninput="_capSet('+i+',\'followUp\',this.value)"></div>';
   }
@@ -260,7 +271,7 @@ async function captureCommit(){
       clientId:it.clientId, newClient: it.clientId?null:it.newClient, forceCreate: !!it.forceCreate, forceCreateClient: !!it.forceCreateClient,
       action:it.action, comments:it.comments, followUp:it.followUp,
       title:it.title, status:it.status, type:it.type, description:it.description, nextStep:it.nextStep, estimatedStart:it.estimatedStart, dealValue:it.dealValue,
-      employmentType:it.employmentType, numOpenings:it.numOpenings, startDate:it.startDate
+      employmentType:it.employmentType, numOpenings:it.numOpenings, startDate:it.startDate, endDate:it.endDate, yearsRequired:it.yearsRequired, pursuitSource:it.pursuitSource
     };
   });
   try{
