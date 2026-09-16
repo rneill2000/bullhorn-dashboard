@@ -109,7 +109,7 @@ module.exports = function registerCapture(app, deps) {
     if (last) { vals.push("%" + last + "%"); parts.push("last_name ILIKE $" + vals.length); }
     if (first) { vals.push("%" + first + "%"); parts.push("first_name ILIKE $" + vals.length); }
     if (!parts.length) return [];
-    const rows = await db.getAll("SELECT id, first_name, last_name, occupation, email, status FROM candidates WHERE is_deleted IS NOT TRUE AND " + parts.join(" AND ") + " ORDER BY date_last_modified DESC NULLS LAST LIMIT 8", vals);
+    const rows = await db.getAll("SELECT id, first_name, last_name, occupation, email, status FROM candidates WHERE " + parts.join(" AND ") + " ORDER BY date_last_modified DESC NULLS LAST LIMIT 8", vals);
     return rows.map(function (r) {
       return { kind: "candidate", id: r.id, name: ((r.first_name || "") + " " + (r.last_name || "")).trim(), sub: [r.occupation, r.status].filter(Boolean).join(" · "), score: scoreName((first || "") + " " + (last || ""), (r.first_name || "") + " " + (r.last_name || "")) };
     }).sort(function (a, b) { return b.score - a.score; });
