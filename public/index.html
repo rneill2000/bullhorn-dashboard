@@ -11476,7 +11476,7 @@ function _capCard(it,i){
     +(res&&res.ok?'':'<label style="font-size:12px;color:#64748b;cursor:pointer"><input type="checkbox" '+(it.skip?'checked':'')+' onchange="_capSet('+i+',\'skip\',this.checked);_capRefresh('+i+')"> skip</label>')+'</div>';
   if(res){
     if(res.skipped) h+='<div style="font-size:13px;color:#64748b;margin-top:8px">Skipped</div>';
-    else if(res.ok){ h+='<div class="cap-ok">&#10003; Written to Bullhorn'+(res.attachedTo?' (attached to '+esc(res.attachedTo)+')':'')+'<br>'+res.created.map(function(c){return esc(c.type)+' #'+c.id+(c.name?' \u2014 '+esc(c.name):'')+(c.title?' \u2014 '+esc(c.title):'');}).join('<br>')+'</div>'; h+='</div>'; return h; }
+    else if(res.ok){ h+='<div class="cap-ok">&#10003; Written to Bullhorn'+(res.attachedTo?' (attached to '+esc(res.attachedTo)+')':'')+'<br>'+res.created.map(function(c){return esc(c.type)+' #'+c.id+(c.name?' \u2014 '+esc(c.name):'')+(c.title?' \u2014 '+esc(c.title):'')+(c.status?' ('+esc(c.status)+')':'');}).join('<br>')+(res.clientStatus?'<br>Client status: '+esc(res.clientStatus):'')+'</div>'; h+='</div>'; return h; }
     else h+='<div class="cap-err">Failed: '+esc(res.error)+'</div>';
   }
   // person
@@ -11503,7 +11503,7 @@ function _capCard(it,i){
       var cl=it.matches.clients||[];
       if(cl.length){ h+='<div style="font-size:12px;color:#64748b">Possible matches:</div>'; cl.slice(0,4).forEach(function(m){ h+='<div style="margin-top:4px"><button class="btn-outline" style="padding:5px 9px;font-size:12px" onclick="_capPickClient('+i+','+m.id+',\''+esc(m.name).replace(/'/g,"\\'")+'\')">'+esc(m.name)+(m.sub?' <span style="color:#94a3b8">\u2014 '+esc(m.sub)+'</span>':'')+' <span style="color:#94a3b8">('+m.score+'%)</span></button></div>'; }); }
       h+='<div class="cap-lookup" style="margin-top:6px"><input class="cap-in" placeholder="Search existing clients\u2026" oninput="_capLookup(this,'+i+',\'client\')"><div class="cap-dd" id="cap-dd-c-'+i+'" style="display:none"></div></div>';
-      h+='<div style="margin-top:6px"><input class="cap-in" placeholder="Or new company name (created as Prospect)" value="'+esc(it.newClient.name)+'" oninput="_cap.items['+i+'].newClient.name=this.value"></div>';
+      h+='<div style="margin-top:6px"><input class="cap-in" placeholder="Or new company name (created as Active if it has a role, else Prospect)" value="'+esc(it.newClient.name)+'" oninput="_cap.items['+i+'].newClient.name=this.value"></div>';
     }
     h+='</div></div>';
   }

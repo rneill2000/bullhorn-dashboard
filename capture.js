@@ -174,6 +174,10 @@ module.exports = function registerCapture(app, deps) {
     const items = (req.body && req.body.items) || [];
     if (!items.length) return res.status(400).json({ error: "Nothing to commit" });
     const createdClients = {}, createdContacts = {};
+    // Companies that have a role/opportunity in this batch get status Active, not Prospect
+    const hasRole = {};
+    items.forEach(function (x) { if (x.kind === "opportunity" && !x.skip) { if (x.clientId) hasRole["id:" + x.clientId] = true; if (x.newClient && x.newClient.name) hasRole[norm(x.newClient.name)] = true; } });
+    const bumpedClients = {};
     const results = [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
@@ -187,12 +191,19 @@ module.exports = function registerCapture(app, deps) {
           const key = norm(newClientName);
           if (createdClients[key]) clientId = createdClients[key];
           else {
-            const body = { name: newClientName, status: "Prospect", isDeleted: false };
+            const body = { name: newClientName, status: hasRole[key] ? "Active" : "Prospect", isDeleted: false };
             if (user) body.owner = { id: user.id };
             clientId = ok(await bhWrite("entity/ClientCorporation", body, "PUT"), "Client");
             createdClients[key] = clientId;
-            r.created.push({ type: "client", id: clientId, name: newClientName });
+            r.created.push({ type: "client", id: clientId, name: newClientName, status: body.status });
           }
+        }
+        if (clientId && hasRole["id:" + clientId] && !bumpedClients[clientId]) {
+          bumpedClients[clientId] = true;
+          try {
+            const cur = db.ready ? await db.getOne("SELECT status FROM clients WHERE id=$1", [clientId]) : null;
+            if (cur && cur.status === "Prospect") { await bhWrite("entity/ClientCorporation/" + clientId, { status: "Active" }, "POST"); r.clientStatus = "Prospect \u2192 Active"; try { await db.query("UPDATE clients SET status=$1 WHERE id=$2", ["Active", clientId]); } catch (e2) {} }
+          } catch (e) { console.log("[Capture] client status bump failed:", e.message); }
         }
         // 2. person
         let personId = it.personId ? parseInt(it.personId) : null;
