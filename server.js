@@ -222,6 +222,7 @@ app.get("/auth/logout", (req, res) => {
 });
 
 // Serve static AFTER auth routes so /auth/* isn't caught by static middleware
+require("./mobile")(app, { db: db, bhFetchAll: bhFetchAll, bhFetch: bhFetch });
 app.use(express.static(path.join(__dirname, "public")));
 
 /* ═══ AUTH FLOW ═══ */

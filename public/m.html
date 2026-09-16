@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E2E47">
+<title>Anura Connect</title>
+<link rel="icon" href="/fulllogo.jpg">
+<style>
+:root{--navy:#0E2E47;--teal:#176087;--sky:#53A2BE;--ink:#0f172a;--mute:#64748b;--line:#e5e9ef;--bg:#f6f8fa;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--tab:64px}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
+button{font-family:inherit}
+a{color:var(--teal)}
+header{position:sticky;top:0;z-index:10;background:var(--navy);color:#fff;padding:calc(env(safe-area-inset-top) + 12px) 16px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+header h1{margin:0;font-size:22px;font-weight:700;letter-spacing:-.01em}
+header .who{font-size:13px;color:#bcd3e0;text-align:right;line-height:1.2}
+header .who b{color:#fff;font-weight:600;display:block}
+header .who a{color:#bcd3e0;text-decoration:none;font-size:12px}
+main{padding:0 0 calc(var(--tab) + env(safe-area-inset-bottom) + 16px)}
+.sec{padding:16px 16px 6px;font-size:13px;font-weight:600;color:var(--mute)}
+.sec .n{color:var(--ink);margin-left:4px}
+.list{background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line);min-height:60px;cursor:pointer;background:#fff}
+.row:last-child{border-bottom:0}
+.row:active{background:#f1f5f9}
+.row .t{flex:1;min-width:0}
+.row .t b{display:block;font-weight:600;font-size:16px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t span{display:block;font-size:13px;color:var(--mute);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .r{font-size:13px;color:var(--mute);text-align:right;flex-shrink:0;line-height:1.3}
+.row .r b{display:block;color:var(--ink);font-weight:600;font-size:15px}
+.chip{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;background:#e8f1f6;color:var(--teal);vertical-align:middle}
+.chip.hot{background:#fee2e2;color:var(--bad)}.chip.warn{background:#fef3c7;color:var(--warn)}.chip.ok{background:#dcfce7;color:var(--ok)}.chip.grey{background:#eef2f6;color:var(--mute)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.stat{background:#fff;padding:14px 16px}
+.stat b{display:block;font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+.stat span{font-size:13px;color:var(--mute)}
+.search{padding:12px 16px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:calc(env(safe-area-inset-top) + 58px);z-index:9}
+.search input{width:100%;font-size:17px;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;background:#f6f8fa;outline:none;font-family:inherit}
+.search input:focus{border-color:var(--sky);background:#fff}
+.seg{display:flex;gap:6px;margin-top:10px}
+.seg button{flex:1;padding:8px 0;border-radius:999px;border:1.5px solid var(--line);background:#fff;font-size:14px;font-weight:600;color:var(--mute)}
+.seg button.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.empty{padding:36px 24px;text-align:center;color:var(--mute);font-size:15px;line-height:1.5}
+.spin{display:inline-block;width:18px;height:18px;border:2.5px solid #cbd5e1;border-top-color:var(--teal);border-radius:50%;animation:sp .8s linear infinite;vertical-align:middle}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.spin{animation:none}}
+/* tabs */
+nav.tabs{position:fixed;left:0;right:0;bottom:0;height:calc(var(--tab) + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:#fff;border-top:1px solid var(--line);display:flex;z-index:20}
+nav.tabs button{flex:1;border:0;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;font-weight:600;color:var(--mute);padding:0}
+nav.tabs button .i{font-size:22px;line-height:1}
+nav.tabs button.on{color:var(--teal)}
+/* sheet */
+.sheet{position:fixed;inset:0;background:var(--bg);z-index:30;overflow-y:auto;display:none;padding-bottom:calc(env(safe-area-inset-bottom) + 24px)}
+.sheet.open{display:block}
+.sheet header{background:#fff;color:var(--ink);border-bottom:1px solid var(--line)}
+.sheet header h1{font-size:18px}
+.back{border:0;background:none;color:var(--teal);font-size:16px;font-weight:600;padding:6px 0;display:flex;align-items:center;gap:4px}
+.hero{background:#fff;padding:18px 16px;border-bottom:1px solid var(--line)}
+.hero h2{margin:0;font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
+.hero p{margin:4px 0 0;color:var(--mute);font-size:15px}
+.acts{display:flex;gap:8px;margin-top:14px}
+.acts a,.acts button{flex:1;text-align:center;padding:12px 0;border-radius:12px;background:var(--teal);color:#fff;text-decoration:none;font-weight:600;font-size:15px;border:0}
+.acts a.off{background:#e8eef3;color:#94a3b8;pointer-events:none}
+.acts button.alt{background:#e8f1f6;color:var(--teal)}
+.kv{background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.kv div{display:flex;justify-content:space-between;gap:16px;padding:11px 16px;border-bottom:1px solid var(--line);font-size:15px}
+.kv div:last-child{border-bottom:0}
+.kv div span:first-child{color:var(--mute);flex-shrink:0}
+.kv div span:last-child{text-align:right;word-break:break-word}
+.note{background:#fff;padding:12px 16px;border-bottom:1px solid var(--line);font-size:14px;line-height:1.5}
+.note .m{font-size:12px;color:var(--mute);margin-bottom:3px}
+.desc{background:#fff;padding:14px 16px;font-size:15px;line-height:1.55;white-space:pre-wrap;border-bottom:1px solid var(--line)}
+.addnote{background:#fff;padding:12px 16px;border-bottom:1px solid var(--line)}
+.addnote select,.addnote textarea{width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:15px;font-family:inherit;margin-bottom:8px;background:#fff}
+.addnote textarea{min-height:90px;resize:vertical}
+.btn-primary{padding:12px 18px;border-radius:12px;border:0;background:var(--teal);color:#fff;font-size:15px;font-weight:600}
+.btn-outline{padding:12px 18px;border-radius:12px;border:1.5px solid var(--line);background:#fff;color:#475569;font-size:15px;font-weight:600}
+.btn-primary:disabled{opacity:.6}
+.loading-spinner{display:inline-block;width:16px;height:16px;border:2px solid #cbd5e1;border-top-color:var(--teal);border-radius:50%;animation:sp .8s linear infinite;vertical-align:middle}
+#toast{position:fixed;left:16px;right:16px;bottom:calc(var(--tab) + env(safe-area-inset-bottom) + 12px);background:var(--navy);color:#fff;padding:12px 16px;border-radius:12px;font-size:14px;z-index:40;display:none;box-shadow:0 8px 24px rgba(14,46,71,.25)}
+#toast.error{background:var(--bad)}
+.cap-wrap{padding:12px 16px}
+.taskdone{width:26px;height:26px;border-radius:50%;border:2px solid #cbd5e1;background:#fff;flex-shrink:0}
+.taskdone.on{background:var(--ok);border-color:var(--ok)}
+</style>
+</head>
+<body>
+<header><h1 id="ttl">Anura</h1><div class="who" id="who"></div></header>
+<main id="main"></main>
+<nav class="tabs" id="tabs"></nav>
+<div class="sheet" id="sheet"></div>
+<div id="toast"></div>
+<script>
+var API_BASE="", apiBase="/api", currentUser=null, tab="home";
+var _cache={};
+function esc(s){return s==null?"":String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+async function apiFetch(endpoint,opts){
+  if(opts&&(opts.method||opts.body)){
+    if(opts.body&&typeof opts.body==="object"){opts.body=JSON.stringify(opts.body);opts.headers=opts.headers||{};opts.headers["Content-Type"]="application/json";}
+    var res=await fetch("/api/"+endpoint,opts);
+    if(!res.ok){var t="";try{t=(await res.json()).error||"";}catch(e){}throw new Error("API "+res.status+(t?": "+t:""));}
+    return res.json();
+  }
+  var qs=opts?"?"+new URLSearchParams(opts).toString():"";
+  var r=await fetch("/api/"+endpoint+qs); if(!r.ok) throw new Error("API "+r.status); return r.json();
+}
+var _toastT;function showToast(msg,type){var t=document.getElementById("toast");t.textContent=msg;t.className=type==="error"?"error":"";t.style.display="block";clearTimeout(_toastT);_toastT=setTimeout(function(){t.style.display="none";},3500);}
+function tel(p){return (p||"").replace(/[^\d+]/g,"");}
+function initials(n){return (n||"?").split(" ").map(function(x){return x[0]||"";}).join("").slice(0,2).toUpperCase();}
+function dt(ms){if(!ms)return "";var d=new Date(+ms);return (d.getMonth()+1)+"/"+d.getDate();}
+
+/* ── tabs ── */
+var TABS=[{k:"home",l:"Home",i:"\u2302"},{k:"search",l:"Search",i:"\u2315"},{k:"jobs",l:"Jobs",i:"\u2630"},{k:"tasks",l:"Tasks",i:"\u2713"},{k:"capture",l:"Capture",i:"\u26A1"}];
+function renderTabs(){document.getElementById("tabs").innerHTML=TABS.map(function(t){return '<button class="'+(tab===t.k?"on":"")+'" onclick="go(\''+t.k+'\')"><span class="i">'+t.i+'</span>'+t.l+'</button>';}).join("");}
+function go(k){tab=k;location.hash=k;closeSheet();loadPage();}
+async function loadPage(){
+  renderTabs();
+  var m=document.getElementById("main");
+  var titles={home:"Anura",search:"Search",jobs:"Open jobs",tasks:"Tasks",capture:"Quick Capture"};
+  document.getElementById("ttl").textContent=titles[tab]||"Anura";
+  if(tab==="capture"){m.innerHTML=renderCapture();if(_cap.items)_capRenderItems();return;}
+  if(tab==="search"){renderSearch();return;}
+  m.innerHTML='<div class="empty"><span class="spin"></span></div>';
+  try{
+    if(tab==="home") m.innerHTML=await renderHome();
+    else if(tab==="jobs") m.innerHTML=await renderJobs();
+    else if(tab==="tasks") m.innerHTML=await renderTasks();
+  }catch(e){m.innerHTML='<div class="empty">Couldn\'t load. '+esc(e.message)+'<br><br><button class="btn-outline" onclick="loadPage()">Try again</button></div>';}
+}
+
+/* ── home ── */
+async function renderHome(){
+  var r=await Promise.all([apiFetch("dashboard"),apiFetch("interviews"),apiFetch("bh-tasks"),apiFetch("revenue").catch(function(){return null;})]);
+  var d=r[0],iv=r[1],tk=r[2],rev=r[3];
+  var h='';
+  h+='<div class="stats">';
+  h+='<div class="stat"><b>'+d.stats.openJobs+'</b><span>open jobs</span></div>';
+  h+='<div class="stat"><b>'+(tk.counts.overdue+tk.counts.today)+'</b><span>tasks due</span></div>';
+  if(rev&&rev.summary){h+='<div class="stat"><b>$'+Math.round(rev.summary.totalMonthlyRevenue/1000)+'k</b><span>monthly revenue · '+rev.summary.activePlacements+' on contract</span></div>';h+='<div class="stat"><b>'+(rev.summary.avgMarginPct||0)+'%</b><span>avg margin</span></div>';}
+  else h+='<div class="stat"><b>'+d.stats.activeCandidates+'</b><span>active candidates</span></div><div class="stat"><b>'+(d.newJobsThisWeek||0)+'</b><span>new jobs this week</span></div>';
+  h+='</div>';
+  var up=(iv.upcoming||[]).slice(0,5);
+  if(up.length){h+='<div class="sec">Upcoming interviews</div><div class="list">'+up.map(function(x){return '<div class="row" onclick="openCandidate('+x.candidateId+')"><div class="t"><b>'+esc(x.candidate)+'</b><span>'+esc(x.job)+' · '+esc(x.client)+'</span></div><div class="r"><b>'+esc(x.date)+'</b>'+esc(x.time)+'</div></div>';}).join("")+'</div>';}
+  var uj=(d.urgentJobs||[]).slice(0,6);
+  if(uj.length){h+='<div class="sec">Needs attention <span class="n">'+d.urgentJobsTotal+'</span></div><div class="list">'+uj.map(function(j){return '<div class="row" onclick="openJob('+j.id+')"><div class="t"><b>'+esc(j.title)+'</b><span>'+esc(j.client)+' · '+j.daysOpen+'d open</span></div><div class="r"><b>'+j.submissions+'</b>subs</div></div>';}).join("")+'</div>';}
+  var ex=(d.expiringPlacements||[]).slice(0,5);
+  if(ex.length){h+='<div class="sec">Contracts ending</div><div class="list">'+ex.map(function(p){return '<div class="row"><div class="t"><b>'+esc(p.candidate)+'</b><span>'+esc(p.job)+'</span></div><div class="r"><b>'+p.daysLeft+'d</b>'+esc(p.endDate)+'</div></div>';}).join("")+'</div>';}
+  var nc=(d.newCandidates||[]).slice(0,5);
+  if(nc.length){h+='<div class="sec">New candidates</div><div class="list">'+nc.map(function(c){return '<div class="row" onclick="openCandidate('+c.id+')"><div class="t"><b>'+esc(c.name)+'</b><span>'+esc(c.title||c.primaryCert)+'</span></div><div class="r">'+(c.grade?'<span class="chip">'+esc(c.grade)+'</span>':'')+'</div></div>';}).join("")+'</div>';}
+  return h;
+}
+
+/* ── search ── */
+var _sq="",_skind="candidate",_sT;
+function renderSearch(){
+  var m=document.getElementById("main");
+  m.innerHTML='<div class="search"><input id="sq" type="search" placeholder="Name, company, cert\u2026" value="'+esc(_sq)+'" autocomplete="off" oninput="_sInput(this.value)"><div class="seg">'+[["candidate","Candidates"],["contact","Contacts"],["client","Clients"]].map(function(k){return '<button class="'+(_skind===k[0]?"on":"")+'" onclick="_skind=\''+k[0]+'\';renderSearch()">'+k[1]+'</button>';}).join("")+'</div></div><div id="sres"></div>';
+  if(_sq.length>=2) runSearch(); else {document.getElementById("sres").innerHTML='<div class="empty">Type a name to find someone, then tap to call, text, or email.</div>';setTimeout(function(){var i=document.getElementById("sq");if(i&&!_sq)i.focus();},50);}
+}
+function _sInput(v){_sq=v;clearTimeout(_sT);_sT=setTimeout(runSearch,280);}
+async function runSearch(){
+  var out=document.getElementById("sres"); if(_sq.length<2){out.innerHTML="";return;}
+  out.innerHTML='<div class="empty"><span class="spin"></span></div>';
+  try{
+    var h='';
+    if(_skind==="candidate"){
+      var r=await apiFetch("candidates",{q:_sq,status:"All"});
+      var d=(r.data||[]).slice(0,30);
+      h=d.length?'<div class="list">'+d.map(function(c){return '<div class="row" onclick="openCandidate('+c.id+')"><div class="t"><b>'+esc(c.firstName+" "+c.lastName)+'</b><span>'+esc([c.primaryCert,c.title].filter(Boolean).join(" · "))+'</span></div><div class="r">'+(c.grade?'<span class="chip">'+esc(c.grade)+'</span>':'')+(c.available?'<br>'+esc(c.available):'')+'</div></div>';}).join("")+'</div>':'<div class="empty">No candidates match.</div>';
+    } else if(_skind==="contact"){
+      var r2=await apiFetch("mobile/contacts",{q:_sq});
+      h=r2.data.length?'<div class="list">'+r2.data.map(function(c){return '<div class="row" onclick="openContact('+c.id+')"><div class="t"><b>'+esc(c.name)+'</b><span>'+esc([c.occupation,c.clientName].filter(Boolean).join(" · "))+'</span></div><div class="r">'+(c.mobile||c.phone?'\u260E':'')+'</div></div>';}).join("")+'</div>':'<div class="empty">No contacts match.</div>';
+    } else {
+      var r3=await apiFetch("clients",{q:_sq});
+      h=(r3.data||[]).length?'<div class="list">'+r3.data.slice(0,30).map(function(c){return '<div class="row" onclick="openClient('+c.id+')"><div class="t"><b>'+esc(c.name)+'</b><span>'+esc(c.status||"")+(c.activePlacements?' · '+c.activePlacements+' on contract':'')+'</span></div></div>';}).join("")+'</div>':'<div class="empty">No clients match.</div>';
+    }
+    out.innerHTML=h;
+  }catch(e){out.innerHTML='<div class="empty">Search failed: '+esc(e.message)+'</div>';}
+}
+
+/* ── jobs ── */
+async function renderJobs(){
+  var r=await apiFetch("jobs",{status:"Accepting Candidates"});
+  var d=(r.data||[]);
+  if(!d.length) return '<div class="empty">No open jobs right now.</div>';
+  return '<div class="sec">Accepting candidates <span class="n">'+d.length+'</span></div><div class="list">'+d.map(function(j){return '<div class="row" onclick="openJob('+j.id+')"><div class="t"><b>'+esc(j.title)+'</b><span>'+esc(j.client)+' · '+esc(j.type)+(j.daysOpen!=null?' · '+j.daysOpen+'d':'')+'</span></div><div class="r">'+(j.priority?'<span class="chip '+(/hot|urgent/i.test(j.priority)?'hot':'')+'">'+esc(j.priority)+'</span><br>':'')+'<b>'+j.submissions+'</b>subs</div></div>';}).join("")+'</div>';
+}
+
+/* ── tasks ── */
+async function renderTasks(){
+  var r=await Promise.all([apiFetch("bh-tasks"),apiFetch("interviews")]);
+  var tk=r[0],iv=r[1],h='';
+  var mine=currentUser?tk.data.filter(function(t){return t.owner===currentUser.name;}):[];
+  var all=tk.data;
+  var groups=[["overdue","Overdue"],["today","Today"],["thisweek","This week"],["upcoming","Upcoming"]];
+  var src=mine.length?mine:all;
+  h+='<div class="sec">'+(mine.length?'My tasks':'All tasks')+' <span class="n">'+src.filter(function(t){return !t.isCompleted;}).length+'</span></div>';
+  groups.forEach(function(g){
+    var items=src.filter(function(t){return t.bucket===g[0]&&!t.isCompleted;});
+    if(!items.length) return;
+    h+='<div class="sec" style="padding-top:8px">'+g[1]+'</div><div class="list">'+items.map(function(t){return '<div class="row" id="task-'+t.id+'"><button class="taskdone" onclick="event.stopPropagation();doneTask('+t.id+')" aria-label="Mark done"></button><div class="t"><b>'+esc(t.subject)+'</b><span>'+esc(t.owner)+(t.due?' · due '+dt(t.due):'')+'</span></div></div>';}).join("")+'</div>';
+  });
+  var up=iv.upcoming||[];
+  if(up.length){h+='<div class="sec">Interviews coming up</div><div class="list">'+up.map(function(x){return '<div class="row" onclick="openCandidate('+x.candidateId+')"><div class="t"><b>'+esc(x.candidate)+'</b><span>'+esc(x.job)+' · '+esc(x.client)+(x.method?' · '+esc(x.method):'')+'</span></div><div class="r"><b>'+esc(x.date)+'</b>'+esc(x.time)+'</div></div>';}).join("")+'</div>';}
+  var st=iv.interviewStage||[];
+  if(st.length){h+='<div class="sec">In interview stage</div><div class="list">'+st.map(function(x){return '<div class="row" onclick="openCandidate('+x.candidateId+')"><div class="t"><b>'+esc(x.candidate)+'</b><span>'+esc(x.job)+' · '+esc(x.client)+'</span></div><div class="r"><span class="chip">'+esc(x.status)+'</span></div></div>';}).join("")+'</div>';}
+  if(!h) h='<div class="empty">Nothing due. Nice.</div>';
+  return h;
+}
+async function doneTask(id){
+  var row=document.getElementById("task-"+id); var b=row&&row.querySelector(".taskdone"); if(b)b.classList.add("on");
+  try{await apiFetch("bh-tasks/"+id+"/complete",{method:"POST",body:{}});showToast("Task completed");setTimeout(function(){if(row)row.style.display="none";},400);}
+  catch(e){if(b)b.classList.remove("on");showToast("Couldn't complete: "+e.message,"error");}
+}
+
+/* ── detail sheets ── */
+function openSheet(title,html){var s=document.getElementById("sheet");s.innerHTML='<header><button class="back" onclick="closeSheet()">\u2039 Back</button><h1>'+esc(title)+'</h1><span></span></header>'+html;s.classList.add("open");s.scrollTop=0;history.pushState({sheet:1},"");}
+function closeSheet(){var s=document.getElementById("sheet");if(s.classList.contains("open")){s.classList.remove("open");s.innerHTML="";}}
+window.addEventListener("popstate",function(){closeSheet();});
+function actsRow(o){
+  var p=tel(o.mobile||o.phone), e=o.email;
+  return '<div class="acts"><a href="'+(p?'tel:'+p:'#')+'" class="'+(p?'':'off')+'">Call</a><a href="'+(p?'sms:'+p:'#')+'" class="'+(p?'':'off')+'">Text</a><a href="'+(e?'mailto:'+esc(e):'#')+'" class="'+(e?'':'off')+'">Email</a></div>';
+}
+function noteForm(kind,id,contactId){
+  var uid="nf"+Date.now();
+  return '<div class="sec">Add a note</div><div class="addnote"><select id="'+uid+'-a">'+["Phone Call","Meeting","Email","Text","Left Message","Follow Up","General Note"].map(function(a){return '<option>'+a+'</option>';}).join("")+'</select><textarea id="'+uid+'-c" placeholder="What happened?"></textarea><button class="btn-primary" style="width:100%" onclick="saveNote(\''+kind+'\','+id+','+(contactId||'null')+',\''+uid+'\',this)">Save note</button></div>';
+}
+async function saveNote(kind,id,contactId,uid,btn){
+  var a=document.getElementById(uid+"-a").value,c=document.getElementById(uid+"-c").value.trim();
+  if(!c){showToast("Write the note first","error");return;}
+  btn.disabled=true;btn.textContent="Saving\u2026";
+  try{
+    if(kind==="candidate") await apiFetch("candidates/"+id+"/notes",{method:"POST",body:{action:a,comments:c}});
+    else await apiFetch("clients/"+id+"/notes",{method:"POST",body:{action:a,comments:c,contactId:contactId}});
+    showToast("Note saved");document.getElementById(uid+"-c").value="";btn.textContent="Saved";setTimeout(function(){btn.textContent="Save note";btn.disabled=false;},1500);
+  }catch(e){showToast("Couldn't save: "+e.message,"error");btn.disabled=false;btn.textContent="Save note";}
+}
+async function openCandidate(id){
+  openSheet("Candidate",'<div class="empty"><span class="spin"></span></div>');
+  try{
+    var cr=await Promise.all([apiFetch("candidates/"+id),apiFetch("candidates/"+id+"/submissions").catch(function(){return {data:[]};})]);var c=cr[0];c.submissions=cr[1].data||[];
+    var h='<div class="hero"><h2>'+esc(c.firstName+" "+c.lastName)+'</h2><p>'+esc([c.title,c.primaryCert].filter(Boolean).join(" · "))+'</p>'+actsRow(c)+'</div>';
+    h+='<div class="kv">';
+    [["Status",c.status],["Grade",c.grade],["Epic role",c.epicRole],["Available",c.available],["Rate",c.hourlyRate?"$"+c.hourlyRate+"/hr":""],["Location",[c.city,c.state].filter(Boolean).join(", ")||c.location],["Mobile",c.mobile],["Phone",c.phone],["Email",c.email],["Owner",c.owner],["Last contact",c.lastContactedAt?dt(c.lastContactedAt)+(c.lastContactedBy?" by "+c.lastContactedBy:""):""]].forEach(function(kv){if(kv[1])h+='<div><span>'+kv[0]+'</span><span>'+esc(kv[1])+'</span></div>';});
+    h+='</div>';
+    h+=noteForm("candidate",id);
+    var notes=(c.notes||[]).slice(0,8);
+    if(notes.length){h+='<div class="sec">Recent notes</div><div class="list">'+notes.map(function(n){return '<div class="note"><div class="m">'+esc(n.action)+' · '+esc(n.date)+(n.by?' · '+esc(n.by):'')+'</div>'+esc(n.comments)+'</div>';}).join("")+'</div>';}
+    var subs=(c.submissions||[]).slice(0,6);
+    if(subs.length){h+='<div class="sec">Submissions</div><div class="list">'+subs.map(function(s){return '<div class="row" onclick="openJob('+s.jobId+')"><div class="t"><b>'+esc(s.job)+'</b><span>'+esc([s.date,s.submittedBy?"by "+s.submittedBy:""].filter(Boolean).join(" · "))+'</span></div><div class="r"><span class="chip">'+esc(s.status)+'</span></div></div>';}).join("")+'</div>';}
+    document.getElementById("sheet").innerHTML=document.getElementById("sheet").querySelector("header").outerHTML+h;
+  }catch(e){document.getElementById("sheet").innerHTML+='<div class="empty">'+esc(e.message)+'</div>';}
+}
+async function openContact(id){
+  openSheet("Contact",'<div class="empty"><span class="spin"></span></div>');
+  try{
+    var c=await apiFetch("mobile/contacts/"+id);
+    var h='<div class="hero"><h2>'+esc(c.name)+'</h2><p>'+esc([c.occupation,c.clientName].filter(Boolean).join(" · "))+'</p>'+actsRow(c)+'</div>';
+    h+='<div class="kv">';
+    [["Company",c.clientName],["Mobile",c.mobile],["Phone",c.phone],["Email",c.email],["Status",c.status],["Owner",c.ownerName],["Last note",c.dateLastComment?dt(c.dateLastComment):""]].forEach(function(kv){if(kv[1])h+='<div><span>'+kv[0]+'</span><span>'+esc(kv[1])+'</span></div>';});
+    h+='</div>';
+    if(c.clientId) h+='<div class="list"><div class="row" onclick="openClient('+c.clientId+')"><div class="t"><b>'+esc(c.clientName)+'</b><span>Open client</span></div><div class="r">\u203A</div></div></div>';
+    h+=noteForm("client",c.clientId,c.id);
+    var notes=(c.notes||[]).slice(0,8);
+    if(notes.length){h+='<div class="sec">Recent notes</div><div class="list">'+notes.map(function(n){return '<div class="note"><div class="m">'+esc(n.action)+' · '+esc(n.date)+(n.by?' · '+esc(n.by):'')+'</div>'+esc(n.comments)+'</div>';}).join("")+'</div>';}
+    document.getElementById("sheet").innerHTML=document.getElementById("sheet").querySelector("header").outerHTML+h;
+  }catch(e){document.getElementById("sheet").innerHTML+='<div class="empty">'+esc(e.message)+'</div>';}
+}
+async function openClient(id){
+  openSheet("Client",'<div class="empty"><span class="spin"></span></div>');
+  try{
+    var r=await Promise.all([apiFetch("clients/"+id),apiFetch("mobile/contacts",{clientId:id})]);
+    var c=r[0],contacts=r[1].data||[];
+    var h='<div class="hero"><h2>'+esc(c.name)+'</h2><p>'+esc([c.status,[c.city,c.state].filter(Boolean).join(", ")].filter(Boolean).join(" · "))+'</p>'+(c.phone?'<div class="acts"><a href="tel:'+tel(c.phone)+'">Call main line</a></div>':'')+'</div>';
+    if(contacts.length){h+='<div class="sec">Contacts <span class="n">'+contacts.length+'</span></div><div class="list">'+contacts.map(function(k){return '<div class="row" onclick="openContact('+k.id+')"><div class="t"><b>'+esc(k.name)+'</b><span>'+esc(k.occupation||"")+'</span></div><div class="r">'+(k.mobile||k.phone?'\u260E ':'')+(k.email?'\u2709':'')+'</div></div>';}).join("")+'</div>';}
+    var jobs=(c.jobs||[]).filter(function(j){return /accepting|open/i.test(j.status);});
+    if(jobs.length){h+='<div class="sec">Open jobs</div><div class="list">'+jobs.map(function(j){return '<div class="row" onclick="openJob('+j.id+')"><div class="t"><b>'+esc(j.title)+'</b><span>'+esc(j.type)+' · '+esc(j.dateAdded)+'</span></div><div class="r"><b>'+j.submissions+'</b>subs</div></div>';}).join("")+'</div>';}
+    var pl=(c.placements||[]).slice(0,8);
+    if(pl.length){h+='<div class="sec">Placements</div><div class="list">'+pl.map(function(p){return '<div class="row"><div class="t"><b>'+esc(p.candidate||p.candidateName)+'</b><span>'+esc(p.job||p.jobTitle||"")+'</span></div><div class="r"><span class="chip grey">'+esc(p.status||"")+'</span></div></div>';}).join("")+'</div>';}
+    if(c.revenue&&c.revenue.activePlacements) h+='<div class="kv"><div><span>On contract</span><span>'+c.revenue.activePlacements+'</span></div><div><span>Avg bill rate</span><span>$'+c.revenue.avgBillRate+'</span></div></div>';
+    h+=noteForm("client",id,contacts[0]?contacts[0].id:null);
+    document.getElementById("sheet").innerHTML=document.getElementById("sheet").querySelector("header").outerHTML+h;
+  }catch(e){document.getElementById("sheet").innerHTML+='<div class="empty">'+esc(e.message)+'</div>';}
+}
+async function openJob(id){
+  openSheet("Job",'<div class="empty"><span class="spin"></span></div>');
+  try{
+    var r=await Promise.all([apiFetch("jobs/"+id),apiFetch("jobs/"+id+"/submissions")]);
+    var j=r[0],subs=r[1].submissions||[];
+    var h='<div class="hero"><h2>'+esc(j.title)+'</h2><p>'+esc([j.client,j.type||j.employmentType].filter(Boolean).join(" · "))+'</p></div>';
+    h+='<div class="kv">';
+    [["Status",j.status],["Priority",j.priority],["Openings",j.openings||j.numOpenings],["Start",j.startDate],["Rate",j.salary&&j.salary!=="$0"?j.salary:""],["Location",j.location],["Contact",j.clientContact||j.contact],["Owner",j.owner],["Added",j.dateAdded]].forEach(function(kv){if(kv[1])h+='<div><span>'+kv[0]+'</span><span>'+esc(kv[1])+'</span></div>';});
+    h+='</div>';
+    h+='<div class="sec">Submitted <span class="n">'+subs.length+'</span></div>';
+    h+=subs.length?'<div class="list">'+subs.map(function(s){return '<div class="row" onclick="openCandidate('+s.candidateId+')"><div class="t"><b>'+esc(s.candidateName)+'</b><span>'+esc([Array.isArray(s.primaryCert)?s.primaryCert.join(", "):s.primaryCert,s.submittedBy?"by "+s.submittedBy:"",s.dateAdded].filter(Boolean).join(" · "))+'</span></div><div class="r"><span class="chip">'+esc(s.status)+'</span></div></div>';}).join("")+'</div>':'<div class="empty">Nobody submitted yet.</div>';
+    var desc=(j.descriptionText||j.description||"").replace(/<[^>]+>/g," ").replace(/\s+\n/g,"\n").trim();
+    if(desc) h+='<div class="sec">Description</div><div class="desc">'+esc(desc.slice(0,3000))+'</div>';
+    document.getElementById("sheet").innerHTML=document.getElementById("sheet").querySelector("header").outerHTML+h;
+  }catch(e){document.getElementById("sheet").innerHTML+='<div class="empty">'+esc(e.message)+'</div>';}
+}
+
+/* ── boot ── */
+(async function(){
+  try{var s=await apiFetch("status");currentUser=s.user||null;}catch(e){}
+  var w=document.getElementById("who");
+  w.innerHTML=currentUser?'<b>'+esc(currentUser.firstName||currentUser.name)+'</b><a href="/?view=desktop">Desktop view</a>':'<a href="/auth/login" style="color:#fff;font-weight:600;font-size:14px">Sign in</a><br><a href="/?view=desktop">Desktop view</a>';
+  var hh=(location.hash||"").replace("#","");
+  if(TABS.some(function(t){return t.k===hh;})) tab=hh;
+  loadPage();
+})();
+</script>
+<script src="/capture-ui.js"></script>
+</body>
+</html>
