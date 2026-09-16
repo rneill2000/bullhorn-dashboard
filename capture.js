@@ -273,6 +273,9 @@ module.exports = function registerCapture(app, deps) {
         const personType = it.personType || "contact";
         if (!personId && it.newPerson && (it.newPerson.firstName || it.newPerson.lastName)) {
           const np = it.newPerson;
+          const key = personType + ":" + norm(np.firstName + " " + np.lastName) + ":" + (clientId || "");
+          if (createdContacts[key]) personId = createdContacts[key];
+          else {
           if (np.firstName && np.lastName && !it.forceCreate) {
             // Live check against Bullhorn itself (not just the synced copy) so we never make a duplicate
             const ent = personType === "candidate" ? "Candidate" : "ClientContact";
@@ -281,8 +284,8 @@ module.exports = function registerCapture(app, deps) {
             try { const d = await bhFetchAll("search/" + ent, { query: q, fields: "id,firstName,lastName" + (ent === "ClientContact" ? ",clientCorporation(name)" : ",occupation"), count: 5 }, 5); dup = (d.data || [])[0]; } catch (e) { console.log("[Capture] dup check failed:", e.message); }
             if (dup) throw new Error(np.firstName + " " + np.lastName + " already exists in Bullhorn (#" + dup.id + (dup.clientCorporation ? ", " + dup.clientCorporation.name : "") + "). Pick that record instead of creating a new one.");
           }
-          const key = personType + ":" + norm(np.firstName + " " + np.lastName) + ":" + (clientId || "");
-          if (createdContacts[key]) personId = createdContacts[key];
+          }
+          if (personId) { /* already created earlier in this batch */ }
           else if (personType === "candidate") {
             const body = { firstName: np.firstName || "", lastName: np.lastName || "", name: ((np.firstName || "") + " " + (np.lastName || "")).trim(), status: "Not Screened", customText3: [np.preferredRole || "Analyst"], isDeleted: false };
             if (np.email) body.email = np.email; if (np.phone) body.phone = np.phone; if (np.title) body.occupation = np.title;
