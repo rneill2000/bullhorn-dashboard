@@ -20,7 +20,8 @@ module.exports = function registerCapture(app, deps) {
       "Today is " + today + ".",
       "",
       "Split the notes into ITEMS. Produce ONE note item per person interacted with (a person = client contact at a hospital/health system/vendor, OR a candidate/consultant).",
-      "If the notes describe a potential deal (an MSA, a project, a client wanting consultants, a go-live needing staff, a renewal), ALSO produce an opportunity item for that company — at most ONE opportunity per company per dump. If an MSA/agreement is needed, use the '<Company> MSA <year>' title and fold the staffing need into the description rather than making a second opportunity.",
+      "If the notes describe a CONCRETE ROLE the client wants filled (a job title or Epic module/role, number of people, start date, rate, contract/perm), produce a JOB item for it — one job item per distinct role.",
+      "If the notes describe an agreement-level deal (an MSA, a vendor/VMO process, a renewal, or a general 'wants to work with us' with no concrete role yet), produce an OPPORTUNITY item — at most ONE per company per dump, titled '<Company> MSA <year>' for MSA/agreement deals. A concrete role that ALSO needs an MSA gets both a job item and an opportunity item.",
       "Keep the author's own wording and facts in `comments` — clean up typos and fragments into readable sentences, but do not invent details, do not summarize away specifics (names, dates, modules, numbers, rates).",
       "",
       "Return ONLY valid JSON, no prose, no markdown fences:",
@@ -32,6 +33,15 @@ module.exports = function registerCapture(app, deps) {
       "  \"action\":one of " + JSON.stringify(NOTE_ACTIONS) + ",",
       "  \"comments\":\"the note text\",",
       "  \"followUp\":\"next step, or null\"},",
+      " {\"kind\":\"job\",",
+      "  \"company\":\"organization name\",",
+      "  \"person\":{...} or null (the hiring contact),",
+      "  \"title\":\"role title, e.g. Epic Beaker CP Analyst\",",
+      "  \"employmentType\":\"Contract\"|\"Contract to Hire\"|\"Direct Hire\",",
+      "  \"numOpenings\":number (default 1),",
+      "  \"startDate\":\"YYYY-MM-DD or null\",",
+      "  \"description\":\"the role as described, in the author's words, including rate/duration/remote details\",",
+      "  \"nextStep\":\"next step or null\"},",
       " {\"kind\":\"opportunity\",",
       "  \"company\":\"organization name\",",
       "  \"person\":{...} or null (the contact this deal is with),",
@@ -176,7 +186,7 @@ module.exports = function registerCapture(app, deps) {
     const createdClients = {}, createdContacts = {};
     // Companies that have a role/opportunity in this batch get status Active, not Prospect
     const hasRole = {};
-    items.forEach(function (x) { if (x.kind === "opportunity" && !x.skip) { if (x.clientId) hasRole["id:" + x.clientId] = true; if (x.newClient && x.newClient.name) hasRole[norm(x.newClient.name)] = true; } });
+    items.forEach(function (x) { if ((x.kind === "opportunity" || x.kind === "job") && !x.skip) { if (x.clientId) hasRole["id:" + x.clientId] = true; if (x.newClient && x.newClient.name) hasRole[norm(x.newClient.name)] = true; } });
     const bumpedClients = {};
     const results = [];
     for (let i = 0; i < items.length; i++) {
@@ -248,6 +258,23 @@ module.exports = function registerCapture(app, deps) {
           const noteId = ok(result, "Note");
           r.created.push({ type: "note", id: noteId, personId: personId });
           if (db.ready) { try { await db.query("INSERT INTO notes (id, person_id, action, comments_text, date_added, commenting_person_id, commenting_person_name, is_deleted, synced_at) VALUES ($1,$2,$3,$4,$5,$6,$7,false,NOW()) ON CONFLICT (id) DO NOTHING", [noteId, personId, body.action, comments, Date.now(), user ? user.id : null, user ? user.name : null]); } catch (e) { console.log("[Capture] local note insert failed:", e.message); } }
+        }
+        // 4. job order
+        if (it.kind === "job") {
+          if (!clientId) throw new Error("Job needs a client — pick an existing one or enter a new company name");
+          const title = (it.title || "").trim(); if (!title) throw new Error("Job needs a title");
+          let contactId = (personId && personType === "contact") ? personId : null;
+          if (!contactId) {
+            const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id,firstName,lastName", orderBy: "-dateLastModified", count: 1 });
+            if (c.data && c.data.length) { contactId = c.data[0].id; r.attachedTo = ((c.data[0].firstName || "") + " " + (c.data[0].lastName || "")).trim(); }
+          }
+          if (!contactId) throw new Error("Bullhorn requires a client contact on every job — add a person for this company");
+          const body = { title: title, clientCorporation: { id: clientId }, clientContact: { id: contactId }, status: "Accepting Candidates", employmentType: ["Contract", "Contract to Hire", "Direct Hire"].includes(it.employmentType) ? it.employmentType : "Contract", numOpenings: parseInt(it.numOpenings) || 1, isDeleted: false, isOpen: true };
+          if (it.description) body.description = it.description + (it.nextStep ? "\n\nNext step: " + it.nextStep : "");
+          if (it.startDate) { const t = Date.parse(it.startDate); if (!isNaN(t)) body.startDate = t; }
+          if (user) body.owner = { id: user.id };
+          const jobId = ok(await bhWrite("entity/JobOrder", body, "PUT"), "Job");
+          r.created.push({ type: "job", id: jobId, title: title });
         }
         // 4. opportunity
         if (it.kind === "opportunity") {
