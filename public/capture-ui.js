@@ -114,7 +114,7 @@ function _capRenderItems(){
   h+='<div class="cap-actions"><button class="btn-primary" id="cap-commit-btn" onclick="captureCommit()" '+(open.length?'disabled title="Answer the questions above first"':'')+'>'+(open.length?'Answer '+open.length+' question'+(open.length===1?'':'s')+' to continue':'&#10003; Write '+n+' to Bullhorn')+'</button><button class="btn-outline" onclick="_capScrollTop()">&#8593; Edit notes</button></div>';
   document.getElementById("cap-items").innerHTML=h;
 }
-function _capQKey(it,q){ if(["who","new","type","lastname"].indexOf(q.id)<0) return null; var nm=((it.newPerson.firstName||"")+" "+(it.newPerson.lastName||"")).trim().toLowerCase(); return nm?q.id+":"+nm:null; }
+function _capQKey(it,q){ if(["who","new","type","lastname","email","prefrole"].indexOf(q.id)<0) return null; var nm=((it.newPerson.firstName||"")+" "+(it.newPerson.lastName||"")).trim().toLowerCase(); return nm?q.id+":"+nm:null; }
 function _capOpenQuestions(){ var o=[],seen={}; (_cap.items||[]).forEach(function(it,i){ if(it.skip) return; (it.questions||[]).forEach(function(q){ if(q.answered) return; var k=_capQKey(it,q); if(k){ if(seen[k]) return; seen[k]=1; } o.push(q); }); }); return o; }
 function _capHasFreeAnswers(){ return Object.keys(_cap.answers).length>0; }
 function _capClarifications(){ return Object.keys(_cap.answers).map(function(k){ return "- Q: "+_cap.answers[k].q+"\n  A: "+_cap.answers[k].a; }).join("\n"); }
@@ -151,7 +151,7 @@ function _capAnswerFree(i,qi,val){
   if(!val){ delete _cap.answers[key]; q.answered=false; _capRenderItems(); return; }
   q.answered=true;
   var direct=false;
-  if(q.id==="email"){ it.newPerson.email=val; direct=true; }
+  if(q.id==="email"){ var fk=((it.newPerson.firstName||"")+" "+(it.newPerson.lastName||"")).trim().toLowerCase(); _cap.items.forEach(function(x){ if(((x.newPerson.firstName||"")+" "+(x.newPerson.lastName||"")).trim().toLowerCase()===fk){ x.newPerson.email=val; (x.questions||[]).forEach(function(qq){ if(qq.id==="email") qq.answered=true; }); } }); direct=true; }
   if(q.id==="start"){ var d=new Date(val); if(!isNaN(d)){ it.startDate=d.toISOString().slice(0,10); direct=true; } }
   if(!direct) _cap.answers[key]={q:q.text,a:val}; else delete _cap.answers[key];
   if(q.id==="lastname"){ var fn=(it.newPerson.firstName||"").toLowerCase(); _cap.items.forEach(function(x){ if((x.newPerson.firstName||"").toLowerCase()===fn && !x.newPerson.lastName){ x.newPerson.lastName=val; (x.questions||[]).forEach(function(qq){ if(qq.id==="lastname") qq.answered=true; }); } }); }
