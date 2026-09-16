@@ -132,6 +132,7 @@ module.exports = function registerCapture(app, deps) {
   }
 
   async function enrichItem(it) {
+    if ((it.kind === "job" || it.kind === "opportunity") && it.personType !== "candidate") it.personType = "contact"; // the person on a deal is the hiring contact
     const p = it.person || null;
     const first = p ? (p.firstName || "").trim() : "", last = p ? (p.lastName || "").trim() : "";
     const out = Object.assign({}, it, { matches: { contacts: [], candidates: [], clients: [] }, suggested: {} });
