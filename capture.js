@@ -214,7 +214,7 @@ module.exports = function registerCapture(app, deps) {
       else qs.push({ id: "new", text: personName + " isn't in Bullhorn. Create a new " + (it.personType === "candidate" ? "candidate" : "client contact") + "?", options: [{ label: "Yes, create as " + (it.personType === "candidate" ? "candidate" : "contact"), create: true }, { label: "No — it's a " + (it.personType === "candidate" ? "client contact" : "candidate"), flipType: true }, { label: "Skip this entry", skip: true }] });
     }
     if (isPersonKind && personName && it.personType === "unknown" && !out.suggested.personId) qs.push({ id: "type", text: "Is " + personName + " a client contact or a candidate?", options: [{ label: "Client contact", personType: "contact" }, { label: "Candidate", personType: "candidate" }] });
-    const needsCompany = (it.kind !== "note" && it.kind !== "contact" && it.kind !== "task") || (it.personType !== "candidate" && !out.suggested.personId);
+    const needsCompany = it.kind !== "task" && ((it.kind !== "note" && it.kind !== "contact") || (it.personType !== "candidate" && !out.suggested.personId));
     if (needsCompany && it.company && !out.suggested.clientId) {
       const cl = out.matches.clients.slice(0, 4);
       if (cl.length) qs.push({ id: "company", text: "Is \"" + it.company + "\" one of these existing clients?", options: cl.map(function (m) { return { label: m.name + (m.sub ? " (" + m.sub + ")" : ""), clientId: m.id }; }).concat([{ label: "No — create \"" + it.company + "\" as a new client", createClient: true }]) });
