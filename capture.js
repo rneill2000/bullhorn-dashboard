@@ -26,7 +26,9 @@ module.exports = function registerCapture(app, deps) {
       "Today is " + today + ".",
       "",
       "The text is EITHER raw meeting/travel notes OR explicit instructions to you (\"update the X job\", \"create a contact for\", \"add a note to\", \"change the start date on\"). When it contains instructions, do exactly what is asked and nothing more — do not add a note, job, or opportunity the author did not ask for. When it is raw notes, split them into ITEMS: ONE note item per person interacted with (a person = client contact at a hospital/health system/vendor, OR a candidate/consultant).",
-      "Item kinds: note (log an interaction on a person), contact (create or update a person's record WITHOUT logging a note — use when the author just wants the person in Bullhorn or gives contact details), job (a NEW role), job_update (change an EXISTING job the author refers to — \"the web services role\", \"the Cook job\", \"the Beaker req\"), opportunity (agreement-level deal).",
+      "Item kinds: note (log an interaction on a person), contact (create or update a person's record WITHOUT logging a note — use when the author just wants the person in Bullhorn, gives contact details, or states a candidate's new availability date / pay rate / status), job (a NEW role), job_update (change an EXISTING job the author refers to — \"the web services role\", \"the Cook job\", \"the Beaker req\"), opportunity (agreement-level deal), task (a reminder or to-do for the author: \"remind me\", \"follow up with X on Friday\", \"need to send Y the resumes\").",
+      "When raw notes state that a candidate's availability, pay rate, or status changed, produce BOTH the note AND a contact item carrying the new values. A rate mentioned about a job or client is the bill rate; a rate mentioned about a candidate is their pay rate; only ask if the text truly leaves it open. A job the client filled themselves or cancelled is status Closed; Filled means Anura placed someone.",
+      "In questions, speak plainly to the author — never mention item kinds, JSON, or field names.",
       "A contact block like a signature (name / title / department / company / phone / email) is a contact item, not a note. If the author asks to update a job, produce a job_update, never a new job.",
       "If the notes describe a CONCRETE ROLE the client wants filled (a job title or Epic module/role, number of people, start date, rate, contract/perm), produce a JOB item for it — one job item per distinct role.",
       "If the notes describe an agreement-level deal (an MSA, a vendor/VMO process, a renewal, or a general 'wants to work with us' with no concrete role yet), produce an OPPORTUNITY item — at most ONE per company per dump, titled '<Company> MSA <year>' for MSA/agreement deals. A concrete role that ALSO needs an MSA gets both a job item and an opportunity item.",
@@ -41,8 +43,14 @@ module.exports = function registerCapture(app, deps) {
       "  \"action\":one of " + JSON.stringify(NOTE_ACTIONS) + " (in-person or video meeting = Appointment; a call the author made = Outbound Call; they called the author = Inbound Call),",
       "  \"comments\":\"the note text\",",
       "  \"followUp\":\"next step, or null\"},",
+      " {\"kind\":\"task\",",
+      "  \"subject\":\"short imperative, e.g. Follow up with Dana Ruiz re resumes\",",
+      "  \"dueDate\":\"YYYY-MM-DD or null (resolve 'Friday', 'next week', 'tomorrow' from today's date)\",",
+      "  \"taskType\":\"Call\"|\"Send Email\"|\"Follow-Up Call\"|\"Meeting\"|\"Other\",",
+      "  \"person\":{...} or null (who the task is about), \"personType\":\"contact\"|\"candidate\"|null,",
+      "  \"company\":\"organization or null\"},",
       " {\"kind\":\"contact\",",
-      "  \"person\":{\"firstName\":\"\",\"lastName\":\"\",\"title\":\"\",\"department\":\"\",\"email\":\"\",\"phone\":\"\",\"mobile\":\"\"},",
+      "  \"person\":{\"firstName\":\"\",\"lastName\":\"\",\"title\":\"\",\"department\":\"\",\"email\":\"\",\"phone\":\"\",\"mobile\":\"\",\"availableDate\":\"YYYY-MM-DD or null (candidates)\",\"payRate\":number or null (candidates, $/hr),\"candidateStatus\":\"Active\"|\"Placed\"|\"DNU\"|null},",
       "  \"personType\":\"contact\"|\"candidate\",",
       "  \"company\":\"organization name or null\"},",
       " {\"kind\":\"job_update\",",
@@ -50,7 +58,7 @@ module.exports = function registerCapture(app, deps) {
       "  \"jobHint\":\"words identifying which job (e.g. web services, Beaker analyst)\",",
       "  \"person\":{...} or null (a contact to attach to the job, if one is given),",
       "  \"appendNotes\":\"the new information to add to the job, in the author's words, or null\",",
-      "  \"changes\":{\"numOpenings\":number|null,\"startDate\":\"YYYY-MM-DD\"|null,\"endDate\":\"YYYY-MM-DD\"|null,\"employmentType\":\"Contract\"|\"Contract to Hire\"|\"Direct Hire\"|null,\"status\":\"Accepting Candidates\"|\"Filled\"|\"Closed\"|\"On Hold\"|null,\"title\":\"new title or null\"}},",
+      "  \"changes\":{\"billRate\":number|null,\"numOpenings\":number|null,\"startDate\":\"YYYY-MM-DD\"|null,\"endDate\":\"YYYY-MM-DD\"|null,\"employmentType\":\"Contract\"|\"Contract to Hire\"|\"Direct Hire\"|null,\"status\":\"Accepting Candidates\"|\"Filled\"|\"Closed\"|\"On Hold\"|null,\"title\":\"new title or null\"}},",
       " {\"kind\":\"job\",",
       "  \"company\":\"organization name\",",
       "  \"person\":{...} or null (the hiring contact),",
@@ -60,6 +68,7 @@ module.exports = function registerCapture(app, deps) {
       "  \"startDate\":\"YYYY-MM-DD or null\",",
       "  \"description\":\"the role as described, in the author's words, including rate/duration/remote details\",",
       "  \"endDate\":\"YYYY-MM-DD or null (compute from start + duration if both are given)\",",
+      "  \"billRate\":number or null ($/hr the client pays),",
       "  \"yearsRequired\":number or null,",
       "  \"nextStep\":\"next step or null\"},",
       " {\"kind\":\"opportunity\",",
@@ -169,6 +178,7 @@ module.exports = function registerCapture(app, deps) {
   async function enrichItem(it) {
     if ((it.kind === "job" || it.kind === "opportunity" || it.kind === "job_update") && it.personType !== "candidate") it.personType = "contact"; // the person on a deal is the hiring contact
     if (it.kind === "contact" && !it.personType) it.personType = "contact";
+    if (it.kind === "task" && !it.personType) it.personType = "unknown";
     const p = it.person || null;
     const first = p ? (p.firstName || "").trim() : "", last = p ? (p.lastName || "").trim() : "";
     const out = Object.assign({}, it, { matches: { contacts: [], candidates: [], clients: [] }, suggested: {} });
@@ -195,7 +205,7 @@ module.exports = function registerCapture(app, deps) {
     // Questions the tool needs answered before it will write anything
     const qs = [];
     const personName = ((first || "") + " " + (last || "")).trim();
-    const isPersonKind = it.kind === "note" || it.kind === "contact" || (it.person && (first || last));
+    const isPersonKind = it.kind === "note" || it.kind === "contact" || (it.kind !== "task" && it.person && (first || last));
     if (isPersonKind && personName && !out.suggested.personId) {
       const cands = out.matches.contacts.concat(out.matches.candidates).filter(function (m) { return m.score >= 50 && !(it.company && m.kind === "contact" && m.clientName && scoreName(it.company, m.clientName) < 50); }).slice(0, 4);
       if (out.needsChoice) qs.push({ id: "who", text: "Several people in Bullhorn are named " + personName + ". Which one is this?", options: cands.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), personType: m.kind, personId: m.id, clientId: m.clientId || null }; }).concat([{ label: "None of these — create new", create: true }]) });
@@ -204,7 +214,7 @@ module.exports = function registerCapture(app, deps) {
       else qs.push({ id: "new", text: personName + " isn't in Bullhorn. Create a new " + (it.personType === "candidate" ? "candidate" : "client contact") + "?", options: [{ label: "Yes, create as " + (it.personType === "candidate" ? "candidate" : "contact"), create: true }, { label: "No — it's a " + (it.personType === "candidate" ? "client contact" : "candidate"), flipType: true }, { label: "Skip this entry", skip: true }] });
     }
     if (isPersonKind && personName && it.personType === "unknown" && !out.suggested.personId) qs.push({ id: "type", text: "Is " + personName + " a client contact or a candidate?", options: [{ label: "Client contact", personType: "contact" }, { label: "Candidate", personType: "candidate" }] });
-    const needsCompany = (it.kind !== "note" && it.kind !== "contact") || (it.personType !== "candidate" && !out.suggested.personId);
+    const needsCompany = (it.kind !== "note" && it.kind !== "contact" && it.kind !== "task") || (it.personType !== "candidate" && !out.suggested.personId);
     if (needsCompany && it.company && !out.suggested.clientId) {
       const cl = out.matches.clients.slice(0, 4);
       if (cl.length) qs.push({ id: "company", text: "Is \"" + it.company + "\" one of these existing clients?", options: cl.map(function (m) { return { label: m.name + (m.sub ? " (" + m.sub + ")" : ""), clientId: m.id }; }).concat([{ label: "No — create \"" + it.company + "\" as a new client", createClient: true }]) });
@@ -216,6 +226,13 @@ module.exports = function registerCapture(app, deps) {
       const jl = (out.matches.jobs || []).slice(0, 5);
       if (jl.length) qs.push({ id: "job", text: "Which " + (it.company || "") + " job should be updated" + (it.jobHint ? " (\"" + it.jobHint + "\")" : "") + "?", options: jl.map(function (m) { return { label: m.name + " — " + m.sub, jobId: m.id }; }) });
       else if (out.suggested.clientId) qs.push({ id: "job", text: "I couldn't find a job at " + (it.company || "that client") + " matching \"" + (it.jobHint || "") + "\". Which job is it?", free: true });
+    }
+    if (it.kind === "task") {
+      if (personName && !out.suggested.personId) {
+        const cands = out.matches.contacts.concat(out.matches.candidates).filter(function (m) { return m.score >= 50; }).slice(0, 4);
+        if (cands.length) qs.push({ id: "who", text: "Link this task to which record for " + personName + "?", options: cands.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), personType: m.kind, personId: m.id, clientId: m.clientId || null }; }).concat([{ label: "No link — just the reminder", nolink: true }]) });
+      }
+      if (!it.dueDate) qs.push({ id: "due", text: "When is \"" + (it.subject || "this task") + "\" due?", free: true, options: [{ label: "Today", dueDays: 0 }, { label: "Tomorrow", dueDays: 1 }, { label: "In 3 days", dueDays: 3 }, { label: "Next week", dueDays: 7 }] });
     }
     const willCreatePerson = isPersonKind && personName && last && !out.suggested.personId;
     if (willCreatePerson && !(p && p.email)) qs.push({ id: "email", text: "Email address for " + personName + "? (Bullhorn asks for one on every " + (it.personType === "candidate" ? "candidate" : "contact") + ")", free: true, options: [{ label: "Don't have it", none: true }] });
@@ -331,6 +348,8 @@ module.exports = function registerCapture(app, deps) {
           else if (personType === "candidate") {
             const body = { firstName: np.firstName || "", lastName: np.lastName || "", name: ((np.firstName || "") + " " + (np.lastName || "")).trim(), status: "Not Screened", customText3: [np.preferredRole || "Analyst"], isDeleted: false };
             if (np.email) body.email = np.email; if (np.phone) body.phone = np.phone; if (np.title) body.occupation = np.title;
+            if (np.availableDate) { const ta = Date.parse(np.availableDate); if (!isNaN(ta)) body.dateAvailable = ta; }
+            if (np.payRate) body.hourlyRate = Number(np.payRate) || undefined;
             if (user) { body.owner = { id: user.id }; body.customText10 = user.name; }
             personId = ok(await bhWrite("entity/Candidate", body, "PUT"), "Candidate");
             createdContacts[key] = personId;
@@ -345,19 +364,37 @@ module.exports = function registerCapture(app, deps) {
             r.created.push({ type: "contact", id: personId, name: (body.firstName + " " + body.lastName).trim() });
           }
         }
+        // 2a. task
+        if (it.kind === "task") {
+          const subject = (it.subject || "").trim(); if (!subject) throw new Error("Task needs a subject");
+          const due = it.dueDate ? Date.parse(it.dueDate) : NaN;
+          const when = isNaN(due) ? Date.now() : due + 17 * 3600 * 1000; // due dates land at 5pm local-ish
+          const body = { subject: subject, type: ["Call", "Send Email", "Follow-Up Call", "Conference Call", "Meeting", "Send Contract", "Send Redlines", "Review Account", "Other"].includes(it.taskType) ? it.taskType : "Other", dateBegin: when, dateEnd: when, priority: 2, isPrivate: false, notificationMinutes: 0, isCompleted: false };
+          if (it.description) body.description = it.description;
+          if (user) body.owner = { id: user.id };
+          if (personId && personType === "candidate") body.candidate = { id: personId };
+          else if (personId) body.clientContact = { id: personId };
+          const taskId = ok(await bhWrite("entity/Task", body, "PUT"), "Task");
+          r.created.push({ type: "task", id: taskId, title: subject + (it.dueDate ? " (due " + it.dueDate + ")" : "") });
+        }
         // 2b. contact record only — update the existing person's details if we matched one
         if (it.kind === "contact") {
           if (!personId) throw new Error("Nothing to save — pick the person or fill in a first and last name");
           if (!r.created.some(function (c) { return c.type === "contact" || c.type === "candidate"; })) {
             const np = it.newPerson || {};
             const ent = personType === "candidate" ? "Candidate" : "ClientContact";
-            const cur = (await bhFetch("entity/" + ent + "/" + personId, { fields: "id,occupation,email,phone,mobile" + (ent === "ClientContact" ? ",division" : "") })).data || {};
+            const cur = (await bhFetch("entity/" + ent + "/" + personId, { fields: "id,occupation,email,phone,mobile" + (ent === "ClientContact" ? ",division" : ",dateAvailable,hourlyRate,status") })).data || {};
             const patch = {}, changed = [];
             if (np.title && np.title !== cur.occupation) { patch.occupation = np.title; changed.push("title: " + (cur.occupation || "(blank)") + " \u2192 " + np.title); }
             if (np.email && np.email !== cur.email) { patch.email = np.email; changed.push("email: " + (cur.email || "(blank)") + " \u2192 " + np.email); }
             if (np.phone && np.phone !== cur.phone) { patch.phone = np.phone; changed.push("phone: " + (cur.phone || "(blank)") + " \u2192 " + np.phone); }
             if (np.mobile && np.mobile !== cur.mobile) { patch.mobile = np.mobile; changed.push("mobile: " + (cur.mobile || "(blank)") + " \u2192 " + np.mobile); }
             if (ent === "ClientContact" && np.department && np.department !== cur.division) { patch.division = np.department; changed.push("department: " + (cur.division || "(blank)") + " \u2192 " + np.department); }
+            if (ent === "Candidate") {
+              if (np.availableDate) { const t = Date.parse(np.availableDate); if (!isNaN(t) && t !== cur.dateAvailable) { patch.dateAvailable = t; changed.push("available: " + (cur.dateAvailable ? new Date(cur.dateAvailable).toLocaleDateString("en-US") : "(blank)") + " \u2192 " + np.availableDate); } }
+              if (np.payRate && Number(np.payRate) !== Number(cur.hourlyRate)) { patch.hourlyRate = Number(np.payRate); changed.push("pay rate: " + (cur.hourlyRate ? "$" + cur.hourlyRate : "(blank)") + " \u2192 $" + np.payRate); }
+              if (np.candidateStatus && np.candidateStatus !== cur.status) { patch.status = np.candidateStatus; changed.push("status: " + cur.status + " \u2192 " + np.candidateStatus); }
+            }
             if (changed.length) { await bhWrite("entity/" + ent + "/" + personId, patch, "POST"); r.created.push({ type: "update", id: personId, name: ((np.firstName || "") + " " + (np.lastName || "")).trim(), fields: changed }); }
             else r.created.push({ type: "unchanged", id: personId, name: ((np.firstName || "") + " " + (np.lastName || "")).trim() });
           }
@@ -366,7 +403,7 @@ module.exports = function registerCapture(app, deps) {
         if (it.kind === "job_update") {
           const jobId = parseInt(it.jobId);
           if (!jobId) throw new Error("Pick which job to update");
-          const cur = (await bhFetch("entity/JobOrder/" + jobId, { fields: "id,title,description,numOpenings,startDate,dateEnd,employmentType,status,clientContact(id,firstName,lastName)" })).data || {};
+          const cur = (await bhFetch("entity/JobOrder/" + jobId, { fields: "id,title,description,numOpenings,startDate,dateEnd,employmentType,status,clientBillRate,clientContact(id,firstName,lastName)" })).data || {};
           const ch = it.changes || {}, patch = {}, changed = [];
           if (it.appendNotes && it.appendNotes.trim()) {
             const stamp = new Date().toLocaleDateString("en-US") + (user ? " \u2013 " + user.name : "");
@@ -374,13 +411,14 @@ module.exports = function registerCapture(app, deps) {
             changed.push("description: appended update");
           }
           if (ch.title && ch.title !== cur.title) { patch.title = ch.title; changed.push("title: " + cur.title + " \u2192 " + ch.title); }
+          if (ch.billRate && Number(ch.billRate) !== Number(cur.clientBillRate)) { patch.clientBillRate = Number(ch.billRate); changed.push("bill rate: " + (cur.clientBillRate ? "$" + cur.clientBillRate : "(blank)") + " \u2192 $" + ch.billRate); }
           if (ch.numOpenings && parseInt(ch.numOpenings) !== cur.numOpenings) { patch.numOpenings = parseInt(ch.numOpenings); changed.push("openings: " + cur.numOpenings + " \u2192 " + ch.numOpenings); }
           if (ch.employmentType && ch.employmentType !== cur.employmentType) { patch.employmentType = ch.employmentType; changed.push("type: " + (cur.employmentType || "(blank)") + " \u2192 " + ch.employmentType); }
           if (ch.status && ch.status !== cur.status) { patch.status = ch.status; changed.push("status: " + cur.status + " \u2192 " + ch.status); }
           if (ch.startDate) { const t = Date.parse(ch.startDate); if (!isNaN(t) && t !== cur.startDate) { patch.startDate = t; changed.push("start: " + (cur.startDate ? new Date(cur.startDate).toLocaleDateString("en-US") : "(blank)") + " \u2192 " + ch.startDate); } }
           if (ch.endDate) { const t = Date.parse(ch.endDate); if (!isNaN(t) && t !== cur.dateEnd) { patch.dateEnd = t; changed.push("end: " + (cur.dateEnd ? new Date(cur.dateEnd).toLocaleDateString("en-US") : "(blank)") + " \u2192 " + ch.endDate); } }
           if (personId && personType === "contact" && (!cur.clientContact || cur.clientContact.id !== personId)) { patch.clientContact = { id: personId }; changed.push("contact: " + (cur.clientContact ? cur.clientContact.firstName + " " + cur.clientContact.lastName : "(blank)") + " \u2192 " + ((it.newPerson && (it.newPerson.firstName + " " + it.newPerson.lastName).trim()) || "#" + personId)); }
-          if (!changed.length) throw new Error("No changes to make on " + cur.title);
+          if (!changed.length && it.kind === "job_update") throw new Error("No changes to make on " + cur.title);
           await bhWrite("entity/JobOrder/" + jobId, patch, "POST");
           r.created.push({ type: "job update", id: jobId, title: cur.title, fields: changed });
           if (db.ready && patch.description) { try { await db.query("UPDATE jobs SET description=$1 WHERE id=$2", [patch.description, jobId]); } catch (e2) {} }
@@ -419,6 +457,7 @@ module.exports = function registerCapture(app, deps) {
           body.description = (it.description || title) + (it.nextStep ? "\n\nNext step: " + it.nextStep : "");
           const st = it.startDate ? Date.parse(it.startDate) : NaN; body.startDate = isNaN(st) ? Date.now() : st;
           if (it.endDate) { const te = Date.parse(it.endDate); if (!isNaN(te)) body.dateEnd = te; }
+          if (it.billRate && Number(it.billRate)) { body.clientBillRate = Number(it.billRate); body.salary = Number(it.billRate); body.salaryUnit = "Per Hour"; }
           if (user) body.owner = { id: user.id };
           const jobId = ok(await bhWrite("entity/JobOrder", body, "PUT"), "Job");
           r.created.push({ type: "job", id: jobId, title: title });
