@@ -7,7 +7,7 @@
  *        POST /api/capture/commit  { items }         -> writes to Bullhorn, per-item results
  */
 module.exports = function registerCapture(app, deps) {
-  const { db, bhWrite, bhFetchAll, getUser } = deps;
+  const { db, bhWrite, bhFetchAll, bhFetch, getUser } = deps;
 
   // Values below come from Anura's Bullhorn field configuration (meta=full) and what the team actually uses.
   const NOTE_ACTIONS = ["Appointment", "Outbound Call", "Inbound Call", "Email", "Text Conversation", "Left Message", "Reached Out", "LinkedIn InMail", "Prescreen", "Reference"];
@@ -25,7 +25,9 @@ module.exports = function registerCapture(app, deps) {
       "You are converting a recruiter/BD leader's raw notes into Bullhorn CRM entries for Anura Connect, a boutique Epic healthcare IT consulting/staffing firm.",
       "Today is " + today + ".",
       "",
-      "Split the notes into ITEMS. Produce ONE note item per person interacted with (a person = client contact at a hospital/health system/vendor, OR a candidate/consultant).",
+      "The text is EITHER raw meeting/travel notes OR explicit instructions to you (\"update the X job\", \"create a contact for\", \"add a note to\", \"change the start date on\"). When it contains instructions, do exactly what is asked and nothing more — do not add a note, job, or opportunity the author did not ask for. When it is raw notes, split them into ITEMS: ONE note item per person interacted with (a person = client contact at a hospital/health system/vendor, OR a candidate/consultant).",
+      "Item kinds: note (log an interaction on a person), contact (create or update a person's record WITHOUT logging a note — use when the author just wants the person in Bullhorn or gives contact details), job (a NEW role), job_update (change an EXISTING job the author refers to — \"the web services role\", \"the Cook job\", \"the Beaker req\"), opportunity (agreement-level deal).",
+      "A contact block like a signature (name / title / department / company / phone / email) is a contact item, not a note. If the author asks to update a job, produce a job_update, never a new job.",
       "If the notes describe a CONCRETE ROLE the client wants filled (a job title or Epic module/role, number of people, start date, rate, contract/perm), produce a JOB item for it — one job item per distinct role.",
       "If the notes describe an agreement-level deal (an MSA, a vendor/VMO process, a renewal, or a general 'wants to work with us' with no concrete role yet), produce an OPPORTUNITY item — at most ONE per company per dump, titled '<Company> MSA <year>' for MSA/agreement deals. A concrete role that ALSO needs an MSA gets both a job item and an opportunity item.",
       "Keep the author's own wording and facts in `comments` — clean up typos and fragments into readable sentences, but do not invent details, do not summarize away specifics (names, dates, modules, numbers, rates).",
@@ -39,6 +41,16 @@ module.exports = function registerCapture(app, deps) {
       "  \"action\":one of " + JSON.stringify(NOTE_ACTIONS) + " (in-person or video meeting = Appointment; a call the author made = Outbound Call; they called the author = Inbound Call),",
       "  \"comments\":\"the note text\",",
       "  \"followUp\":\"next step, or null\"},",
+      " {\"kind\":\"contact\",",
+      "  \"person\":{\"firstName\":\"\",\"lastName\":\"\",\"title\":\"\",\"department\":\"\",\"email\":\"\",\"phone\":\"\",\"mobile\":\"\"},",
+      "  \"personType\":\"contact\"|\"candidate\",",
+      "  \"company\":\"organization name or null\"},",
+      " {\"kind\":\"job_update\",",
+      "  \"company\":\"organization name\",",
+      "  \"jobHint\":\"words identifying which job (e.g. web services, Beaker analyst)\",",
+      "  \"person\":{...} or null (a contact to attach to the job, if one is given),",
+      "  \"appendNotes\":\"the new information to add to the job, in the author's words, or null\",",
+      "  \"changes\":{\"numOpenings\":number|null,\"startDate\":\"YYYY-MM-DD\"|null,\"endDate\":\"YYYY-MM-DD\"|null,\"employmentType\":\"Contract\"|\"Contract to Hire\"|\"Direct Hire\"|null,\"status\":\"Accepting Candidates\"|\"Filled\"|\"Closed\"|\"On Hold\"|null,\"title\":\"new title or null\"}},",
       " {\"kind\":\"job\",",
       "  \"company\":\"organization name\",",
       "  \"person\":{...} or null (the hiring contact),",
@@ -65,7 +77,7 @@ module.exports = function registerCapture(app, deps) {
       " \"questions\":[{\"itemIndex\":0,\"question\":\"...\"}]",
       "}",
       "",
-      "QUESTIONS: for facts you had to guess, add a short question aimed at the author (max one per item, only when truly unclear): a rate that could be bill or pay, a date with no year, a next step with no owner, text that could belong to two people, or a role that could be contract or perm. Never ask who a person is, for a last name, or whether someone is a contact or candidate — matching against Bullhorn is handled separately. Do not ask about things the notes make clear, and never ask about the JSON schema, field options, or your own output — pick the closest valid value and move on.",
+      "QUESTIONS: for facts you had to guess, add a short question aimed at the author (max one per item, only when truly unclear): a rate that could be bill or pay, a date with no year, a next step with no owner, text that could belong to two people, or a role that could be contract or perm. Never ask who a person is, for a last name, whether someone is a contact or candidate, for an email address, or for a start date or years of experience — those are handled separately. Do not ask about things the notes make clear, and never ask about the JSON schema, field options, or your own output — pick the closest valid value and move on.",
       "",
       "Rules: personType is 'contact' for anyone who works at a client/prospect/hospital/vendor, 'candidate' for consultants/job seekers. Anura Connect's own team (Rachel Neill, Peter Oppermann, Ben Oppermann, Ben Gray, Dan, Suzie Hall, Melissa Alfiero) are colleagues — never make them the person; a conversation with a colleague about a client becomes a note on that client (person null unless a client contact is named). If only a first name is given, leave lastName empty. Never merge two people into one item. If the text mentions no person at all for a fact, attach it as a note to the company with person null.",
       "",
@@ -90,8 +102,9 @@ module.exports = function registerCapture(app, deps) {
   }
 
   // ── Matching against Postgres (Bullhorn fallback) ────────────────────
-  function norm(s) { return (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim(); }
-  function tokens(s) { return norm(s).split(" ").filter(function (t) { return t && !["the", "of", "and", "inc", "llc", "health", "system", "medical", "center", "hospital"].includes(t); }); }
+  function norm(s) { return (s || "").toLowerCase().replace(/['\u2019]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim(); }
+  const STOP = ["the", "of", "and", "inc", "llc", "health", "healthcare", "system", "systems", "medical", "center", "hospital", "care", "group", "services"];
+  function tokens(s) { return norm(s).split(" ").filter(function (t) { return t.length > 1 && !STOP.includes(t); }); }
   function scoreName(target, cand) {
     const a = norm(target), b = norm(cand);
     if (!a || !b) return 0;
@@ -134,14 +147,28 @@ module.exports = function registerCapture(app, deps) {
     const toks = tokens(company);
     if (!db.ready || !toks.length) return [];
     const vals = toks.slice(0, 4).map(function (t) { return "%" + t + "%"; });
+    // rank in SQL by how many distinctive tokens hit, so a common word can't crowd out the real match
+    const hits = vals.map(function (_, i) { return "(CASE WHEN name ILIKE $" + (i + 1) + " THEN 1 ELSE 0 END)"; }).join(" + ");
     const where = vals.map(function (_, i) { return "name ILIKE $" + (i + 1); }).join(" OR ");
-    const rows = await db.getAll("SELECT id, name, status FROM clients WHERE (" + where + ") ORDER BY date_last_modified DESC NULLS LAST LIMIT 12", vals);
+    const rows = await db.getAll("SELECT id, name, status, (" + hits + ") AS hits FROM clients WHERE (" + where + ") AND status IS DISTINCT FROM 'Archive' ORDER BY hits DESC, date_last_modified DESC NULLS LAST LIMIT 40", vals);
     return rows.map(function (r) { return { kind: "client", id: r.id, name: r.name, sub: r.status || "", score: scoreName(company, r.name) }; })
       .sort(function (a, b) { return b.score - a.score; }).slice(0, 6);
   }
 
+  async function findJobs(clientId, hint) {
+    if (!db.ready || !clientId) return [];
+    const rows = await db.getAll("SELECT id, title, status, date_added FROM jobs WHERE client_id=$1 AND (is_deleted IS NOT TRUE) ORDER BY (CASE WHEN status IN ('Accepting Candidates','Open') THEN 0 ELSE 1 END), date_added DESC LIMIT 25", [clientId]).catch(function () { return []; });
+    return rows.map(function (r) {
+      const open = r.status === "Accepting Candidates" || r.status === "Open";
+      let sc = hint ? scoreName(hint, r.title) : 0;
+      if (hint) { const ht = tokens(hint), tt = norm(r.title); const hit = ht.filter(function (t) { return tt.indexOf(t) >= 0; }).length; sc = Math.max(sc, ht.length ? Math.round(100 * hit / ht.length) : 0); }
+      return { kind: "job", id: r.id, name: r.title, sub: r.status + (r.date_added ? " · " + new Date(Number(r.date_added)).toLocaleDateString("en-US") : ""), open: open, score: sc + (open ? 5 : 0) };
+    }).sort(function (a, b) { return b.score - a.score; });
+  }
+
   async function enrichItem(it) {
-    if ((it.kind === "job" || it.kind === "opportunity") && it.personType !== "candidate") it.personType = "contact"; // the person on a deal is the hiring contact
+    if ((it.kind === "job" || it.kind === "opportunity" || it.kind === "job_update") && it.personType !== "candidate") it.personType = "contact"; // the person on a deal is the hiring contact
+    if (it.kind === "contact" && !it.personType) it.personType = "contact";
     const p = it.person || null;
     const first = p ? (p.firstName || "").trim() : "", last = p ? (p.lastName || "").trim() : "";
     const out = Object.assign({}, it, { matches: { contacts: [], candidates: [], clients: [] }, suggested: {} });
@@ -159,10 +186,16 @@ module.exports = function registerCapture(app, deps) {
     if (!out.suggested.personId && ((bestC && bestC.score >= 80) || (bestK && bestK.score >= 80))) out.needsChoice = true;
     if (!out.suggested.clientId && bestCl && bestCl.score >= 70) out.suggested.clientId = bestCl.id;
 
+    // Which existing job? (job_update)
+    if (it.kind === "job_update") {
+      out.matches.jobs = await findJobs(out.suggested.clientId, it.jobHint);
+      const bj = out.matches.jobs[0];
+      if (bj && bj.score >= 60 && !(out.matches.jobs[1] && out.matches.jobs[1].score >= bj.score)) out.suggested.jobId = bj.id;
+    }
     // Questions the tool needs answered before it will write anything
     const qs = [];
     const personName = ((first || "") + " " + (last || "")).trim();
-    const isPersonKind = it.kind === "note" || (it.person && (first || last));
+    const isPersonKind = it.kind === "note" || it.kind === "contact" || (it.person && (first || last));
     if (isPersonKind && personName && !out.suggested.personId) {
       const cands = out.matches.contacts.concat(out.matches.candidates).filter(function (m) { return m.score >= 50 && !(it.company && m.kind === "contact" && m.clientName && scoreName(it.company, m.clientName) < 50); }).slice(0, 4);
       if (out.needsChoice) qs.push({ id: "who", text: "Several people in Bullhorn are named " + personName + ". Which one is this?", options: cands.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), personType: m.kind, personId: m.id, clientId: m.clientId || null }; }).concat([{ label: "None of these — create new", create: true }]) });
@@ -171,7 +204,7 @@ module.exports = function registerCapture(app, deps) {
       else qs.push({ id: "new", text: personName + " isn't in Bullhorn. Create a new " + (it.personType === "candidate" ? "candidate" : "client contact") + "?", options: [{ label: "Yes, create as " + (it.personType === "candidate" ? "candidate" : "contact"), create: true }, { label: "No — it's a " + (it.personType === "candidate" ? "client contact" : "candidate"), flipType: true }, { label: "Skip this entry", skip: true }] });
     }
     if (isPersonKind && personName && it.personType === "unknown" && !out.suggested.personId) qs.push({ id: "type", text: "Is " + personName + " a client contact or a candidate?", options: [{ label: "Client contact", personType: "contact" }, { label: "Candidate", personType: "candidate" }] });
-    const needsCompany = (it.kind !== "note") || (it.personType !== "candidate" && !out.suggested.personId);
+    const needsCompany = (it.kind !== "note" && it.kind !== "contact") || (it.personType !== "candidate" && !out.suggested.personId);
     if (needsCompany && it.company && !out.suggested.clientId) {
       const cl = out.matches.clients.slice(0, 4);
       if (cl.length) qs.push({ id: "company", text: "Is \"" + it.company + "\" one of these existing clients?", options: cl.map(function (m) { return { label: m.name + (m.sub ? " (" + m.sub + ")" : ""), clientId: m.id }; }).concat([{ label: "No — create \"" + it.company + "\" as a new client", createClient: true }]) });
@@ -179,6 +212,11 @@ module.exports = function registerCapture(app, deps) {
     }
     if (needsCompany && !it.company && !out.suggested.clientId && (it.kind !== "note" || (personName && it.personType !== "candidate" && !out.suggested.personId))) qs.push({ id: "company", text: "Which company is " + (personName || "this") + " with?", free: true });
     // Fields Bullhorn wants on a NEW record that the notes may not contain
+    if (it.kind === "job_update" && !out.suggested.jobId) {
+      const jl = (out.matches.jobs || []).slice(0, 5);
+      if (jl.length) qs.push({ id: "job", text: "Which " + (it.company || "") + " job should be updated" + (it.jobHint ? " (\"" + it.jobHint + "\")" : "") + "?", options: jl.map(function (m) { return { label: m.name + " — " + m.sub, jobId: m.id }; }) });
+      else if (out.suggested.clientId) qs.push({ id: "job", text: "I couldn't find a job at " + (it.company || "that client") + " matching \"" + (it.jobHint || "") + "\". Which job is it?", free: true });
+    }
     const willCreatePerson = isPersonKind && personName && last && !out.suggested.personId;
     if (willCreatePerson && !(p && p.email)) qs.push({ id: "email", text: "Email address for " + personName + "? (Bullhorn asks for one on every " + (it.personType === "candidate" ? "candidate" : "contact") + ")", free: true, options: [{ label: "Don't have it", none: true }] });
     if (willCreatePerson && it.personType === "candidate" && !(p && p.preferredRole)) qs.push({ id: "prefrole", text: "Preferred role for " + personName + "?", options: PREFERRED_ROLES.map(function (r) { return { label: r, preferredRole: r }; }) });
@@ -187,7 +225,10 @@ module.exports = function registerCapture(app, deps) {
       if (it.yearsRequired == null) qs.push({ id: "years", text: "Minimum years of experience for the " + (it.title || "role") + "?", options: YEARS_OPTIONS.map(function (y) { return { label: y === 0 ? "Not specified (0)" : String(y), yearsRequired: y }; }) });
     }
     if (it.kind === "opportunity" && !it.pursuitSource) qs.push({ id: "pursuit", text: "How did the " + (it.company || "") + " opportunity come about?", options: PURSUIT_SOURCES.map(function (r) { return { label: r, pursuitSource: r }; }) });
-    (it.aiQuestions || []).forEach(function (t, n) { qs.push({ id: "ai" + n, text: t, free: true }); });
+    (it.aiQuestions || []).forEach(function (t, n) {
+      if (/start date|email|last name|years of experience|client contact or|a contact or a candidate/i.test(t)) return; // already asked by the rules above
+      qs.push({ id: "ai" + n, text: t, free: true });
+    });
     out.questions = qs;
     return out;
   }
@@ -210,11 +251,12 @@ module.exports = function registerCapture(app, deps) {
   app.get("/api/capture/lookup", async function (req, res) {
     try {
       const q = (req.query.q || "").trim(), kind = req.query.kind || "contact";
-      if (!q) return res.json({ data: [] });
+      if (!q && kind !== "job") return res.json({ data: [] });
       const bits = q.split(/\s+/); const first = bits[0], last = bits.slice(1).join(" ");
       let data = [];
       if (kind === "contact") data = last ? await findContacts(first, last, "") : (await findContacts("", first, "")).concat(await findContacts(first, "", ""));
       else if (kind === "candidate") data = last ? await findCandidates(first, last) : (await findCandidates("", first)).concat(await findCandidates(first, ""));
+      else if (kind === "job") data = await findJobs(parseInt(req.query.clientId), q);
       else data = await findClients(q);
       const seen = {}; data = data.filter(function (d) { if (seen[d.id]) return false; seen[d.id] = 1; return true; });
       res.json({ data: data.slice(0, 10) });
@@ -302,6 +344,46 @@ module.exports = function registerCapture(app, deps) {
             createdContacts[key] = personId;
             r.created.push({ type: "contact", id: personId, name: (body.firstName + " " + body.lastName).trim() });
           }
+        }
+        // 2b. contact record only — update the existing person's details if we matched one
+        if (it.kind === "contact") {
+          if (!personId) throw new Error("Nothing to save — pick the person or fill in a first and last name");
+          if (!r.created.some(function (c) { return c.type === "contact" || c.type === "candidate"; })) {
+            const np = it.newPerson || {};
+            const ent = personType === "candidate" ? "Candidate" : "ClientContact";
+            const cur = (await bhFetch("entity/" + ent + "/" + personId, { fields: "id,occupation,email,phone,mobile" + (ent === "ClientContact" ? ",division" : "") })).data || {};
+            const patch = {}, changed = [];
+            if (np.title && np.title !== cur.occupation) { patch.occupation = np.title; changed.push("title: " + (cur.occupation || "(blank)") + " \u2192 " + np.title); }
+            if (np.email && np.email !== cur.email) { patch.email = np.email; changed.push("email: " + (cur.email || "(blank)") + " \u2192 " + np.email); }
+            if (np.phone && np.phone !== cur.phone) { patch.phone = np.phone; changed.push("phone: " + (cur.phone || "(blank)") + " \u2192 " + np.phone); }
+            if (np.mobile && np.mobile !== cur.mobile) { patch.mobile = np.mobile; changed.push("mobile: " + (cur.mobile || "(blank)") + " \u2192 " + np.mobile); }
+            if (ent === "ClientContact" && np.department && np.department !== cur.division) { patch.division = np.department; changed.push("department: " + (cur.division || "(blank)") + " \u2192 " + np.department); }
+            if (changed.length) { await bhWrite("entity/" + ent + "/" + personId, patch, "POST"); r.created.push({ type: "update", id: personId, name: ((np.firstName || "") + " " + (np.lastName || "")).trim(), fields: changed }); }
+            else r.created.push({ type: "unchanged", id: personId, name: ((np.firstName || "") + " " + (np.lastName || "")).trim() });
+          }
+        }
+        // 2c. update an existing job
+        if (it.kind === "job_update") {
+          const jobId = parseInt(it.jobId);
+          if (!jobId) throw new Error("Pick which job to update");
+          const cur = (await bhFetch("entity/JobOrder/" + jobId, { fields: "id,title,description,numOpenings,startDate,dateEnd,employmentType,status,clientContact(id,firstName,lastName)" })).data || {};
+          const ch = it.changes || {}, patch = {}, changed = [];
+          if (it.appendNotes && it.appendNotes.trim()) {
+            const stamp = new Date().toLocaleDateString("en-US") + (user ? " \u2013 " + user.name : "");
+            patch.description = ((cur.description || "").trim() + "\n\n<p><b>Update " + stamp + ":</b> " + it.appendNotes.trim().replace(/\n/g, "<br>") + "</p>").trim();
+            changed.push("description: appended update");
+          }
+          if (ch.title && ch.title !== cur.title) { patch.title = ch.title; changed.push("title: " + cur.title + " \u2192 " + ch.title); }
+          if (ch.numOpenings && parseInt(ch.numOpenings) !== cur.numOpenings) { patch.numOpenings = parseInt(ch.numOpenings); changed.push("openings: " + cur.numOpenings + " \u2192 " + ch.numOpenings); }
+          if (ch.employmentType && ch.employmentType !== cur.employmentType) { patch.employmentType = ch.employmentType; changed.push("type: " + (cur.employmentType || "(blank)") + " \u2192 " + ch.employmentType); }
+          if (ch.status && ch.status !== cur.status) { patch.status = ch.status; changed.push("status: " + cur.status + " \u2192 " + ch.status); }
+          if (ch.startDate) { const t = Date.parse(ch.startDate); if (!isNaN(t) && t !== cur.startDate) { patch.startDate = t; changed.push("start: " + (cur.startDate ? new Date(cur.startDate).toLocaleDateString("en-US") : "(blank)") + " \u2192 " + ch.startDate); } }
+          if (ch.endDate) { const t = Date.parse(ch.endDate); if (!isNaN(t) && t !== cur.dateEnd) { patch.dateEnd = t; changed.push("end: " + (cur.dateEnd ? new Date(cur.dateEnd).toLocaleDateString("en-US") : "(blank)") + " \u2192 " + ch.endDate); } }
+          if (personId && personType === "contact" && (!cur.clientContact || cur.clientContact.id !== personId)) { patch.clientContact = { id: personId }; changed.push("contact: " + (cur.clientContact ? cur.clientContact.firstName + " " + cur.clientContact.lastName : "(blank)") + " \u2192 " + ((it.newPerson && (it.newPerson.firstName + " " + it.newPerson.lastName).trim()) || "#" + personId)); }
+          if (!changed.length) throw new Error("No changes to make on " + cur.title);
+          await bhWrite("entity/JobOrder/" + jobId, patch, "POST");
+          r.created.push({ type: "job update", id: jobId, title: cur.title, fields: changed });
+          if (db.ready && patch.description) { try { await db.query("UPDATE jobs SET description=$1 WHERE id=$2", [patch.description, jobId]); } catch (e2) {} }
         }
         // 3. note
         if (it.kind === "note") {

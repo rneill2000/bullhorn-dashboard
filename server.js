@@ -11646,7 +11646,7 @@ app.get("/", (req, res) => {
 /* ═══ GLOBAL ERROR HANDLER ═══ */
 // Catch any unhandled errors in route handlers so they return 500 instead of crashing
 /* ═══ QUICK CAPTURE (notes dump → Bullhorn) ═══ */
-require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, getUser: getUser });
+require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
 
 app.use(function (err, req, res, next) {
   console.error("[Express] Unhandled route error:", err.message);
