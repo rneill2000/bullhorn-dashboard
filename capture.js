@@ -28,6 +28,7 @@ module.exports = function registerCapture(app, deps) {
       "The text is EITHER raw meeting/travel notes OR explicit instructions to you (\"update the X job\", \"create a contact for\", \"add a note to\", \"change the start date on\"). When it contains instructions, do exactly what is asked and nothing more — do not add a note, job, or opportunity the author did not ask for. When it is raw notes, split them into ITEMS: ONE note item per person interacted with (a person = client contact at a hospital/health system/vendor, OR a candidate/consultant).",
       "Item kinds: note (log an interaction on a person), contact (create or update a person's record WITHOUT logging a note — use when the author just wants the person in Bullhorn, gives contact details, or states a candidate's new availability date / pay rate / status), job (a NEW role), job_update (change an EXISTING job the author refers to — \"the web services role\", \"the Cook job\", \"the Beaker req\"), opportunity (agreement-level deal), task (a reminder or to-do for the author: \"remind me\", \"follow up with X on Friday\", \"need to send Y the resumes\").",
       "When raw notes state that a candidate's availability, pay rate, or status changed, produce BOTH the note AND a contact item carrying the new values. A rate mentioned about a job or client is the bill rate; a rate mentioned about a candidate is their pay rate; only ask if the text truly leaves it open. A job the client filled themselves or cancelled is status Closed; Filled means Anura placed someone.",
+      "Keep titles, task subjects, and next-step lines under 90 characters; put detail in description fields.",
       "In questions, speak plainly to the author — never mention item kinds, JSON, or field names.",
       "A contact block like a signature (name / title / department / company / phone / email) is a contact item, not a note. If the author asks to update a job, produce a job_update, never a new job.",
       "If the notes describe a CONCRETE ROLE the client wants filled (a job title or Epic module/role, number of people, start date, rate, contract/perm), produce a JOB item for it — one job item per distinct role.",
@@ -281,6 +282,10 @@ module.exports = function registerCapture(app, deps) {
   });
 
   // ── Commit to Bullhorn ───────────────────────────────────────────────
+  // Max lengths from Bullhorn field metadata — anything longer is rejected by the API ("longer than the field allowed")
+  const MAX = { name: 50, occupation: 100, division: 40, email: 100, phone: 50, clientName: 100, title: 100, nextStep: 100, subject: 100, action: 30, preferredRole: 100 };
+  function clip(v, n) { v = (v == null ? "" : String(v)).trim(); if (v.length <= n) return v; const cut = v.slice(0, n - 1); const sp = cut.lastIndexOf(" "); return (sp > n * 0.6 ? cut.slice(0, sp) : cut) + "\u2026"; }
+
   function ok(result, what) {
     if (!result || !result.changedEntityId) throw new Error(what + " write returned no changedEntityId: " + JSON.stringify(result).slice(0, 200));
     return result.changedEntityId;
@@ -313,7 +318,7 @@ module.exports = function registerCapture(app, deps) {
               try { const d = await bhFetchAll("query/ClientCorporation", { where: "name='" + newClientName.replace(/'/g, "''") + "'", fields: "id,name,status", count: 1 }, 1); dupC = (d.data || [])[0]; } catch (e) { console.log("[Capture] client dup check failed:", e.message); }
               if (dupC) throw new Error("\"" + dupC.name + "\" already exists in Bullhorn (#" + dupC.id + "). Pick it from the company matches instead of creating a new one.");
             }
-            const body = { name: newClientName, status: hasRole[key] ? CLIENT_STATUS_ACTIVE : CLIENT_STATUS_NEW, customText2: hasOpp[key] ? "MSA In Progress" : "No MSA", department: { id: DEPARTMENT_ID }, isDeleted: false };
+            const body = { name: clip(newClientName, MAX.clientName), status: hasRole[key] ? CLIENT_STATUS_ACTIVE : CLIENT_STATUS_NEW, customText2: hasOpp[key] ? "MSA In Progress" : "No MSA", department: { id: DEPARTMENT_ID }, isDeleted: false };
             if (user) body.owner = { id: user.id };
             clientId = ok(await bhWrite("entity/ClientCorporation", body, "PUT"), "Client");
             createdClients[key] = clientId;
@@ -346,8 +351,8 @@ module.exports = function registerCapture(app, deps) {
           }
           if (personId) { /* already created earlier in this batch */ }
           else if (personType === "candidate") {
-            const body = { firstName: np.firstName || "", lastName: np.lastName || "", name: ((np.firstName || "") + " " + (np.lastName || "")).trim(), status: "Not Screened", customText3: [np.preferredRole || "Analyst"], isDeleted: false };
-            if (np.email) body.email = np.email; if (np.phone) body.phone = np.phone; if (np.title) body.occupation = np.title;
+            const body = { firstName: clip(np.firstName || "", MAX.name), lastName: clip(np.lastName || "", MAX.name), name: clip(((np.firstName || "") + " " + (np.lastName || "")).trim(), MAX.occupation), status: "Not Screened", customText3: [clip(np.preferredRole || "Analyst", MAX.preferredRole)], isDeleted: false };
+            if (np.email) body.email = clip(np.email, MAX.email); if (np.phone) body.phone = clip(np.phone, MAX.phone); if (np.title) body.occupation = clip(np.title, MAX.occupation);
             if (np.availableDate) { const ta = Date.parse(np.availableDate); if (!isNaN(ta)) body.dateAvailable = ta; }
             if (np.payRate) body.hourlyRate = Number(np.payRate) || undefined;
             if (user) { body.owner = { id: user.id }; body.customText10 = user.name; }
@@ -356,8 +361,8 @@ module.exports = function registerCapture(app, deps) {
             r.created.push({ type: "candidate", id: personId, name: body.name });
           } else {
             if (!clientId) throw new Error("A new contact needs a company — pick an existing client or enter a new company name");
-            const body = { firstName: np.firstName || "", lastName: np.lastName || "(unknown)", clientCorporation: { id: clientId }, status: "Active" };
-            if (np.email) body.email = np.email; if (np.phone) body.phone = np.phone; if (np.title) body.occupation = np.title;
+            const body = { firstName: clip(np.firstName || "", MAX.name), lastName: clip(np.lastName || "(unknown)", MAX.name), clientCorporation: { id: clientId }, status: "Active" };
+            if (np.email) body.email = clip(np.email, MAX.email); if (np.phone) body.phone = clip(np.phone, MAX.phone); if (np.title) body.occupation = clip(np.title, MAX.occupation); if (np.department) body.division = clip(np.department, MAX.division);
             if (user) body.owner = { id: user.id };
             personId = ok(await bhWrite("entity/ClientContact", body, "PUT"), "Contact");
             createdContacts[key] = personId;
@@ -366,7 +371,9 @@ module.exports = function registerCapture(app, deps) {
         }
         // 2a. task
         if (it.kind === "task") {
-          const subject = (it.subject || "").trim(); if (!subject) throw new Error("Task needs a subject");
+          const subjectFull = (it.subject || "").trim(); if (!subjectFull) throw new Error("Task needs a subject");
+          const subject = clip(subjectFull, MAX.subject);
+          if (subject !== subjectFull) it.description = subjectFull + (it.description ? "\n\n" + it.description : "");
           const due = it.dueDate ? Date.parse(it.dueDate) : NaN;
           const when = isNaN(due) ? Date.now() : due + 17 * 3600 * 1000; // due dates land at 5pm local-ish
           const body = { subject: subject, type: ["Call", "Send Email", "Follow-Up Call", "Conference Call", "Meeting", "Send Contract", "Send Redlines", "Review Account", "Other"].includes(it.taskType) ? it.taskType : "Other", dateBegin: when, dateEnd: when, priority: 2, isPrivate: false, notificationMinutes: 0, isCompleted: false };
@@ -385,11 +392,11 @@ module.exports = function registerCapture(app, deps) {
             const ent = personType === "candidate" ? "Candidate" : "ClientContact";
             const cur = (await bhFetch("entity/" + ent + "/" + personId, { fields: "id,occupation,email,phone,mobile" + (ent === "ClientContact" ? ",division" : ",dateAvailable,hourlyRate,status") })).data || {};
             const patch = {}, changed = [];
-            if (np.title && np.title !== cur.occupation) { patch.occupation = np.title; changed.push("title: " + (cur.occupation || "(blank)") + " \u2192 " + np.title); }
-            if (np.email && np.email !== cur.email) { patch.email = np.email; changed.push("email: " + (cur.email || "(blank)") + " \u2192 " + np.email); }
-            if (np.phone && np.phone !== cur.phone) { patch.phone = np.phone; changed.push("phone: " + (cur.phone || "(blank)") + " \u2192 " + np.phone); }
-            if (np.mobile && np.mobile !== cur.mobile) { patch.mobile = np.mobile; changed.push("mobile: " + (cur.mobile || "(blank)") + " \u2192 " + np.mobile); }
-            if (ent === "ClientContact" && np.department && np.department !== cur.division) { patch.division = np.department; changed.push("department: " + (cur.division || "(blank)") + " \u2192 " + np.department); }
+            if (np.title && np.title !== cur.occupation) { patch.occupation = clip(np.title, MAX.occupation); changed.push("title: " + (cur.occupation || "(blank)") + " \u2192 " + np.title); }
+            if (np.email && np.email !== cur.email) { patch.email = clip(np.email, MAX.email); changed.push("email: " + (cur.email || "(blank)") + " \u2192 " + np.email); }
+            if (np.phone && np.phone !== cur.phone) { patch.phone = clip(np.phone, MAX.phone); changed.push("phone: " + (cur.phone || "(blank)") + " \u2192 " + np.phone); }
+            if (np.mobile && np.mobile !== cur.mobile) { patch.mobile = clip(np.mobile, MAX.phone); changed.push("mobile: " + (cur.mobile || "(blank)") + " \u2192 " + np.mobile); }
+            if (ent === "ClientContact" && np.department && np.department !== cur.division) { patch.division = clip(np.department, MAX.division); changed.push("department: " + (cur.division || "(blank)") + " \u2192 " + np.department); }
             if (ent === "Candidate") {
               if (np.availableDate) { const t = Date.parse(np.availableDate); if (!isNaN(t) && t !== cur.dateAvailable) { patch.dateAvailable = t; changed.push("available: " + (cur.dateAvailable ? new Date(cur.dateAvailable).toLocaleDateString("en-US") : "(blank)") + " \u2192 " + np.availableDate); } }
               if (np.payRate && Number(np.payRate) !== Number(cur.hourlyRate)) { patch.hourlyRate = Number(np.payRate); changed.push("pay rate: " + (cur.hourlyRate ? "$" + cur.hourlyRate : "(blank)") + " \u2192 $" + np.payRate); }
@@ -410,7 +417,7 @@ module.exports = function registerCapture(app, deps) {
             patch.description = ((cur.description || "").trim() + "\n\n<p><b>Update " + stamp + ":</b> " + it.appendNotes.trim().replace(/\n/g, "<br>") + "</p>").trim();
             changed.push("description: appended update");
           }
-          if (ch.title && ch.title !== cur.title) { patch.title = ch.title; changed.push("title: " + cur.title + " \u2192 " + ch.title); }
+          if (ch.title && ch.title !== cur.title) { patch.title = clip(ch.title, MAX.title); changed.push("title: " + cur.title + " \u2192 " + ch.title); }
           if (ch.billRate && Number(ch.billRate) !== Number(cur.clientBillRate)) { patch.clientBillRate = Number(ch.billRate); changed.push("bill rate: " + (cur.clientBillRate ? "$" + cur.clientBillRate : "(blank)") + " \u2192 $" + ch.billRate); }
           if (ch.numOpenings && parseInt(ch.numOpenings) !== cur.numOpenings) { patch.numOpenings = parseInt(ch.numOpenings); changed.push("openings: " + cur.numOpenings + " \u2192 " + ch.numOpenings); }
           if (ch.employmentType && ch.employmentType !== cur.employmentType) { patch.employmentType = ch.employmentType; changed.push("type: " + (cur.employmentType || "(blank)") + " \u2192 " + ch.employmentType); }
@@ -446,7 +453,7 @@ module.exports = function registerCapture(app, deps) {
         // 4. job order
         if (it.kind === "job") {
           if (!clientId) throw new Error("Job needs a client — pick an existing one or enter a new company name");
-          const title = (it.title || "").trim(); if (!title) throw new Error("Job needs a title");
+          const title = clip((it.title || "").trim(), MAX.title); if (!title) throw new Error("Job needs a title");
           let contactId = (personId && personType === "contact") ? personId : null;
           if (!contactId) {
             const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id,firstName,lastName", orderBy: "-dateLastModified", count: 1 });
@@ -465,14 +472,14 @@ module.exports = function registerCapture(app, deps) {
         // 4. opportunity
         if (it.kind === "opportunity") {
           if (!clientId) throw new Error("Opportunity needs a client — pick an existing one or enter a new company name");
-          const title = (it.title || "").trim(); if (!title) throw new Error("Opportunity needs a title");
+          const title = clip((it.title || "").trim(), MAX.title); if (!title) throw new Error("Opportunity needs a title");
           const body = { title: title, status: OPP_STATUSES.includes(it.status) ? it.status : "Identified", type: ["New", "Renewal", "Amendment"].includes(it.type) ? it.type : "New", clientCorporation: { id: clientId }, dealValue: Number(it.dealValue) || 0, branchCode: PURSUIT_SOURCES.includes(it.pursuitSource) ? it.pursuitSource : "Outbound", isDeleted: false };
           if (it.description) body.description = it.description;
           if (!personId || personType !== "contact") {
             const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id", orderBy: "-dateLastModified", count: 1 });
             if (c.data && c.data.length) body.clientContact = { id: c.data[0].id };
           }
-          if (it.nextStep) body.customText1 = it.nextStep;
+          if (it.nextStep) { body.customText1 = clip(it.nextStep, MAX.nextStep); if (body.customText1 !== it.nextStep.trim()) body.description = (body.description || "") + "\n\nNext step: " + it.nextStep.trim(); }
           if (it.dealValue) body.dealValue = Number(it.dealValue) || 0;
           if (it.estimatedStart) { const t = Date.parse(it.estimatedStart); if (!isNaN(t)) body.estimatedStartDate = t; }
           if (personId && personType === "contact") body.clientContact = { id: personId };
