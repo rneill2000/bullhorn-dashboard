@@ -291,6 +291,30 @@ module.exports = function registerCapture(app, deps) {
     return result.changedEntityId;
   }
 
+  const ENT = { client: "ClientCorporation", contact: "ClientContact", candidate: "Candidate", note: "Note", job: "JobOrder", "job update": "JobOrder", opportunity: "Opportunity", task: "Task", update: null, unchanged: null };
+  const ENT_FIELDS = { ClientCorporation: "id,name,status", ClientContact: "id,firstName,lastName,occupation,email,phone,clientCorporation(id)", Candidate: "id,firstName,lastName,dateAvailable,hourlyRate,status", Note: "id,action,comments,personReference(id)", JobOrder: "id,title,status,numOpenings,clientBillRate,startDate,dateEnd,employmentType,clientContact(id),description", Opportunity: "id,title,status,type,branchCode,customText1,clientCorporation(id)", Task: "id,subject,dateBegin,isCompleted" };
+  function bhLink(entity, id) { return "https://cls91.bullhornstaffing.com/BullhornSTAFFING/OpenWindow.cfm?entity=" + entity + "&id=" + id; }
+
+  // Read each created/updated record back and confirm it really exists with what we wrote.
+  async function verifyCreated(c, it, personType) {
+    let entity = ENT[c.type];
+    if (c.type === "update") entity = personType === "candidate" ? "Candidate" : "ClientContact";
+    if (!entity) return c;
+    try {
+      const got = (await bhFetch("entity/" + entity + "/" + c.id, { fields: ENT_FIELDS[entity] })).data;
+      if (!got || got.id !== c.id) { c.verified = false; c.verifyError = "record not found on read-back"; return c; }
+      const problems = [];
+      if (entity === "Note" && !(got.comments || "").trim()) problems.push("empty comments");
+      if (entity === "JobOrder" && c.type === "job" && got.status !== "Accepting Candidates") problems.push("status is " + got.status);
+      if (entity === "JobOrder" && c.fields) c.fields.forEach(function (f) { const m = f.match(/^status: .* \u2192 (.+)$/); if (m && got.status !== m[1]) problems.push("status did not change to " + m[1]); });
+      if (entity === "Opportunity" && !got.clientCorporation) problems.push("no client on opportunity");
+      if (entity === "ClientContact" && c.type === "contact" && !got.clientCorporation) problems.push("contact has no company");
+      c.verified = problems.length === 0; if (problems.length) c.verifyError = problems.join("; ");
+      c.link = bhLink(entity, c.id);
+    } catch (e) { c.verified = false; c.verifyError = "read-back failed: " + e.message; }
+    return c;
+  }
+
   app.post("/api/capture/commit", async function (req, res) {
     const user = getUser(req);
     const items = (req.body && req.body.items) || [];
@@ -493,7 +517,13 @@ module.exports = function registerCapture(app, deps) {
         r.ok = false; r.error = e.message;
         console.error("[Capture commit] item", i, e.message);
       }
+      // Verify: nothing is reported green unless Bullhorn hands it back to us
+      for (const c of r.created) await verifyCreated(c, it, it.personType || "contact");
+      const bad = r.created.filter(function (c) { return c.verified === false; });
+      if (bad.length) { r.ok = false; r.error = (r.error ? r.error + "; " : "") + "Bullhorn did not confirm: " + bad.map(function (c) { return c.type + " #" + c.id + " (" + c.verifyError + ")"; }).join(", "); }
       results.push(r);
+      // Audit trail
+      if (db.ready) { try { await db.query("CREATE TABLE IF NOT EXISTS capture_log (id SERIAL PRIMARY KEY, at TIMESTAMPTZ DEFAULT NOW(), user_name TEXT, kind TEXT, ok BOOLEAN, error TEXT, created JSONB)"); await db.query("INSERT INTO capture_log (user_name, kind, ok, error, created) VALUES ($1,$2,$3,$4,$5)", [user ? user.name : null, it.kind, r.ok, r.error || null, JSON.stringify(r.created)]); } catch (e) { console.log("[Capture] log failed:", e.message); } }
     }
     res.json({ results: results, user: user ? user.name : null });
   });

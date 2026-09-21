@@ -176,8 +176,8 @@ function _capCard(it,i){
     +(res&&res.ok?'':'<label style="font-size:12px;color:#64748b;cursor:pointer"><input type="checkbox" '+(it.skip?'checked':'')+' onchange="_capSet('+i+',\'skip\',this.checked);_capRefresh('+i+')"> skip</label>')+'</div>';
   if(res){
     if(res.skipped) h+='<div style="font-size:13px;color:#64748b;margin-top:8px">Skipped</div>';
-    else if(res.ok){ h+='<div class="cap-ok">&#10003; Written to Bullhorn'+(res.attachedTo?' (attached to '+esc(res.attachedTo)+')':'')+'<br>'+res.created.map(function(c){return esc(c.type)+' #'+c.id+(c.name?' \u2014 '+esc(c.name):'')+(c.title?' \u2014 '+esc(c.title):'')+(c.status?' ('+esc(c.status)+')':'')+(c.fields?'<div style="font-size:12px;color:#166534;margin:2px 0 4px 12px">'+c.fields.map(esc).join('<br>')+'</div>':'');}).join('<br>')+(res.clientStatus?'<br>Client status: '+esc(res.clientStatus):'')+'</div>'; h+='</div>'; return h; }
-    else h+='<div class="cap-err">Failed: '+esc(res.error)+'</div>';
+    else if(res.ok){ h+='<div class="cap-ok">&#10003; Written and verified in Bullhorn'+(res.attachedTo?' (attached to '+esc(res.attachedTo)+')':'')+'<br>'+res.created.map(function(c){return (c.link?'<a href="'+esc(c.link)+'" target="_blank" style="color:#166534">':'')+esc(c.type)+' #'+c.id+(c.link?' \u2197</a>':'')+(c.name?' \u2014 '+esc(c.name):'')+(c.title?' \u2014 '+esc(c.title):'')+(c.status?' ('+esc(c.status)+')':'')+(c.fields?'<div style="font-size:12px;color:#166534;margin:2px 0 4px 12px">'+c.fields.map(esc).join('<br>')+'</div>':'');}).join('<br>')+(res.clientStatus?'<br>Client status: '+esc(res.clientStatus):'')+'</div>'; h+='</div>'; return h; }
+    else h+='<div class="cap-err">Failed: '+esc(res.error)+(res.created&&res.created.length?'<div style="margin-top:4px;font-size:12px">Created before the failure: '+res.created.map(function(c){return esc(c.type)+' #'+c.id+(c.verified===false?' (unverified)':'');}).join(', ')+'</div>':'')+'</div>';
   }
   // person
   if(!isOpp || isCt || it.hasPerson || it.personId){
