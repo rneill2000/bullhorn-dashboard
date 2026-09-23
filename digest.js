@@ -103,5 +103,6 @@ module.exports = function registerDigest(app, deps) {
 
   app.get("/api/digest/ready-to-submit", async function (req, res) { try { res.json(await build()); } catch (e) { res.status(500).json({ error: e.message }); } });
   app.get("/api/digest/ready-to-submit/preview", async function (req, res) { try { res.type("html").send(render(await build())); } catch (e) { res.status(500).send(e.message); } });
+  app.get("/api/digest/ready-to-submit/send", async function (req, res) { try { const u = getUser(req); const r = await send("manual by " + (u ? u.name : "unknown")); res.type("html").send("<p style=\"font-family:sans-serif\">Sent to " + r.to.join(", ") + " \u2014 " + r.candidates + " candidates at " + r.clients + " clients. <a href=\"/\">Back to dashboard</a></p>"); } catch (e) { res.status(500).send(e.message); } });
   app.post("/api/digest/ready-to-submit/send", async function (req, res) { try { const u = getUser(req); res.json(await send("manual by " + (u ? u.name : "unknown"))); } catch (e) { res.status(500).json({ error: e.message }); } });
 };
