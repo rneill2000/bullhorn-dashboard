@@ -597,6 +597,7 @@ async function apiFetch(endpoint, opts) {
       if (!opts.headers["Content-Type"]) opts.headers["Content-Type"] = "application/json";
     }
     var res = await fetch(API_BASE + "/api/" + endpoint, opts);
+    if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.hash); throw new Error("Sign in required"); }
     if (!res.ok) {
       var errText = ""; try { errText = (await res.json()).error || ""; } catch(e) {}
       throw new Error("API " + res.status + (errText ? ": " + errText : ""));
@@ -606,6 +607,7 @@ async function apiFetch(endpoint, opts) {
   // Otherwise treat as GET with query params
   var qs = opts ? "?" + new URLSearchParams(opts).toString() : "";
   var res = await fetch(API_BASE + "/api/" + endpoint + qs);
+  if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.hash); throw new Error("Sign in required"); }
   if (!res.ok) throw new Error("API " + res.status);
   return res.json();
 }

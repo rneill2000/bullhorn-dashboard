@@ -127,6 +127,8 @@ setInterval(function () {
 
 // Step 1: Redirect user to Bullhorn login page
 app.get("/auth/login", (req, res) => {
+  const nxt = typeof req.query.next === "string" && req.query.next.startsWith("/") && !req.query.next.startsWith("//") ? req.query.next : "/";
+  res.setHeader("Set-Cookie", "bh_next=" + encodeURIComponent(nxt) + "; Path=/; HttpOnly; SameSite=Lax; Max-Age=600");
   const params = new URLSearchParams({
     client_id: BH.clientId,
     response_type: "code",
@@ -194,11 +196,13 @@ app.get("/auth/callback", async (req, res) => {
 
     // Set cookie and redirect to dashboard
     const isSecure = BH.redirectUri.startsWith("https");
-    res.setHeader("Set-Cookie", `bh_session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${isSecure ? "; Secure" : ""}`);
-    res.redirect("/");
+    const nxtRaw = parseCookies(req).bh_next; let nxt = "/";
+    try { const d = decodeURIComponent(nxtRaw || ""); if (d.startsWith("/") && !d.startsWith("//")) nxt = d; } catch (e) {}
+    res.setHeader("Set-Cookie", [`bh_session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${isSecure ? "; Secure" : ""}`, "bh_next=; Path=/; Max-Age=0"]);
+    res.redirect(nxt);
   } catch (e) {
     console.error("[SSO Callback]", e.message);
-    res.redirect("/?auth_error=" + encodeURIComponent(e.message));
+    res.redirect("/login?error=" + encodeURIComponent(e.message));
   }
 });
 
@@ -218,10 +222,35 @@ app.get("/auth/logout", (req, res) => {
   const tok = cookies.bh_session;
   if (tok && userSessions[tok]) delete userSessions[tok];
   res.setHeader("Set-Cookie", "bh_session=; Path=/; HttpOnly; Max-Age=0");
+  if (!req.query.api) return res.redirect("/login");
   res.redirect("/");
 });
 
 // Serve static AFTER auth routes so /auth/* isn't caught by static middleware
+/* ═══ ACCESS CONTROL ═══
+ * Everything requires a signed-in Bullhorn user except: the login flow, the candidate
+ * submission portal (links are signed), inbound webhooks (token in URL), a bare health
+ * check, and non-HTML static assets. Pages redirect to /login; API calls get a 401. */
+const PUBLIC_EXACT = new Set(["/login", "/health", "/portal", "/api/portal/config", "/api/portal/submit", "/favicon.ico"]);
+const PUBLIC_PREFIX = ["/auth/", "/api/dux-webhook/"];
+const PUBLIC_ASSET = /\.(js|css|png|jpg|jpeg|gif|svg|ico|webp|woff2?|ttf|map)$/i;
+function isPublicPath(p) {
+  if (PUBLIC_EXACT.has(p)) return true;
+  if (PUBLIC_PREFIX.some(function (x) { return p.startsWith(x); })) return true;
+  if (PUBLIC_ASSET.test(p) && !/\.html$/i.test(p)) return true;
+  return false;
+}
+app.get("/login", function (req, res) { res.setHeader("Cache-Control", "no-store"); res.sendFile(path.join(__dirname, "public", "login.html")); });
+app.get("/health", function (req, res) { res.json({ ok: true }); });
+app.use(function (req, res, next) {
+  if (isPublicPath(req.path)) return next();
+  const u = getUser(req);
+  if (u) { res.setHeader("Cache-Control", "no-store"); return next(); }
+  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Sign in required", login: "/login" });
+  const next_ = req.originalUrl && req.originalUrl !== "/" ? "?next=" + encodeURIComponent(req.originalUrl) : "";
+  res.redirect("/login" + next_);
+});
+
 require("./mobile")(app, { db: db, bhFetchAll: bhFetchAll, bhFetch: bhFetch });
 app.use(express.static(path.join(__dirname, "public")));
 

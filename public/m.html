@@ -99,11 +99,12 @@ async function apiFetch(endpoint,opts){
   if(opts&&(opts.method||opts.body)){
     if(opts.body&&typeof opts.body==="object"){opts.body=JSON.stringify(opts.body);opts.headers=opts.headers||{};opts.headers["Content-Type"]="application/json";}
     var res=await fetch("/api/"+endpoint,opts);
+    if(res.status===401){ location.href="/login?next="+encodeURIComponent(location.pathname+location.hash); throw new Error("Sign in required"); }
     if(!res.ok){var t="";try{t=(await res.json()).error||"";}catch(e){}throw new Error("API "+res.status+(t?": "+t:""));}
     return res.json();
   }
   var qs=opts?"?"+new URLSearchParams(opts).toString():"";
-  var r=await fetch("/api/"+endpoint+qs); if(!r.ok) throw new Error("API "+r.status); return r.json();
+  var r=await fetch("/api/"+endpoint+qs); if(r.status===401){ location.href="/login?next="+encodeURIComponent(location.pathname+location.hash); throw new Error("Sign in required"); } if(!r.ok) throw new Error("API "+r.status); return r.json();
 }
 var _toastT;function showToast(msg,type){var t=document.getElementById("toast");t.textContent=msg;t.className=type==="error"?"error":"";t.style.display="block";clearTimeout(_toastT);_toastT=setTimeout(function(){t.style.display="none";},3500);}
 function tel(p){return (p||"").replace(/[^\d+]/g,"");}
