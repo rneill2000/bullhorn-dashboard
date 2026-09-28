@@ -7,8 +7,29 @@
  *   POST /api/digest/ready-to-submit/send     → send it now
  */
 module.exports = function registerDigest(app, deps) {
-  const { db, graphFetch, outlookUsers, getUser } = deps;
-  const TO = (process.env.DIGEST_READY_TO || "rachel@anuraconnect.com").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  const { db, graphFetch, outlookUsers, getUser, bhFetchAll } = deps;
+  const TO = (process.env.DIGEST_READY_TO || "rachel@anuraconnect.com").split(",").map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
+  // These recipients see everything; everyone else only sees jobs they own in Bullhorn
+  const SEE_ALL = (process.env.DIGEST_READY_ALL || "rachel@anuraconnect.com").split(",").map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
+
+  async function userNameByEmail() {
+    const map = {};
+    try {
+      const r = await bhFetchAll("query/CorporateUser", { where: "id>0", fields: "id,firstName,lastName,email,enabled", count: 100 }, 100);
+      (r.data || []).forEach(function (u) { if (u.email) map[u.email.toLowerCase()] = ((u.firstName || "") + " " + (u.lastName || "")).trim(); });
+    } catch (e) { console.log("[Digest] could not load Bullhorn users:", e.message); }
+    return map;
+  }
+  function filterForOwner(d, ownerName) {
+    const clients = d.clients.map(function (c) {
+      const jobs = c.jobs.filter(function (j) { return (j.owner || "").trim().toLowerCase() === ownerName.toLowerCase(); });
+      if (!jobs.length) return null;
+      const count = jobs.reduce(function (n, j) { return n + j.candidates.length; }, 0);
+      const oldest = Math.max.apply(null, jobs.map(function (j) { return Math.max.apply(null, j.candidates.map(function (x) { return x.daysWaiting || 0; })); }));
+      return Object.assign({}, c, { jobs: jobs, count: count, oldest: oldest });
+    }).filter(Boolean).sort(function (a, b) { return b.oldest - a.oldest || b.count - a.count; });
+    return { generatedAt: d.generatedAt, totalCandidates: clients.reduce(function (n, c) { return n + c.count; }, 0), clients: clients, forOwner: ownerName };
+  }
   const SEND_HOUR_CT = 7;
   const DASH = "https://dashboard.anuraconnect.com";
 
@@ -43,13 +64,14 @@ module.exports = function registerDigest(app, deps) {
   }
 
   function render(d) {
+    const scope = d.forOwner ? " \u00b7 your jobs" : "";
     const dateStr = chicagoNow().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     const sty = { body: "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0f172a;max-width:680px;margin:0 auto;padding:0 12px", h: "background:#0E2E47;color:#fff;padding:20px 24px;border-radius:10px 10px 0 0", muted: "color:#64748b;font-size:13px" };
     let h = "<div style=\"" + sty.body + "\">";
-    h += "<div style=\"" + sty.h + "\"><div style=\"font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#bcd3e0\">Anura Connect</div><div style=\"font-size:20px;font-weight:700;margin-top:4px\">Ready to submit \u2014 " + esc(dateStr) + "</div></div>";
+    h += "<div style=\"" + sty.h + "\"><div style=\"font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#bcd3e0\">Anura Connect</div><div style=\"font-size:20px;font-weight:700;margin-top:4px\">Ready to submit \u2014 " + esc(dateStr) + esc(scope) + "</div></div>";
     h += "<div style=\"background:#fff;border:1px solid #e2e8f0;border-top:0;border-radius:0 0 10px 10px;padding:20px 24px\">";
     if (!d.clients.length) {
-      h += "<p style=\"font-size:15px\">Nothing waiting. Every internally submitted candidate has been sent to the client.</p>";
+      h += "<p style=\"font-size:15px\">Nothing waiting" + (d.forOwner ? " on your jobs" : "") + ". Every internally submitted candidate has been sent to the client.</p>";
     } else {
       h += "<p style=\"font-size:15px;margin:0 0 16px\"><b>" + d.totalCandidates + " candidate" + (d.totalCandidates === 1 ? "" : "s") + "</b> across <b>" + d.clients.length + " client" + (d.clients.length === 1 ? "" : "s") + "</b> " + (d.totalCandidates === 1 ? "is" : "are") + " internally submitted and waiting to go to the client. Oldest first.</p>";
       d.clients.forEach(function (c) {
@@ -74,15 +96,27 @@ module.exports = function registerDigest(app, deps) {
   }
 
   async function send(reason) {
-    const d = await build();
-    const html = render(d);
+    const all = await build();
     const from = Object.keys(outlookUsers())[0];
-    if (!from) throw new Error("No Outlook mailbox is connected to the dashboard — connect one under Settings \u2192 Outlook");
-    const subject = d.clients.length ? "Ready to submit: " + d.totalCandidates + " candidate" + (d.totalCandidates === 1 ? "" : "s") + " at " + d.clients.length + " client" + (d.clients.length === 1 ? "" : "s") : "Ready to submit: nothing waiting";
-    await graphFetch(from, "/me/sendMail", { method: "POST", body: JSON.stringify({ message: { subject: subject, body: { contentType: "HTML", content: html }, toRecipients: TO.map(function (a) { return { emailAddress: { address: a } }; }) }, saveToSentItems: false }) });
-    if (db.ready) { try { await db.query("CREATE TABLE IF NOT EXISTS digest_log (id SERIAL PRIMARY KEY, kind TEXT, sent_on DATE, sent_at TIMESTAMPTZ DEFAULT NOW(), reason TEXT, recipients TEXT, candidates INT, clients INT)"); await db.query("INSERT INTO digest_log (kind, sent_on, reason, recipients, candidates, clients) VALUES ('ready_to_submit', $1, $2, $3, $4, $5)", [chicagoNow().toISOString().slice(0, 10), reason || "scheduled", TO.join(","), d.totalCandidates, d.clients.length]); } catch (e) { console.log("[Digest] log failed:", e.message); } }
-    console.log("[Digest] ready-to-submit sent to", TO.join(","), "—", d.totalCandidates, "candidates /", d.clients.length, "clients (" + (reason || "scheduled") + ")");
-    return { sent: true, to: TO, from: from, subject: subject, candidates: d.totalCandidates, clients: d.clients.length };
+    if (!from) throw new Error("No Outlook mailbox is connected to the dashboard \u2014 connect one under Settings \u2192 Outlook");
+    const names = await userNameByEmail();
+    const results = [];
+    for (const to of TO) {
+      let d = all, scoped = false;
+      if (SEE_ALL.indexOf(to) < 0) {
+        const nm = names[to];
+        if (!nm) { console.log("[Digest] no Bullhorn user for", to, "\u2014 skipped"); results.push({ to: to, skipped: "no Bullhorn user with that email" }); continue; }
+        d = filterForOwner(all, nm); scoped = true;
+        if (!d.clients.length) { results.push({ to: to, skipped: "nothing waiting on their jobs" }); continue; } // no noise for owners with nothing waiting
+      }
+      const html = render(d);
+      const subject = d.clients.length ? "Ready to submit: " + d.totalCandidates + " candidate" + (d.totalCandidates === 1 ? "" : "s") + " at " + d.clients.length + " client" + (d.clients.length === 1 ? "" : "s") + (scoped ? " (your jobs)" : "") : "Ready to submit: nothing waiting";
+      await graphFetch(from, "/me/sendMail", { method: "POST", body: JSON.stringify({ message: { subject: subject, body: { contentType: "HTML", content: html }, toRecipients: [{ emailAddress: { address: to } }] }, saveToSentItems: false }) });
+      results.push({ to: to, subject: subject, candidates: d.totalCandidates, clients: d.clients.length });
+    }
+    if (db.ready) { try { await db.query("CREATE TABLE IF NOT EXISTS digest_log (id SERIAL PRIMARY KEY, kind TEXT, sent_on DATE, sent_at TIMESTAMPTZ DEFAULT NOW(), reason TEXT, recipients TEXT, candidates INT, clients INT)"); await db.query("INSERT INTO digest_log (kind, sent_on, reason, recipients, candidates, clients) VALUES ('ready_to_submit', $1, $2, $3, $4, $5)", [chicagoNow().toISOString().slice(0, 10), reason || "scheduled", JSON.stringify(results), all.totalCandidates, all.clients.length]); } catch (e) { console.log("[Digest] log failed:", e.message); } }
+    console.log("[Digest] ready-to-submit:", JSON.stringify(results), "(" + (reason || "scheduled") + ")");
+    return { sent: true, from: from, results: results, to: results.filter(function (r) { return !r.skipped; }).map(function (r) { return r.to; }), candidates: all.totalCandidates, clients: all.clients.length };
   }
 
   // ── schedule: weekdays 7:00 AM Central, at most once per day even across restarts ──
@@ -102,7 +136,7 @@ module.exports = function registerDigest(app, deps) {
   setTimeout(function () { tick(); setInterval(tick, 5 * 60 * 1000); }, 90 * 1000);
 
   app.get("/api/digest/ready-to-submit", async function (req, res) { try { res.json(await build()); } catch (e) { res.status(500).json({ error: e.message }); } });
-  app.get("/api/digest/ready-to-submit/preview", async function (req, res) { try { res.type("html").send(render(await build())); } catch (e) { res.status(500).send(e.message); } });
+  app.get("/api/digest/ready-to-submit/preview", async function (req, res) { try { let d = await build(); if (req.query.as) { const nm = (await userNameByEmail())[String(req.query.as).toLowerCase()]; if (nm) d = filterForOwner(d, nm); } res.type("html").send(render(d)); } catch (e) { res.status(500).send(e.message); } });
   app.get("/api/digest/ready-to-submit/send", async function (req, res) { try { const u = getUser(req); const r = await send("manual by " + (u ? u.name : "unknown")); res.type("html").send("<p style=\"font-family:sans-serif\">Sent to " + r.to.join(", ") + " \u2014 " + r.candidates + " candidates at " + r.clients + " clients. <a href=\"/\">Back to dashboard</a></p>"); } catch (e) { res.status(500).send(e.message); } });
   app.post("/api/digest/ready-to-submit/send", async function (req, res) { try { const u = getUser(req); res.json(await send("manual by " + (u ? u.name : "unknown"))); } catch (e) { res.status(500).json({ error: e.message }); } });
 };

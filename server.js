@@ -11675,7 +11675,7 @@ app.get("/", (req, res) => {
 /* ═══ GLOBAL ERROR HANDLER ═══ */
 // Catch any unhandled errors in route handlers so they return 500 instead of crashing
 /* ═══ QUICK CAPTURE (notes dump → Bullhorn) ═══ */
-require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser });
+require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetchAll: bhFetchAll });
 require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
 
 app.use(function (err, req, res, next) {
