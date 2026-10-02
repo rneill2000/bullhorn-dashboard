@@ -413,7 +413,7 @@ async function bhWrite(endpoint, body, method = "PUT") {
   if (u) {
     let us = await userRestSession(u);
     for (let attempt = 0; us && attempt < 2; attempt++) {
-      const res = await fetch(us.restUrl + endpoint + "?BhRestToken=" + us.bhRestToken, { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+      const res = await fetch(us.restUrl + endpoint + (endpoint.includes("?") ? "&" : "?") + "BhRestToken=" + us.bhRestToken, { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
       if (res.ok) return res.json();
       const errText = await res.text();
       if (res.status === 401 && attempt === 0) { us = (await refreshUserRestSession(u)) ? u : null; continue; }
@@ -427,7 +427,7 @@ async function bhWrite(endpoint, body, method = "PUT") {
 
 async function bhWriteAsService(endpoint, body, method = "PUT") {
   const s = await authenticate();
-  const url = `${s.restUrl}${endpoint}?BhRestToken=${s.bhRestToken}`;
+  const url = `${s.restUrl}${endpoint}${endpoint.includes("?") ? "&" : "?"}BhRestToken=${s.bhRestToken}`;
   const res = await fetch(url, {
     method: method,
     headers: { "Content-Type": "application/json" },
@@ -11675,6 +11675,7 @@ app.get("/", (req, res) => {
 /* ═══ GLOBAL ERROR HANDLER ═══ */
 // Catch any unhandled errors in route handlers so they return 500 instead of crashing
 /* ═══ QUICK CAPTURE (notes dump → Bullhorn) ═══ */
+require("./events")(app, { db: db, bhFetch: bhFetch, bhWrite: bhWriteAsService });
 require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetchAll: bhFetchAll });
 require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
 
