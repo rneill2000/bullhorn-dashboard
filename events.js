@@ -47,6 +47,7 @@ module.exports = function registerEvents(app, deps) {
       }
       console.log("[Events] +" + evs.length);
     } catch (e) {
+      if (/Unexpected end of JSON/.test(e.message)) { consecutiveErrors = 0; return; } // empty body = no new events
       consecutiveErrors++;
       if (/404|not found|subscription/i.test(e.message)) subscribed = false; // resubscribe next tick
       if (consecutiveErrors <= 3 || consecutiveErrors % 20 === 0) console.error("[Events] poll failed:", e.message);
