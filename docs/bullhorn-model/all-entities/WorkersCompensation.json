@@ -1,0 +1,222 @@
+{
+ "entity": "WorkersCompensation",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/WorkersCompensation?fields=*",
+ "label": "Workers Compensation",
+ "dateLastModified": "1790845796486",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "code",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": false,
+   "label": "Code",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateAdded",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": false,
+   "label": "Date Added",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateLastModified",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": false,
+   "label": "Date Last Modified",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "description",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 200,
+   "confidential": false,
+   "optional": true,
+   "label": "Description",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "name",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "rates",
+   "type": "TO_MANY",
+   "confidential": false,
+   "optional": true,
+   "label": "Rates",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "optionsType": "WorkersCompensationRate",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/WorkersCompensationRate",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "WorkersCompensationRate",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/WorkersCompensationRate?fields=*",
+    "label": "Workers Compensation Rate",
+    "dateLastModified": "1790845796480",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "rate",
+      "type": "SCALAR",
+      "dataType": "Double",
+      "confidential": false,
+      "optional": false,
+      "label": "Rate",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "compensation",
+      "type": "TO_ONE",
+      "confidential": false,
+      "optional": false,
+      "label": "Compensation",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "optionsType": "WorkersCompensation",
+      "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/WorkersCompensation",
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false,
+      "associatedEntity": {
+       "entity": "WorkersCompensation",
+       "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/WorkersCompensation?fields=*",
+       "label": "Workers Compensation",
+       "dateLastModified": "1790845796486",
+       "fields": [
+        {
+         "name": "id",
+         "type": "ID",
+         "dataType": "Integer",
+         "optional": false,
+         "label": "ID"
+        },
+        {
+         "name": "name",
+         "type": "SCALAR",
+         "dataType": "String",
+         "maxLength": 100,
+         "confidential": false,
+         "optional": true,
+         "label": "Name",
+         "required": false,
+         "readOnly": false,
+         "multiValue": false,
+         "hideFromSearch": false,
+         "systemRequired": false,
+         "shouldAddCustomEntityLabel": false
+        },
+        {
+         "name": "code",
+         "type": "SCALAR",
+         "dataType": "String",
+         "maxLength": 100,
+         "confidential": false,
+         "optional": false,
+         "label": "Code",
+         "required": false,
+         "readOnly": false,
+         "multiValue": false,
+         "hideFromSearch": false,
+         "systemRequired": false,
+         "shouldAddCustomEntityLabel": false
+        },
+        {
+         "name": "state",
+         "type": "SCALAR",
+         "dataType": "String",
+         "maxLength": 2,
+         "confidential": false,
+         "optional": true,
+         "label": "State",
+         "required": false,
+         "readOnly": false,
+         "multiValue": false,
+         "hideFromSearch": false,
+         "systemRequired": false,
+         "shouldAddCustomEntityLabel": false
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "state",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2,
+   "confidential": false,
+   "optional": true,
+   "label": "State",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

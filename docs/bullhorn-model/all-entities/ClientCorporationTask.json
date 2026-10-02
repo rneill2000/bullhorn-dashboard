@@ -1,0 +1,159 @@
+{
+ "entity": "ClientCorporationTask",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ClientCorporationTask?fields=*",
+ "label": "Client Corporation Task",
+ "dateLastModified": "1790953636225",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "clientContact",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Client Contact",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "ClientContact",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ClientContact",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ClientContact",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ClientContact?fields=*",
+    "label": "Contact",
+    "dateLastModified": "1790846012855",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 10,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 20,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "clientCorporation",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Client Corporation",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "ClientCorporation",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ClientCorporation",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ClientCorporation",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ClientCorporation?fields=*",
+    "label": "Company",
+    "dateLastModified": "1790845791030",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "name",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 100,
+      "confidential": false,
+      "optional": false,
+      "label": "Company Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 5,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "task",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Task",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "Task",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Task",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "Task",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Task?fields=*",
+    "label": "Task",
+    "dateLastModified": "1790845793854",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  }
+ ]
+}

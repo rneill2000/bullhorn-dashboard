@@ -1,0 +1,44 @@
+{
+ "entity": "ChipLayoutOptionTypeLookup",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ChipLayoutOptionTypeLookup?fields=*",
+ "label": "Chip Layout Option Type Lookup",
+ "dateLastModified": "1790953611496",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "isDeleted",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": false,
+   "label": "Is Deleted",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "label",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "confidential": false,
+   "optional": true,
+   "label": "Label",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

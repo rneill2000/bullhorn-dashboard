@@ -1,0 +1,182 @@
+{
+ "entity": "ShiftSharedSchedule",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ShiftSharedSchedule?fields=*",
+ "label": "Shift Shared Schedule",
+ "dateLastModified": "1790953691227",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "clientCorporation",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Client Corporation",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "ClientCorporation",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ClientCorporation",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ClientCorporation",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ClientCorporation?fields=*",
+    "label": "Company",
+    "dateLastModified": "1790845791030",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "name",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 100,
+      "confidential": false,
+      "optional": false,
+      "label": "Company Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 5,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "date",
+   "type": "SCALAR",
+   "dataType": "Date",
+   "confidential": false,
+   "optional": false,
+   "label": "Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateAddedAtUtc",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": false,
+   "label": "Date Added At Utc",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateLastModifiedAtUtc",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": false,
+   "label": "Date Last Modified At Utc",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "isSharedWithAllClientsInCorp",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": false,
+   "label": "Is Shared With All Clients In Corp",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "jobOrder",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Job Order",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "JobOrder",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/JobOrder",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "JobOrder",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/JobOrder?fields=*",
+    "label": "Job",
+    "dateLastModified": "1790879461656",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "title",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 100,
+      "confidential": false,
+      "optional": true,
+      "label": "Consulting Job Title",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 5,
+      "hint": " ",
+      "description": " ",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "uuid",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 36,
+   "confidential": false,
+   "optional": false,
+   "label": "Uuid",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

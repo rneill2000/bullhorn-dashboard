@@ -1,0 +1,74 @@
+{
+ "entity": "EntityTypeLookup",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/EntityTypeLookup?fields=*",
+ "label": "Entity Type Lookup",
+ "dateLastModified": "1790953640068",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "isDeleted",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": false,
+   "label": "Is Deleted",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "label",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 256,
+   "confidential": false,
+   "optional": true,
+   "label": "Label",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "schemaName",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 256,
+   "confidential": false,
+   "optional": false,
+   "label": "Schema Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "tableName",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 256,
+   "confidential": false,
+   "optional": false,
+   "label": "Table Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

@@ -1,0 +1,155 @@
+{
+ "entity": "EstaffMappableFlowback",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/EstaffMappableFlowback?fields=*",
+ "label": "Estaff Mappable Flowback",
+ "dateLastModified": "1790953640192",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "alwaysOverwrite",
+   "type": "TO_ONE",
+   "dataType": "SimplifiedOptionsLookup",
+   "confidential": false,
+   "optional": false,
+   "label": "Always Overwrite",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "EstaffMappableFlowbackOverride",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/EstaffMappableFlowbackOverride",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "EstaffMappableFlowbackOverride",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/EstaffMappableFlowbackOverride?fields=*",
+    "label": "Estaff Mappable Flowback Override",
+    "dateLastModified": "1790953640220",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "atsEntity",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 255,
+   "confidential": false,
+   "optional": false,
+   "label": "Bullhorn Record Type",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "Candidate",
+     "label": "Candidate"
+    },
+    {
+     "value": "Placement",
+     "label": "Placement"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 30,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "atsField",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 255,
+   "confidential": false,
+   "optional": false,
+   "label": "Bullhorn Field Type",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 40,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "conversion",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2147483647,
+   "confidential": false,
+   "optional": true,
+   "label": "Conversion",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "estaffFieldType",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 255,
+   "confidential": false,
+   "optional": false,
+   "label": "eStaff Field Type",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 20,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "estaffRecordType",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 255,
+   "confidential": false,
+   "optional": false,
+   "label": "eStaff Record Type",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "Contractor",
+     "label": "Contractor"
+    },
+    {
+     "value": "PreHire",
+     "label": "PreHire"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 10,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

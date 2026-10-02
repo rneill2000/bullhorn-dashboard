@@ -1,0 +1,454 @@
+{
+ "entity": "Note",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Note?fields=*",
+ "label": "Note",
+ "dateLastModified": "1790845793641",
+ "layouts": [
+  {
+   "name": "ListExpandedCenter",
+   "label": "List - Expanded Center",
+   "enabled": false
+  },
+  {
+   "name": "ListExpandedLeft",
+   "label": "List - Expanded Left",
+   "enabled": true
+  },
+  {
+   "name": "ListExpandedRight",
+   "label": "List - Expanded Right",
+   "enabled": false
+  },
+  {
+   "name": "ListRow",
+   "label": "List - Row",
+   "enabled": true
+  },
+  {
+   "name": "ListRowCompany",
+   "label": "List - Row (Company)",
+   "enabled": true
+  },
+  {
+   "name": "Mobile Details",
+   "label": "Mobile Details Layout",
+   "enabled": true
+  },
+  {
+   "name": "Mobile Edit",
+   "label": "Mobile Edit Layout",
+   "enabled": true
+  }
+ ],
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "action",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 30,
+   "confidential": false,
+   "optional": true,
+   "label": "Action",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "Prescreen",
+     "label": "Prescreen"
+    },
+    {
+     "value": "Reference",
+     "label": "Reference"
+    },
+    {
+     "value": "Outbound Call",
+     "label": "Outbound Call"
+    },
+    {
+     "value": "Inbound Call",
+     "label": "Inbound Call"
+    },
+    {
+     "value": "Left Message",
+     "label": "Left Message"
+    },
+    {
+     "value": "Text Conversation",
+     "label": "Text Conversation"
+    },
+    {
+     "value": "Email",
+     "label": "Email"
+    },
+    {
+     "value": "Appointment",
+     "label": "Appointment"
+    },
+    {
+     "value": "Client Visit",
+     "label": "Client Visit"
+    },
+    {
+     "value": "Other",
+     "label": "Other"
+    },
+    {
+     "value": "LinkedIn Note",
+     "label": "LinkedIn Note"
+    },
+    {
+     "value": "LinkedIn InMail",
+     "label": "LinkedIn InMail"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 40,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "bhTimeStamp",
+   "type": "SCALAR",
+   "dataType": "byte[]",
+   "confidential": false,
+   "optional": false,
+   "label": "Bh Time Stamp",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "commentingPerson",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Author",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "optionsType": "CorporateUser",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/CorporateUser",
+   "hideFromSearch": false,
+   "sortOrder": 20,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "Person",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Person?fields=*",
+    "label": "Person",
+    "dateLastModified": "1790845793574",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "comments",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2147483647,
+   "dataSpecialization": "HTML",
+   "confidential": false,
+   "optional": false,
+   "label": "Comments",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 60,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateAdded",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATETIME",
+   "confidential": false,
+   "optional": false,
+   "label": "Date Added",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 10,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateLastModified",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": true,
+   "label": "Date Last Modified",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "externalID",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "External ID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "isDeleted",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": false,
+   "label": "Is Deleted",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "jobOrder",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Job Order",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "JobOrder",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/JobOrder",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "JobOrder",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/JobOrder?fields=*",
+    "label": "Job",
+    "dateLastModified": "1790879461656",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "title",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 100,
+      "confidential": false,
+      "optional": true,
+      "label": "Consulting Job Title",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 5,
+      "hint": " ",
+      "description": " ",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "linkedInID",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 200,
+   "confidential": false,
+   "optional": true,
+   "label": "Linked In ID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "migrateGUID",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 36,
+   "confidential": false,
+   "optional": true,
+   "label": "Migrate GUID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "personReference",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "About",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "optionsType": "External",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/External",
+   "hideFromSearch": false,
+   "sortOrder": 30,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "Person",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Person?fields=*",
+    "label": "Person",
+    "dateLastModified": "1790845793574",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "primaryDepartmentName",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 0,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Primary Department",
+   "required": false,
+   "readOnly": false,
+   "multiValue": true,
+   "hideFromSearch": false,
+   "sortOrder": 200,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "truestDateAdded",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": true,
+   "label": "Truest Date Added",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

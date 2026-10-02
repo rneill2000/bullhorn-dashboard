@@ -1,0 +1,133 @@
+{
+ "entity": "CandidateReferenceResponse",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/CandidateReferenceResponse?fields=*",
+ "label": "Candidate Reference Response",
+ "dateLastModified": "1790952794292",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "dateAdded",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": false,
+   "label": "Date Added",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateLastModified",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": false,
+   "label": "Date Last Modified",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "migrateGUID",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 36,
+   "confidential": false,
+   "optional": true,
+   "label": "Migrate GUID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "question",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Question",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "CandidateReferenceQuestion",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/CandidateReferenceQuestion",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "CandidateReferenceQuestion",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/CandidateReferenceQuestion?fields=*",
+    "label": "Reference Question",
+    "dateLastModified": "1790953608921",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "reference",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Reference",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "CandidateReference",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/CandidateReference",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "CandidateReference",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/CandidateReference?fields=*",
+    "label": "Reference",
+    "dateLastModified": "1790845793748",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "responseText",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2147483647,
+   "confidential": false,
+   "optional": true,
+   "label": "Response Text",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

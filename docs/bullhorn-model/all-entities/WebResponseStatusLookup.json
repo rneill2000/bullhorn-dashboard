@@ -1,0 +1,118 @@
+{
+ "entity": "WebResponseStatusLookup",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/WebResponseStatusLookup?fields=*",
+ "label": "Web Response Status Lookup",
+ "dateLastModified": "1790953695096",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "isDeleted",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": false,
+   "label": "Is Deleted",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "label",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 30,
+   "confidential": false,
+   "optional": true,
+   "label": "Label",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "privateLabelID",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "confidential": false,
+   "optional": true,
+   "label": "Private Label ID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "sortOrder",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "confidential": false,
+   "optional": false,
+   "label": "Sort Order",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "terminalState",
+   "type": "TO_ONE",
+   "dataType": "SimplifiedOptionsLookup",
+   "confidential": false,
+   "optional": true,
+   "label": "Terminal State",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "SubmissionTerminalStateLookup",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/SubmissionTerminalStateLookup",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "SubmissionTerminalStateLookup",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/SubmissionTerminalStateLookup?fields=*",
+    "label": "Submission Terminal State Lookup",
+    "dateLastModified": "1790953691997",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "label",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 30,
+      "confidential": false,
+      "optional": true,
+      "label": "Label",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  }
+ ]
+}

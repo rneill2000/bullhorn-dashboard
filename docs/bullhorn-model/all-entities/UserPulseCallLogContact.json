@@ -1,0 +1,111 @@
+{
+ "entity": "UserPulseCallLogContact",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/UserPulseCallLogContact?fields=*",
+ "label": "User Pulse Call Log Contact",
+ "dateLastModified": "1790953694705",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "user",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "User",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "ClientContact",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ClientContact",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ClientContact",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ClientContact?fields=*",
+    "label": "Contact",
+    "dateLastModified": "1790846012855",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 10,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 20,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "userPulseCallLog",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "User Pulse Call Log",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "UserPulseCallLog",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/UserPulseCallLog",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "UserPulseCallLog",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/UserPulseCallLog?fields=*",
+    "label": "User Pulse Call Log",
+    "dateLastModified": "1790953694556",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  }
+ ]
+}

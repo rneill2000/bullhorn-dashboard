@@ -1,0 +1,155 @@
+[
+ {
+  "id": 1291,
+  "name": "Losses",
+  "entity": "JOBORDER",
+  "owner": "Jennifer Hemming",
+  "dateAdded": 1785513445000,
+  "favorite": false,
+  "columns": [
+   "id",
+   "title",
+   "clientCorporation",
+   "employmentType",
+   "status",
+   "submissions",
+   "type",
+   "owner",
+   "isOpen",
+   "dateAdded",
+   "dateLastModified"
+  ],
+  "filters": {
+   "employmentType": "",
+   "status": "#On Hold#,#Lost - Competitor#,#Lost - Filled Internally#,#Lost#",
+   "submissions": "",
+   "type": "",
+   "isOpen": "",
+   "dateAdded": "",
+   "dateLastModified": ""
+  },
+  "keywords": null,
+  "query": "isDeleted:0  AND NOT status:Archive AND NOT status:Archive"
+ },
+ {
+  "id": 198,
+  "name": "Active Anura Clients",
+  "entity": "CLIENTCORPORATION",
+  "owner": "Zach Munns",
+  "dateAdded": 1768846511207,
+  "favorite": false,
+  "columns": [
+   "id",
+   "name",
+   "customText2",
+   "status",
+   "clientContacts"
+  ],
+  "filters": {
+   "clientContacts": "",
+   "status": "",
+   "customText2": ""
+  },
+  "keywords": null,
+  "query": "isDeleted:0  AND NOT status:Archive AND NOT status:Archive"
+ },
+ {
+  "id": 144,
+  "name": "Biz Dev",
+  "entity": "JOBORDER",
+  "owner": "Bill Neill",
+  "dateAdded": 1764869433587,
+  "favorite": false,
+  "columns": [
+   "id",
+   "title",
+   "employmentType",
+   "certificationList",
+   "status",
+   "type",
+   "dateAdded",
+   "clientCorporation",
+   "owner",
+   "submissions",
+   "isOpen"
+  ],
+  "filters": {
+   "employmentType": "",
+   "status": "#Accepting Candidates#,#Covered#,#Offer Out#",
+   "type": "",
+   "dateAdded": "",
+   "submissions": "",
+   "isOpen": "#true#"
+  },
+  "keywords": null,
+  "query": "isDeleted:0  AND NOT status:Archive AND NOT status:Archive"
+ },
+ {
+  "id": 73,
+  "name": "Active Placements",
+  "entity": "PLACEMENT",
+  "owner": "Nicole Meidinger",
+  "dateAdded": 1760984727503,
+  "favorite": false,
+  "columns": [
+   "id",
+   "candidate",
+   "jobOrder",
+   "status",
+   "dateBegin",
+   "dateEnd",
+   "payRate",
+   "clientBillRate",
+   "dateAdded",
+   "employmentType",
+   "salary",
+   "reportTo",
+   "dateBegin",
+   "dateEnd",
+   "reportTo"
+  ],
+  "filters": {
+   "dateAdded": "",
+   "status": "#Submitted#,#Approved#,#Completed#",
+   "employmentType": "",
+   "dateBegin": "",
+   "dateEnd": ""
+  },
+  "keywords": null,
+  "query": "isDeleted:0  AND NOT status:Archive AND NOT status:Archive"
+ },
+ {
+  "id": 28,
+  "name": "Consultants Coming Off Contract",
+  "entity": "PLACEMENT",
+  "owner": "Bill Neill",
+  "dateAdded": 1759767675863,
+  "favorite": false,
+  "columns": [
+   "id",
+   "dateAdded",
+   "status",
+   "jobOrder",
+   "owner",
+   "clientCorporation",
+   "candidate",
+   "employmentType",
+   "clientContact",
+   "salary",
+   "payRate",
+   "clientBillRate",
+   "dateBegin",
+   "dateEnd",
+   "reportTo"
+  ],
+  "filters": {
+   "employmentType": "",
+   "status": "#Submitted#,#Approved#,#Re-Submitted#,#Completed#",
+   "dateAdded": "",
+   "dateBegin": "",
+   "dateEnd": ""
+  },
+  "keywords": null,
+  "query": "isDeleted:0  AND NOT status:Archive AND NOT status:Archive"
+ }
+]

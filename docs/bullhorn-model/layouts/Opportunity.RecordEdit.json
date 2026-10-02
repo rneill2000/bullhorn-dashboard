@@ -1,0 +1,1030 @@
+{
+ "entity": "Opportunity",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Opportunity?fields=*",
+ "label": "MSA",
+ "dateLastModified": "1790845794954",
+ "layouts": [
+  {
+   "name": "Custom Action",
+   "label": "Custom Action",
+   "enabled": false
+  },
+  {
+   "name": "Custom List Buttons",
+   "label": "Custom List Buttons",
+   "enabled": false
+  },
+  {
+   "name": "Custom Tab 1",
+   "label": "Custom Tab 1",
+   "enabled": false
+  },
+  {
+   "name": "Custom Tab 2",
+   "label": "Custom Tab 2",
+   "enabled": false
+  },
+  {
+   "name": "Custom Tab 3",
+   "label": "Custom Tab 3",
+   "enabled": false
+  },
+  {
+   "name": "Edit",
+   "label": "Edit Screen Layout",
+   "enabled": false
+  },
+  {
+   "name": "FasterFind",
+   "label": "Fast Find",
+   "enabled": true
+  },
+  {
+   "name": "ListExpandedCenter",
+   "label": "List - Expanded Center",
+   "enabled": false
+  },
+  {
+   "name": "ListExpandedLeft",
+   "label": "List - Expanded Left",
+   "enabled": true
+  },
+  {
+   "name": "ListExpandedRight",
+   "label": "List - Expanded Right",
+   "enabled": false
+  },
+  {
+   "name": "ListRow",
+   "label": "List - Row",
+   "enabled": true
+  },
+  {
+   "name": "Mobile Details",
+   "label": "Mobile Details Layout",
+   "enabled": true
+  },
+  {
+   "name": "Mobile Edit",
+   "label": "Mobile Edit Layout",
+   "enabled": true
+  },
+  {
+   "name": "OverviewBottom",
+   "label": "",
+   "enabled": true
+  },
+  {
+   "name": "OverviewMiddleLeft",
+   "label": "MSA Terms & Dates",
+   "enabled": true
+  },
+  {
+   "name": "OverviewMiddleRight",
+   "label": "",
+   "enabled": true
+  },
+  {
+   "name": "OverviewTop",
+   "label": "MSA Status & Actions",
+   "enabled": true
+  },
+  {
+   "name": "ProfileHeader",
+   "label": "Profile - Header",
+   "enabled": true
+  },
+  {
+   "name": "ProfileRightSideBar",
+   "label": "Profile - Right Side Bar",
+   "enabled": true
+  }
+ ],
+ "sectionHeaders": [
+  {
+   "label": "Identification",
+   "name": "sectionHeader1",
+   "sortOrder": 10,
+   "enabled": true
+  },
+  {
+   "label": "Source and Routing",
+   "name": "sectionHeader2",
+   "sortOrder": 20,
+   "enabled": true
+  },
+  {
+   "label": "Client Contacts",
+   "name": "sectionHeader3",
+   "sortOrder": 30,
+   "enabled": true
+  },
+  {
+   "label": "Scope and Commercial Terms",
+   "name": "sectionHeader4",
+   "sortOrder": 40,
+   "enabled": true
+  },
+  {
+   "label": "Dates and Execution",
+   "name": "sectionHeader5",
+   "sortOrder": 50,
+   "enabled": true
+  }
+ ],
+ "trackTrigger": "type",
+ "tracks": [
+  {
+   "name": "Opportunity",
+   "values": [
+    "New",
+    "Amendment",
+    "Renewal"
+   ]
+  },
+  {
+   "name": "Opportunity2",
+   "values": []
+  },
+  {
+   "name": "Opportunity3",
+   "values": []
+  },
+  {
+   "name": "Opportunity4",
+   "values": []
+  },
+  {
+   "name": "Opportunity5",
+   "values": []
+  }
+ ],
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "actualCloseDate",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATE",
+   "confidential": false,
+   "optional": true,
+   "label": "Actual Execution Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 53,
+   "hint": "Fill only once fully executed.",
+   "description": "Use this field to specify the actual close date.",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "branchCode",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Pursuit Source",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "Inbound",
+     "label": "Inbound"
+    },
+    {
+     "value": "Outbound",
+     "label": "Outbound"
+    },
+    {
+     "value": "Referral",
+     "label": "Referral"
+    },
+    {
+     "value": "Event / conference",
+     "label": "Event / conference"
+    },
+    {
+     "value": "Executive network",
+     "label": "Executive network"
+    },
+    {
+     "value": "Reactivation",
+     "label": "Reactivation"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 21,
+   "hint": "Inbound = they came to us. Outbound = cold BD. Referral = third-party warm intro. Event = met at conference. Executive network = warm intro from exec relationship. Reactivation = prior lead or client rekindled.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "clientContact",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Primary Contact",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "optionsType": "Client",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Client",
+   "hideFromSearch": false,
+   "sortOrder": 31,
+   "hint": "Day-to-day client contact driving the MSA. Required.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ClientContact",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ClientContact?fields=*",
+    "label": "Contact",
+    "dateLastModified": "1790846012855",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 10,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 20,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "clientCorporation",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Client Company",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "optionsType": "ClientCorporation",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ClientCorporation",
+   "hideFromSearch": false,
+   "sortOrder": 16,
+   "hint": "The client legal entity that will sign. Create the Company record first if missing.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ClientCorporation",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ClientCorporation?fields=*",
+    "label": "Company",
+    "dateLastModified": "1790845791030",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "name",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 100,
+      "confidential": false,
+      "optional": false,
+      "label": "Company Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 5,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "customDate1",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATE",
+   "confidential": false,
+   "optional": true,
+   "label": "MSA Effective Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 54,
+   "hint": "Effective date on the signed MSA. Not necessarily the execution date.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customDate2",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATE",
+   "confidential": false,
+   "optional": true,
+   "label": "MSA Expiration Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 55,
+   "hint": "Expiration date on the signed MSA. Trigger to start renewal work.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customDate3",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATE",
+   "confidential": false,
+   "optional": true,
+   "label": "NDA Signed Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 51,
+   "hint": "Date of the governing NDA if signed before the MSA.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customInt1",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "INTEGER",
+   "confidential": false,
+   "optional": true,
+   "label": "Term Length (Months)",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 47,
+   "hint": "Initial term length in months. Example: 24.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customInt2",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "INTEGER",
+   "confidential": false,
+   "optional": true,
+   "label": "Renewal Notice (Days)",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 48,
+   "hint": "Days of notice required to prevent auto-renewal or signal renewal.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customText1",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Next Action",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 19,
+   "hint": "Single next step to advance this MSA and who owns it. Example: Bill to return redlines by 5/1.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customText2",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Auto-Renewal",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "options": [
+    {
+     "value": "Evergreen",
+     "label": "Evergreen"
+    },
+    {
+     "value": "Annual",
+     "label": "Annual"
+    },
+    {
+     "value": "None",
+     "label": "None"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 46,
+   "hint": "Yes or No, plus notice period if Yes. Example: Yes, 60 days.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customText3",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Exclusivity",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "options": [
+    {
+     "value": "None",
+     "label": "None"
+    },
+    {
+     "value": "Preferred",
+     "label": "Preferred"
+    },
+    {
+     "value": "Exclusive",
+     "label": "Exclusive"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 45,
+   "hint": "Exclusive, Non-exclusive, or Preferred. Note carve-outs.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customText4",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Rate Card Attached",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "options": [
+    {
+     "value": "Yes",
+     "label": "Yes"
+    },
+    {
+     "value": "No",
+     "label": "No"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 44,
+   "hint": "Yes or No. If Yes, note where the rate card lives.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customText5",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Client Signing Authority",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 33,
+   "hint": "Named individual or title with authority to sign on the client side.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customTextBlock1",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2147483647,
+   "confidential": false,
+   "optional": true,
+   "label": "Key Commercial Terms",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "TEXTAREA",
+   "hideFromSearch": false,
+   "sortOrder": 42,
+   "hint": "Bullet list of payment terms, rate structure, indemnity caps, non-standard terms.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customTextBlock2",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2147483647,
+   "confidential": false,
+   "optional": true,
+   "label": "Negotiation Notes",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "TEXTAREA",
+   "hideFromSearch": false,
+   "sortOrder": 43,
+   "hint": "Running log of negotiation moves and verbal agreements. Date-stamp entries.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "description",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2147483647,
+   "dataSpecialization": "HTML",
+   "confidential": false,
+   "optional": true,
+   "label": "MSA Scope / Notes",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 41,
+   "hint": "One paragraph summary of services covered and any scope carve-outs.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "expectedCloseDate",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATE",
+   "confidential": false,
+   "optional": true,
+   "label": "Target Execution Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 52,
+   "hint": "Date we are targeting for full execution. Update as it slips.",
+   "description": ".",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "lead",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Originating Lead",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "optionsType": "Lead",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Lead",
+   "hideFromSearch": false,
+   "sortOrder": 22,
+   "hint": "Anura person who sourced this relationship.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "Lead",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Lead?fields=*",
+    "label": "Lead",
+    "dateLastModified": "1790845793515",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 10,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 20,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "owner",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "MSA Owner (Internal)",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "optionsType": "CorporateUser",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/CorporateUser",
+   "hideFromSearch": false,
+   "sortOrder": 14,
+   "hint": "Anura internal user driving this MSA to execution.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "CorporateUser",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/CorporateUser?fields=*",
+    "label": "Corporate User",
+    "dateLastModified": "1790845793673",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "priority",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "confidential": false,
+   "optional": false,
+   "label": "MSA Priority",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": 3,
+     "label": "High"
+    },
+    {
+     "value": 2,
+     "label": "Medium"
+    },
+    {
+     "value": 1,
+     "label": "Low"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 15,
+   "hint": "High, Medium, or Low. Reflect commercial value and likelihood.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "reasonClosed",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 255,
+   "confidential": false,
+   "optional": true,
+   "label": "Close Reason",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "Executed and Active",
+     "label": "Executed and Active"
+    },
+    {
+     "value": "Expired",
+     "label": "Expired"
+    },
+    {
+     "value": "Declined by Client",
+     "label": "Declined by Client"
+    },
+    {
+     "value": "Withdrawn by Anura",
+     "label": "Withdrawn by Anura"
+    },
+    {
+     "value": "Superseded",
+     "label": "Superseded"
+    },
+    {
+     "value": "Replaced",
+     "label": "Replaced"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 56,
+   "hint": "Required when Status = Closed. Why it did not execute.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "reportToClientContact",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Client Signer",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "optionsType": "Client",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Client",
+   "hideFromSearch": false,
+   "sortOrder": 32,
+   "hint": "Client executive with signing authority. Leave blank if unknown.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ClientContact",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ClientContact?fields=*",
+    "label": "Contact",
+    "dateLastModified": "1790846012855",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 10,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 20,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "status",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 200,
+   "confidential": false,
+   "optional": true,
+   "label": "Status",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "Identified",
+     "label": "Identified"
+    },
+    {
+     "value": "Qualifying",
+     "label": "Qualifying"
+    },
+    {
+     "value": "Negotiating",
+     "label": "Negotiating"
+    },
+    {
+     "value": "Legal Review",
+     "label": "Legal Review"
+    },
+    {
+     "value": "Executed",
+     "label": "Executed"
+    },
+    {
+     "value": "Burner",
+     "label": "Burner"
+    },
+    {
+     "value": "Closed",
+     "label": "Closed"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 11,
+   "hint": "Identified = logged, not active yet. Qualifying = discovery. Negotiating = terms in flight. Legal Review = with legal counsel. Executed = signed. Burner = parking. Closed = dead or superseded.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "title",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "MSA Name",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 12,
+   "hint": "Use format: [Client Company] MSA [YYYY]. Example: Jefferson Health MSA 2026.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "type",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 200,
+   "confidential": false,
+   "optional": true,
+   "label": "MSA Type",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "New",
+     "label": "New"
+    },
+    {
+     "value": "Amendment",
+     "label": "Amendment"
+    },
+    {
+     "value": "Renewal",
+     "label": "Renewal"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 13,
+   "hint": "New = net-new client. Amendment = change to executed MSA. Renewal = replacing expired or expiring MSA.",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

@@ -1,0 +1,76 @@
+{
+ "entity": "ChipLayout",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ChipLayout?fields=*",
+ "label": "Chip Layout",
+ "dateLastModified": "1790953611108",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "chipLayoutOption",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Chip Layout Option",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "ChipLayoutOption",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ChipLayoutOption",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ChipLayoutOption",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ChipLayoutOption?fields=*",
+    "label": "Chip Layout Option",
+    "dateLastModified": "1790953611146",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "chipLayoutPositionLookup",
+   "type": "TO_ONE",
+   "dataType": "SimplifiedOptionsLookup",
+   "confidential": false,
+   "optional": false,
+   "label": "Chip Layout Position Lookup",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "ChipLayoutPositionLookup",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ChipLayoutPositionLookup",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ChipLayoutPositionLookup",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ChipLayoutPositionLookup?fields=*",
+    "label": "Chip Layout Position Lookup",
+    "dateLastModified": "1790953611170",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  }
+ ]
+}

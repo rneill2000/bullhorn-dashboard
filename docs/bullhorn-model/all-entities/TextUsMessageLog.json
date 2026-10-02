@@ -1,0 +1,146 @@
+{
+ "entity": "TextUsMessageLog",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/TextUsMessageLog?fields=*",
+ "label": "Text Us Message Log",
+ "dateLastModified": "1790953693595",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "body",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2000,
+   "confidential": false,
+   "optional": false,
+   "label": "Body",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateAddedAtUtc",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": false,
+   "label": "Date Added At Utc",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "entityID",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "confidential": false,
+   "optional": true,
+   "label": "Entity ID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "entityName",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "confidential": false,
+   "optional": true,
+   "label": "Entity Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "externalNumber",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 20,
+   "confidential": false,
+   "optional": false,
+   "label": "External Number",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "isOutgoing",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": false,
+   "label": "Is Outgoing",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "sendingUserID",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "confidential": false,
+   "optional": true,
+   "label": "Sending User ID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "textUsSenderServiceLookup",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Text Us Sender Service Lookup",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "TextUsSenderServiceLookup",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/TextUsSenderServiceLookup",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "TextUsSenderServiceLookup",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/TextUsSenderServiceLookup?fields=*",
+    "label": "Text Us Sender Service Lookup",
+    "dateLastModified": "1790953693639",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,73 @@
+{
+ "entity": "PlacementRateCardEffectiveDateChange",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/PlacementRateCardEffectiveDateChange?fields=*",
+ "label": "Placement Rate Card Effective Date Change",
+ "dateLastModified": "1790953686928",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "editHistory",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Edit History",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "PlacementRateCardEditHistory",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/PlacementRateCardEditHistory",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "PlacementRateCardEditHistory",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/PlacementRateCardEditHistory?fields=*",
+    "label": "Placement Rate Card Edit History",
+    "dateLastModified": "1790953686911",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "newEffectiveDate",
+   "type": "SCALAR",
+   "dataType": "Date",
+   "confidential": false,
+   "optional": true,
+   "label": "New Effective Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "previousEffectiveDate",
+   "type": "SCALAR",
+   "dataType": "Date",
+   "confidential": false,
+   "optional": true,
+   "label": "Previous Effective Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

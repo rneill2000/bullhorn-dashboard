@@ -1,0 +1,438 @@
+{
+ "entity": "CandidateTrustData",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/CandidateTrustData?fields=*",
+ "label": "Candidate Trust Data",
+ "dateLastModified": "1790845793902",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "behavioralLevel",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Behavioral Trust Level",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "options": [
+    {
+     "value": 0,
+     "label": "Clear"
+    },
+    {
+     "value": 1,
+     "label": "Flagged"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "candidate",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Candidate",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "Candidate",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Candidate",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "Candidate",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Candidate?fields=*",
+    "label": "Candidate",
+    "dateLastModified": "1790848074880",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 10,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 20,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "consistencyLevel",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Consistency Trust Level",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "options": [
+    {
+     "value": 0,
+     "label": "Clear"
+    },
+    {
+     "value": 1,
+     "label": "Flagged"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateLevelLastChanged",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Date Trust Level Last Changed",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "email2Status",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Email2 Trust Status",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "email3Status",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Email3 Trust Status",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "emailStatus",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Email Trust Status",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "identityLevel",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Identity Trust Level",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "options": [
+    {
+     "value": 0,
+     "label": "Clear"
+    },
+    {
+     "value": 1,
+     "label": "Flagged"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "level",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Trust Level",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "options": [
+    {
+     "value": 0,
+     "label": "Clear"
+    },
+    {
+     "value": 1,
+     "label": "Flagged"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "misrepresentationLevel",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Misrepresentation Trust Level",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "options": [
+    {
+     "value": 0,
+     "label": "Clear"
+    },
+    {
+     "value": 1,
+     "label": "Flagged"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "mobileStatus",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Mobile Trust Status",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "phone2Status",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Phone2 Trust Status",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "phone3Status",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Phone3 Trust Status",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "phoneStatus",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Phone Trust Status",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "previousLevel",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Previous Trust Level",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "options": [
+    {
+     "value": 0,
+     "label": "Clear"
+    },
+    {
+     "value": 1,
+     "label": "Flagged"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "summary",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2147483647,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Trust Summary",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "workphoneStatus",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Work Phone Trust Status",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 0,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

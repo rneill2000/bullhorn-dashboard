@@ -1,0 +1,73 @@
+{
+ "entity": "LocationEffectiveDateChange",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/LocationEffectiveDateChange?fields=*",
+ "label": "Location Effective Date Change",
+ "dateLastModified": "1790953654742",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "editHistory",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Edit History",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "LocationEditHistory",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/LocationEditHistory",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "LocationEditHistory",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/LocationEditHistory?fields=*",
+    "label": "Location Edit History",
+    "dateLastModified": "1790953654709",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "newEffectiveDate",
+   "type": "SCALAR",
+   "dataType": "Date",
+   "confidential": false,
+   "optional": true,
+   "label": "New Effective Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "previousEffectiveDate",
+   "type": "SCALAR",
+   "dataType": "Date",
+   "confidential": false,
+   "optional": true,
+   "label": "Previous Effective Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

@@ -1,0 +1,91 @@
+{
+ "entity": "ChipLayoutOption",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ChipLayoutOption?fields=*",
+ "label": "Chip Layout Option",
+ "dateLastModified": "1790953611146",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "chipLayoutOptionFields",
+   "type": "TO_MANY",
+   "confidential": false,
+   "optional": true,
+   "label": "Chip Layout Option Fields",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "optionsType": "ChipLayoutOptionField",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ChipLayoutOptionField",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ChipLayoutOptionField",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ChipLayoutOptionField?fields=*",
+    "label": "Chip Layout Option Field",
+    "dateLastModified": "1790953611448",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "chipLayoutOptionTypeLookup",
+   "type": "TO_ONE",
+   "dataType": "SimplifiedOptionsLookup",
+   "confidential": false,
+   "optional": false,
+   "label": "Chip Layout Option Type Lookup",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "ChipLayoutOptionTypeLookup",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ChipLayoutOptionTypeLookup",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ChipLayoutOptionTypeLookup",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ChipLayoutOptionTypeLookup?fields=*",
+    "label": "Chip Layout Option Type Lookup",
+    "dateLastModified": "1790953611496",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "label",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "confidential": false,
+   "optional": false,
+   "label": "Label",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

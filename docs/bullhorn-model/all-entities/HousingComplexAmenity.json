@@ -1,0 +1,211 @@
+{
+ "entity": "HousingComplexAmenity",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/HousingComplexAmenity?fields=*",
+ "label": "Housing Complex Amenity",
+ "dateLastModified": "1790845796417",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "amenityName",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "confidential": false,
+   "optional": true,
+   "label": "Amenity Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateAdded",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "confidential": false,
+   "optional": false,
+   "label": "Date Added",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "housingComplexUnits",
+   "type": "TO_MANY",
+   "confidential": false,
+   "optional": true,
+   "label": "Housing Complex Units",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "HousingComplexUnit",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/HousingComplexUnit",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "HousingComplexUnit",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/HousingComplexUnit?fields=*",
+    "label": "Housing Complex Unit",
+    "dateLastModified": "1790846498633",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "housingComplexes",
+   "type": "TO_MANY",
+   "confidential": false,
+   "optional": true,
+   "label": "Housing Complexes",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "HousingComplex",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/HousingComplex",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "HousingComplex",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/HousingComplex?fields=*",
+    "label": "Housing Complex",
+    "dateLastModified": "1790846498592",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "name",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 100,
+      "confidential": false,
+      "optional": false,
+      "label": "Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 20,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "isDeleted",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": false,
+   "label": "Is Deleted",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "migrateGUID",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 36,
+   "confidential": false,
+   "optional": true,
+   "label": "Migrate GUID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "placementChangeRequests",
+   "type": "TO_MANY",
+   "confidential": false,
+   "optional": true,
+   "label": "Placement Change Requests",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "PlacementChangeRequest",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/PlacementChangeRequest",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "PlacementChangeRequest",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/PlacementChangeRequest?fields=*",
+    "label": "Change Request",
+    "dateLastModified": "1790845795950",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "placements",
+   "type": "TO_MANY",
+   "confidential": false,
+   "optional": true,
+   "label": "Placements",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "Placement",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Placement",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "Placement",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Placement?fields=*",
+    "label": "Placement",
+    "dateLastModified": "1790845790840",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  }
+ ]
+}

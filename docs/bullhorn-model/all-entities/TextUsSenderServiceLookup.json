@@ -1,0 +1,74 @@
+{
+ "entity": "TextUsSenderServiceLookup",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/TextUsSenderServiceLookup?fields=*",
+ "label": "Text Us Sender Service Lookup",
+ "dateLastModified": "1790953693639",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "isDeleted",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": false,
+   "label": "Is Deleted",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "label",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "confidential": false,
+   "optional": false,
+   "label": "Label",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "textUsMessageLogs",
+   "type": "TO_MANY",
+   "confidential": false,
+   "optional": true,
+   "label": "Text Us Message Logs",
+   "required": false,
+   "readOnly": true,
+   "multiValue": false,
+   "optionsType": "TextUsMessageLog",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/TextUsMessageLog",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "TextUsMessageLog",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/TextUsMessageLog?fields=*",
+    "label": "Text Us Message Log",
+    "dateLastModified": "1790953693595",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  }
+ ]
+}

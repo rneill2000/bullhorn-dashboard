@@ -1,0 +1,74 @@
+{
+ "entity": "PlacementShiftSetAssociationChangeHistory",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/PlacementShiftSetAssociationChangeHistory?fields=*",
+ "label": "Placement Shift Set Association Change History",
+ "dateLastModified": "1790953688517",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "editHistoryFieldChange",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Edit History Field Change",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "PlacementShiftSetEditHistoryFieldChange",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/PlacementShiftSetEditHistoryFieldChange",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "PlacementShiftSetEditHistoryFieldChange",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/PlacementShiftSetEditHistoryFieldChange?fields=*",
+    "label": "Placement Shift Set Edit History Field Change",
+    "dateLastModified": "1790953688570",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "entityID",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "confidential": false,
+   "optional": false,
+   "label": "Entity ID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "entityName",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": false,
+   "label": "Entity Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

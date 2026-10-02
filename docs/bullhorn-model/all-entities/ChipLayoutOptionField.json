@@ -1,0 +1,60 @@
+{
+ "entity": "ChipLayoutOptionField",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ChipLayoutOptionField?fields=*",
+ "label": "Chip Layout Option Field",
+ "dateLastModified": "1790953611448",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "chipLayoutOption",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Chip Layout Option",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "ChipLayoutOption",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/ChipLayoutOption",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ChipLayoutOption",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ChipLayoutOption?fields=*",
+    "label": "Chip Layout Option",
+    "dateLastModified": "1790953611146",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "propertyName",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "confidential": false,
+   "optional": false,
+   "label": "Property Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

@@ -1,0 +1,1047 @@
+{
+ "entity": "Placement",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Placement?fields=*",
+ "label": "Placement",
+ "dateLastModified": "1790845790840",
+ "layouts": [
+  {
+   "name": "CredentialManagement",
+   "label": "Candidate Credential Overview Card",
+   "enabled": true
+  },
+  {
+   "name": "Custom Action",
+   "label": "Custom Action",
+   "enabled": false
+  },
+  {
+   "name": "Custom List Buttons",
+   "label": "Custom List Buttons",
+   "enabled": false
+  },
+  {
+   "name": "Custom Tab 1",
+   "label": "Custom Tab 1",
+   "enabled": false
+  },
+  {
+   "name": "Embedded",
+   "label": "Time & Expense",
+   "enabled": false
+  },
+  {
+   "name": "FasterFind",
+   "label": "Fast Find",
+   "enabled": true
+  },
+  {
+   "name": "ListExpandedCenter",
+   "label": "List - Expanded Center",
+   "enabled": false
+  },
+  {
+   "name": "ListExpandedLeft",
+   "label": "List - Expanded Left",
+   "enabled": false
+  },
+  {
+   "name": "ListExpandedRight",
+   "label": "List - Expanded Right",
+   "enabled": false
+  },
+  {
+   "name": "ListRow",
+   "label": "List - Row",
+   "enabled": true
+  },
+  {
+   "name": "Mobile Details",
+   "label": "Mobile Details Layout",
+   "enabled": true
+  },
+  {
+   "name": "Mobile Edit",
+   "label": "Mobile Edit Layout",
+   "enabled": true
+  },
+  {
+   "name": "ProfileHeader",
+   "label": "Profile - Header",
+   "enabled": true
+  },
+  {
+   "name": "ProfileRightSideBar",
+   "label": "Profile - Right Side Bar",
+   "enabled": false
+  },
+  {
+   "name": "QuickPlacement",
+   "label": "Add Page",
+   "enabled": true
+  },
+  {
+   "name": "credentialListRow",
+   "label": "Credential - List Row",
+   "enabled": true
+  }
+ ],
+ "sectionHeaders": [
+  {
+   "label": "Permanent Employment Info",
+   "name": "permanentInfoHeader",
+   "sortOrder": 80,
+   "enabled": true
+  },
+  {
+   "label": "Contract Employment Info",
+   "name": "contractInfoHeader",
+   "sortOrder": 120,
+   "enabled": true
+  },
+  {
+   "label": "Pay Rate Information",
+   "name": "payRateInfoHeader",
+   "sortOrder": 135,
+   "enabled": true
+  },
+  {
+   "label": "Bill Rate Information",
+   "name": "billRateInfoHeader",
+   "sortOrder": 215,
+   "enabled": true
+  },
+  {
+   "label": "customHeader1",
+   "name": "customHeader1",
+   "sortOrder": 680,
+   "enabled": false
+  },
+  {
+   "label": "customHeader2",
+   "name": "customHeader2",
+   "sortOrder": 685,
+   "enabled": false
+  },
+  {
+   "label": "customHeader3",
+   "name": "customHeader3",
+   "sortOrder": 690,
+   "enabled": false
+  },
+  {
+   "label": "customHeader4",
+   "name": "customHeader4",
+   "sortOrder": 695,
+   "enabled": false
+  },
+  {
+   "label": "customHeader5",
+   "name": "customHeader5",
+   "sortOrder": 700,
+   "enabled": false
+  },
+  {
+   "label": "customHeader6",
+   "name": "customHeader6",
+   "sortOrder": 6000,
+   "enabled": false
+  },
+  {
+   "label": "customHeader7",
+   "name": "customHeader7",
+   "sortOrder": 6000,
+   "enabled": false
+  },
+  {
+   "label": "customHeader8",
+   "name": "customHeader8",
+   "sortOrder": 6000,
+   "enabled": false
+  },
+  {
+   "label": "customHeader9",
+   "name": "customHeader9",
+   "sortOrder": 6000,
+   "enabled": false
+  },
+  {
+   "label": "customHeader10",
+   "name": "customHeader10",
+   "sortOrder": 6000,
+   "enabled": false
+  },
+  {
+   "label": "Referral Fee",
+   "name": "referralFeeHeader",
+   "sortOrder": 8000,
+   "enabled": false
+  },
+  {
+   "label": "Accounting Ownership",
+   "name": "generalLedgerSegmentHeader",
+   "sortOrder": 11010,
+   "enabled": false
+  }
+ ],
+ "trackTrigger": "employmentType",
+ "tracks": [
+  {
+   "name": "Placement",
+   "values": [
+    "Extension"
+   ]
+  },
+  {
+   "name": "Placement2",
+   "values": [
+    "Contract",
+    "Contract to Hire"
+   ]
+  },
+  {
+   "name": "Placement3",
+   "values": [
+    "Direct Hire"
+   ]
+  },
+  {
+   "name": "Placement4",
+   "values": []
+  },
+  {
+   "name": "Placement5",
+   "values": []
+  }
+ ],
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "billingClientContact",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": true,
+   "label": "Manager",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "optionsType": "Client",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Client",
+   "hideFromSearch": false,
+   "sortOrder": 15,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "ClientContact",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/ClientContact?fields=*",
+    "label": "Contact",
+    "dateLastModified": "1790846012855",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 10,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 20,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "bteSyncStatus",
+   "type": "TO_ONE",
+   "dataType": "SimplifiedOptionsLookup",
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": false,
+   "label": "BTE Sync Status",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "BteSyncStatusLookup",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/BteSyncStatusLookup",
+   "options": [
+    {
+     "value": 1,
+     "label": "Not Synced",
+     "readOnly": false
+    },
+    {
+     "value": 2,
+     "label": "Pending",
+     "readOnly": false
+    },
+    {
+     "value": 3,
+     "label": "Success",
+     "readOnly": false
+    },
+    {
+     "value": 4,
+     "label": "Failed",
+     "readOnly": false
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 32010,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "BteSyncStatusLookup",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/BteSyncStatusLookup?fields=*",
+    "label": "Bte Sync Status Lookup",
+    "dateLastModified": "1790845795943",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "label",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 100,
+      "confidential": false,
+      "optional": true,
+      "label": "Label",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "clientBillRate",
+   "type": "SCALAR",
+   "dataType": "Double",
+   "dataSpecialization": "MONEY",
+   "confidential": false,
+   "optional": true,
+   "label": "Bill Rate",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 225,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "clientOvertimeRate",
+   "type": "SCALAR",
+   "dataType": "Double",
+   "dataSpecialization": "MONEY",
+   "confidential": false,
+   "optional": true,
+   "label": "Over-time Bill Rate",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 240,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "comments",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 2147483647,
+   "confidential": false,
+   "optional": true,
+   "label": "Comments",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "TEXTAREA",
+   "hideFromSearch": false,
+   "sortOrder": 110,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "costCenter",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Cost Center",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 55,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customText1",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Consultant Advocate",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "optionsType": "CorporateUserText",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/CorporateUserText",
+   "hideFromSearch": false,
+   "sortOrder": 121,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "customText2",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Extension Contract",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "RADIO",
+   "options": [
+    {
+     "value": "No",
+     "label": "No"
+    },
+    {
+     "value": "Yes",
+     "label": "Yes"
+    }
+   ],
+   "defaultValue": "No",
+   "hideFromSearch": false,
+   "sortOrder": 305,
+   "hint": "",
+   "description": "Mark yes if this is an extension to an existing contract",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateBegin",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATE",
+   "confidential": false,
+   "optional": false,
+   "label": "Start Date",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 40,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateClientEffective",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATE",
+   "confidential": false,
+   "optional": true,
+   "label": "Effective Date (Client)",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 230,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateEffective",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATE",
+   "confidential": false,
+   "optional": true,
+   "label": "Effective Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 150,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "dateEnd",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "DATE",
+   "confidential": false,
+   "optional": true,
+   "label": "Scheduled End",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 45,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "daysGuaranteed",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "INTEGER",
+   "confidential": false,
+   "optional": false,
+   "label": "Days Guaranteed",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 100,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "daysProRated",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "dataSpecialization": "INTEGER",
+   "confidential": false,
+   "optional": false,
+   "label": "Days Pro-Rated",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 105,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "employeeType",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 30,
+   "confidential": false,
+   "optional": true,
+   "label": "Employee Type",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "W2",
+     "label": "W2"
+    },
+    {
+     "value": "1099",
+     "label": "1099"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 35,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "employmentType",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 200,
+   "confidential": false,
+   "optional": false,
+   "label": "Employment Type",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "Direct Hire",
+     "label": "Direct Hire"
+    },
+    {
+     "value": "Contract",
+     "label": "Contract"
+    },
+    {
+     "value": "Contract to Hire",
+     "label": "Contract to Hire"
+    },
+    {
+     "value": "Extension",
+     "label": "Extension"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 30,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "fee",
+   "type": "SCALAR",
+   "dataType": "Double",
+   "dataSpecialization": "PERCENTAGE",
+   "confidential": false,
+   "optional": false,
+   "label": "Placement Fee (%)",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 90,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "flatFee",
+   "type": "SCALAR",
+   "dataType": "Double",
+   "dataSpecialization": "MONEY",
+   "confidential": false,
+   "optional": true,
+   "label": "Placement Fee",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 95,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "hoursOfOperation",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Hours of Operation",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "9 to 5",
+     "label": "9 to 5"
+    },
+    {
+     "value": "9 to 4",
+     "label": "9 to 4"
+    },
+    {
+     "value": "9 to 6",
+     "label": "9 to 6"
+    },
+    {
+     "value": "9 to 11",
+     "label": "9 to 11"
+    },
+    {
+     "value": "9 to noon",
+     "label": "9 to noon"
+    },
+    {
+     "value": "8 to 5",
+     "label": "8 to 5"
+    },
+    {
+     "value": "8 to 4",
+     "label": "8 to 4"
+    },
+    {
+     "value": "8 to 6",
+     "label": "8 to 6"
+    },
+    {
+     "value": "8 to 11",
+     "label": "8 to 11"
+    },
+    {
+     "value": "8 to noon",
+     "label": "8 to noon"
+    },
+    {
+     "value": "7 to 3",
+     "label": "7 to 3"
+    },
+    {
+     "value": "7 to 11",
+     "label": "7 to 11"
+    },
+    {
+     "value": "7 to noon",
+     "label": "7 to noon"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 130,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "hoursPerDay",
+   "type": "SCALAR",
+   "dataType": "Double",
+   "dataSpecialization": "FLOAT",
+   "confidential": false,
+   "optional": false,
+   "label": "Hours Per Day",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 125,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "isMultirate",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": true,
+   "label": "Rate Entry Type",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "RADIO",
+   "options": [
+    {
+     "value": false,
+     "label": "Single Rate"
+    },
+    {
+     "value": true,
+     "label": "Multiple Rate"
+    }
+   ],
+   "defaultValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 3005,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "lastBteSyncDate",
+   "type": "SCALAR",
+   "dataType": "Timestamp",
+   "dataSpecialization": "SYSTEM",
+   "confidential": false,
+   "optional": true,
+   "label": "Last BTE Sync Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 32020,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "markUpPercentage",
+   "type": "SCALAR",
+   "dataType": "Double",
+   "dataSpecialization": "PERCENTAGE",
+   "confidential": false,
+   "optional": true,
+   "label": "Mark-up %",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 220,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "overtimeMarkUpPercentage",
+   "type": "SCALAR",
+   "dataType": "Double",
+   "dataSpecialization": "PERCENTAGE",
+   "confidential": false,
+   "optional": true,
+   "label": "OT Mark-up %",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 235,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "overtimeRate",
+   "type": "SCALAR",
+   "dataType": "Double",
+   "dataSpecialization": "MONEY",
+   "confidential": false,
+   "optional": true,
+   "label": "Over-time Pay Rate",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 155,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "payRate",
+   "type": "SCALAR",
+   "dataType": "BigDecimal",
+   "dataSpecialization": "MONEY",
+   "confidential": false,
+   "optional": false,
+   "label": "Pay Rate",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 140,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "referralFeeType",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 20,
+   "confidential": false,
+   "optional": false,
+   "label": "Referral Fee Type",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 8000,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "salary",
+   "type": "SCALAR",
+   "dataType": "BigDecimal",
+   "dataSpecialization": "MONEY",
+   "confidential": false,
+   "optional": false,
+   "label": "Salary",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 85,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "salaryUnit",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 20,
+   "confidential": false,
+   "optional": false,
+   "label": "Pay Type",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "Per Hour",
+     "label": "Per Hour"
+    },
+    {
+     "value": "Per Day",
+     "label": "Per Day"
+    },
+    {
+     "value": "Per Year",
+     "label": "Per Year"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 145,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "status",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 30,
+   "confidential": false,
+   "optional": false,
+   "label": "Status",
+   "required": true,
+   "readOnly": false,
+   "multiValue": false,
+   "inputType": "SELECT",
+   "options": [
+    {
+     "value": "Submitted",
+     "label": "Submitted"
+    },
+    {
+     "value": "Rejected",
+     "label": "Rejected"
+    },
+    {
+     "value": "Actively On Contract",
+     "label": "Actively On Contract"
+    },
+    {
+     "value": "Drop Out",
+     "label": "Drop Out"
+    },
+    {
+     "value": "Terminated",
+     "label": "Terminated"
+    },
+    {
+     "value": "Contract Completed",
+     "label": "Contract Completed"
+    },
+    {
+     "value": "Direct Hire Completed",
+     "label": "Direct Hire Completed"
+    }
+   ],
+   "hideFromSearch": false,
+   "sortOrder": 5,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "terminationReason",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Termination Reason",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "sortOrder": 10,
+   "hint": "",
+   "description": "",
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

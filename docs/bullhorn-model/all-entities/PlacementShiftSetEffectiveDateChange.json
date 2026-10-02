@@ -1,0 +1,73 @@
+{
+ "entity": "PlacementShiftSetEffectiveDateChange",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/PlacementShiftSetEffectiveDateChange?fields=*",
+ "label": "Placement Shift Set Effective Date Change",
+ "dateLastModified": "1790953688796",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "editHistory",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Edit History",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "PlacementShiftSetEditHistory",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/PlacementShiftSetEditHistory",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "PlacementShiftSetEditHistory",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/PlacementShiftSetEditHistory?fields=*",
+    "label": "Placement Shift Set Edit History",
+    "dateLastModified": "1790953688757",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "newEffectiveDate",
+   "type": "SCALAR",
+   "dataType": "Date",
+   "confidential": false,
+   "optional": true,
+   "label": "New Effective Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "previousEffectiveDate",
+   "type": "SCALAR",
+   "dataType": "Date",
+   "confidential": false,
+   "optional": true,
+   "label": "Previous Effective Date",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}
