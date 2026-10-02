@@ -1,0 +1,74 @@
+{
+ "entity": "NoteEntity",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/NoteEntity?fields=*",
+ "label": "Note Entity",
+ "dateLastModified": "1790846496373",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "note",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Note",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "Note",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Note",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "Note",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Note?fields=*",
+    "label": "Note",
+    "dateLastModified": "1790845793641",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     }
+    ]
+   }
+  },
+  {
+   "name": "targetEntityID",
+   "type": "SCALAR",
+   "dataType": "Integer",
+   "confidential": false,
+   "optional": false,
+   "label": "Target Entity ID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "targetEntityName",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "confidential": false,
+   "optional": false,
+   "label": "Target Entity Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

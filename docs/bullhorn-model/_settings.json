@@ -1,0 +1,17 @@
+{
+ "entityTitleCandidate": "Candidate",
+ "entityTitleClientContact": "Contact",
+ "entityTitleClientCorporation": "Company",
+ "entityTitleJobOrder": "Job",
+ "entityTitlePlacement": "Placement",
+ "entityTitleOpportunity": "MSA",
+ "entityTitleLead": "Lead",
+ "corporationName": "Anura Connect Inc.",
+ "privateLabelId": {
+  "id": 53352,
+  "name": "Anura Connect Inc."
+ },
+ "userTypeId": 223607,
+ "novoEnabled": true,
+ "currencyFormat": "USD"
+}

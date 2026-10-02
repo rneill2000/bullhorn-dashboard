@@ -1,0 +1,89 @@
+{
+ "entity": "Skill",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Skill?fields=*",
+ "label": "Skill",
+ "dateLastModified": "1790845793720",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "categories",
+   "type": "TO_MANY",
+   "confidential": false,
+   "optional": true,
+   "label": "Categories",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "Category",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Category",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "Category",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Category?fields=*",
+    "label": "Category",
+    "dateLastModified": "1790845791137",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "name",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 100,
+      "confidential": false,
+      "optional": false,
+      "label": "Name",
+      "required": false,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "enabled",
+   "type": "SCALAR",
+   "dataType": "Boolean",
+   "confidential": false,
+   "optional": false,
+   "label": "Enabled",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "name",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": false,
+   "label": "Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}

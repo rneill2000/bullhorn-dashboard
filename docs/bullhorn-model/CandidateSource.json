@@ -1,0 +1,251 @@
+{
+ "entity": "CandidateSource",
+ "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/CandidateSource?fields=*",
+ "label": "Candidate Source",
+ "dateLastModified": "1790845791125",
+ "fields": [
+  {
+   "name": "id",
+   "type": "ID",
+   "dataType": "Integer",
+   "optional": false,
+   "label": "ID"
+  },
+  {
+   "name": "accountNumber",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": true,
+   "label": "Account Number",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "address",
+   "type": "COMPOSITE",
+   "dataType": "AddressWithoutCountry",
+   "confidential": false,
+   "optional": true,
+   "label": "Address",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "fields": [
+    {
+     "name": "address1",
+     "type": "SCALAR",
+     "dataType": "String",
+     "maxLength": 100,
+     "optional": true
+    },
+    {
+     "name": "address2",
+     "type": "SCALAR",
+     "dataType": "String",
+     "maxLength": 100,
+     "optional": true
+    },
+    {
+     "name": "city",
+     "type": "SCALAR",
+     "dataType": "String",
+     "maxLength": 40,
+     "optional": true
+    },
+    {
+     "name": "state",
+     "type": "SCALAR",
+     "dataType": "String",
+     "maxLength": 100,
+     "optional": true
+    },
+    {
+     "name": "zip",
+     "type": "SCALAR",
+     "dataType": "String",
+     "maxLength": 15,
+     "optional": true
+    }
+   ]
+  },
+  {
+   "name": "candidate",
+   "type": "TO_ONE",
+   "confidential": false,
+   "optional": false,
+   "label": "Candidate",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "optionsType": "Candidate",
+   "optionsUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/options/Candidate",
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false,
+   "associatedEntity": {
+    "entity": "Candidate",
+    "entityMetaUrl": "https://rest44.bullhornstaffing.com/rest-services/di6b5s/meta/Candidate?fields=*",
+    "label": "Candidate",
+    "dateLastModified": "1790848074880",
+    "fields": [
+     {
+      "name": "id",
+      "type": "ID",
+      "dataType": "Integer",
+      "optional": false,
+      "label": "ID"
+     },
+     {
+      "name": "firstName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "First Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 10,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     },
+     {
+      "name": "lastName",
+      "type": "SCALAR",
+      "dataType": "String",
+      "maxLength": 50,
+      "confidential": false,
+      "optional": true,
+      "label": "Last Name",
+      "required": true,
+      "readOnly": false,
+      "multiValue": false,
+      "hideFromSearch": false,
+      "sortOrder": 20,
+      "hint": "",
+      "description": "",
+      "systemRequired": false,
+      "shouldAddCustomEntityLabel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "fax",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 20,
+   "confidential": false,
+   "optional": true,
+   "label": "Fax",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "fee",
+   "type": "SCALAR",
+   "dataType": "BigDecimal",
+   "confidential": false,
+   "optional": false,
+   "label": "Fee",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "feeType",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 20,
+   "confidential": false,
+   "optional": false,
+   "label": "Fee Type",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "migrateGUID",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 36,
+   "confidential": false,
+   "optional": true,
+   "label": "Migrate GUID",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "name",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 100,
+   "confidential": false,
+   "optional": false,
+   "label": "Name",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "phone",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 20,
+   "confidential": false,
+   "optional": true,
+   "label": "Phone",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  },
+  {
+   "name": "type",
+   "type": "SCALAR",
+   "dataType": "String",
+   "maxLength": 50,
+   "confidential": false,
+   "optional": true,
+   "label": "Type",
+   "required": false,
+   "readOnly": false,
+   "multiValue": false,
+   "hideFromSearch": false,
+   "systemRequired": false,
+   "shouldAddCustomEntityLabel": false
+  }
+ ]
+}
