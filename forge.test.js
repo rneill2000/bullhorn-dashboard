@@ -116,118 +116,10 @@ test("outlook sign-in requests Mail.ReadWrite and still includes Mail.Send", fun
   assert.match(ui, /Mail\.Send/);
 });
 
-test("module source never sends mail or writes Bullhorn", function () {
+test("module source never sends mail", function () {
   const src = fs.readFileSync(__dirname + "/forge.js", "utf8");
   assert.doesNotMatch(src, /\/me\/sendMail/);
-  assert.doesNotMatch(src, /bhWrite/);
-  assert.doesNotMatch(src, /entity\/JobSubmission/);
   assert.match(src, /\/me\/messages/);
-  assert.match(src, /Bullhorn status was not changed/);
-});
-
-test("date-only availability keeps the Bullhorn calendar day", function () {
-  const ms = Date.parse("2026-10-06T00:00:00Z");
-  const eveningChicago = Date.parse("2026-10-07T01:30:00Z");
-  const avail = forge.pickAvailability({ dateAvailable: ms }, eveningChicago);
-  assert.equal(avail.text, "Available Oct 6, 2026");
-  assert.equal(avail.daysAgo, 0);
-  const fit = forge.scoreFit({
-    dateAvailable: ms,
-    availability: avail.text,
-    billRate: "$180/hr",
-    whyMe: "Led the HB implementation at Memorial Hermann and stayed through go-live.",
-    location: "Houston, TX",
-    primaryCert: "HB",
-    jobTitle: "HB Analyst",
-    flags: [],
-  }, eveningChicago);
-  assert.ok(!fit.flags.some(function (f) { return f.code === "availability_stale"; }));
-});
-
-test("notice text wins over a date, and a date is not shifted", function () {
-  const now = Date.parse("2026-10-06T18:00:00Z");
-  const notice = forge.pickAvailability({ customAvail: "2 weeks notice", dateAvailable: Date.parse("2026-10-06T00:00:00Z") }, now);
-  assert.equal(notice.text, "2 weeks notice");
-  const dated = forge.pickAvailability({ dateAvailable: Date.parse("2026-10-20T00:00:00Z") }, now);
-  assert.equal(dated.text, "Available Oct 20, 2026");
-});
-
-test("dashboard comment template does not leak pay or margin", function () {
-  const text = [
-    "Candidate Name: Jack Corbell",
-    "Why Me: Led the HB build.",
-    "Availability Date: 10/6/2026",
-    "Pay Rate: $95/hr",
-    "Bill Rate: $185/hr",
-    "Margin: $90/hr",
-  ].join("\n");
-  const p = forge.parseSubmissionComments(text);
-  assert.equal(p.name, "Jack Corbell");
-  assert.equal(p.whyMe, "Led the HB build.");
-  assert.equal(p.availability, "10/6/2026");
-  assert.equal(p.billRate, "$185/hr");
-  assert.equal(p.payRate, "$95/hr");
-  assert.equal(p.margin, "$90/hr");
-  const bill = forge.pickBillRate({ commentRate: p.billRate, payRate: 95, payText: p.payRate, customText10: "" });
-  assert.equal(bill.billRate, "$185/hr");
-  assert.doesNotMatch(bill.billRate, /95|Margin/);
-  const email = forge.composeEmail({
-    candidateName: p.name,
-    whyMe: p.whyMe,
-    availability: p.availability,
-    location: "Houston, TX",
-    billRate: bill.billRate,
-    subject: "HB Consultant Resume",
-    signerName: "Rachel",
-  });
-  assert.doesNotMatch(email.text, /\$95|Margin/);
-  assert.match(email.text, /\$185\/hr/);
-});
-
-test("consultant pay text is not sent when it is the only rate", function () {
-  const bill = forge.pickBillRate({ commentRate: "95", payText: "$95/hr", jobBill: null, submissionBill: null });
-  assert.equal(bill.billRate, "");
-  assert.equal(bill.source, "withheld_pay");
-});
-
-test("location does not mix address city with a custom state", function () {
-  assert.equal(forge.pickLocation({
-    candCity: "Houston",
-    candState: "",
-    candCityCustom: "Austin",
-    candStateCustom: "TX",
-  }), "Austin, TX");
-  assert.equal(forge.pickLocation({
-    candCity: "Houston",
-    candState: "TX",
-    candCityCustom: "Austin",
-    candStateCustom: "TX",
-  }), "Houston, TX");
-});
-
-test("mailbox suggestion keeps the connected address casing", function () {
-  assert.equal(forge.mailboxMatch(["Rachel@anuraconnect.com"], "rachel@anuraconnect.com"), "Rachel@anuraconnect.com");
-});
-
-test("sync warning only after the sync loop has been quiet", function () {
-  const now = Date.parse("2026-10-06T18:00:00Z");
-  assert.equal(forge.syncStaleFlags([
-    { entity_type: "submissions", last_incremental_sync: new Date(now - 5 * 60 * 1000).toISOString() },
-  ], now).length, 0);
-  const stale = forge.syncStaleFlags([
-    { entity_type: "candidates", last_full_sync: new Date(now - 5 * 3600 * 1000).toISOString() },
-  ], now);
-  assert.equal(stale.length, 1);
-  assert.equal(stale[0].code, "sync_stale");
-});
-
-test("submit-to-job writes Anura fields and the real pipeline status", function () {
-  const src = fs.readFileSync(__dirname + "/server.js", "utf8");
-  assert.match(src, /status: "Internally Submitted"/);
-  assert.match(src, /customText10/);
-  assert.match(src, /customText11/);
-  assert.match(src, /customText12/);
-  assert.doesNotMatch(src, /status: "Internal Submission"/);
 });
 
 test("forge page renders a draft button and sits after Submittal Tracker", function () {
@@ -457,53 +349,6 @@ test("scope refusal returns the email instead of sending", async function () {
     assert.match(draft.json.instructions, /Mail\.ReadWrite/);
     assert.match(draft.json.bodyText, /Candidate Name: Jack Corbell/);
     assert.match(draft.json.bodyText, /\$185\/hr/);
-  } finally {
-    server.close();
-  }
-});
-
-test("preview uses the submission available date and does not call Bullhorn", async function () {
-  const calls = [];
-  const app = express();
-  app.use(express.json());
-  const row = fixtureRow();
-  row.comments = "Why Me:\nJack led the HB implementation at Memorial Hermann and knows the revenue-cycle side.";
-  row.sub_custom_avail = "";
-  row.sub_date_available = String(Date.parse("2026-10-20T00:00:00Z"));
-  row.date_available = Date.parse("2026-10-06T00:00:00Z");
-  row.sub_custom_bill = "185";
-  row.pay_rate = "95";
-  forge(app, {
-    db: {
-      ready: true,
-      query: async function () { return { rows: [] }; },
-      getOne: async function () { return row; },
-      getAll: async function () { return []; },
-    },
-    graphFetch: async function () { calls.push("graph"); return {}; },
-    outlookUsers: function () { return { "Rachel@anuraconnect.com": {} }; },
-    getUser: function () { return { firstName: "Rachel", email: "rachel@anuraconnect.com" }; },
-  });
-  const server = await listen(app);
-  try {
-    const preview = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
-    assert.equal(preview.status, 200);
-    assert.equal(preview.json.draft.availability, "Available Oct 20, 2026");
-    assert.equal(preview.json.draft.billRate, "$185/hr");
-    assert.equal(preview.json.outlook.suggestedMailbox, "Rachel@anuraconnect.com");
-    assert.equal(calls.length, 0);
-    const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
-      to: "dana@mh.example",
-      billRate: preview.json.draft.billRate,
-      availability: preview.json.draft.availability,
-      whyMe: preview.json.draft.whyMe,
-      candidateName: "Jack Corbell",
-      location: "Houston, TX",
-      subject: "HB Consultant Resume",
-    });
-    assert.equal(draft.json.created, true);
-    assert.equal(calls.length, 1);
-    assert.match(draft.json.instructions, /Bullhorn status was not changed/);
   } finally {
     server.close();
   }

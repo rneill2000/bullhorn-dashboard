@@ -47,7 +47,7 @@ module.exports = function registerDigest(app, deps) {
       "JOIN jobs j ON j.id = s.job_id " +
       "LEFT JOIN clients c ON c.id = j.client_id " +
       "LEFT JOIN candidates cd ON cd.id = s.candidate_id " +
-      "WHERE LOWER(s.status) IN ('internally submitted', 'internal submission') AND s.is_deleted IS NOT TRUE AND j.is_deleted IS NOT TRUE " +
+      "WHERE s.status = 'Internally Submitted' AND s.is_deleted IS NOT TRUE AND j.is_deleted IS NOT TRUE " +
       "  AND j.status IN ('Accepting Candidates','Open') " +
       "ORDER BY j.client_name, j.title, s.date_added", []);
     const now = Date.now();

@@ -55,18 +55,11 @@ const BUNDLE_FROM = `
 `;
 
 const BUNDLE_SELECT = `
-  SELECT s.id, s.candidate_id,
-         COALESCE(NULLIF(BTRIM(s.candidate_name), ''), NULLIF(BTRIM(cd.name), ''), NULLIF(BTRIM(CONCAT_WS(' ', cd.first_name, cd.last_name)), '')) AS candidate_name,
-         s.job_id, s.job_title, s.client_id,
-         COALESCE(NULLIF(BTRIM(s.client_name), ''), NULLIF(BTRIM(j.client_name), '')) AS client_name,
+  SELECT s.id, s.candidate_id, s.candidate_name, s.job_id, s.job_title, s.client_id, s.client_name,
          s.status, s.date_added, s.sending_user, s.comments, s.pay_rate, s.client_bill_rate,
          s.raw_json->>'customText10' AS sub_custom_bill,
-         s.raw_json->>'customText11' AS sub_custom_pay,
          s.raw_json->>'customText12' AS sub_custom_avail,
-         s.raw_json->>'billRate' AS sub_bill_rate,
-         s.raw_json->>'customDate2' AS sub_date_available,
          j.title AS job_title_live, j.status AS job_status, j.client_bill_rate AS job_bill_rate,
-         j.custom_float1 AS job_bill_high, j.custom_float2 AS job_bill_low,
          j.pay_rate AS job_pay_rate, LEFT(COALESCE(j.description, j.public_description, ''), 2000) AS job_description,
          j.address_city AS job_city, j.address_state AS job_state, j.on_site, j.owner_name AS job_owner,
          j.custom_text1 AS job_rate_notes, j.employment_type, j.skill_list AS job_skills,
@@ -118,19 +111,7 @@ function fmtDate(ms) {
   if (!n) return "";
   const d = new Date(n);
   if (isNaN(d.getTime())) return "";
-  // Bullhorn DATE values are midnight UTC. America/Chicago prints the previous calendar day.
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-}
-/** Calendar days from a Bullhorn DATE (UTC) to today in Chicago. Negative means still in the future. */
-function calendarDaysBefore(ms, now) {
-  const n = Number(ms);
-  if (!n) return null;
-  const fieldDay = new Date(n).toLocaleDateString("en-CA", { timeZone: "UTC" });
-  const today = new Date(now || Date.now()).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
-  const a = Date.parse(fieldDay + "T00:00:00Z");
-  const b = Date.parse(today + "T00:00:00Z");
-  if (isNaN(a) || isNaN(b)) return null;
-  return Math.round((b - a) / 86400000);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
 }
 function daysSince(ms, now) {
   const n = Number(ms);
@@ -143,45 +124,12 @@ function slaFor(days) {
   if (days < 2) return "yellow";
   return "red";
 }
-function syncStaleFlags(states, now) {
-  const labels = { submissions: "submission", candidates: "candidate", jobs: "job" };
-  const by = {};
-  (states || []).forEach(function (s) { if (s && s.entity_type) by[s.entity_type] = s; });
-  const flags = [];
-  Object.keys(labels).forEach(function (name) {
-    const row = by[name];
-    if (!row) return;
-    const ts = row.last_incremental_sync || row.last_full_sync;
-    if (!ts) return;
-    const at = new Date(ts).getTime();
-    if (isNaN(at)) return;
-    const age = (now || Date.now()) - at;
-    if (age > 2 * 60 * 60 * 1000) {
-      flags.push({
-        level: "warn",
-        code: "sync_stale",
-        message: "Bullhorn → Railway " + labels[name] + " sync last succeeded " + Math.floor(age / 3600000) + "h ago, so this draft may be behind Bullhorn.",
-      });
-    }
-  });
-  return flags;
-}
-function mailboxMatch(boxes, email) {
-  const want = String(email || "").trim().toLowerCase();
-  if (!want) return "";
-  for (let i = 0; i < boxes.length; i++) {
-    if (String(boxes[i] || "").toLowerCase() === want) return boxes[i];
-  }
-  return "";
-}
 
 const COMMENT_LABELS = [
   ["whyMe", /^why\s*me\b/i],
-  ["availability", /^(?:date\s+available|availability(?:\s+date)?|available|avail\.?)\b/i],
+  ["availability", /^(?:availability|available|avail\.?)\b/i],
   ["location", /^(?:location|loc\.?)\b/i],
-  ["payRate", /^pay\s*rate\b/i],
-  ["margin", /^margin\b/i],
-  ["billRate", /^(?:bill\s*rate|client\s*bill(?:\s*rate)?|rate)\b/i],
+  ["billRate", /^(?:bill\s*rate|rate)\b/i],
   ["name", /^(?:candidate\s+name|name)\b/i],
 ];
 
@@ -236,24 +184,13 @@ function parseSubmissionComments(text) {
     availability: joined.availability || "",
     location: joined.location || "",
     billRate: joined.billRate || "",
-    payRate: joined.payRate || "",
-    margin: joined.margin || "",
   };
 }
 
-function payFigures(parts) {
-  return [parts.payRate, parts.payText, parts.jobPay].filter(function (p) {
-    return p != null && p !== "" && moneyNumber(p) != null && moneyNumber(p) > 0;
-  });
-}
-function matchesPay(text, pays) {
-  return pays.some(function (p) { return sameMoney(text, p); });
-}
 function pickBillRate(parts) {
   const flags = [];
-  const comment = String(parts.commentRate || "").trim().split(/\n/)[0].trim();
-  const pays = payFigures(parts);
-  const payLabel = pays.length ? formatRate(pays[0]) : "";
+  const comment = (parts.commentRate || "").trim();
+  const pay = parts.payRate || parts.jobPay || "";
   const structured = [parts.customText10, parts.submissionBill, parts.jobBill]
     .map(function (x) { return x == null ? "" : String(x).trim(); })
     .filter(function (x) { return x && moneyNumber(x) != null && moneyNumber(x) > 0; });
@@ -265,54 +202,40 @@ function pickBillRate(parts) {
       flags.push({ level: "warn", code: "rate_scale", message: "This figure is over $1,000. Confirm it is an hourly bill rate before sending." });
     }
   }
-  function rangeNote() {
-    const high = parts.jobBillHigh;
-    if (!(high && moneyNumber(high) > 0)) return;
-    const low = parts.jobBillLow;
-    const lowBit = low && moneyNumber(low) > 0 ? " and Bill Rate Low is " + formatRate(low) : "";
-    flags.push({ level: "warn", code: "job_bill_range", message: "The job's Bill Rate High is " + formatRate(high) + lowBit + ". That range was not used as the client bill rate." });
-  }
   if (comment) {
-    const commentIsPay = matchesPay(comment, pays);
-    const knownBill = structured.find(function (s) { return !matchesPay(s, pays); });
+    const commentIsPay = pay && sameMoney(comment, pay);
+    const knownBill = structured.find(function (s) { return !sameMoney(s, pay); });
     if (commentIsPay && knownBill && !sameMoney(comment, knownBill)) {
       flags.push({ level: "warn", code: "pay_vs_bill", message: "The rate in the submission comments matches the pay rate. The draft uses the bill rate on the job or submission instead." });
       annualFlag(knownBill);
       return { billRate: formatRate(knownBill), flags: flags, source: "structured" };
     }
     if (commentIsPay && !knownBill) {
-      flags.push({ level: "alert", code: "pay_vs_bill", message: "Only a pay rate is on file (" + payLabel + "). It was left out of the draft so it is not sent to the client." });
-      rangeNote();
+      flags.push({ level: "alert", code: "pay_vs_bill", message: "Only a pay rate is on file (" + formatRate(pay) + "). It was left out of the draft so it is not sent to the client." });
       return { billRate: "", flags: flags, source: "withheld_pay" };
     }
     annualFlag(comment);
     return { billRate: formatRate(comment), flags: flags, source: "comments" };
   }
-  const bill = structured.find(function (s) { return !matchesPay(s, pays); }) || "";
+  const bill = structured.find(function (s) { return !(pay && sameMoney(s, pay)); }) || "";
   if (bill) {
     annualFlag(bill);
     return { billRate: formatRate(bill), flags: flags, source: "structured" };
   }
-  if (pays.length) {
-    flags.push({ level: "alert", code: "bill_rate_missing", message: "No bill rate on the submission or job. Pay rate is " + payLabel + " and was not put in the draft." });
+  if (pay && moneyNumber(pay)) {
+    flags.push({ level: "alert", code: "bill_rate_missing", message: "No bill rate on the submission or job. Pay rate is " + formatRate(pay) + " and was not put in the draft." });
   } else {
     flags.push({ level: "alert", code: "bill_rate_missing", message: "Bill rate is missing." });
   }
-  rangeNote();
   return { billRate: "", flags: flags, source: "missing" };
 }
 
-function placePair(city, state) {
-  const c = String(city || "").trim();
-  const s = String(state || "").trim();
-  return { text: [c, s].filter(Boolean).join(", "), complete: !!(c && s) };
-}
 function pickLocation(parts) {
   if (parts.commentLocation && String(parts.commentLocation).trim()) return String(parts.commentLocation).trim();
-  const address = placePair(parts.candCity, parts.candState);
-  const custom = placePair(parts.candCityCustom, parts.candStateCustom);
-  const base = (address.complete ? address.text : "") || (custom.complete ? custom.text : "") || address.text || custom.text;
-  const jobLoc = placePair(parts.jobCity, parts.jobState).text;
+  const city = parts.candCity || parts.candCityCustom || "";
+  const state = parts.candState || parts.candStateCustom || "";
+  const base = [city, state].filter(Boolean).join(", ");
+  const jobLoc = [parts.jobCity, parts.jobState].filter(Boolean).join(", ");
   const remote = /remote/i.test(parts.onSite || "") || /remote/i.test(parts.jobTitle || "");
   if (remote && base) return "Remote · based in " + base;
   if (remote) return "Remote";
@@ -321,10 +244,14 @@ function pickLocation(parts) {
 }
 
 function pickAvailability(parts, now) {
-  if (parts.commentAvail && String(parts.commentAvail).trim()) return { text: String(parts.commentAvail).trim(), fromField: false, daysAgo: null };
-  if (parts.customAvail && String(parts.customAvail).trim()) return { text: String(parts.customAvail).trim(), fromField: false, daysAgo: null };
-  const when = fmtDate(parts.dateAvailable);
-  if (when) return { text: "Available " + when, fromField: true, daysAgo: calendarDaysBefore(parts.dateAvailable, now) };
+  if (parts.commentAvail && String(parts.commentAvail).trim()) return { text: String(parts.commentAvail).trim(), fromField: false };
+  if (parts.customAvail && String(parts.customAvail).trim()) return { text: String(parts.customAvail).trim(), fromField: false };
+  if (parts.dateAvailable) {
+    const when = fmtDate(parts.dateAvailable);
+    const daysAgo = daysSince(parts.dateAvailable, now);
+    const text = when ? "Available " + when : "";
+    return { text: text, fromField: true, daysAgo: daysAgo };
+  }
   return { text: "", fromField: false, daysAgo: null };
 }
 
@@ -402,7 +329,7 @@ function scoreFit(input, now) {
     score += 10;
   }
   if (input.dateAvailable) {
-    const age = calendarDaysBefore(input.dateAvailable, now);
+    const age = daysSince(input.dateAvailable, now);
     if (age != null && age > 14) {
       score -= 12;
       flags.push({ level: "alert", code: "availability_stale", message: "Available date is " + age + " days ago. Confirm it is still current." });
@@ -562,15 +489,6 @@ function registerForge(app, deps) {
     return row;
   }
 
-  async function loadSyncState() {
-    if (!db || !db.ready) return [];
-    try {
-      return await db.getAll(
-        "SELECT entity_type, last_incremental_sync, last_full_sync FROM sync_state WHERE entity_type IN ('submissions','candidates','jobs')"
-      );
-    } catch (e) { return []; }
-  }
-
   async function loadNotes(candidateId) {
     if (!candidateId || !db || !db.ready) return [];
     try {
@@ -607,17 +525,13 @@ function registerForge(app, deps) {
     const name = (row.candidate_name || parsed.name || "").trim();
     const jobTitle = row.job_title_live || row.job_title || "";
     const clientName = row.client_name || "";
-    const availDate = row.sub_date_available || row.date_available;
     const bill = pickBillRate({
       commentRate: parsed.billRate,
       customText10: row.sub_custom_bill,
-      submissionBill: row.sub_bill_rate || row.client_bill_rate,
+      submissionBill: row.client_bill_rate,
       jobBill: row.job_bill_rate,
-      jobBillHigh: row.job_bill_high,
-      jobBillLow: row.job_bill_low,
       rateNotes: row.job_rate_notes,
       payRate: row.pay_rate,
-      payText: row.sub_custom_pay,
       jobPay: row.job_pay_rate,
     });
     const location = pickLocation({
@@ -631,7 +545,7 @@ function registerForge(app, deps) {
       onSite: row.on_site,
       jobTitle: jobTitle,
     });
-    const avail = pickAvailability({ commentAvail: parsed.availability, customAvail: row.sub_custom_avail, dateAvailable: availDate }, now);
+    const avail = pickAvailability({ commentAvail: parsed.availability, customAvail: row.sub_custom_avail, dateAvailable: row.date_available }, now);
     const why = templateWhyMe({
       commentWhy: parsed.whyMe,
       name: name,
@@ -658,7 +572,7 @@ function registerForge(app, deps) {
       jobState: row.job_state,
       willRelocate: row.will_relocate,
       availability: avail.text,
-      dateAvailable: availDate,
+      dateAvailable: row.date_available,
       candModified: row.cand_modified,
       billRate: bill.billRate,
       whyMe: why.text,
@@ -764,7 +678,7 @@ function registerForge(app, deps) {
       if (!db || !db.ready) return res.status(503).json({ error: "Database is not connected. Forge reads the Railway Postgres sync." });
       const rows = await db.getAll(
         BUNDLE_SELECT +
-        " WHERE LOWER(s.status) IN ('internally submitted', 'internal submission') AND s.is_deleted IS NOT TRUE AND j.is_deleted IS NOT TRUE " +
+        " WHERE LOWER(s.status) = 'internally submitted' AND s.is_deleted IS NOT TRUE AND j.is_deleted IS NOT TRUE " +
         " AND j.status IN ('Accepting Candidates','Open') " +
         " ORDER BY s.date_added ASC NULLS LAST LIMIT 200",
         []
@@ -832,12 +746,12 @@ function registerForge(app, deps) {
               candStateCustom: row.cand_state_custom,
               jobState: row.job_state,
               willRelocate: row.will_relocate,
-              dateAvailable: row.sub_date_available || row.date_available,
+              dateAvailable: row.date_available,
               candModified: row.cand_modified,
               flags: [],
             }), now);
             draft.fitScore = rescored.score;
-            draft.flags = rescored.flags.concat(draft.flags.filter(function (f) { return f.code === "pay_vs_bill" || f.code === "bill_rate_missing" || f.code === "rate_scale" || f.code === "job_bill_range"; }));
+            draft.flags = rescored.flags.concat(draft.flags.filter(function (f) { return f.code === "pay_vs_bill" || f.code === "bill_rate_missing" || f.code === "rate_scale"; }));
           }
         } catch (e) {
           draft.flags = draft.flags.concat([{ level: "warn", code: "polish", message: "Why Me was not polished (" + e.message + "). The Bullhorn text is shown instead." }]);
@@ -845,7 +759,6 @@ function registerForge(app, deps) {
       }
       const user = getUser(req);
       const boxes = await mailboxes();
-      draft.flags = (draft.flags || []).concat(syncStaleFlags(await loadSyncState(), now));
       const resume = publicResume(await lookupResume(draft.candidate.id, draft.candidate.name));
       const email = composeEmail({
         candidateName: draft.candidate.name,
@@ -865,7 +778,7 @@ function registerForge(app, deps) {
         resume: resume,
         outlook: {
           mailboxes: boxes,
-          suggestedMailbox: mailboxMatch(boxes, user && user.email) || boxes[0] || "",
+          suggestedMailbox: (user && boxes.indexOf((user.email || "").toLowerCase()) >= 0) ? user.email.toLowerCase() : (boxes[0] || ""),
           reconnectUrl: "/auth/outlook/login",
           draftsNeedMailReadWrite: false,
           hint: "Forge saves a draft. You send it. Sign-in includes Mail.ReadWrite along with Mail.Read, Mail.Send, and User.Read. Reconnect Outlook if this mailbox was linked before that permission.",
@@ -1028,5 +941,3 @@ module.exports.resumeFilename = resumeFilename;
 module.exports.classifyGraphError = classifyGraphError;
 module.exports.formatRate = formatRate;
 module.exports.RESUME_TODO = RESUME_TODO;
-module.exports.syncStaleFlags = syncStaleFlags;
-module.exports.mailboxMatch = mailboxMatch;

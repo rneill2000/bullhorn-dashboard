@@ -1264,31 +1264,19 @@ app.post("/api/candidates/:id/notes", async (req, res) => {
 // ── Submit Candidate to Job ────────────────────
 app.post("/api/submissions", async (req, res) => {
   try {
-    const { candidateId, jobId, comments, notifyUsers, payRate, billRate, availDate } = req.body;
+    const { candidateId, jobId, comments, notifyUsers } = req.body;
     if (!candidateId || !jobId) {
       return res.status(400).json({ error: "candidateId and jobId are required" });
     }
 
-    function clipField(v) {
-      const s = v == null ? "" : String(v).trim();
-      return s && s.length <= 100 ? s : "";
-    }
-    // Create JobSubmission in Bullhorn. Status must be the real pipeline value.
-    // Editable Anura fields: customText10 Bill Rate, customText11 Consultant Pay Rate,
-    // customText12 Date Available / Notice Needed. billRate, payRate, and customDate2 are read-only.
+    // Create JobSubmission in Bullhorn
     const subBody = {
       candidate: { id: parseInt(candidateId) },
       jobOrder: { id: parseInt(jobId) },
-      status: "Internally Submitted",
+      status: "Internal Submission",
       dateWebResponse: Date.now(),
       comments: comments || "",
     };
-    const billText = clipField(billRate);
-    const payText = clipField(payRate);
-    const availText = clipField(availDate);
-    if (billText) subBody.customText10 = billText;
-    if (payText) subBody.customText11 = payText;
-    if (availText) subBody.customText12 = availText;
     const result = await bhWrite("entity/JobSubmission", subBody, "PUT");
     console.log("[Submission] Created internal submission", candidateId, "→ Job", jobId, "→", result);
 
