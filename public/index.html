@@ -546,6 +546,7 @@ tbody tr:hover{background:#eff6ff}
     <div><div class="logo-text">Anura Connect</div><div class="logo-sub">Bullhorn Dashboard</div></div>
   </div>
   <nav id="nav"></nav>
+  <!-- Submittal Forge will sit after Submittal Tracker in the Candidates group once it ships. -->
   <div class="user-box" id="user-box">
     <div class="user-card" style="cursor:pointer" onclick="window.location.href='/auth/login'">
       <div class="avatar" style="background:#334155">?</div>
@@ -801,16 +802,27 @@ function setHash(h){
   setTimeout(function(){_hashGuard=false;},50);
 }
 function isValidPage(pg){
+  if(pg==="msapipeline"||pg==="salespipeline")return true;
+  if(typeof HIDDEN_PAGES!=="undefined"&&HIDDEN_PAGES[pg])return true;
+  if(typeof DISABLED_PAGES!=="undefined"&&DISABLED_PAGES[pg])return true;
   var ok=false;
   try{getNavGroups().forEach(function(g){g.items.forEach(function(n){if(n.key===pg)ok=true;});});}catch(e){}
   return ok;
+}
+// Old MSA / Sales hashes land on the single Deals entry, on the matching tab.
+function canonicalizePage(pg){
+  if(pg==="msapipeline"){_dealsTab="msa";return "deals";}
+  if(pg==="salespipeline"){_dealsTab="sales";return "deals";}
+  return pg;
 }
 function applyHash(){
   var h=(location.hash||"").replace(/^#/,"");
   if(!h)return;
   var m=h.match(/^(candidate|job|client|placement)\/(\d+)$/);
   if(m){_detailOpenByKind(m[1],parseInt(m[2]));return;}
-  if(isValidPage(h)&&h!==currentPage){closeDetail();setPage(h);}
+  var raw=h;
+  h=canonicalizePage(h);
+  if(isValidPage(h)&&(h!==currentPage||raw==="msapipeline"||raw==="salespipeline")){closeDetail();setPage(h);}
 }
 window.addEventListener("hashchange",function(){
   if(_hashGuard)return;
@@ -3628,6 +3640,7 @@ var filters = {};
 var advOpen = false;
 
 function setPage(pg){
+  pg=canonicalizePage(pg);
   currentPage=pg; advOpen=false;
   var sv=_savedSorts[pg]; _sortCol=sv?sv.col:null; _sortDir=(sv&&sv.dir)?sv.dir:"asc";
   var df={}; if(pg==="jobs") df.status="Accepting Candidates"; if(pg==="consultants") df.status="Placed"; if(pg==="clients") df.status="Active Account";
@@ -3692,55 +3705,70 @@ function starBtnHtml(candidateId) {
 function candClick(idx){ var c=_lastData.candidates[idx]; if(c) openDetail(c.id, c); }
 
 /* ═══ NAV ═══ */
+// Hidden from the sidebar. Page code still runs for a direct #hash.
+var HIDDEN_PAGES={
+  starcandidates:"Star Candidates",
+  newcandidates:"New Candidates",
+  smartlists:"Smart Lists",
+  resumeparser:"Resume Parser",
+  trends:"Trends",
+  pipeline:"Pipeline",
+  outreach:"Outreach"
+};
+// Broken pages. Deep links show a stub and never call the failing loader.
+var DISABLED_PAGES={
+  reports:{
+    label:"Reports",
+    reason:"Reports is temporarily disabled. Opening it loaded every candidate and every placement into the browser, and the page hung."
+  },
+  dataquality:{
+    label:"Data Quality",
+    reason:"Data Quality is temporarily disabled. The report queries candidates.is_deleted, and that column is not on the candidates table, so the page returns an error."
+  },
+  certtracker:{
+    label:"Cert Tracker",
+    reason:"Cert Tracker is temporarily disabled. It was not in the sidebar. Its database query also filters candidates.is_deleted, which does not exist, and the Bullhorn fallback loads every certified candidate."
+  }
+};
 var NAV_GROUPS=[
   {section:null, items:[
     {key:"home",label:"Home",emoji:"\uD83C\uDFE0"},
-    {key:"bizdev",label:"BizDev",emoji:"\uD83D\uDCC5"},
-    {key:"bhtasks",label:"Tasks",emoji:"\u2705"},
-    {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
     {key:"capture",label:"Quick Capture",emoji:"\u26A1"},
+    {key:"ask",label:"Ask Anura",emoji:"\uD83E\uDD16"},
+    {key:"bhtasks",label:"Tasks",emoji:"\u2705"},
+    {key:"bizdev",label:"BizDev",emoji:"\uD83D\uDCC5"},
   ]},
   {section:"Candidates", items:[
     {key:"candidates",label:"Candidates",emoji:"\uD83D\uDC65"},
-    {key:"starcandidates",label:"Star Candidates",emoji:"\u2B50"},
-    {key:"newcandidates",label:"New Candidates",emoji:"\uD83C\uDD95"},
     {key:"subtracker",label:"Submittal Tracker",emoji:"\uD83D\uDCCA"},
     {key:"forge",label:"Submittal Forge",emoji:"\u2692\uFE0F"},
-    {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
-    {key:"customsheets",label:"Custom Sheets",emoji:"\uD83D\uDCCC"},
     {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
     {key:"sourcing",label:"Sourcing Board",emoji:"\uD83D\uDD0D"},
     {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
-    {key:"resumeparser",label:"Resume Parser",emoji:"\uD83D\uDCC4"},
   ]},
-  {section:"Consultants", items:[
-    {key:"consultants",label:"Consultants",emoji:"\uD83D\uDC54"},
+  {section:"Pipeline", items:[
+    {key:"jobs",label:"Jobs",emoji:"\uD83D\uDCBC"},
     {key:"submissions",label:"Submissions",emoji:"\uD83D\uDCE9"},
     {key:"interviews",label:"Interviews",emoji:"\uD83D\uDDD3\uFE0F"},
     {key:"placements",label:"Placements",emoji:"\uD83D\uDCCB"},
-    {key:"pipeline",label:"Pipeline",emoji:"\uD83D\uDD04"},
+    {key:"consultants",label:"Consultants",emoji:"\uD83D\uDC54"},
   ]},
   {section:"Clients", items:[
     {key:"clients",label:"Clients",emoji:"\uD83C\uDFE2"},
-    {key:"jobs",label:"Jobs",emoji:"\uD83D\uDCBC"},
-    {key:"msapipeline",label:"MSA Pipeline",emoji:"\uD83D\uDCDD"},
-    {key:"salespipeline",label:"Sales Pipeline",emoji:"\uD83D\uDCC8"},
+    {key:"deals",label:"Deals",emoji:"\uD83D\uDCDD"},
     {key:"golives",label:"Go-Lives",emoji:"\uD83C\uDFE5"},
   ]},
-  {section:"Reporting", items:[
+  {section:"Tools", items:[
+    {key:"portal",label:"Portal",emoji:"\uD83D\uDCE8"},
+    {key:"customsheets",label:"Custom Sheets",emoji:"\uD83D\uDCCC"},
+  ]},
+  {section:"Insights", items:[
     {key:"revenue",label:"Revenue",emoji:"\uD83D\uDCB0"},
-    {key:"trends",label:"Trends",emoji:"\uD83D\uDCC8"},
-    {key:"reports",label:"Reports",emoji:"\uD83D\uDCCA"},
     {key:"intel",label:"Market Intel",emoji:"\uD83D\uDCF0"},
     {key:"relationships",label:"Relationships",emoji:"\u2764\uFE0F"},
-  ]},
-  {section:"Admin", items:[
-    {key:"outreach",label:"Outreach",emoji:"\uD83D\uDCE7"},
-    {key:"dataquality",label:"Data Quality",emoji:"\uD83D\uDEE0\uFE0F"},
-    {key:"portal",label:"Portal",emoji:"\uD83D\uDCE8"},
   ]}
 ];
-var _navCollapsed = { "Reporting": true, "Admin": true }; // Reporting + Admin collapsed by default
+var _navCollapsed = { "Insights": true }; // Insights collapsed by default
 function getNavGroups(){
   var groups = JSON.parse(JSON.stringify(NAV_GROUPS));
   if(currentUser){
@@ -3784,7 +3812,29 @@ function renderNav(){
 function getPageLabel(){
   var lbl="Dashboard";
   getNavGroups().forEach(function(g){g.items.forEach(function(n){if(n.key===currentPage)lbl=n.label;});});
+  if(HIDDEN_PAGES[currentPage])lbl=HIDDEN_PAGES[currentPage];
+  if(DISABLED_PAGES[currentPage])lbl=DISABLED_PAGES[currentPage].label;
   return lbl;
+}
+function renderDisabledPage(key){
+  var info=DISABLED_PAGES[key]||{label:"This page",reason:"This page is temporarily disabled."};
+  return '<div class="empty-state"><div class="big">\u26D4</div>'
+    +'<div class="title">'+esc(info.label)+' temporarily disabled</div>'
+    +'<div class="sub">'+esc(info.reason)+'</div>'
+    +'<button class="btn-primary" style="margin-top:16px" onclick="setPage(\'home\')">Back to Home</button></div>';
+}
+var _dealsTab="msa";
+function setDealsTab(tab){
+  _dealsTab=(tab==="sales")?"sales":"msa";
+  if(currentPage!=="deals")currentPage="deals";
+  loadPage();
+}
+function dealsTabBar(){
+  var msaOn=_dealsTab!=="sales";
+  return '<div class="chips" style="margin-bottom:16px">'
+    +'<button class="chip'+(msaOn?" on":"")+'" onclick="setDealsTab(\'msa\')">MSA Pipeline</button>'
+    +'<button class="chip'+(!msaOn?" on":"")+'" onclick="setDealsTab(\'sales\')">Sales Pipeline</button>'
+    +'</div>';
 }
 
 /* ═══ MOBILE MENU ═══ */
@@ -11377,11 +11427,21 @@ function render(){
   document.getElementById("page-title").textContent=getPageLabel();
 }
 async function loadPage(){
+  currentPage=canonicalizePage(currentPage);
   renderNav();
   document.getElementById("page-title").textContent=getPageLabel();
+  if(DISABLED_PAGES[currentPage]){
+    var saveBtnDisabled=document.getElementById("save-search-btn");
+    if(saveBtnDisabled)saveBtnDisabled.style.display="none";
+    document.getElementById("content").innerHTML=renderDisabledPage(currentPage);
+    return;
+  }
   _savedFilters[currentPage]=filters;
   _prefSet("filters",_savedFilters);
-  if(!apiConnected){document.getElementById("content").innerHTML=showConnectionError();return;}
+  if(!apiConnected){
+    document.getElementById("content").innerHTML=(currentPage==="deals"?dealsTabBar():"")+showConnectionError();
+    return;
+  }
   // Show loading state
   document.getElementById("content").innerHTML='<div style="padding:48px;text-align:center"><span class="loading-spinner"></span> Loading from Bullhorn\u2026</div>';
   var q=getQ(),sf=filters.status||"All",tf=filters.type||"All",loc=filters.location||"";
@@ -11442,13 +11502,18 @@ async function loadPage(){
       case "touches":
         var touchR=await apiFetch("touch-report",{days:_touchDays,clientStatus:_touchClientStatus});
         h=renderTouches(touchR);break;
-      case "salespipeline":
-        if(_spView==="funnel"){
-          var sfData=await apiFetch("sales-funnel");
-          h=renderSalesFunnel(sfData);
+      case "deals":
+        if(_dealsTab==="sales"){
+          if(_spView==="funnel"){
+            var sfData=await apiFetch("sales-funnel");
+            h=dealsTabBar()+renderSalesFunnel(sfData);
+          } else {
+            var spData=await apiFetch("sales-pipeline");
+            h=dealsTabBar()+renderSalesPipeline(spData);
+          }
         } else {
-          var spData=await apiFetch("sales-pipeline");
-          h=renderSalesPipeline(spData);
+          var msaData=await apiFetch("opportunities",{status:filters.status||"all",q:getQ(),owner:filters.owner||""});
+          h=dealsTabBar()+renderMSAPipeline(msaData);
         }
         break;
       case "bhtasks":
@@ -11456,16 +11521,8 @@ async function loadPage(){
         h=renderBhTasks(btData);break;
       case "ask":
         h=renderAsk();break;
-      case "dataquality":
-        var dqData=await apiFetch("data-quality",{status:_dqStatus||"active"});
-        h=renderDataQuality(dqData);break;
-      case "reports":
-        var st=await loadStats();
-        var placR=await loadPlacements("","All","All");
-        _lastData.placements=placR.data;
-        var candR=await loadCandidates("","All","","","","","");
-        _lastData.candidates=candR.data;
-        h=renderReports(st);break;
+      // reports, dataquality, and certtracker are stubbed in DISABLED_PAGES
+      // before this switch so their loaders never run.
       case "smartlists":
         var slr=await apiFetch("smart-lists");
         h=renderSmartLists(slr);break;
@@ -11474,9 +11531,6 @@ async function loadPage(){
         h=renderCustomSheets(csData);break;
       case "portal":
         h=await renderPortal();break;
-      case "certtracker":
-        var ctData=await apiFetch("cert-tracker");
-        h=renderCertTracker(ctData);break;
       case "relationships":
         var relData=await apiFetch("relationship-scores",{type:_relTab||"candidates",sort:_relSort||"risk",limit:200});
         h=renderRelationships(relData);break;
@@ -11502,9 +11556,6 @@ async function loadPage(){
         if(_ncRange==="custom"&&_ncFrom&&_ncTo){ncParams.from=_ncFrom;ncParams.to=_ncTo;delete ncParams.range;}
         var ncData=await apiFetch("new-candidates",ncParams);
         h=renderNewCandidates(ncData);break;
-      case "msapipeline":
-        var msaData=await apiFetch("opportunities",{status:filters.status||"all",q:getQ(),owner:filters.owner||""});
-        h=renderMSAPipeline(msaData);break;
       case "resumeparser":
         h=renderResumeParser();break;
       case "capture":
@@ -11513,12 +11564,12 @@ async function loadPage(){
   }catch(e){
     console.error(e);
     h=showLoadError(currentPage, e.message);
+    if(currentPage==="deals") h=dealsTabBar()+h;
   }
   document.getElementById("content").innerHTML=h;
   // Post-render hooks
   if(currentPage==="smartmatch") populateJobDropdown();
 
-  if(currentPage==="dataquality") renderDQTable();
   if(currentPage==="capture") captureAfterRender();
   if(currentPage==="portal"&&_portalTab==="generate"&&_portalSelectedClient){
     var genTmpl=document.querySelector('input[name="gen-template"]:checked');
@@ -11550,6 +11601,9 @@ checkConnection().then(function(){
   // Deep link: honor #page or #kind/id in the URL
   var _hh=(location.hash||"").replace(/^#/,"");
   var _dm=_hh.match(/^(candidate|job|client|placement)\/(\d+)$/);
+  if(!_dm&&_hh){
+    _hh=canonicalizePage(_hh);
+  }
   if(!_dm&&_hh&&isValidPage(_hh)){
     currentPage=_hh;
     var _sv=_savedSorts[_hh];_sortCol=_sv?_sv.col:null;_sortDir=(_sv&&_sv.dir)?_sv.dir:"asc";
