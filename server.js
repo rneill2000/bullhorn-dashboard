@@ -8835,11 +8835,26 @@ app.get("/api/pipeline", async (req, res) => {
 // Per-user OAuth2 flow with Microsoft Graph API for email read/send/sync
 
 var OUTLOOK_TENANT = (process.env.OUTLOOK_TENANT_ID || "common").trim();
+// Mail.ReadWrite is required to create a draft. Mail.Send stays so the digest can still send.
+// Mailboxes consented before Mail.ReadWrite refresh with OUTLOOK_LEGACY_SCOPES until they reconnect.
+var OUTLOOK_LEGACY_SCOPES = "openid profile email offline_access Mail.Read Mail.Send User.Read";
+var OUTLOOK_BASE_SCOPES = OUTLOOK_LEGACY_SCOPES + " Mail.ReadWrite";
+var OUTLOOK_EXTRA_SCOPES = (process.env.OUTLOOK_EXTRA_SCOPES || "").trim();
+function outlookScopes(extra) {
+  var seen = {};
+  return (OUTLOOK_BASE_SCOPES + " " + (extra || "")).split(/\s+/).filter(function (s) {
+    if (!s) return false;
+    var key = s.toLowerCase();
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  }).join(" ");
+}
 var OUTLOOK_CONFIG = {
   clientId: (process.env.OUTLOOK_CLIENT_ID || "").trim(),
   clientSecret: (process.env.OUTLOOK_CLIENT_SECRET || "").trim(),
   redirectUri: (process.env.RAILWAY_PUBLIC_DOMAIN ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.BASE_URL || "https://bullhorn-dashboard-production.up.railway.app") + "/auth/outlook/callback",
-  scopes: "openid profile email offline_access Mail.Read Mail.Send User.Read",
+  scopes: outlookScopes(OUTLOOK_EXTRA_SCOPES),
   authorizeUrl: "https://login.microsoftonline.com/" + OUTLOOK_TENANT + "/oauth2/v2.0/authorize",
   tokenUrl: "https://login.microsoftonline.com/" + OUTLOOK_TENANT + "/oauth2/v2.0/token",
   graphUrl: "https://graph.microsoft.com/v1.0",
@@ -8968,17 +8983,28 @@ async function refreshOutlookToken(userEmail) {
   }
   if (user.expiresAt && Date.now() < user.expiresAt - 60000) return user.accessToken;
 
-  var resp = await fetch(OUTLOOK_CONFIG.tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: OUTLOOK_CONFIG.clientId,
-      client_secret: OUTLOOK_CONFIG.clientSecret,
-      refresh_token: user.refreshToken,
-      grant_type: "refresh_token",
-      scope: OUTLOOK_CONFIG.scopes,
-    }).toString(),
-  });
+  async function requestRefresh(scope) {
+    return fetch(OUTLOOK_CONFIG.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: OUTLOOK_CONFIG.clientId,
+        client_secret: OUTLOOK_CONFIG.clientSecret,
+        refresh_token: user.refreshToken,
+        grant_type: "refresh_token",
+        scope: scope,
+      }).toString(),
+    });
+  }
+  var resp = await requestRefresh(OUTLOOK_CONFIG.scopes);
+  // 400/401 means this mailbox never consented to Mail.ReadWrite (or the refresh
+  // token was issued for the smaller set). Retry with Mail.Read + Mail.Send so
+  // the digest still sends. Other failures are left alone so a blip cannot
+  // replace a good token with a narrower one.
+  if (!resp.ok && (resp.status === 400 || resp.status === 401)) {
+    console.log("[Outlook] Refresh with Mail.ReadWrite was declined; retrying with Mail.Send so send still works. Reconnect Outlook to create drafts.");
+    resp = await requestRefresh(OUTLOOK_LEGACY_SCOPES);
+  }
   if (!resp.ok) throw new Error("Token refresh failed");
   var tokens = await resp.json();
   user.accessToken = tokens.access_token;
@@ -11678,6 +11704,7 @@ app.get("/", (req, res) => {
 require("./events")(app, { db: db, bhFetch: bhFetch, bhWrite: bhWriteAsService });
 require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetchAll: bhFetchAll });
 require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
+require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser });
 
 app.use(function (err, req, res, next) {
   console.error("[Express] Unhandled route error:", err.message);
