@@ -3705,6 +3705,7 @@ var NAV_GROUPS=[
     {key:"starcandidates",label:"Star Candidates",emoji:"\u2B50"},
     {key:"newcandidates",label:"New Candidates",emoji:"\uD83C\uDD95"},
     {key:"subtracker",label:"Submittal Tracker",emoji:"\uD83D\uDCCA"},
+    {key:"forge",label:"Submittal Forge",emoji:"\u2692\uFE0F"},
     {key:"smartlists",label:"Smart Lists",emoji:"\uD83D\uDCCB"},
     {key:"customsheets",label:"Custom Sheets",emoji:"\uD83D\uDCCC"},
     {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
@@ -11418,6 +11419,8 @@ async function loadPage(){
         if(_stTo) stParams.to=_stTo;
         var stData=await apiFetch("submission-analytics",stParams);
         h=renderSubTracker(stData);break;
+      case "forge":
+        h=renderForge();break;
       case "interviews":
         var ivData=await apiFetch("interviews");
         h=renderInterviews(ivData);break;
@@ -11556,5 +11559,6 @@ checkConnection().then(function(){
 });
 </script>
 <script src="/capture-ui.js"></script>
+<script src="/forge-ui.js"></script>
 </body>
 </html>
