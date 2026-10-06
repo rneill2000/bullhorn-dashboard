@@ -5,22 +5,14 @@
  * Polishes Why Me with Anthropic when ANTHROPIC_API_KEY is set (capture.js pattern).
  * Creates an Outlook *draft* via Microsoft Graph. Never calls sendMail.
  *
- * ResumeKiln (https://resumetool.anuraconnect.com) is a signed-in upload UI.
- * Probed 2026-10-06: /healthz is open; /, /upload/, /dashboard/, /fit-check/
- * redirect to login; /api/resume, /api/resumes, /api/pdf, /export, /download,
- * /profiles, /resumes all 404. No candidate-id PDF API.
- * TODO: add an authenticated export on ResumeKiln and set RESUME_TOOL_API_URL
- * to a URL template containing {candidateId}. Optional RESUME_TOOL_TOKEN is sent
- * as a Bearer token. Until then Forge still creates the draft, without a PDF.
+ * The file on that draft is a Bullhorn candidate attachment, the same list as
+ * GET /api/candidates/:id/files. File Type is inconsistent (raw .docx, branded
+ * "Anura Connect {Name} Resume.pdf", client-tailored PDFs, certs), so the picker
+ * uses the file name and whether the bytes are a PDF. No external résumé service is called.
  */
 "use strict";
 
-const RESUME_BASE = (process.env.RESUME_TOOL_BASE_URL || "https://resumetool.anuraconnect.com").replace(/\/$/, "");
-const RESUME_TODO = "ResumeKiln (resumetool.anuraconnect.com) has no callable PDF API yet. " +
-  "The site is a signed-in uploader (/, /upload/, /dashboard/, /fit-check/); probed API paths 404. " +
-  "TODO: expose an authenticated export that returns application/pdf named \"Anura Connect {Name} Resume.pdf\" " +
-  "and set RESUME_TOOL_API_URL (use {candidateId} in the URL). Optional RESUME_TOOL_TOKEN. " +
-  "Download the branded PDF in ResumeKiln and attach it before sending. Forge does not send mail.";
+const { fmtDateOnly } = require("./dates");
 
 const MODULES = [
   ["HB", /\bHB\b|healthy\s*planet/i],
@@ -107,11 +99,8 @@ function formatRate(v) {
   return "$" + shown + "/hr";
 }
 function fmtDate(ms) {
-  const n = Number(ms);
-  if (!n) return "";
-  const d = new Date(n);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+  // dateAvailable is midnight UTC. America/Chicago would show the previous day.
+  return fmtDateOnly(ms, { month: "short", day: "numeric", year: "numeric" });
 }
 function daysSince(ms, now) {
   const n = Number(ms);
@@ -286,9 +275,138 @@ function subjectFor(jobTitle, certs) {
   return "Consultant Resume";
 }
 
-function resumeFilename(name) {
-  const clean = String(name || "Consultant").replace(/\s+/g, " ").trim() || "Consultant";
-  return "Anura Connect " + clean + " Resume.pdf";
+function normName(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isPdfFile(file) {
+  const name = String(file && file.name || "");
+  const ext = String(file && file.fileExtension || "").replace(/^\./, "").toLowerCase();
+  const fromName = name.indexOf(".") >= 0 ? name.split(".").pop().toLowerCase() : "";
+  const ct = String((file && (file.contentType || file.type)) || "").toLowerCase();
+  if (ext === "pdf" || fromName === "pdf") return true;
+  if (ct.indexOf("pdf") >= 0) return true;
+  return false;
+}
+
+function fileTime(file) {
+  const raw = file && (file.dateAddedMs != null ? file.dateAddedMs : file.dateAdded);
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function nameContains(fileName, phrase) {
+  const p = normName(phrase);
+  if (p.length < 3) return false;
+  return normName(fileName).indexOf(p) >= 0;
+}
+
+function isBrandedAnura(fileName) {
+  return normName(fileName).indexOf("anura connect") >= 0;
+}
+
+function newestFile(list) {
+  if (!list.length) return null;
+  return list.slice().sort(function (a, b) { return fileTime(b) - fileTime(a); })[0];
+}
+
+/**
+ * Default PDF for a submittal. File Type is ignored.
+ * (a) newest PDF whose name contains the client name, else the job title
+ * (b) else newest PDF whose name contains "Anura Connect" (any separator)
+ * (c) else nothing
+ */
+function pickResumeFile(files, ctx) {
+  const context = ctx || {};
+  const pdfs = (files || []).filter(function (f) { return f && !f.isDeleted && isPdfFile(f); });
+  const clientHit = newestFile(pdfs.filter(function (f) { return nameContains(f.name, context.clientName); }));
+  if (clientHit) return { file: clientHit, reason: "client" };
+  const jobHit = newestFile(pdfs.filter(function (f) { return nameContains(f.name, context.jobTitle); }));
+  if (jobHit) return { file: jobHit, reason: "job" };
+  const branded = newestFile(pdfs.filter(function (f) { return isBrandedAnura(f.name); }));
+  if (branded) return { file: branded, reason: "anura_connect" };
+  return { file: null, reason: "none" };
+}
+
+function fmtFileDate(ms) {
+  const n = Number(ms);
+  if (!n || isNaN(n)) return "";
+  const d = new Date(n);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+}
+
+function suggestionHint(reason, ctx) {
+  const client = (ctx && ctx.clientName) || "the client";
+  if (reason === "client") return "Suggested because the PDF name matches " + client + ". Confirm it or pick another file.";
+  if (reason === "job") return "Suggested because the PDF name matches the job title. Confirm it or pick another file.";
+  if (reason === "anura_connect") return "Suggested the newest PDF with Anura Connect in the name. Confirm it or pick another file.";
+  return "No PDF matched the client, the job, or a branded Anura Connect résumé. Choose a file or No attachment.";
+}
+
+function presentCandidateFiles(files, ctx) {
+  const context = ctx || {};
+  const rows = (files || []).filter(function (f) { return f && !f.isDeleted; }).map(function (f) {
+    const dateAddedMs = fileTime(f) || null;
+    return {
+      id: f.id,
+      name: f.name || "Untitled",
+      dateAddedMs: dateAddedMs,
+      dateLabel: dateAddedMs ? fmtFileDate(dateAddedMs) : (typeof f.dateAdded === "string" ? f.dateAdded : ""),
+      isPdf: isPdfFile(f),
+      size: f.size || f.fileSize || 0,
+      contentType: f.contentType || "",
+      fileExtension: String(f.fileExtension || "").replace(/^\./, "").toLowerCase(),
+    };
+  });
+  rows.sort(function (a, b) {
+    if (a.isPdf !== b.isPdf) return a.isPdf ? -1 : 1;
+    return (b.dateAddedMs || 0) - (a.dateAddedMs || 0);
+  });
+  const pick = pickResumeFile(rows, context);
+  return {
+    files: rows,
+    suggestedFileId: pick.file ? pick.file.id : null,
+    suggestedReason: pick.reason,
+    hint: suggestionHint(pick.reason, context),
+  };
+}
+
+function normalizeAttachmentChoice(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.mode === "none") return { mode: "none", fileId: null };
+  if (raw.mode === "file") {
+    const fileId = parseInt(raw.fileId, 10);
+    if (!fileId) return null;
+    return { mode: "file", fileId: fileId };
+  }
+  return null;
+}
+
+function safeFileName(name) {
+  const clean = String(name || "attachment").replace(/[\\/:*?"<>|\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  return clean || "attachment";
+}
+
+function attachmentContentType(file) {
+  const ct = String(file && file.contentType || "");
+  if (ct.indexOf("/") >= 0 && !/octet-stream/i.test(ct)) return ct;
+  return contentTypeForName(file && file.name);
+}
+
+function contentTypeForName(name) {
+  const ext = String(name || "").split(".").pop().toLowerCase();
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === "doc") return "application/msword";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  return "application/octet-stream";
 }
 
 function scoreFit(input, now) {
@@ -618,40 +736,50 @@ function registerForge(app, deps) {
     };
   }
 
-  async function lookupResume(candidateId, candidateName) {
-    const filename = resumeFilename(candidateName);
-    const openUrl = RESUME_BASE + "/";
-    const apiTpl = (process.env.RESUME_TOOL_API_URL || "").trim();
-    if (!apiTpl) return { attached: false, status: "todo", filename: filename, openUrl: openUrl, todo: RESUME_TODO };
-    const url = apiTpl
-      .replace(/\{candidateId\}/g, encodeURIComponent(String(candidateId || "")))
-      .replace(/\{name\}/g, encodeURIComponent(candidateName || ""));
+  async function loadFiles(candidateId) {
+    if (!candidateId || typeof deps.listCandidateFiles !== "function") return { files: [], error: "" };
     try {
-      const headers = {};
-      if (process.env.RESUME_TOOL_TOKEN) headers.Authorization = "Bearer " + process.env.RESUME_TOOL_TOKEN;
-      const resp = await fetch(url, { headers: headers, signal: AbortSignal.timeout(20000), redirect: "manual" });
-      const ct = resp.headers.get("content-type") || "";
-      if (resp.status >= 300 && resp.status < 400) {
-        return { attached: false, status: "auth_required", filename: filename, openUrl: openUrl, todo: "Resume Tool redirected to a login. " + RESUME_TODO };
-      }
-      if (!resp.ok) return { attached: false, status: "http_" + resp.status, filename: filename, openUrl: openUrl, todo: RESUME_TODO };
-      if (!/pdf|octet-stream/i.test(ct)) {
-        return { attached: false, status: "not_pdf", filename: filename, openUrl: openUrl, todo: "Resume Tool did not return a PDF (" + ct + "). " + RESUME_TODO };
-      }
-      const buf = Buffer.from(await resp.arrayBuffer());
-      if (buf.length < 100) return { attached: false, status: "empty", filename: filename, openUrl: openUrl, todo: RESUME_TODO };
-      if (buf.length > 3 * 1024 * 1024) {
-        return { attached: false, status: "too_large", filename: filename, openUrl: openUrl, bytes: buf.length, todo: "PDF is over 3MB, so it was not attached. Download it from ResumeKiln and attach it in Outlook." };
-      }
-      return { attached: true, status: "ok", filename: filename, openUrl: openUrl, contentType: ct.indexOf("pdf") >= 0 ? "application/pdf" : "application/octet-stream", contentBytes: buf.toString("base64"), bytes: buf.length };
+      const files = await deps.listCandidateFiles(candidateId);
+      return { files: files || [], error: "" };
     } catch (e) {
-      return { attached: false, status: "error", filename: filename, openUrl: openUrl, todo: RESUME_TODO, error: e.message };
+      return { files: [], error: "Could not load Bullhorn files (" + e.message + ")." };
     }
   }
 
-  function publicResume(resume) {
-    if (!resume) return null;
-    return { attached: !!resume.attached, status: resume.status, filename: resume.filename, openUrl: resume.openUrl, bytes: resume.bytes || null, todo: resume.todo || "" };
+  async function loadAttachment(candidateId, choice) {
+    if (!choice || choice.mode === "none") return { file: null };
+    if (typeof deps.readCandidateFile !== "function") {
+      const err = new Error("Bullhorn files are not available from this server.");
+      err.status = 503;
+      throw err;
+    }
+    let file;
+    try {
+      file = await deps.readCandidateFile(candidateId, choice.fileId);
+    } catch (e) {
+      const err = new Error("Could not download that Bullhorn file. " + e.message);
+      err.status = e.status || 502;
+      throw err;
+    }
+    if (!file || !file.buffer || file.buffer.length < 20) {
+      const err = new Error("Bullhorn returned an empty file.");
+      err.status = 502;
+      throw err;
+    }
+    if (file.buffer.length > 3 * 1024 * 1024) {
+      const err = new Error("That file is over 3MB, so it was not attached. Pick a smaller file or choose No attachment.");
+      err.status = 400;
+      throw err;
+    }
+    return {
+      file: {
+        name: safeFileName(file.name || ("file-" + choice.fileId)),
+        contentType: attachmentContentType(file),
+        contentBytes: file.buffer.toString("base64"),
+        bytes: file.buffer.length,
+        fileId: choice.fileId,
+      },
+    };
   }
 
   function signerName(user) {
@@ -759,7 +887,8 @@ function registerForge(app, deps) {
       }
       const user = getUser(req);
       const boxes = await mailboxes();
-      const resume = publicResume(await lookupResume(draft.candidate.id, draft.candidate.name));
+      const loadedFiles = await loadFiles(draft.candidate.id);
+      const presented = presentCandidateFiles(loadedFiles.files, { clientName: draft.job.clientName, jobTitle: draft.job.title });
       const email = composeEmail({
         candidateName: draft.candidate.name,
         jobTitle: draft.job.title,
@@ -775,7 +904,13 @@ function registerForge(app, deps) {
         draft: draft,
         contacts: contacts,
         email: email,
-        resume: resume,
+        files: presented.files,
+        attachment: {
+          suggestedFileId: presented.suggestedFileId,
+          suggestedReason: presented.suggestedReason,
+          hint: presented.hint,
+          error: loadedFiles.error,
+        },
         outlook: {
           mailboxes: boxes,
           suggestedMailbox: (user && boxes.indexOf((user.email || "").toLowerCase()) >= 0) ? user.email.toLowerCase() : (boxes[0] || ""),
@@ -827,7 +962,14 @@ function registerForge(app, deps) {
       const mailbox = (wanted && boxes.map(function (b) { return b.toLowerCase(); }).indexOf(wanted) >= 0)
         ? boxes.filter(function (b) { return b.toLowerCase() === wanted; })[0]
         : ((user && boxes.filter(function (b) { return b.toLowerCase() === (user.email || "").toLowerCase(); })[0]) || boxes[0] || "");
-      const resumeFull = await lookupResume(base.candidate.id, candidateName);
+      const choice = normalizeAttachmentChoice(body.attachment);
+      if (!choice) return res.status(400).json({ error: "Confirm a Bullhorn file or choose No attachment before creating the draft." });
+      let attachedFile = null;
+      try {
+        attachedFile = (await loadAttachment(base.candidate.id, choice)).file;
+      } catch (e) {
+        return res.status(e.status || 502).json({ error: e.message });
+      }
       const auditBase = {
         submissionId: id,
         candidateId: base.candidate.id,
@@ -837,7 +979,7 @@ function registerForge(app, deps) {
         createdBy: user ? (user.email || user.name || "") : "",
         toEmail: to,
         subject: email.subject,
-        resumeStatus: resumeFull.status,
+        resumeStatus: attachedFile ? "file:" + attachedFile.fileId : "none",
         fitScore: base.fitScore,
         flags: base.flags,
       };
@@ -853,7 +995,7 @@ function registerForge(app, deps) {
           subject: email.subject,
           bodyHtml: email.html,
           bodyText: email.text,
-          resume: publicResume(resumeFull),
+          attachment: choice,
         });
       }
 
@@ -878,7 +1020,7 @@ function registerForge(app, deps) {
             bodyHtml: email.html,
             bodyText: email.text,
             mailbox: mailbox,
-            resume: publicResume(resumeFull),
+            attachment: choice,
           });
         }
         await writeAudit(Object.assign({}, auditBase, { mailbox: mailbox, draftStatus: "failed", note: e.message }));
@@ -886,19 +1028,19 @@ function registerForge(app, deps) {
       }
 
       let attachNote = "";
-      if (resumeFull.attached && resumeFull.contentBytes && created && created.id) {
+      if (attachedFile && created && created.id) {
         try {
           await graphFetch(mailbox, "/me/messages/" + encodeURIComponent(created.id) + "/attachments", {
             method: "POST",
             body: JSON.stringify({
               "@odata.type": "#microsoft.graph.fileAttachment",
-              name: resumeFull.filename,
-              contentType: resumeFull.contentType || "application/pdf",
-              contentBytes: resumeFull.contentBytes,
+              name: attachedFile.name,
+              contentType: attachedFile.contentType || "application/octet-stream",
+              contentBytes: attachedFile.contentBytes,
             }),
           });
         } catch (e) {
-          attachNote = "Draft was created. The résumé PDF was not attached (" + e.message + ").";
+          attachNote = "Draft was created. The file was not attached (" + e.message + ").";
         }
       }
 
@@ -917,9 +1059,13 @@ function registerForge(app, deps) {
         messageId: created && created.id || "",
         webLink: created && created.webLink || "",
         subject: email.subject,
-        resume: publicResume(resumeFull),
+        attachment: attachedFile
+          ? { mode: "file", fileId: attachedFile.fileId, filename: attachedFile.name, bytes: attachedFile.bytes }
+          : { mode: "none" },
         attachNote: attachNote,
-        instructions: "Draft saved in " + mailbox + ". Open it in Outlook, attach the résumé if it is missing, and send it yourself. Bullhorn status was not changed.",
+        instructions: attachedFile && !attachNote
+          ? "Draft saved in " + mailbox + " with " + attachedFile.name + " attached. Open it in Outlook and send it yourself. Bullhorn status was not changed."
+          : "Draft saved in " + mailbox + (choice.mode === "none" ? " with no attachment" : "") + ". Open it in Outlook and send it yourself. Bullhorn status was not changed.",
       });
     } catch (e) {
       console.error("[Forge] draft", e.message);
@@ -937,7 +1083,9 @@ module.exports.templateWhyMe = templateWhyMe;
 module.exports.subjectFor = subjectFor;
 module.exports.scoreFit = scoreFit;
 module.exports.composeEmail = composeEmail;
-module.exports.resumeFilename = resumeFilename;
+module.exports.pickResumeFile = pickResumeFile;
+module.exports.presentCandidateFiles = presentCandidateFiles;
+module.exports.isPdfFile = isPdfFile;
+module.exports.fmtDate = fmtDate;
 module.exports.classifyGraphError = classifyGraphError;
 module.exports.formatRate = formatRate;
-module.exports.RESUME_TODO = RESUME_TODO;

@@ -10,6 +10,7 @@
  */
 
 const { Pool } = require("pg");
+const { fmtDateOnly } = require("./dates");
 
 /* ═══ CONNECTION ═══ */
 var pool = null;
@@ -2124,7 +2125,7 @@ async function dbSearchCandidates(filters) {
       status: c.status || "Unknown",
       location: [c.address_city, c.address_state].filter(Boolean).join(", "),
       salary: c.salary ? fmtMoney(c.salary) : "—",
-      available: c.date_available ? fmtDate(c.date_available) : "—",
+      available: c.date_available ? fmtDateOnly(c.date_available) : "—",
       availableRaw: c.date_available || null,
       email: c.email || "",
       phone: c.phone || "",
@@ -2421,7 +2422,7 @@ async function dbGetDashboard() {
       return {
         id: c.id, name: ((c.first_name || "") + " " + (c.last_name || "")).trim(),
         title: c.occupation || "", primaryCert: c.custom_text1 || "",
-        grade: c.custom_text6 || "", available: c.date_available ? fmtDate(c.date_available) : "",
+        grade: c.custom_text6 || "", available: c.date_available ? fmtDateOnly(c.date_available) : "",
       };
     }),
     availableSoonTotal: availTotal ? parseInt(availTotal.count) : 0,
@@ -2450,7 +2451,7 @@ async function dbGetSmartLists() {
       preferredRole: c.custom_text3 || "",
       epicRole: c.custom_text5 || "", grade: c.custom_text6 || "",
       salary: c.salary ? fmtMoney(c.salary) : "—",
-      available: c.date_available ? fmtDate(c.date_available) : "",
+      available: c.date_available ? fmtDateOnly(c.date_available) : "",
       location: [c.address_city, c.address_state].filter(Boolean).join(", "),
       email: c.email || "",
     };
@@ -2482,7 +2483,7 @@ async function dbGetStaleCandidates(days) {
       grade: c.custom_text6 || "",
       lastModified: c.date_last_modified ? fmtDate(c.date_last_modified) : "",
       daysSinceTouch: c.date_last_modified ? Math.floor((Date.now() - c.date_last_modified) / 86400000) : 999,
-      available: c.date_available ? fmtDate(c.date_available) : "—",
+      available: c.date_available ? fmtDateOnly(c.date_available) : "—",
     };
   });
 
@@ -2773,7 +2774,7 @@ async function dbGetSheet(sheetId, userEmail) {
         epicRole: m.custom_text5 || "", grade: m.custom_text6 || "",
         email: m.email || "",
         salary: m.salary ? "$" + Number(m.salary).toLocaleString() : "—",
-        available: m.date_available ? fmtDate(m.date_available) : "",
+        available: m.date_available ? fmtDateOnly(m.date_available) : "",
         location: [m.address_city, m.address_state].filter(Boolean).join(", "),
         addedBy: m.added_by_name || m.added_by || "",
         addedAt: m.added_at,
@@ -2844,7 +2845,7 @@ async function dbListStarred() {
       epicRole: r.custom_text5 || "", grade: r.custom_text6 || "",
       email: r.email || "", phone: r.phone || "", mobile: r.mobile || "",
       salary: r.salary ? "$" + Number(r.salary).toLocaleString() : "",
-      available: r.date_available ? fmtDate(r.date_available) : "",
+      available: r.date_available ? fmtDateOnly(r.date_available) : "",
       location: [r.address_city, r.address_state].filter(Boolean).join(", "),
       owner: r.owner_name || "",
       starredBy: r.starred_by_name || r.starred_by || "",
@@ -2908,7 +2909,7 @@ async function dbGetStarredWithPlacements() {
         epicRole: r.custom_text5 || "", grade: r.custom_text6 || "",
         email: r.email || "", phone: r.phone || "", mobile: r.mobile || "",
         salary: r.salary ? "$" + Number(r.salary).toLocaleString() : "",
-        available: r.date_available ? fmtDate(r.date_available) : "",
+        available: r.date_available ? fmtDateOnly(r.date_available) : "",
         location: [r.address_city, r.address_state].filter(Boolean).join(", "),
         owner: r.owner_name || "",
         starredBy: r.starred_by_name || "",

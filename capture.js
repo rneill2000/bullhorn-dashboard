@@ -6,6 +6,8 @@
  *        GET  /api/capture/lookup  ?kind=&q=         -> manual re-match search
  *        POST /api/capture/commit  { items }         -> writes to Bullhorn, per-item results
  */
+const { fmtDateOnly } = require("./dates");
+
 module.exports = function registerCapture(app, deps) {
   const { db, bhWrite, bhFetchAll, bhFetch, getUser } = deps;
 
@@ -422,7 +424,7 @@ module.exports = function registerCapture(app, deps) {
             if (np.mobile && np.mobile !== cur.mobile) { patch.mobile = clip(np.mobile, MAX.phone); changed.push("mobile: " + (cur.mobile || "(blank)") + " \u2192 " + np.mobile); }
             if (ent === "ClientContact" && np.department && np.department !== cur.division) { patch.division = clip(np.department, MAX.division); changed.push("department: " + (cur.division || "(blank)") + " \u2192 " + np.department); }
             if (ent === "Candidate") {
-              if (np.availableDate) { const t = Date.parse(np.availableDate); if (!isNaN(t) && t !== cur.dateAvailable) { patch.dateAvailable = t; changed.push("available: " + (cur.dateAvailable ? new Date(cur.dateAvailable).toLocaleDateString("en-US") : "(blank)") + " \u2192 " + np.availableDate); } }
+              if (np.availableDate) { const t = Date.parse(np.availableDate); if (!isNaN(t) && t !== cur.dateAvailable) { patch.dateAvailable = t; changed.push("available: " + (cur.dateAvailable ? fmtDateOnly(cur.dateAvailable) : "(blank)") + " \u2192 " + np.availableDate); } }
               if (np.payRate && Number(np.payRate) !== Number(cur.hourlyRate)) { patch.hourlyRate = Number(np.payRate); changed.push("pay rate: " + (cur.hourlyRate ? "$" + cur.hourlyRate : "(blank)") + " \u2192 $" + np.payRate); }
               if (np.candidateStatus && np.candidateStatus !== cur.status) { patch.status = np.candidateStatus; changed.push("status: " + cur.status + " \u2192 " + np.candidateStatus); }
             }

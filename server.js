@@ -15,6 +15,7 @@ const path = require("path");
 const crypto = require("crypto");
 require("dotenv").config();
 const db = require("./db");
+const { fmtDateOnly } = require("./dates");
 
 /* ── Submission stages ───────────────────────────────────────────────
    A "client submission" means the candidate actually reached the client.
@@ -945,9 +946,7 @@ app.get("/api/candidates", async (req, res) => {
           ? [c.address.city, c.address.state].filter(Boolean).join(", ")
           : "",
         salary: c.salary ? "$" + Number(c.salary).toLocaleString() : "—",
-        available: c.dateAvailable
-          ? new Date(c.dateAvailable).toLocaleDateString()
-          : "—",
+        available: fmtDateOnly(c.dateAvailable) || "—",
         availableRaw: c.dateAvailable || null,
         email: c.email || "",
         phone: c.phone || "",
@@ -1130,7 +1129,7 @@ app.get("/api/candidates/:id", async (req, res) => {
       phone2: c.phone2 || "",
       phone3: c.phone3 || "",
       mobile: c.mobile || "",
-      available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "—",
+      available: fmtDateOnly(c.dateAvailable) || "—",
       dateAdded: c.dateAdded ? new Date(c.dateAdded).toLocaleDateString() : "",
       lastModified: c.dateLastModified ? new Date(c.dateLastModified).toLocaleDateString() : "",
       lastComment: c.dateLastComment ? new Date(c.dateLastComment).toLocaleDateString() : "",
@@ -4760,7 +4759,7 @@ app.get("/api/smart-match/:jobId", async (req, res) => {
         grade,
         status: c.status || "",
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
-        available: smAvailDate ? new Date(smAvailDate).toLocaleDateString() : "—",
+        available: fmtDateOnly(smAvailDate) || "—",
         email: c.email || "",
         phone: c.phone || "",
         score: totalScore,
@@ -6966,7 +6965,7 @@ app.get("/api/bizdev", async (req, res) => {
           title: c.occupation || "", grade: c.customText6 || "", urgency: c.customText7 || "",
           primaryCert: c.customText1 || "", secondaryCert: c.customText2 || "",
           epicRole: c.customText5 || "", status: c.status || "",
-          available: fmtDate(c.dateAvailable), availSoon: availSoon,
+          available: fmtDateOnly(c.dateAvailable) || "—", availSoon: availSoon,
           location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
           email: c.email || "", phone: c.phone || "",
           owner: c.owner ? ((c.owner.firstName || "") + " " + (c.owner.lastName || "")).trim() : "",
@@ -7235,7 +7234,7 @@ app.get("/api/dashboard", async (req, res) => {
         title: c.occupation || "",
         primaryCert: (Array.isArray(c.customText1) ? c.customText1.join(", ") : c.customText1) || "",
         grade: c.customText6 || "",
-        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
+        available: fmtDateOnly(c.dateAvailable),
       })),
       availableSoonTotal: recentlyAvail.total || 0,
       newJobsThisWeek: newJobsThisWeek.total || 0,
@@ -7281,20 +7280,74 @@ app.get("/api/candidates/:id/submissions", async (req, res) => {
 });
 
 // ═══ CANDIDATE FILES / RESUME ═══════════════════════════════════
+function mapCandidateFile(f) {
+  const name = f.name || f.fileName || "Untitled";
+  const extRaw = f.fileExtension || (name.indexOf(".") >= 0 ? name.split(".").pop() : "");
+  const ext = String(extRaw || "").replace(/^\./, "").toLowerCase();
+  const dateNum = f.dateAdded ? Number(f.dateAdded) : NaN;
+  const dateAddedMs = Number.isFinite(dateNum) && dateNum > 0 ? dateNum : null;
+  return {
+    id: f.id,
+    name: name,
+    type: f.type || f.contentType || "",
+    fileType: f.fileType || "",
+    contentType: f.contentType || "",
+    fileExtension: ext,
+    size: f.fileSize || 0,
+    dateAdded: dateAddedMs ? new Date(dateAddedMs).toLocaleDateString() : "",
+    dateAddedMs: dateAddedMs,
+    description: f.description || "",
+    isDeleted: f.isDeleted === true,
+  };
+}
+
+async function listCandidateFiles(candidateId) {
+  await authenticate();
+  const data = await bhFetch(`entityFiles/Candidate/${candidateId}`);
+  return (data.EntityFiles || data.data || []).map(mapCandidateFile).filter(function (f) { return !f.isDeleted; });
+}
+
+async function readCandidateFile(candidateId, fileId) {
+  const s = await authenticate();
+  const url = `${s.restUrl}file/Candidate/${candidateId}/${fileId}?BhRestToken=${s.bhRestToken}`;
+  const fileRes = await fetch(url);
+  if (!fileRes.ok) {
+    const errText = await fileRes.text();
+    const error = new Error(`Bullhorn file error (${fileRes.status}): ${errText}`);
+    error.status = fileRes.status;
+    throw error;
+  }
+  const bhContentType = fileRes.headers.get("content-type") || "";
+  // Bullhorn's file endpoint returns JSON with base64-encoded fileContent
+  // Format: { "File": { "contentType":"...", "fileContent":"<base64>", "name":"..." } }
+  if (bhContentType.includes("application/json") || bhContentType.includes("text/json")) {
+    const json = await fileRes.json();
+    const fileObj = json.File || json.file || json;
+    const base64Data = fileObj.fileContent || fileObj.content || "";
+    if (!base64Data) {
+      const error = new Error("No file content returned from Bullhorn");
+      error.status = 404;
+      throw error;
+    }
+    return {
+      name: fileObj.name || `file-${fileId}`,
+      contentType: fileObj.contentType || fileObj.type || "application/octet-stream",
+      buffer: Buffer.from(base64Data, "base64"),
+    };
+  }
+  const disposition = fileRes.headers.get("content-disposition") || "";
+  const nameMatch = disposition.match(/filename="?([^"]+)"?/i);
+  const arrayBuf = await fileRes.arrayBuffer();
+  return {
+    name: (nameMatch && nameMatch[1]) || `file-${fileId}`,
+    contentType: bhContentType || "application/octet-stream",
+    buffer: Buffer.from(arrayBuf),
+  };
+}
+
 app.get("/api/candidates/:id/files", async (req, res) => {
   try {
-    const id = req.params.id;
-    await authenticate();
-    const data = await bhFetch(`entityFiles/Candidate/${id}`);
-    const files = (data.EntityFiles || data.data || []).map(f => ({
-      id: f.id,
-      name: f.name || f.fileName || "Untitled",
-      type: f.type || f.contentType || "",
-      fileType: f.fileType || "",
-      size: f.fileSize || 0,
-      dateAdded: f.dateAdded ? new Date(f.dateAdded).toLocaleDateString() : "",
-      description: f.description || "",
-    }));
+    const files = await listCandidateFiles(req.params.id);
     res.json({ data: files, total: files.length });
   } catch (e) {
     console.error("[Files]", e.message);
@@ -7306,57 +7359,21 @@ app.get("/api/candidates/:id/files", async (req, res) => {
 app.get("/api/candidates/:id/files/:fileId", async (req, res) => {
   try {
     const { id, fileId } = req.params;
-    const s = await authenticate();
-    const url = `${s.restUrl}file/Candidate/${id}/${fileId}?BhRestToken=${s.bhRestToken}`;
-    const fileRes = await fetch(url);
-    if (!fileRes.ok) {
-      const err = await fileRes.text();
-      throw new Error(`Bullhorn file error (${fileRes.status}): ${err}`);
+    const file = await readCandidateFile(id, fileId);
+    const actualContentType = file.contentType || "application/octet-stream";
+    const viewableTypes = ["application/pdf", "image/png", "image/jpeg", "image/gif", "image/svg+xml", "image/webp", "text/plain"];
+    const isViewable = viewableTypes.some(t => actualContentType.startsWith(t));
+    res.set("Content-Type", actualContentType);
+    res.set("Content-Length", file.buffer.length);
+    if (req.query.download === "1" || !isViewable) {
+      res.set("Content-Disposition", `attachment; filename="${file.name}"`);
+    } else {
+      res.set("Content-Disposition", `inline; filename="${file.name}"`);
     }
-    const bhContentType = fileRes.headers.get("content-type") || "";
-
-    // Bullhorn's file endpoint returns JSON with base64-encoded fileContent
-    // Format: { "File": { "contentType":"...", "fileContent":"<base64>", "name":"..." } }
-    if (bhContentType.includes("application/json") || bhContentType.includes("text/json")) {
-      const json = await fileRes.json();
-      const fileObj = json.File || json.file || json;
-      const base64Data = fileObj.fileContent || fileObj.content || "";
-      const actualContentType = fileObj.contentType || fileObj.type || "application/octet-stream";
-      const fileName = fileObj.name || `file-${fileId}`;
-
-      if (!base64Data) {
-        return res.status(404).json({ error: "No file content returned from Bullhorn" });
-      }
-
-      const fileBuf = Buffer.from(base64Data, "base64");
-      const viewableTypes = ["application/pdf", "image/png", "image/jpeg", "image/gif", "image/svg+xml", "image/webp", "text/plain"];
-      const isViewable = viewableTypes.some(t => actualContentType.startsWith(t));
-
-      res.set("Content-Type", actualContentType);
-      res.set("Content-Length", fileBuf.length);
-      if (req.query.download === "1" || !isViewable) {
-        res.set("Content-Disposition", `attachment; filename="${fileName}"`);
-      } else {
-        res.set("Content-Disposition", `inline; filename="${fileName}"`);
-      }
-      return res.send(fileBuf);
-    }
-
-    // Fallback: Bullhorn returned raw binary (some versions do this)
-    const contentType = bhContentType || "application/octet-stream";
-    const disposition = fileRes.headers.get("content-disposition");
-    res.set("Content-Type", contentType);
-    if (req.query.download === "1") {
-      const fileName = disposition ? disposition.replace(/.*filename="?([^"]+)"?.*/, "$1") : `file-${fileId}`;
-      res.set("Content-Disposition", `attachment; filename="${fileName}"`);
-    } else if (disposition) {
-      res.set("Content-Disposition", disposition);
-    }
-    const arrayBuf = await fileRes.arrayBuffer();
-    res.send(Buffer.from(arrayBuf));
+    return res.send(file.buffer);
   } catch (e) {
     console.error("[File Download]", e.message);
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -9871,7 +9888,7 @@ app.get("/api/stale-candidates", async (req, res) => {
       grade: c.customText6 || "",
       lastModified: c.dateLastModified ? new Date(c.dateLastModified).toLocaleDateString() : "",
       daysSinceTouch: c.dateLastModified ? Math.floor((Date.now() - c.dateLastModified) / 86400000) : 999,
-      available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "—",
+      available: fmtDateOnly(c.dateAvailable) || "—",
     }));
     res.json({ data: candidates, total: data.total || candidates.length });
   } catch (e) {
@@ -10414,7 +10431,7 @@ app.get("/api/smart-lists", async (req, res) => {
         epicRole: typeof c.customText5 === "string" ? c.customText5 : "",
         grade: c.customText6 || "",
         salary: c.salary ? "$" + Number(c.salary).toLocaleString() : "—",
-        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString("en-US") : "",
+        available: fmtDateOnly(c.dateAvailable),
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
         email: c.email || "",
       };
@@ -10493,7 +10510,7 @@ app.get("/api/ask", async (req, res) => {
         grade: c.customText6 || "",
         status: c.status || "",
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
-        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
+        available: fmtDateOnly(c.dateAvailable),
       }; });
       answer = `Found **${r.total}** candidates with **${certLabel}** certification:`;
       data = cands;
@@ -10577,7 +10594,7 @@ app.get("/api/ask", async (req, res) => {
         title: c.occupation || "",
         cert: c.customText1 || "",
         grade: c.customText6 || "",
-        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
+        available: fmtDateOnly(c.dateAvailable),
       }));
       answer = `**${r.total}** candidates available now or soon:`;
       data = cands;
@@ -10638,7 +10655,7 @@ app.get("/api/ask", async (req, res) => {
         grade: c.customText6 || "",
         status: c.status || "",
         location: c.address ? [c.address.city, c.address.state].filter(Boolean).join(", ") : "",
-        available: c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "",
+        available: fmtDateOnly(c.dateAvailable),
       }));
       const scope = isPrimaryOnly ? "primary" : "any";
       answer = `Found **${r.total}** candidates with **${certLabel}** as ${scope} certification:`;
@@ -11672,7 +11689,7 @@ app.get("/tearsheet/:id", async (req, res) => {
     // Availability & Compensation
     html += '<div class="ts-section"><h4>Availability &amp; Compensation</h4><div class="ts-row">';
     html += '<div><div class="ts-label">Pay Rate</div><div class="ts-val" style="font-weight:700;color:#10b981">' + (c.salary ? "$" + Number(c.salary).toLocaleString() : "\u2014") + '</div></div>';
-    html += '<div><div class="ts-label">Available</div><div class="ts-val">' + (c.dateAvailable ? new Date(c.dateAvailable).toLocaleDateString() : "\u2014") + '</div></div>';
+    html += '<div><div class="ts-label">Available</div><div class="ts-val">' + (fmtDateOnly(c.dateAvailable) || "\u2014") + '</div></div>';
     if (c.source) html += '<div><div class="ts-label">Source</div><div class="ts-val">' + esc(c.source) + '</div></div>';
     if (c.owner) html += '<div><div class="ts-label">Owner</div><div class="ts-val">' + esc(c.owner.firstName + " " + c.owner.lastName) + '</div></div>';
     html += '</div></div>';
@@ -11704,7 +11721,7 @@ app.get("/", (req, res) => {
 require("./events")(app, { db: db, bhFetch: bhFetch, bhWrite: bhWriteAsService });
 require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetchAll: bhFetchAll });
 require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
-require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser });
+require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, listCandidateFiles: listCandidateFiles, readCandidateFile: readCandidateFile });
 
 app.use(function (err, req, res, next) {
   console.error("[Express] Unhandled route error:", err.message);

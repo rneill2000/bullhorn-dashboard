@@ -78,10 +78,59 @@ test("subject stays tight", function () {
   assert.equal(forge.subjectFor("Project role", ""), "Consultant Resume");
 });
 
-test("resume filename and todo", function () {
-  assert.equal(forge.resumeFilename("Jack Corbell"), "Anura Connect Jack Corbell Resume.pdf");
-  assert.match(forge.RESUME_TODO, /RESUME_TOOL_API_URL/);
-  assert.match(forge.RESUME_TODO, /does not send/);
+test("available date stays on the UTC calendar day in Chicago", function () {
+  const summer = Date.parse("2026-10-15T00:00:00.000Z");
+  const winter = Date.parse("2026-01-15T00:00:00.000Z");
+  assert.equal(new Date(summer).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" }), "Oct 14, 2026");
+  assert.equal(new Date(winter).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" }), "Jan 14, 2026");
+  assert.equal(forge.pickAvailability({ dateAvailable: summer }, Date.parse("2026-10-06T18:00:00Z")).text, "Available Oct 15, 2026");
+  assert.equal(forge.pickAvailability({ dateAvailable: winter }, Date.parse("2026-01-02T18:00:00Z")).text, "Available Jan 15, 2026");
+  assert.equal(forge.pickAvailability({ commentAvail: "2 weeks", dateAvailable: summer }).text, "2 weeks");
+});
+
+test("default PDF is client, then job, then newest Anura Connect", function () {
+  const files = [
+    { id: 1, name: "Anura Connect Jack Resume.pdf", contentType: "application/pdf", dateAddedMs: 300 },
+    { id: 2, name: "Anura_Connect_Jack_older.pdf", fileExtension: "pdf", dateAddedMs: 100 },
+    { id: 3, name: "Memorial_Hermann Jack.pdf", contentType: "application/pdf", dateAddedMs: 200 },
+    { id: 4, name: "Epic HB Analyst packet.pdf", contentType: "application/pdf", dateAddedMs: 400 },
+    { id: 5, name: "Anura Connect Jack Resume.docx", fileExtension: "docx", dateAddedMs: 900 },
+    { id: 6, name: "certs.pdf", contentType: "application/pdf", dateAddedMs: 50 },
+  ];
+  const client = forge.pickResumeFile(files, { clientName: "Memorial Hermann", jobTitle: "Epic HB Analyst" });
+  assert.equal(client.file.id, 3);
+  assert.equal(client.reason, "client");
+  const job = forge.pickResumeFile(files, { clientName: "Other Health", jobTitle: "Epic HB Analyst" });
+  assert.equal(job.file.id, 4);
+  assert.equal(job.reason, "job");
+  const branded = forge.pickResumeFile(files, { clientName: "Other Health", jobTitle: "Trainer" });
+  assert.equal(branded.file.id, 1);
+  assert.equal(branded.reason, "anura_connect");
+  const none = forge.pickResumeFile([{ id: 6, name: "certs.pdf", contentType: "application/pdf", dateAddedMs: 50 }, { id: 5, name: "raw.docx" }], { clientName: "Memorial Hermann", jobTitle: "Epic HB Analyst" });
+  assert.equal(none.file, null);
+  assert.equal(none.reason, "none");
+  const presented = forge.presentCandidateFiles(files, { clientName: "Memorial Hermann", jobTitle: "Epic HB Analyst" });
+  assert.equal(presented.suggestedFileId, 3);
+  assert.equal(presented.files[0].isPdf, true);
+  assert.equal(presented.files[presented.files.length - 1].name, "Anura Connect Jack Resume.docx");
+  assert.ok(presented.files.find(function (f) { return f.id === 1; }).dateLabel);
+  const glued = forge.pickResumeFile([{ id: 7, name: "AnuraConnect.pdf", contentType: "application/pdf", dateAddedMs: 10 }], { clientName: "Xyz Health", jobTitle: "Role Title" });
+  assert.equal(glued.reason, "none");
+  const underscored = forge.pickResumeFile([{ id: 8, name: "Anura_Connect_Resume.pdf", fileExtension: ".pdf", dateAddedMs: 10 }], { clientName: "Xyz Health", jobTitle: "Role Title" });
+  assert.equal(underscored.reason, "anura_connect");
+});
+
+test("forge does not call a résumé tool", function () {
+  const src = fs.readFileSync(__dirname + "/forge.js", "utf8");
+  const ui = fs.readFileSync(__dirname + "/public/forge-ui.js", "utf8");
+  assert.doesNotMatch(src, /RESUME_TOOL/);
+  assert.doesNotMatch(src, /resumetool/i);
+  assert.doesNotMatch(ui, /ResumeKiln|resumetool/i);
+  const dbSrc = fs.readFileSync(__dirname + "/db.js", "utf8");
+  assert.match(dbSrc, /fmtDateOnly\(c\.date_available\)/);
+  const serverSrc = fs.readFileSync(__dirname + "/server.js", "utf8");
+  assert.doesNotMatch(serverSrc, /new Date\(c\.dateAvailable\)\.toLocaleDateString/);
+  assert.doesNotMatch(serverSrc, /new Date\(smAvailDate\)\.toLocaleDateString/);
 });
 
 test("fit score flags a stale available date and a missing bill rate", function () {
@@ -126,6 +175,10 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
   const vm = require("vm");
   const main = { innerHTML: "" };
   const preview = { textContent: "" };
+  const buttons = {
+    "forge-create": { disabled: true, textContent: "Create Outlook draft" },
+    "forge-confirm-file": { disabled: true, textContent: "Confirm this file" },
+  };
   const ctx = {
     console: console,
     esc: function (s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); },
@@ -139,6 +192,7 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
     document: { getElementById: function (id) {
       if (id === "forge-main") return main;
       if (id === "forge-preview") return preview;
+      if (buttons[id]) return buttons[id];
       if (id === "forge-to") return { value: "dana@mh.example", selectedIndex: 0, options: [{ getAttribute: function () { return "Dana"; } }] };
       const values = {
         "forge-subject": "HB Consultant Resume",
@@ -165,7 +219,11 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
     signerName: "Rachel",
     contacts: [{ id: 1, name: "Dana Ruiz", firstName: "Dana", email: "dana@mh.example", occupation: "Director" }],
     outlook: { mailboxes: ["rachel@anuraconnect.com"], suggestedMailbox: "rachel@anuraconnect.com", hint: "Forge saves a draft." },
-    resume: { filename: "Anura Connect Jack Corbell Resume.pdf", todo: "Download the branded PDF in ResumeKiln and attach it before sending.", openUrl: "https://resumetool.anuraconnect.com/" },
+    files: [
+      { id: 9, name: "Anura Connect Jack Corbell Resume.pdf", dateLabel: "Oct 2, 2026", isPdf: true, fileExtension: "pdf" },
+      { id: 4, name: "Jack_original.docx", dateLabel: "Sep 1, 2026", isPdf: false, fileExtension: "docx" },
+    ],
+    attachment: { suggestedFileId: 9, suggestedReason: "anura_connect", hint: "Suggested the newest PDF with Anura Connect in the name." },
     draft: {
       candidate: { name: "Jack Corbell", primaryCert: "HB", epicRole: "Analyst" },
       job: { title: "Epic HB Analyst", clientName: "Memorial Hermann" },
@@ -184,10 +242,28 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
   };
   ctx.forgePaintDraft();
   assert.match(main.innerHTML, /Create Outlook draft/);
+  assert.match(main.innerHTML, /id="forge-create"[^>]*disabled/);
+  assert.match(main.innerHTML, /Confirm this file/);
+  assert.doesNotMatch(main.innerHTML, /id="forge-confirm-file"[^>]*disabled/);
+  assert.match(main.innerHTML, /No attachment/);
+  assert.match(main.innerHTML, /Anura Connect Jack Corbell Resume\.pdf/);
+  assert.match(main.innerHTML, /Oct 2, 2026/);
+  assert.match(main.innerHTML, /Suggested/);
   assert.match(main.innerHTML, /Mark client submitted/);
   assert.match(main.innerHTML, /Nothing is sent/);
-  assert.match(main.innerHTML, /ResumeKiln/);
+  assert.doesNotMatch(main.innerHTML, /ResumeKiln|resumetool/i);
   assert.doesNotMatch(main.innerHTML, />\s*Send\s*</);
+  assert.equal(buttons["forge-create"].disabled, true);
+  assert.equal(buttons["forge-confirm-file"].disabled, false);
+  ctx.forgeConfirmFile();
+  assert.equal(buttons["forge-create"].disabled, false);
+  assert.equal(ctx.forgeFields().attachment.fileId, 9);
+  ctx.forgeChooseFile(4);
+  assert.equal(buttons["forge-create"].disabled, true);
+  assert.equal(ctx.forgeFields().attachment, null);
+  ctx.forgeChooseNone();
+  assert.equal(buttons["forge-create"].disabled, false);
+  assert.equal(ctx.forgeFields().attachment.mode, "none");
   assert.match(preview.textContent, /Subject: HB Consultant Resume/);
   assert.match(preview.textContent, /Hi Dana,/);
   assert.match(preview.textContent, /Why Me:\nLed the HB build/);
@@ -286,6 +362,18 @@ test("draft route posts to Graph and never sends", async function () {
     },
     outlookUsers: function () { return { "rachel@anuraconnect.com": { name: "Rachel" } }; },
     getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+    listCandidateFiles: async function () {
+      return [
+        { id: 9, name: "Anura Connect Jack Corbell Resume.pdf", contentType: "application/pdf", fileExtension: "pdf", dateAddedMs: Date.parse("2026-10-02T18:00:00Z") },
+        { id: 3, name: "Memorial_Hermann_Jack.pdf", contentType: "application/pdf", fileExtension: "pdf", dateAddedMs: Date.parse("2026-09-01T18:00:00Z") },
+        { id: 8, name: "Jack original.docx", fileExtension: "docx", dateAddedMs: Date.parse("2026-10-05T18:00:00Z") },
+      ];
+    },
+    readCandidateFile: async function (candidateId, fileId) {
+      assert.equal(candidateId, 7);
+      assert.equal(fileId, 3);
+      return { name: "Memorial_Hermann_Jack.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4 memorial hermann resume") };
+    },
   });
   const server = await listen(app);
   try {
@@ -293,7 +381,11 @@ test("draft route posts to Graph and never sends", async function () {
     assert.equal(preview.status, 200);
     assert.equal(preview.json.email.subject, "HB Consultant Resume");
     assert.match(preview.json.email.text, /Bill rate: \$185\/hr/);
-    assert.equal(preview.json.resume.status, "todo");
+    assert.equal(preview.json.attachment.suggestedFileId, 3);
+    assert.equal(preview.json.attachment.suggestedReason, "client");
+    assert.equal(preview.json.files.length, 3);
+    assert.equal(preview.json.files[0].isPdf, true);
+    assert.match(preview.json.files[0].dateLabel, /Sep|Oct/);
     assert.equal(preview.json.contacts[0].email, "dana@mh.example");
     const queue = await req(server.address().port, "GET", "/api/forge/queue");
     assert.equal(queue.status, 200);
@@ -307,6 +399,7 @@ test("draft route posts to Graph and never sends", async function () {
       availability: "2 weeks",
       location: "Houston, TX",
       billRate: "$185/hr",
+      attachment: { mode: "none" },
     });
     assert.equal(draft.status, 200);
     assert.equal(draft.json.created, true);
@@ -319,7 +412,27 @@ test("draft route posts to Graph and never sends", async function () {
     assert.match(sent.body.content, /Bill rate/);
     assert.match(sent.body.content, /Hi Dana/);
     assert.doesNotMatch(sent.body.content, /\$95/);
+    assert.equal(draft.json.attachment.mode, "none");
     assert.ok(!calls.some(function (c) { return /sendMail/i.test(c.endpoint); }));
+    calls.length = 0;
+    const missing = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", { to: "dana@mh.example" });
+    assert.equal(missing.status, 400);
+    assert.match(missing.json.error, /No attachment/);
+    assert.equal(calls.length, 0);
+    const withFile = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      to: "dana@mh.example",
+      attachment: { mode: "file", fileId: 3 },
+    });
+    assert.equal(withFile.status, 200);
+    assert.equal(withFile.json.created, true);
+    assert.equal(withFile.json.attachment.filename, "Memorial_Hermann_Jack.pdf");
+    assert.match(withFile.json.instructions, /Memorial_Hermann_Jack\.pdf attached/);
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].endpoint, /\/attachments$/);
+    const attached = JSON.parse(calls[1].body);
+    assert.equal(attached.name, "Memorial_Hermann_Jack.pdf");
+    assert.equal(attached.contentType, "application/pdf");
+    assert.equal(Buffer.from(attached.contentBytes, "base64").toString("utf8"), "%PDF-1.4 memorial hermann resume");
   } finally {
     server.close();
   }
@@ -341,7 +454,7 @@ test("scope refusal returns the email instead of sending", async function () {
   });
   const server = await listen(app);
   try {
-    const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {});
+    const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", { attachment: { mode: "none" } });
     assert.equal(draft.status, 200);
     assert.equal(draft.json.created, false);
     assert.equal(draft.json.stub, true);

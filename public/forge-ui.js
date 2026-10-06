@@ -47,6 +47,12 @@ function renderForge() {
     + '.fg-note{font-size:12px;color:#64748b;margin-top:6px}'
     + '.fg-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}'
     + '.fg-split{display:grid;grid-template-columns:1fr 1fr;gap:10px}'
+    + '.fg-files{border:1px solid #e2e8f0;border-radius:10px;margin-top:6px;max-height:260px;overflow:auto;background:#fff}'
+    + '.fg-file{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:13px;cursor:pointer}'
+    + '.fg-file:last-child{border-bottom:0}'
+    + '.fg-file .nm{font-weight:650;color:#0f172a}'
+    + '.fg-sug{font-size:10px;font-weight:700;color:#176087;background:#e0f2fe;border-radius:999px;padding:1px 6px;margin-left:6px}'
+    + '#forge-create:disabled,#forge-confirm-file:disabled{opacity:.45;cursor:not-allowed}'
     + '@media(max-width:860px){.fg{grid-template-columns:1fr}.fg-q{max-height:320px}.fg-split{grid-template-columns:1fr}}'
     + '</style>';
   h += '<div style="font-size:14px;color:#475569;margin-bottom:12px;max-width:760px">Internally submitted candidates waiting on a client email. Forge drafts Name, Why Me, Availability, Location, and bill rate. <b>You send it</b> from Outlook. Bullhorn status stays where it is.</div>';
@@ -158,12 +164,30 @@ function forgePaintDraft() {
   h += '</div>';
   h += '<label class="fg-lab">Bill rate</label><input class="fg-in" id="forge-rate" value="' + forgeAttr(d.billRate || "") + '" oninput="forgePreview()" placeholder="Hourly bill rate. Leave blank if you only have pay.">';
   h += '<div class="fg-note">Pay rate is never filled in here. Confirm the number is what the client pays.</div>';
-  var resume = r.resume || {};
-  h += '<div class="fg-flag warn" style="margin-top:12px"><b>' + esc(resume.filename || "Anura Connect Resume.pdf") + '</b><div style="margin-top:4px">' + esc(resume.todo || (resume.attached ? "Résumé will be attached to the draft." : "No résumé attached.")) + '</div>';
-  if (resume.openUrl) h += '<div style="margin-top:6px"><a href="' + forgeAttr(resume.openUrl) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:650">Open ResumeKiln</a></div>';
+  var files = r.files || [];
+  var att = r.attachment || {};
+  var suggestedFileId = att.suggestedFileId;
+  _forge.attachment = { mode: suggestedFileId ? "file" : "", fileId: suggestedFileId || null, confirmed: false };
+  h += '<label class="fg-lab">Bullhorn file</label>';
+  h += '<div class="fg-note">PDFs are listed first, with name and date. Create draft stays off until you confirm a file or choose No attachment.</div>';
+  if (att.error) h += '<div class="fg-flag warn">' + esc(att.error) + '</div>';
+  if (att.hint) h += '<div class="fg-note">' + esc(att.hint) + '</div>';
+  h += '<div class="fg-files" id="forge-files">';
+  if (!files.length) h += '<div class="fg-note" style="padding:8px 10px">No files on this candidate in Bullhorn.</div>';
+  files.forEach(function (f) {
+    var idNum = parseInt(f.id, 10);
+    var isSuggested = suggestedFileId != null && String(suggestedFileId) === String(f.id);
+    var kind = f.isPdf ? "PDF" : ((f.fileExtension || "file") + "").toUpperCase();
+    h += '<label class="fg-file"><input type="radio" name="forge-file" value="' + forgeAttr(String(f.id)) + '"' + (isSuggested ? " checked" : "") + ' onchange="forgeChooseFile(' + (isNaN(idNum) ? "null" : idNum) + ')">';
+    h += '<span><span class="nm">' + esc(f.name || "Untitled") + (isSuggested ? '<span class="fg-sug">Suggested</span>' : "") + '</span>';
+    h += '<span class="fg-note">' + esc(f.dateLabel || "No date") + " · " + esc(kind) + '</span></span></label>';
+  });
+  h += '<label class="fg-file"><input type="radio" name="forge-file" value="none" onchange="forgeChooseNone()">';
+  h += '<span><span class="nm">No attachment</span><span class="fg-note">Save the draft without a file</span></span></label>';
   h += '</div>';
+  h += '<div class="fg-actions" style="margin-top:8px"><button type="button" class="btn-outline" id="forge-confirm-file" onclick="forgeConfirmFile()"' + (suggestedFileId ? "" : " disabled") + '>Confirm this file</button></div>';
   h += '<div class="fg-actions">';
-  h += '<button type="button" class="btn-primary" id="forge-create" onclick="forgeCreate()">Create Outlook draft</button>';
+  h += '<button type="button" class="btn-primary" id="forge-create" onclick="forgeCreate()" disabled>Create Outlook draft</button>';
   h += '<button type="button" class="btn-outline" onclick="forgeCopy()">Copy email</button>';
   h += '<button type="button" class="btn-outline" disabled title="Not in this version. Forge does not change Bullhorn status.">Mark client submitted</button>';
   h += '</div>';
@@ -174,6 +198,36 @@ function forgePaintDraft() {
   h += '</div>';
   main.innerHTML = h;
   forgePreview();
+  forgeSyncAttachmentButtons();
+}
+
+function forgeChooseFile(id) {
+  _forge.attachment = { mode: "file", fileId: id, confirmed: false };
+  forgeSyncAttachmentButtons();
+}
+
+function forgeChooseNone() {
+  _forge.attachment = { mode: "none", fileId: null, confirmed: true };
+  forgeSyncAttachmentButtons();
+}
+
+function forgeConfirmFile() {
+  var a = _forge.attachment || {};
+  if (a.mode !== "file" || !a.fileId) return;
+  a.confirmed = true;
+  forgeSyncAttachmentButtons();
+}
+
+function forgeSyncAttachmentButtons() {
+  var a = _forge.attachment || {};
+  var create = document.getElementById("forge-create");
+  var confirmBtn = document.getElementById("forge-confirm-file");
+  var confirmed = !!a.confirmed && (a.mode === "none" || (a.mode === "file" && a.fileId));
+  if (create && !_forge.busy) create.disabled = !confirmed;
+  if (confirmBtn) {
+    confirmBtn.disabled = !(a.mode === "file" && a.fileId && !a.confirmed);
+    confirmBtn.textContent = a.mode === "file" && a.confirmed ? "File confirmed" : "Confirm this file";
+  }
 }
 
 function forgeToChanged() {
@@ -212,7 +266,16 @@ function forgeFields() {
     jobTitle: j.title || "",
     clientName: j.clientName || "",
     signerName: v.signerName || "Anura Connect",
+    attachment: forgeAttachmentPayload(),
   };
+}
+
+function forgeAttachmentPayload() {
+  var a = _forge.attachment || {};
+  if (!a.confirmed) return null;
+  if (a.mode === "none") return { mode: "none" };
+  if (a.mode === "file" && a.fileId) return { mode: "file", fileId: a.fileId };
+  return null;
 }
 
 function forgeEmailText(f) {
@@ -241,6 +304,11 @@ async function forgeCopy() {
 
 async function forgeCreate() {
   if (!_forge.selected || _forge.busy) return;
+  var payload = forgeAttachmentPayload();
+  if (!payload) {
+    if (typeof showToast === "function") showToast("Confirm a file or choose No attachment", "error");
+    return;
+  }
   var btn = document.getElementById("forge-create");
   var result = document.getElementById("forge-result");
   _forge.busy = true;
@@ -262,6 +330,7 @@ async function forgeCreate() {
     if (typeof showToast === "function") showToast(e.message, "error");
   } finally {
     _forge.busy = false;
-    if (btn) { btn.disabled = false; btn.textContent = "Create Outlook draft"; }
+    if (btn) btn.textContent = "Create Outlook draft";
+    forgeSyncAttachmentButtons();
   }
 }
