@@ -400,9 +400,10 @@ function classifyGraphError(err) {
 }
 
 function scopeHelp() {
-  return "This Outlook connection can read and send mail (Mail.Read, Mail.Send). Saving a draft needs Mail.ReadWrite, which is not in the default grant, so Graph refused to create one. " +
-    "Add the delegated Mail.ReadWrite permission on the Azure app, set OUTLOOK_EXTRA_SCOPES=Mail.ReadWrite on the dashboard, then reconnect Outlook (Outreach → Connect Outlook Account). " +
-    "Until then, copy this email into Outlook yourself. Forge will not send it.";
+  return "Graph refused to save the draft. Sign-in requests Mail.Read, Mail.ReadWrite, Mail.Send, and User.Read. " +
+    "Add delegated Mail.ReadWrite on the Azure app and grant admin consent if required, then reconnect Outlook (Outreach → Connect Outlook Account). " +
+    "Mailboxes connected before that permission keep sending the digest with Mail.Send. " +
+    "Until this mailbox is reconnected, copy this email into Outlook. Forge will not send it.";
 }
 
 async function polishWhyMe(source, context) {
@@ -779,8 +780,8 @@ function registerForge(app, deps) {
           mailboxes: boxes,
           suggestedMailbox: (user && boxes.indexOf((user.email || "").toLowerCase()) >= 0) ? user.email.toLowerCase() : (boxes[0] || ""),
           reconnectUrl: "/auth/outlook/login",
-          draftsNeedMailReadWrite: (process.env.OUTLOOK_EXTRA_SCOPES || "").indexOf("Mail.ReadWrite") < 0,
-          hint: "Forge saves a draft in Outlook. You send it. Default Graph scopes are Mail.Read and Mail.Send; creating a draft needs Mail.ReadWrite (set OUTLOOK_EXTRA_SCOPES and reconnect).",
+          draftsNeedMailReadWrite: false,
+          hint: "Forge saves a draft. You send it. Sign-in includes Mail.ReadWrite along with Mail.Read, Mail.Send, and User.Read. Reconnect Outlook if this mailbox was linked before that permission.",
         },
         signerName: signerName(user),
       });

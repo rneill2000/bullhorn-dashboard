@@ -8835,15 +8835,26 @@ app.get("/api/pipeline", async (req, res) => {
 // Per-user OAuth2 flow with Microsoft Graph API for email read/send/sync
 
 var OUTLOOK_TENANT = (process.env.OUTLOOK_TENANT_ID || "common").trim();
-// Mail.ReadWrite is what Graph requires to create a draft. It is off unless
-// OUTLOOK_EXTRA_SCOPES includes it, so existing mailbox refresh keeps working.
-var OUTLOOK_BASE_SCOPES = "openid profile email offline_access Mail.Read Mail.Send User.Read";
+// Mail.ReadWrite is required to create a draft. Mail.Send stays so the digest can still send.
+// Mailboxes consented before Mail.ReadWrite refresh with OUTLOOK_LEGACY_SCOPES until they reconnect.
+var OUTLOOK_LEGACY_SCOPES = "openid profile email offline_access Mail.Read Mail.Send User.Read";
+var OUTLOOK_BASE_SCOPES = OUTLOOK_LEGACY_SCOPES + " Mail.ReadWrite";
 var OUTLOOK_EXTRA_SCOPES = (process.env.OUTLOOK_EXTRA_SCOPES || "").trim();
+function outlookScopes(extra) {
+  var seen = {};
+  return (OUTLOOK_BASE_SCOPES + " " + (extra || "")).split(/\s+/).filter(function (s) {
+    if (!s) return false;
+    var key = s.toLowerCase();
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  }).join(" ");
+}
 var OUTLOOK_CONFIG = {
   clientId: (process.env.OUTLOOK_CLIENT_ID || "").trim(),
   clientSecret: (process.env.OUTLOOK_CLIENT_SECRET || "").trim(),
   redirectUri: (process.env.RAILWAY_PUBLIC_DOMAIN ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.BASE_URL || "https://bullhorn-dashboard-production.up.railway.app") + "/auth/outlook/callback",
-  scopes: [OUTLOOK_BASE_SCOPES, OUTLOOK_EXTRA_SCOPES].filter(Boolean).join(" "),
+  scopes: outlookScopes(OUTLOOK_EXTRA_SCOPES),
   authorizeUrl: "https://login.microsoftonline.com/" + OUTLOOK_TENANT + "/oauth2/v2.0/authorize",
   tokenUrl: "https://login.microsoftonline.com/" + OUTLOOK_TENANT + "/oauth2/v2.0/token",
   graphUrl: "https://graph.microsoft.com/v1.0",
@@ -8986,9 +8997,14 @@ async function refreshOutlookToken(userEmail) {
     });
   }
   var resp = await requestRefresh(OUTLOOK_CONFIG.scopes);
-  // A mailbox consented before Mail.ReadWrite was added cannot refresh the wider
-  // scope. Fall back so the digest and inbox keep working until they reconnect.
-  if (!resp.ok && OUTLOOK_EXTRA_SCOPES) resp = await requestRefresh(OUTLOOK_BASE_SCOPES);
+  // 400/401 means this mailbox never consented to Mail.ReadWrite (or the refresh
+  // token was issued for the smaller set). Retry with Mail.Read + Mail.Send so
+  // the digest still sends. Other failures are left alone so a blip cannot
+  // replace a good token with a narrower one.
+  if (!resp.ok && (resp.status === 400 || resp.status === 401)) {
+    console.log("[Outlook] Refresh with Mail.ReadWrite was declined; retrying with Mail.Send so send still works. Reconnect Outlook to create drafts.");
+    resp = await requestRefresh(OUTLOOK_LEGACY_SCOPES);
+  }
   if (!resp.ok) throw new Error("Token refresh failed");
   var tokens = await resp.json();
   user.accessToken = tokens.access_token;

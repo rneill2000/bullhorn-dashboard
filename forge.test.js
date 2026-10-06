@@ -105,6 +105,17 @@ test("fit score flags a stale available date and a missing bill rate", function 
   assert.ok(fit.flags.some(function (f) { return f.code === "sla"; }));
 });
 
+test("outlook sign-in requests Mail.ReadWrite and still includes Mail.Send", function () {
+  const src = fs.readFileSync(__dirname + "/server.js", "utf8");
+  assert.match(src, /OUTLOOK_BASE_SCOPES = OUTLOOK_LEGACY_SCOPES \+ " Mail\.ReadWrite"/);
+  assert.match(src, /openid profile email offline_access Mail\.Read Mail\.Send User\.Read/);
+  assert.match(src, /requestRefresh\(OUTLOOK_LEGACY_SCOPES\)/);
+  assert.match(src, /outlookScopes\(OUTLOOK_EXTRA_SCOPES\)/);
+  const ui = fs.readFileSync(__dirname + "/public/index.html", "utf8");
+  assert.match(ui, /Mail\.ReadWrite/);
+  assert.match(ui, /Mail\.Send/);
+});
+
 test("module source never sends mail", function () {
   const src = fs.readFileSync(__dirname + "/forge.js", "utf8");
   assert.doesNotMatch(src, /\/me\/sendMail/);

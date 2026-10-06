@@ -10410,7 +10410,7 @@ async function renderInbox(){
     h+='<p style="margin-bottom:8px">To connect your team\'s Outlook emails, an admin needs to:</p>';
     h+='<div style="margin-bottom:8px">1. Go to <a href="https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" style="color:#176087;font-weight:600">Azure Portal \u2192 App Registrations</a></div>';
     h+='<div style="margin-bottom:8px">2. Create a new registration with redirect URI: <code style="background:#fef3c7;padding:2px 6px;border-radius:4px">'+esc(status.redirectUri||window.location.origin+"/auth/outlook/callback")+'</code></div>';
-    h+='<div style="margin-bottom:8px">3. Under API Permissions, add: <strong>Mail.Read</strong>, <strong>Mail.Send</strong>, <strong>User.Read</strong> (delegated)</div>';
+    h+='<div style="margin-bottom:8px">3. Under API Permissions, add delegated <strong>Mail.Read</strong>, <strong>Mail.ReadWrite</strong>, <strong>Mail.Send</strong>, and <strong>User.Read</strong>. Grant admin consent if the tenant requires it. Mail.ReadWrite is what lets Forge save a draft; Mail.Send is what sends the digest.</div>';
     h+='<div style="margin-bottom:8px">4. Under Certificates & Secrets, create a client secret</div>';
     h+='<div style="margin-bottom:8px">5. In Railway, set environment variables: <code style="background:#fef3c7;padding:2px 6px;border-radius:4px">OUTLOOK_CLIENT_ID</code> and <code style="background:#fef3c7;padding:2px 6px;border-radius:4px">OUTLOOK_CLIENT_SECRET</code></div>';
     h+='</div></div>';
@@ -10429,6 +10429,7 @@ async function renderInbox(){
   h+='<a href="/auth/outlook/login" style="display:inline-flex;align-items:center;gap:8px;padding:10px 18px;background:#0078d4;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">';
   h+='<svg width="16" height="16" viewBox="0 0 16 16" fill="white"><path d="M7.3 0v7.3H0V0h7.3zm8.7 0v7.3H8.7V0H16zM7.3 8.7V16H0V8.7h7.3zM16 8.7V16H8.7V8.7H16z"/></svg>';
   h+='Connect Outlook Account</a>';
+  h+='<span style="font-size:12px;color:#64748b;max-width:520px">Reconnect after Azure has delegated <strong>Mail.ReadWrite</strong> (plus Mail.Read, Mail.Send, User.Read) so Forge can save drafts. The digest still sends with Mail.Send.</span>';
   if(connectedUsers.length>0){
     h+='<span style="font-size:13px;color:#64748b">Connected: ';
     connectedUsers.forEach(function(u,i){
