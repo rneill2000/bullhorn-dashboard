@@ -1,6 +1,28 @@
 /* Submittal Forge — pick an Internally Submitted row, preview the client email, save an Outlook draft.
    Expects globals from index.html: esc, apiFetch, showToast, setHash, NAV_GROUPS, currentPage. */
 function forgeAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
+function forgeStoreGet(key, fallback) {
+  try {
+    if (typeof localStorage === "undefined") return fallback;
+    var raw = localStorage.getItem(key);
+    if (raw == null || raw === "") return fallback;
+    return raw;
+  } catch (e) { return fallback; }
+}
+function forgeStoreSet(key, value) {
+  try { if (typeof localStorage !== "undefined") localStorage.setItem(key, value); } catch (e) {}
+}
+function forgeJsonGet(key, fallback) {
+  try {
+    if (typeof localStorage === "undefined") return fallback;
+    var raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  } catch (e) { return fallback; }
+}
+function forgeJsonSet(key, value) {
+  try { if (typeof localStorage !== "undefined") localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+}
 (function () {
   if (typeof NAV_GROUPS !== "undefined") {
     var forgeItem = { key: "forge", label: "Submittal Forge", emoji: "\u2692\uFE0F" };
@@ -23,7 +45,19 @@ function forgeAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
   }
 })();
 
-var _forge = { queue: [], selected: null, view: null, busy: false };
+var _forge = {
+  queue: [],
+  owners: [],
+  me: null,
+  ownerFilter: forgeStoreGet("forge.ownerFilter", "mine"),
+  selected: null,
+  view: null,
+  busy: false,
+  resumeConfirmed: false,
+  resumeFileId: "",
+  toHits: [],
+  ccHits: [],
+};
 
 function renderForge() {
   setTimeout(forgeAfterRender, 0);
@@ -45,11 +79,17 @@ function renderForge() {
     + '.fg-ta{min-height:140px;line-height:1.45;resize:vertical}'
     + '.fg-pre{white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.45;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-top:8px}'
     + '.fg-note{font-size:12px;color:#64748b;margin-top:6px}'
-    + '.fg-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}'
+    + '.fg-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center}'
     + '.fg-split{display:grid;grid-template-columns:1fr 1fr;gap:10px}'
+    + '.fg-ac{position:relative}'
+    + '.fg-suggest{position:absolute;z-index:5;left:0;right:0;top:100%;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 20px rgba(15,23,42,.08);max-height:220px;overflow:auto}'
+    + '.fg-suggest button{display:block;width:100%;text-align:left;background:#fff;border:0;border-bottom:1px solid #f1f5f9;padding:8px 10px;font-family:inherit;cursor:pointer}'
+    + '.fg-suggest button:hover{background:#f8fafc}'
+    + '.fg-miss{font-size:12px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 10px;margin-top:10px}'
+    + '.fg-ok{font-size:12px;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px;margin-top:10px}'
     + '@media(max-width:860px){.fg{grid-template-columns:1fr}.fg-q{max-height:320px}.fg-split{grid-template-columns:1fr}}'
     + '</style>';
-  h += '<div style="font-size:14px;color:#475569;margin-bottom:12px;max-width:760px">Internally submitted candidates waiting on a client email. Forge drafts Name, Why Me, Availability, Location, and bill rate. <b>You send it</b> from Outlook. Bullhorn status stays where it is.</div>';
+  h += '<div style="font-size:14px;color:#475569;margin-bottom:12px;max-width:760px">Internally submitted candidates waiting on a client email. Forge drafts Why Me, availability, location, and bill rate. <b>You send it</b> from Outlook. Nothing is sent until you send the draft.</div>';
   h += '<div class="fg"><div class="fg-card fg-q" id="forge-queue"><div style="padding:20px;color:#64748b">Loading the ready-to-submit queue…</div></div><div id="forge-main"><div class="fg-card" style="color:#64748b">Pick a submission to preview the client draft.</div></div></div>';
   return h;
 }
@@ -69,31 +109,48 @@ async function forgeLoadQueue() {
   var box = document.getElementById("forge-queue");
   if (!box) return;
   try {
-    var r = await apiFetch("forge/queue");
+    var r = await apiFetch("forge/queue", { owner: _forge.ownerFilter || "mine" });
     _forge.queue = r.data || [];
+    _forge.owners = r.owners || [];
+    _forge.me = r.me || null;
     forgePaintQueue();
     var want = window._forgeSelectId;
-    if (want && _forge.queue.some(function (row) { return row.submissionId === want; })) forgeOpen(want);
-    else if (want) forgeOpen(want);
+    if (want) forgeOpen(want);
   } catch (e) {
     box.innerHTML = '<div style="color:#b91c1c;font-size:13px">' + esc(e.message) + '</div>';
   }
 }
 
+function forgeOwnerChanged(value) {
+  _forge.ownerFilter = value || "mine";
+  forgeStoreSet("forge.ownerFilter", _forge.ownerFilter);
+  forgeLoadQueue();
+}
+
 function forgePaintQueue() {
   var box = document.getElementById("forge-queue");
   if (!box) return;
+  var h = '<label class="fg-lab" style="margin-top:0">Owner</label><select class="fg-in" id="forge-owner" onchange="forgeOwnerChanged(this.value)">';
+  h += '<option value="mine"' + (_forge.ownerFilter === "mine" ? " selected" : "") + '>Mine</option>';
+  (_forge.owners || []).forEach(function (o) {
+    h += '<option value="' + forgeAttr(String(o.id)) + '"' + (String(_forge.ownerFilter) === String(o.id) ? " selected" : "") + '>' + esc(o.firstName || o.name || "User") + ' (' + (o.count || 0) + ')</option>';
+  });
+  h += '<option value="all"' + (_forge.ownerFilter === "all" ? " selected" : "") + '>All</option></select>';
   if (!_forge.queue.length) {
-    box.innerHTML = '<div style="font-size:14px;color:#334155"><b>Nothing waiting.</b></div><div class="fg-note">No Internally Submitted candidates on open jobs. The same queue feeds the weekday ready-to-submit digest.</div>';
+    h += '<div style="font-size:14px;color:#334155;margin-top:12px"><b>Nothing waiting.</b></div><div class="fg-note">No Internally Submitted candidates on open jobs for this filter.</div>';
+    box.innerHTML = h;
     return;
   }
-  var h = '<div style="font-size:12px;font-weight:700;color:#64748b;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px">Ready to submit · ' + _forge.queue.length + '</div>';
+  h += '<div style="font-size:12px;font-weight:700;color:#64748b;letter-spacing:.04em;text-transform:uppercase;margin:12px 0 8px">Ready to submit · ' + _forge.queue.length + '</div>';
   _forge.queue.forEach(function (row) {
     var on = _forge.selected === row.submissionId ? " on" : "";
+    var missing = (row.missing || []).slice();
     h += '<button type="button" class="fg-row' + on + '" onclick="forgeOpen(' + row.submissionId + ')">';
     h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span class="nm">' + esc(row.candidateName || "Candidate") + '</span><span class="fg-sla ' + esc(row.sla || "unknown") + '">' + esc(forgeSlaLabel(row.daysWaiting, row.sla)) + '</span></div>';
     h += '<div class="sub">' + esc(row.clientName || "Client") + ' · ' + esc(row.jobTitle || "Role") + '</div>';
-    h += '<div class="sub">Fit ' + (row.fitScore == null ? "—" : row.fitScore) + (row.billRate ? " · " + esc(row.billRate) : " · bill rate missing") + '</div>';
+    h += '<div class="sub">Owner: ' + esc(row.jobOwnerFirst || "—") + ' · Submitted by: ' + esc(row.submittedByFirst || "—") + '</div>';
+    h += '<div class="sub">' + (row.billRate ? esc(row.billRate) : "bill rate missing") + (missing.length ? " · missing " + esc(missing.join(", ")) : "") + '</div>';
+    if (row.existingDraft && row.existingDraft.label) h += '<div class="sub">' + esc(row.existingDraft.label) + '</div>';
     h += '</button>';
   });
   box.innerHTML = h;
@@ -101,6 +158,8 @@ function forgePaintQueue() {
 
 async function forgeOpen(id) {
   _forge.selected = id;
+  _forge.resumeConfirmed = false;
+  _forge.resumeFileId = "";
   window._forgeSelectId = id;
   if (typeof setHash === "function") setHash("forge/" + id);
   forgePaintQueue();
@@ -108,12 +167,27 @@ async function forgeOpen(id) {
   if (!main) return;
   main.innerHTML = '<div class="fg-card" style="color:#64748b">Building the draft…</div>';
   try {
-    var r = await apiFetch("forge/submissions/" + id);
+    var r = await apiFetch("forge/submissions/" + id + "?polish=0");
     _forge.view = r;
+    var suggested = r.resume && r.resume.suggestedId;
+    _forge.resumeFileId = suggested ? String(suggested) : "";
+    _forge.resumeConfirmed = false;
     forgePaintDraft();
   } catch (e) {
     main.innerHTML = '<div class="fg-card" style="color:#b91c1c">' + esc(e.message) + '</div>';
   }
+}
+
+function forgeRemembered(clientId) {
+  if (!clientId) return null;
+  var map = forgeJsonGet("forge.lastRecipient", {});
+  return map[String(clientId)] || null;
+}
+function forgeRemember(clientId, contact) {
+  if (!clientId || !contact || !contact.email) return;
+  var map = forgeJsonGet("forge.lastRecipient", {});
+  map[String(clientId)] = { email: contact.email, firstName: contact.firstName || "", name: contact.name || "" };
+  forgeJsonSet("forge.lastRecipient", map);
 }
 
 function forgePaintDraft() {
@@ -126,142 +200,449 @@ function forgePaintDraft() {
   var contacts = r.contacts || [];
   var boxes = (r.outlook && r.outlook.mailboxes) || [];
   var suggested = (r.outlook && r.outlook.suggestedMailbox) || "";
+  var profile = r.profile || {};
+  var report = j.reportingContact || null;
+  var remembered = forgeRemembered(j.clientId);
+  var chosen = null;
+  if (report && report.email) chosen = report;
+  else if (remembered && remembered.email) chosen = remembered;
   var h = '<div class="fg-card">';
-  h += '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start">';
   h += '<div><div style="font-size:18px;font-weight:700;color:#0f172a">' + esc(c.name || "Candidate") + '</div>';
   h += '<div style="color:#475569;font-size:13px;margin-top:2px">' + esc(j.title || "") + (j.clientName ? " · " + esc(j.clientName) : "") + '</div>';
-  h += '<div class="fg-note">' + esc(c.primaryCert || "No primary cert") + (c.epicRole ? " · " + esc(c.epicRole) : "") + (d.submittedBy ? " · submitted by " + esc(d.submittedBy) : "") + '</div></div>';
-  h += '<div style="text-align:right"><div style="font-size:28px;font-weight:700;color:#0E2E47;line-height:1">' + d.fitScore + '</div><div class="fg-note">fit score</div><div style="margin-top:6px"><span class="fg-sla ' + esc(d.sla || "unknown") + '">' + esc(forgeSlaLabel(d.daysWaiting, d.sla)) + '</span></div></div>';
-  h += '</div>';
+  h += '<div class="fg-note">Owner: ' + esc(j.ownerFirst || "—") + ' · Submitted by: ' + esc(d.submittedByFirst || "—") + '</div>';
+  h += '<div style="margin-top:6px"><span class="fg-sla ' + esc(d.sla || "unknown") + '">' + esc(forgeSlaLabel(d.daysWaiting, d.sla)) + '</span></div></div>';
+  if (d.existingDraft && d.existingDraft.label) h += '<div class="fg-flag warn">' + esc(d.existingDraft.label) + '</div>';
   (d.flags || []).forEach(function (f) {
     h += '<div class="fg-flag ' + (f.level === "alert" ? "alert" : "warn") + '">' + esc(f.message) + '</div>';
   });
+  h += '<div id="forge-missing"></div>';
   h += '<label class="fg-lab">To</label>';
-  h += '<select class="fg-in" id="forge-to" onchange="forgeToChanged()">';
-  h += '<option value="">Choose a client contact, or type one</option>';
-  contacts.forEach(function (ct) {
-    h += '<option value="' + forgeAttr(ct.email) + '" data-first="' + forgeAttr(ct.firstName || (ct.name || "").split(" ")[0]) + '">' + esc(ct.name || ct.email) + (ct.occupation ? " · " + esc(ct.occupation) : "") + " · " + esc(ct.email) + '</option>';
-  });
-  h += '<option value="__other">Other address…</option></select>';
-  h += '<input class="fg-in" id="forge-to-other" style="display:none;margin-top:6px" placeholder="name@hospital.org" oninput="forgePreview()">';
+  h += '<div class="fg-ac"><input class="fg-in" id="forge-to" placeholder="Search contacts or type an email" autocomplete="off" value="' + forgeAttr(chosen ? chosen.email : "") + '" oninput="forgeToInput()" onfocus="forgeToFocus()">';
+  h += '<div id="forge-to-list" class="fg-suggest" style="display:none"></div></div>';
+  h += '<input type="hidden" id="forge-greeting" value="' + forgeAttr(chosen ? (chosen.firstName || "") : "") + '">';
+  h += '<label class="fg-lab">CC <span style="font-weight:500;color:#94a3b8">(optional)</span></label>';
+  h += '<div class="fg-ac"><input class="fg-in" id="forge-cc" placeholder="Search or type an email" autocomplete="off" oninput="forgeCcInput()" onfocus="forgeCcFocus()">';
+  h += '<div id="forge-cc-list" class="fg-suggest" style="display:none"></div></div>';
   h += '<label class="fg-lab">From mailbox</label><select class="fg-in" id="forge-from">';
   if (!boxes.length) h += '<option value="">No Outlook mailbox connected</option>';
   boxes.forEach(function (b) { h += '<option value="' + forgeAttr(b) + '"' + (b === suggested ? " selected" : "") + '>' + esc(b) + '</option>'; });
   h += '</select>';
   h += '<label class="fg-lab">Subject</label><input class="fg-in" id="forge-subject" value="' + forgeAttr(d.subject || "") + '" oninput="forgePreview()">';
   h += '<label class="fg-lab">Candidate name</label><input class="fg-in" id="forge-name" value="' + forgeAttr(c.name || "") + '" oninput="forgePreview()">';
-  h += '<label class="fg-lab">Why Me' + (d.whyMeSource === "anthropic" ? " · polished" : d.whyMeSource === "comments" ? " · from Bullhorn comments" : " · from Bullhorn fields") + '</label>';
+  var whyNote = d.whyMeSource === "anthropic" ? " · polished" : d.whyMeSource === "comments" ? " · from Bullhorn comments" : "";
+  h += '<label class="fg-lab">Why Me' + whyNote + '</label>';
   h += '<textarea class="fg-ta" id="forge-why" oninput="forgePreview()">' + esc(d.whyMe || "") + '</textarea>';
   h += '<div class="fg-split">';
   h += '<div><label class="fg-lab">Availability</label><input class="fg-in" id="forge-avail" value="' + forgeAttr(d.availability || "") + '" oninput="forgePreview()"></div>';
   h += '<div><label class="fg-lab">Location</label><input class="fg-in" id="forge-loc" value="' + forgeAttr(d.location || "") + '" oninput="forgePreview()"></div>';
   h += '</div>';
-  h += '<label class="fg-lab">Bill rate</label><input class="fg-in" id="forge-rate" value="' + forgeAttr(d.billRate || "") + '" oninput="forgePreview()" placeholder="Hourly bill rate. Leave blank if you only have pay.">';
-  h += '<div class="fg-note">Pay rate is never filled in here. Confirm the number is what the client pays.</div>';
+  var source = d.billRateSource ? " · " + d.billRateSource : "";
+  h += '<label class="fg-lab">Bill rate' + esc(source) + '</label><input class="fg-in" id="forge-rate" value="' + forgeAttr(d.billRate || "") + '" oninput="forgePreview()" placeholder="Hourly bill rate">';
+  h += '<div class="fg-note">Pay rate is never filled in here. The source is ' + esc(d.billRateSource || "not on file") + '.</div>';
+  h += '<div class="fg-split">';
+  h += '<div><label class="fg-lab">Your name</label><input class="fg-in" id="forge-sign-name" value="' + forgeAttr(profile.name || r.signerName || "") + '" oninput="forgePreview()"></div>';
+  h += '<div><label class="fg-lab">Title</label><input class="fg-in" id="forge-sign-title" value="' + forgeAttr(profile.title || "") + '" oninput="forgePreview()"></div>';
+  h += '</div>';
+  h += '<label class="fg-lab">Phone</label><input class="fg-in" id="forge-sign-phone" value="' + forgeAttr(profile.phone || "") + '" oninput="forgePreview()" onblur="forgeSaveProfile()">';
   var resume = r.resume || {};
-  h += '<div class="fg-flag warn" style="margin-top:12px"><b>' + esc(resume.filename || "Anura Connect Resume.pdf") + '</b><div style="margin-top:4px">' + esc(resume.todo || (resume.attached ? "Résumé will be attached to the draft." : "No résumé attached.")) + '</div>';
-  if (resume.openUrl) h += '<div style="margin-top:6px"><a href="' + forgeAttr(resume.openUrl) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:650">Open ResumeKiln</a></div>';
-  h += '</div>';
+  var files = resume.files || [];
+  h += '<label class="fg-lab">Resume to attach</label><div class="fg-split">';
+  h += '<select class="fg-in" id="forge-resume" onchange="forgeResumeChanged()">';
+  h += '<option value="">No attachment</option>';
+  files.forEach(function (f) {
+    var sel = String(f.id) === String(resume.suggestedId || "") ? " selected" : "";
+    h += '<option value="' + forgeAttr(String(f.id)) + '"' + sel + '>' + esc(f.name || "PDF") + '</option>';
+  });
+  h += '</select>';
+  h += '<button type="button" class="btn-outline" id="forge-resume-confirm" onclick="forgeConfirmResume()">Confirm</button></div>';
+  h += '<div class="fg-note" id="forge-resume-note">Confirm the résumé before creating the draft. Changing the file clears the confirmation.</div>';
+  if (files.length) {
+    h += '<div class="fg-note">';
+    files.forEach(function (f) {
+      if (f.viewUrl) h += '<a href="' + forgeAttr(f.viewUrl) + '" target="_blank" rel="noopener" style="color:#176087;margin-right:10px">View ' + esc(f.name || "file") + '</a>';
+    });
+    h += '</div>';
+  }
+  var createLabel = d.existingDraft ? "Create another" : "Create Outlook draft";
   h += '<div class="fg-actions">';
-  h += '<button type="button" class="btn-primary" id="forge-create" onclick="forgeCreate()">Create Outlook draft</button>';
+  h += '<button type="button" class="btn-primary" id="forge-create" onclick="forgeCreate()" disabled>' + createLabel + '</button>';
   h += '<button type="button" class="btn-outline" onclick="forgeCopy()">Copy email</button>';
-  h += '<button type="button" class="btn-outline" disabled title="Not in this version. Forge does not change Bullhorn status.">Mark client submitted</button>';
+  h += '<button type="button" class="btn-outline" onclick="forgeMarkSubmitted()">Mark client submitted</button>';
+  h += '<select class="fg-in" id="forge-dismiss-reason" style="max-width:180px"><option value="stale">Stale</option><option value="withdrawn">Withdrawn</option><option value="job_on_hold">Job on hold</option></select>';
+  h += '<button type="button" class="btn-outline" onclick="forgeDismiss()">Not sending</button>';
   h += '</div>';
-  h += '<div class="fg-note">Creates a draft only. Nothing is sent, and the submission stays Internally Submitted.</div>';
+  h += '<div class="fg-note">Creates a draft only. Nothing is sent. Mark client submitted only after a draft exists.</div>';
   if (r.outlook && r.outlook.hint) h += '<div class="fg-note">' + esc(r.outlook.hint) + '</div>';
   h += '<div id="forge-result"></div>';
   h += '<div class="fg-lab">Preview</div><div class="fg-pre" id="forge-preview"></div>';
   h += '</div>';
   main.innerHTML = h;
+  _forge.resumeFileId = resume.suggestedId ? String(resume.suggestedId) : "";
+  _forge.resumeConfirmed = false;
+  _forge._contacts = contacts;
   forgePreview();
 }
 
-function forgeToChanged() {
-  var sel = document.getElementById("forge-to");
-  var other = document.getElementById("forge-to-other");
-  if (other) other.style.display = sel && sel.value === "__other" ? "block" : "none";
-  forgePreview();
-}
+function forgeVal(id) { var el = document.getElementById(id); return el ? el.value : ""; }
 
 function forgeFields() {
-  function val(id) { var el = document.getElementById(id); return el ? el.value : ""; }
   var sel = document.getElementById("forge-to");
   var to = "";
   var greeting = "";
-  if (sel) {
-    if (sel.value === "__other") to = val("forge-to-other").trim();
+  if (sel && sel.options && typeof sel.selectedIndex === "number" && sel.options[sel.selectedIndex]) {
+    if (sel.value === "__other") to = forgeVal("forge-to-other").trim();
     else {
-      to = sel.value;
+      to = sel.value || "";
       var opt = sel.options[sel.selectedIndex];
-      greeting = opt ? (opt.getAttribute("data-first") || "") : "";
+      greeting = opt && opt.getAttribute ? (opt.getAttribute("data-first") || "") : "";
     }
+  } else if (sel) {
+    to = (sel.value || "").trim();
+    greeting = forgeVal("forge-greeting").trim();
   }
   var v = _forge.view || {};
   var d = v.draft || {};
   var j = d.job || {};
+  var profile = v.profile || {};
   return {
     to: to,
+    cc: forgeVal("forge-cc").trim(),
     greetingName: greeting,
-    mailbox: val("forge-from"),
-    subject: val("forge-subject"),
-    candidateName: val("forge-name"),
-    whyMe: val("forge-why"),
-    availability: val("forge-avail"),
-    location: val("forge-loc"),
-    billRate: val("forge-rate"),
+    mailbox: forgeVal("forge-from"),
+    subject: forgeVal("forge-subject"),
+    candidateName: forgeVal("forge-name"),
+    whyMe: forgeVal("forge-why"),
+    availability: forgeVal("forge-avail"),
+    location: forgeVal("forge-loc"),
+    billRate: forgeVal("forge-rate"),
     jobTitle: j.title || "",
     clientName: j.clientName || "",
-    signerName: v.signerName || "Anura Connect",
+    clientId: j.clientId || null,
+    signerName: forgeVal("forge-sign-name") || v.signerName || profile.name || "Anura Connect",
+    signerTitle: forgeVal("forge-sign-title") || profile.title || "",
+    signerPhone: forgeVal("forge-sign-phone") || profile.phone || "",
+    resumeFileId: _forge.resumeConfirmed ? (_forge.resumeFileId || forgeVal("forge-resume")) : "",
+    confirmAnother: !!(d.existingDraft),
   };
 }
 
+function forgeMissingNow(f) {
+  var missing = [];
+  if (!(f.whyMe || "").trim()) missing.push("Why Me");
+  if (!(f.availability || "").trim()) missing.push("availability");
+  if (!(f.location || "").trim()) missing.push("location");
+  if (!(f.billRate || "").trim()) missing.push("bill rate");
+  if (!_forge.resumeConfirmed || !(_forge.resumeFileId || forgeVal("forge-resume"))) missing.push("resume");
+  if (!(f.to || "").trim()) missing.push("recipient");
+  return missing;
+}
+
 function forgeEmailText(f) {
-  var greeting = f.greetingName ? "Hi " + f.greetingName + "," : "Hi,";
+  var greet = (f.greetingName || "").trim().replace(/,+$/, "");
+  var greeting = greet ? "Hi " + greet + "," : "Hi,";
   var intro = f.candidateName ? "Sharing " + f.candidateName + (f.jobTitle ? " for the " + f.jobTitle + " role" : "") + (f.clientName ? " at " + f.clientName : "") + "." : "Sharing a consultant for your review.";
-  return [greeting, "", intro, "", "Candidate Name: " + (f.candidateName || ""), "", "Why Me:", f.whyMe || "", "", "Availability: " + (f.availability || ""), "Location: " + (f.location || ""), "Bill rate: " + (f.billRate || ""), "", "Happy to line up time if this looks like a fit.", "", f.signerName || "Anura Connect"].join("\n");
+  var lines = [greeting, "", intro, ""];
+  if ((f.whyMe || "").trim()) lines.push(f.whyMe, "");
+  lines.push("Availability: " + (f.availability || ""), "Location: " + (f.location || ""), "Bill rate: " + (f.billRate || ""), "");
+  var sig = [f.signerName, f.signerTitle, f.signerPhone].filter(function (x) { return x && String(x).trim(); });
+  lines.push(sig.length ? sig.join("\n") : "Anura Connect");
+  return lines.join("\n");
 }
 
 function forgePreview() {
   var el = document.getElementById("forge-preview");
-  if (!el) return;
   var f = forgeFields();
-  el.textContent = "Subject: " + (f.subject || "") + "\n\n" + forgeEmailText(f);
+  if (el) el.textContent = "Subject: " + (f.subject || "") + "\n\n" + forgeEmailText(f);
+  var miss = document.getElementById("forge-missing");
+  if (miss) {
+    var missing = forgeMissingNow(f);
+    miss.className = missing.length ? "fg-miss" : "fg-ok";
+    miss.textContent = missing.length ? "Missing: " + missing.join(", ") : "Nothing missing.";
+  }
+  forgeSyncCreate();
+}
+
+function forgeSyncCreate() {
+  var btn = document.getElementById("forge-create");
+  if (!btn) return;
+  var resumeId = _forge.resumeFileId || forgeVal("forge-resume");
+  btn.disabled = !_forge.resumeConfirmed || !resumeId;
+}
+
+function forgeResumeChanged() {
+  _forge.resumeConfirmed = false;
+  _forge.resumeFileId = forgeVal("forge-resume");
+  var note = document.getElementById("forge-resume-note");
+  if (note) note.textContent = "Selection changed. Confirm the résumé again before creating the draft.";
+  forgePreview();
+}
+
+function forgeConfirmResume() {
+  var id = forgeVal("forge-resume");
+  if (!id) {
+    _forge.resumeConfirmed = false;
+    _forge.resumeFileId = "";
+    var note = document.getElementById("forge-resume-note");
+    if (note) note.textContent = "Pick a PDF. No attachment cannot be confirmed for a client draft.";
+    forgePreview();
+    return;
+  }
+  _forge.resumeFileId = id;
+  _forge.resumeConfirmed = true;
+  var noteOk = document.getElementById("forge-resume-note");
+  if (noteOk) noteOk.textContent = "Résumé confirmed.";
+  forgePreview();
+}
+
+function forgeRenderHits(listId, hits, which) {
+  var box = document.getElementById(listId);
+  if (!box) return;
+  if (!hits || !hits.length) { box.style.display = "none"; box.innerHTML = ""; return; }
+  var h = "";
+  hits.forEach(function (ct, i) {
+    var label = (ct.name || ct.email) + (ct.company ? " · " + ct.company : (ct.occupation ? " · " + ct.occupation : "")) + " · " + ct.email;
+    h += '<button type="button" onmousedown="forgePickContact(\'' + which + '\',' + i + ')">' + esc(label) + '</button>';
+  });
+  box.innerHTML = h;
+  box.style.display = "block";
+}
+
+function forgeLocalHits(q) {
+  var contacts = (_forge.view && _forge.view.contacts) || _forge._contacts || [];
+  var needle = (q || "").trim().toLowerCase();
+  if (!needle) return contacts.slice(0, 8);
+  return contacts.filter(function (c) {
+    return ((c.name || "") + " " + (c.email || "") + " " + (c.company || "")).toLowerCase().indexOf(needle) >= 0;
+  }).slice(0, 8);
+}
+
+async function forgeSearchContacts(q) {
+  if (!q || q.trim().length < 2) return [];
+  try {
+    var r = await apiFetch("forge/contacts", { q: q.trim() });
+    return r.data || [];
+  } catch (e) { return []; }
+}
+
+var _forgeToTimer = null;
+function forgeToFocus() { forgeRenderHits("forge-to-list", forgeLocalHits(forgeVal("forge-to")), "to"); }
+function forgeToInput() {
+  var q = forgeVal("forge-to");
+  var hidden = document.getElementById("forge-greeting");
+  if (hidden && q.indexOf("@") >= 0) hidden.value = "";
+  clearTimeout(_forgeToTimer);
+  _forgeToTimer = setTimeout(async function () {
+    var hits = forgeLocalHits(q);
+    if (q.trim().length >= 2) {
+      var remote = await forgeSearchContacts(q);
+      remote.forEach(function (ct) {
+        if (!hits.some(function (h) { return (h.email || "").toLowerCase() === (ct.email || "").toLowerCase(); })) hits.push(ct);
+      });
+    }
+    _forge.toHits = hits;
+    forgeRenderHits("forge-to-list", hits, "to");
+    forgePreview();
+  }, 180);
+  forgePreview();
+}
+function forgeCcFocus() { forgeRenderHits("forge-cc-list", forgeLocalHits(forgeVal("forge-cc")), "cc"); }
+function forgeCcInput() {
+  var q = forgeVal("forge-cc");
+  clearTimeout(_forgeToTimer);
+  _forgeToTimer = setTimeout(async function () {
+    var hits = forgeLocalHits(q);
+    if (q.trim().length >= 2) {
+      var remote = await forgeSearchContacts(q);
+      remote.forEach(function (ct) {
+        if (!hits.some(function (h) { return (h.email || "").toLowerCase() === (ct.email || "").toLowerCase(); })) hits.push(ct);
+      });
+    }
+    _forge.ccHits = hits;
+    forgeRenderHits("forge-cc-list", hits, "cc");
+  }, 180);
+}
+function forgePickContact(which, index) {
+  var hits = which === "cc" ? _forge.ccHits : _forge.toHits;
+  var ct = hits[index];
+  if (!ct) return;
+  if (which === "cc") {
+    var cc = document.getElementById("forge-cc");
+    if (cc) cc.value = ct.email || "";
+    var ccList = document.getElementById("forge-cc-list");
+    if (ccList) ccList.style.display = "none";
+  } else {
+    var to = document.getElementById("forge-to");
+    if (to) to.value = ct.email || "";
+    var g = document.getElementById("forge-greeting");
+    if (g) g.value = ct.firstName || ((ct.name || "").split(" ")[0] || "");
+    var list = document.getElementById("forge-to-list");
+    if (list) list.style.display = "none";
+    var clientId = _forge.view && _forge.view.draft && _forge.view.draft.job && _forge.view.draft.job.clientId;
+    forgeRemember(clientId, ct);
+  }
+  forgePreview();
+}
+
+async function forgeSaveProfile() {
+  var body = {
+    name: forgeVal("forge-sign-name"),
+    title: forgeVal("forge-sign-title"),
+    phone: forgeVal("forge-sign-phone"),
+  };
+  forgeJsonSet("forge.profile", body);
+  try { await forgeSend("forge/profile", body, "PUT"); } catch (e) {}
+}
+
+function forgeCopyText() {
+  var f = forgeFields();
+  return "Subject: " + (f.subject || "") + "\n\n" + forgeEmailText(f);
 }
 
 async function forgeCopy() {
-  var f = forgeFields();
-  var text = "Subject: " + (f.subject || "") + "\n\n" + forgeEmailText(f);
   try {
-    await navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(forgeCopyText());
     if (typeof showToast === "function") showToast("Email copied");
   } catch (e) {
     if (typeof showToast === "function") showToast("Could not copy", "error");
   }
 }
 
+async function forgeSend(path, body, method) {
+  var res = await fetch("/api/" + path, {
+    method: method || "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  var json = {};
+  try { json = await res.json(); } catch (e) {}
+  if (!res.ok) {
+    var err = new Error(json.error || ("API " + res.status));
+    err.status = res.status;
+    err.body = json;
+    throw err;
+  }
+  return json;
+}
+
+function forgeShowBlock(result, err) {
+  var body = err.body || {};
+  var html = '<div class="fg-flag alert"><b>Draft blocked.</b>';
+  if (body.snippet) html += '<div style="margin-top:4px">Matched: ' + esc(body.snippet) + '</div>';
+  if (body.code === "bill_rate_mismatch") html += '<div style="margin-top:4px">Bullhorn has ' + esc(body.live || "") + (body.liveSource ? " (" + esc(body.liveSource) + ")" : "") + '. This draft shows ' + esc(body.displayed || "") + '.</div>';
+  html += '<div style="margin-top:4px">Edit the draft, then try again.</div></div>';
+  if (result) result.innerHTML = html;
+}
+
 async function forgeCreate() {
   if (!_forge.selected || _forge.busy) return;
+  if (!_forge.resumeConfirmed || !_forge.resumeFileId) return;
   var btn = document.getElementById("forge-create");
   var result = document.getElementById("forge-result");
+  var f = forgeFields();
+  var existing = _forge.view && _forge.view.draft && _forge.view.draft.existingDraft;
+  if (existing) {
+    var ok = typeof confirm === "function" ? confirm(existing.label + ". Create another draft?") : false;
+    if (!ok) return;
+    f.confirmAnother = true;
+  }
+  if (f.to && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.to)) {
+    if (result) result.innerHTML = '<div class="fg-flag alert">That recipient address does not look like an email.</div>';
+    return;
+  }
   _forge.busy = true;
   if (btn) { btn.disabled = true; btn.textContent = "Saving draft…"; }
   try {
-    var f = forgeFields();
-    var r = await apiFetch("forge/submissions/" + _forge.selected + "/draft", { method: "POST", body: f });
+    await forgeSaveProfile();
+    var clientId = f.clientId;
+    if (f.to) forgeRemember(clientId, { email: f.to, firstName: f.greetingName, name: f.greetingName });
+    var r = await forgeSend("forge/submissions/" + _forge.selected + "/draft", {
+      to: f.to,
+      cc: f.cc,
+      greetingName: f.greetingName,
+      mailbox: f.mailbox,
+      subject: f.subject,
+      candidateName: f.candidateName,
+      whyMe: f.whyMe,
+      availability: f.availability,
+      location: f.location,
+      billRate: f.billRate,
+      jobTitle: f.jobTitle,
+      clientName: f.clientName,
+      signerName: f.signerName,
+      signerTitle: f.signerTitle,
+      signerPhone: f.signerPhone,
+      resumeFileId: _forge.resumeFileId,
+      confirmAnother: !!f.confirmAnother,
+    });
     if (r.created) {
       var link = r.webLink ? '<div style="margin-top:8px"><a href="' + forgeAttr(r.webLink) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:700">Open draft in Outlook</a></div>' : "";
       if (result) result.innerHTML = '<div class="fg-flag" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">' + esc(r.instructions || "Draft saved.") + (r.attachNote ? " " + esc(r.attachNote) : "") + link + '</div>';
+      if (_forge.view && _forge.view.draft) {
+        _forge.view.draft.existingDraft = { label: "Draft created just now by you" };
+      }
       if (typeof showToast === "function") showToast("Outlook draft saved");
+      forgeLoadQueue();
     } else {
-      var copyNote = "The email is ready below. Copy it into Outlook if a draft was not saved.";
-      if (result) result.innerHTML = '<div class="fg-flag warn"><b>Draft was not saved in Outlook.</b><div style="margin-top:4px">' + esc(r.instructions || copyNote) + '</div></div>';
+      if (result) result.innerHTML = '<div class="fg-flag warn"><b>Draft was not saved in Outlook.</b><div style="margin-top:4px">' + esc(r.instructions || "Copy the email into Outlook.") + '</div></div>';
       if (typeof showToast === "function") showToast("Draft not saved — copy the email", "error");
     }
   } catch (e) {
-    if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.message) + '</div>';
+    if (e.body && (e.body.snippet || e.body.code === "bill_rate_mismatch" || e.body.code === "internal_leak")) forgeShowBlock(result, e);
+    else if (e.body && e.body.code === "duplicate_draft") {
+      if (_forge.view && _forge.view.draft && e.body.existingDraft) _forge.view.draft.existingDraft = e.body.existingDraft;
+      if (result) result.innerHTML = '<div class="fg-flag warn">' + esc((e.body.existingDraft && e.body.existingDraft.label) || e.body.error || e.message) + ' Use Create another to make a second draft.</div>';
+    } else if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.message) + '</div>';
     if (typeof showToast === "function") showToast(e.message, "error");
   } finally {
     _forge.busy = false;
-    if (btn) { btn.disabled = false; btn.textContent = "Create Outlook draft"; }
+    if (btn) {
+      var again = _forge.view && _forge.view.draft && _forge.view.draft.existingDraft;
+      btn.textContent = again ? "Create another" : "Create Outlook draft";
+      forgeSyncCreate();
+    }
+  }
+}
+
+async function forgeMarkSubmitted() {
+  if (!_forge.selected) return;
+  var existing = _forge.view && _forge.view.draft && _forge.view.draft.existingDraft;
+  if (!existing) {
+    var result = document.getElementById("forge-result");
+    if (result) result.innerHTML = '<div class="fg-flag warn">Create an Outlook draft before marking this client submitted.</div>';
+    return;
+  }
+  var ok = typeof confirm === "function" ? confirm("Mark this submission client submitted in Bullhorn? It will leave the queue.") : false;
+  if (!ok) return;
+  try {
+    await forgeSend("forge/submissions/" + _forge.selected + "/client-submitted", { confirm: true });
+    if (typeof showToast === "function") showToast("Marked client submitted");
+    _forge.selected = null;
+    _forge.view = null;
+    var main = document.getElementById("forge-main");
+    if (main) main.innerHTML = '<div class="fg-card">Marked client submitted. The row has left the queue.</div>';
+    forgeLoadQueue();
+  } catch (e) {
+    var box = document.getElementById("forge-result");
+    if (box) box.innerHTML = '<div class="fg-flag alert">' + esc(e.message) + '</div>';
+  }
+}
+
+async function forgeDismiss() {
+  if (!_forge.selected) return;
+  var reason = forgeVal("forge-dismiss-reason") || "stale";
+  var label = reason === "withdrawn" ? "withdrawn" : reason === "job_on_hold" ? "job on hold" : "stale";
+  var ok = typeof confirm === "function" ? confirm("Not sending (" + label + ")? The row will hide and a note will be written in Bullhorn.") : false;
+  if (!ok) return;
+  try {
+    await forgeSend("forge/submissions/" + _forge.selected + "/dismiss", { reason: reason });
+    if (typeof showToast === "function") showToast("Hidden from the queue");
+    _forge.selected = null;
+    _forge.view = null;
+    var main = document.getElementById("forge-main");
+    if (main) main.innerHTML = '<div class="fg-card">Not sending. The row is hidden.</div>';
+    forgeLoadQueue();
+  } catch (e) {
+    var box = document.getElementById("forge-result");
+    if (box) box.innerHTML = '<div class="fg-flag alert">' + esc(e.message) + '</div>';
   }
 }

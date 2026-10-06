@@ -11704,7 +11704,7 @@ app.get("/", (req, res) => {
 require("./events")(app, { db: db, bhFetch: bhFetch, bhWrite: bhWriteAsService });
 require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetchAll: bhFetchAll });
 require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
-require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser });
+require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate });
 
 app.use(function (err, req, res, next) {
   console.error("[Express] Unhandled route error:", err.message);

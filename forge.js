@@ -2,29 +2,26 @@
  * Submittal Forge — draft a client submittal from an Internally Submitted row.
  *
  * Reads the Railway Postgres sync (same tables as the ready-to-submit digest).
- * Polishes Why Me with Anthropic when ANTHROPIC_API_KEY is set (capture.js pattern).
+ * Polishes a whitelisted Why Me with Anthropic when ANTHROPIC_API_KEY is set.
  * Creates an Outlook *draft* via Microsoft Graph. Never calls sendMail.
  *
- * ResumeKiln (https://resumetool.anuraconnect.com) is a signed-in upload UI.
- * Probed 2026-10-06: /healthz is open; /, /upload/, /dashboard/, /fit-check/
- * redirect to login; /api/resume, /api/resumes, /api/pdf, /export, /download,
- * /profiles, /resumes all 404. No candidate-id PDF API.
- * TODO: add an authenticated export on ResumeKiln and set RESUME_TOOL_API_URL
- * to a URL template containing {candidateId}. Optional RESUME_TOOL_TOKEN is sent
- * as a Bearer token. Until then Forge still creates the draft, without a PDF.
+ * Résumés come from Bullhorn Candidate file attachments (PDFs). The client
+ * email may only use Why Me, Availability, Location, and Bill Rate.
  */
 "use strict";
 
-const RESUME_BASE = (process.env.RESUME_TOOL_BASE_URL || "https://resumetool.anuraconnect.com").replace(/\/$/, "");
-const RESUME_TODO = "ResumeKiln (resumetool.anuraconnect.com) has no callable PDF API yet. " +
-  "The site is a signed-in uploader (/, /upload/, /dashboard/, /fit-check/); probed API paths 404. " +
-  "TODO: expose an authenticated export that returns application/pdf named \"Anura Connect {Name} Resume.pdf\" " +
-  "and set RESUME_TOOL_API_URL (use {candidateId} in the URL). Optional RESUME_TOOL_TOKEN. " +
-  "Download the branded PDF in ResumeKiln and attach it before sending. Forge does not send mail.";
-
 const MODULES = [
-  ["HB", /\bHB\b|healthy\s*planet/i],
-  ["AMB", /\bAMB\b|\bambulatory\b/i],
+  ["SBO", /\bSBO\b/i],
+  ["PB", /\bPB\b/i],
+  ["Resolute", /\bresolute\b/i],
+  ["Tapestry", /\btapestry\b/i],
+  ["Caboodle", /\bcaboodle\b/i],
+  ["Healthy Planet", /\bhealthy\s*planet\b/i],
+  ["HB", /\bHB\b/i],
+  ["Ambulatory", /\bambulatory\b/i],
+  ["AMB", /\bAMB\b/i],
+  ["ECSA/Technical", /\bECSA\b|\btechnical\b/i],
+  ["Security", /\bsecurity\b/i],
   ["Beaker", /\bbeaker\b/i],
   ["Willow", /\bwillow\b/i],
   ["Cadence", /\bcadence\b/i],
@@ -48,21 +45,45 @@ const MODULES = [
   ["HIM", /\bHIM\b/i],
 ];
 
+/** Bullhorn's client-facing stage after Internally Submitted. Matches the dashboard pipeline. */
+const CLIENT_SUBMITTED_STATUS = "Client Submission";
+
+const DISMISS_REASONS = {
+  stale: { label: "stale", status: "" },
+  withdrawn: { label: "withdrawn", status: "Withdrew" },
+  job_on_hold: { label: "job on hold", status: "On Hold" },
+};
+
+const LABEL_WORD = "why\\s*me|bill\\s*rate|pay\\s*rate|availability|available|avail\\.?|location|loc\\.?|candidate\\s+name|rate|name";
+const INLINE_RE = new RegExp("\\b(" + LABEL_WORD + ")\\b\\s*[:\\-\\u2013\\u2014]\\s*", "gi");
+const HEADER_RE = new RegExp("^(" + LABEL_WORD + ")\\s*[:\\-\\u2013\\u2014]?\\s*$", "i");
+
 const BUNDLE_FROM = `
   FROM submissions s
   LEFT JOIN jobs j ON j.id = s.job_id
   LEFT JOIN candidates cd ON cd.id = s.candidate_id
+  LEFT JOIN corporate_users ou ON ou.id = j.owner_id
 `;
 
 const BUNDLE_SELECT = `
-  SELECT s.id, s.candidate_id, s.candidate_name, s.job_id, s.job_title, s.client_id, s.client_name,
-         s.status, s.date_added, s.sending_user, s.comments, s.pay_rate, s.client_bill_rate,
+  SELECT s.id, s.candidate_id, s.candidate_name, s.job_id, s.job_title,
+         NULLIF(s.client_id, 0) AS sub_client_id,
+         NULLIF(s.client_name, '') AS sub_client_name,
+         j.client_id AS job_client_id,
+         j.client_name AS job_client_name,
+         s.status, s.date_added, s.sending_user, s.sending_user_id, s.comments, s.pay_rate, s.client_bill_rate,
          s.raw_json->>'customText10' AS sub_custom_bill,
          s.raw_json->>'customText12' AS sub_custom_avail,
          j.title AS job_title_live, j.status AS job_status, j.client_bill_rate AS job_bill_rate,
          j.pay_rate AS job_pay_rate, LEFT(COALESCE(j.description, j.public_description, ''), 2000) AS job_description,
          j.address_city AS job_city, j.address_state AS job_state, j.on_site, j.owner_name AS job_owner,
+         j.owner_id AS job_owner_id, ou.email AS job_owner_email, ou.first_name AS job_owner_first_name,
          j.custom_text1 AS job_rate_notes, j.employment_type, j.skill_list AS job_skills,
+         j.raw_json->'clientContact'->>'id' AS job_contact_id,
+         j.raw_json->'clientContact'->>'firstName' AS job_contact_first,
+         j.raw_json->'clientContact'->>'lastName' AS job_contact_last,
+         j.raw_json->'clientContact'->>'name' AS job_contact_name,
+         j.raw_json->'clientContact'->>'email' AS job_contact_email,
          cd.occupation, cd.custom_text1 AS primary_cert, cd.custom_text2 AS secondary_cert,
          cd.custom_text5 AS epic_role, cd.custom_text6 AS grade,
          cd.custom_text8 AS cand_city_custom, cd.custom_text9 AS cand_state_custom,
@@ -71,11 +92,36 @@ const BUNDLE_SELECT = `
          LEFT(cd.description, 2000) AS cand_description, cd.will_relocate
 ` + BUNDLE_FROM;
 
+const MAX_RESUME_BYTES = 3 * 1024 * 1024;
+
 function esc(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-function stripHtml(s) {
-  return String(s || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+function decodeEntities(s) {
+  return String(s)
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#160;/g, " ")
+    .replace(/&#x0*a0;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, function (_, n) { return String.fromCharCode(parseInt(n, 10)); })
+    .replace(/&#x([0-9a-f]+);/gi, function (_, n) { return String.fromCharCode(parseInt(n, 16)); });
+}
+/** Comments are HTML. Tags become whitespace or newlines; entities (including &nbsp;) decode to text. */
+function htmlToPlain(s) {
+  let t = String(s || "");
+  t = decodeEntities(decodeEntities(t));
+  t = t.replace(/<\s*br\s*\/?\s*>/gi, "\n");
+  t = t.replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n");
+  t = t.replace(/<\s*(p|div|li|tr|h[1-6])\b[^>]*>/gi, "\n");
+  t = t.replace(/<[^>]+>/g, "");
+  t = decodeEntities(t);
+  t = t.replace(/\u00a0/g, " ");
+  t = t.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  return t;
 }
 function clip(s, n) {
   const t = String(s || "").trim();
@@ -98,20 +144,47 @@ function formatRate(v) {
   if (v == null || v === "") return "";
   const s = String(v).trim();
   if (!s) return "";
-  if (/[a-z]/i.test(s)) return s;
+  if (/[a-z]/i.test(s) && /[$/]/.test(s)) return s;
   const n = moneyNumber(s);
-  if (n == null) return s;
+  if (n == null) return "";
   const rounded = Math.round(n * 100) / 100;
   const shown = Number.isInteger(rounded) ? String(rounded) : String(rounded);
   if (rounded >= 1000) return "$" + rounded.toLocaleString("en-US");
   return "$" + shown + "/hr";
 }
-function fmtDate(ms) {
-  const n = Number(ms);
-  if (!n) return "";
-  const d = new Date(n);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+function cleanBill(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const m = s.match(/\$?\s*\d[\d,]*(?:\.\d+)?(?:\s*\/\s*hr|\s*per\s*hour|\s*hr)?/i);
+  if (!m) return "";
+  return formatRate(m[0].trim());
+}
+function positiveMoney(v) {
+  const n = moneyNumber(v);
+  if (n == null || !(n > 0)) return null;
+  return n;
+}
+function firstNameOf(full) {
+  const s = String(full || "").trim();
+  if (!s) return "";
+  return s.split(/\s+/)[0];
+}
+function personName(user) {
+  if (!user) return "";
+  return String(user.name || ((user.firstName || "") + " " + (user.lastName || "")).trim() || "").trim();
+}
+function samePerson(user, ownerId, ownerName, ownerEmail) {
+  if (!user) return false;
+  const hasUserId = user.id != null && user.id !== "";
+  const hasOwnerId = ownerId != null && ownerId !== "";
+  if (hasUserId && hasOwnerId) return Number(user.id) === Number(ownerId);
+  const ue = String(user.email || "").trim().toLowerCase();
+  const oe = String(ownerEmail || "").trim().toLowerCase();
+  if (ue && oe && ue === oe) return true;
+  const un = personName(user).toLowerCase();
+  const on = String(ownerName || "").trim().toLowerCase();
+  if (un && on && un === on) return true;
+  return false;
 }
 function daysSince(ms, now) {
   const n = Number(ms);
@@ -124,59 +197,110 @@ function slaFor(days) {
   if (days < 2) return "yellow";
   return "red";
 }
-
-const COMMENT_LABELS = [
-  ["whyMe", /^why\s*me\b/i],
-  ["availability", /^(?:availability|available|avail\.?)\b/i],
-  ["location", /^(?:location|loc\.?)\b/i],
-  ["billRate", /^(?:bill\s*rate|rate)\b/i],
-  ["name", /^(?:candidate\s+name|name)\b/i],
-];
-
-/** A comments line is a section header when it is only the label, or label plus a colon.
- *  "Available immediately" stays prose. Matches the JobSubmission comments hint. */
-function matchCommentHeader(line) {
-  const trimmed = String(line || "").trim();
-  for (let i = 0; i < COMMENT_LABELS.length; i++) {
-    const m = trimmed.match(COMMENT_LABELS[i][1]);
-    if (!m) continue;
-    const rest = trimmed.slice(m[0].length);
-    const sep = rest.match(/^\s*([:\-–—])\s*([\s\S]*)$/);
-    if (sep) return { key: COMMENT_LABELS[i][0], value: sep[2].trim() };
-    if (!rest.trim()) return { key: COMMENT_LABELS[i][0], value: "" };
-    return null;
-  }
+function utcParts(ms) {
+  const d = new Date(Number(ms));
+  if (isNaN(d.getTime())) return null;
+  return { y: d.getUTCFullYear(), m: d.getUTCMonth(), day: d.getUTCDate() };
+}
+function fmtUtcDate(ms) {
+  const p = utcParts(ms);
+  if (!p) return "";
+  return new Date(Date.UTC(p.y, p.m, p.day)).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+function formatStamp(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+function isEmail(s) {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(s || "").trim());
+}
+function labelKey(word) {
+  const w = String(word || "").toLowerCase().replace(/\s+/g, " ").replace(/\.$/, "").trim();
+  if (w === "why me") return "whyMe";
+  if (w === "availability" || w === "available" || w === "avail") return "availability";
+  if (w === "location" || w === "loc") return "location";
+  if (w === "bill rate" || w === "rate") return "billRate";
+  if (w === "pay rate") return "payRate";
+  if (w === "candidate name" || w === "name") return "name";
   return null;
 }
+function matchStandaloneHeader(line) {
+  const m = String(line || "").trim().match(HEADER_RE);
+  if (!m) return null;
+  const key = labelKey(m[1]);
+  return key ? { key: key } : null;
+}
+function splitInlineLabels(line) {
+  const re = new RegExp(INLINE_RE.source, "gi");
+  const matches = [];
+  let m;
+  while ((m = re.exec(line))) {
+    const key = labelKey(m[1]);
+    if (!key) continue;
+    matches.push({ key: key, index: m.index, end: re.lastIndex });
+  }
+  if (!matches.length) return null;
+  const parts = [];
+  if (matches[0].index > 0) {
+    const lead = line.slice(0, matches[0].index).trim();
+    if (lead) parts.push({ key: null, text: lead });
+  }
+  matches.forEach(function (match, i) {
+    const next = matches[i + 1];
+    const text = line.slice(match.end, next ? next.index : line.length).trim();
+    parts.push({ key: match.key, text: text });
+  });
+  return parts;
+}
 
-/** Split Bullhorn submission comments into Name / Why Me / Availability / Location / Rate. */
+/**
+ * Split Bullhorn submission comments into labeled sections.
+ * Preamble and Pay Rate (plus anything after Pay Rate until the next label) are not client fields.
+ */
 function parseSubmissionComments(text) {
   const empty = { name: "", whyMe: "", availability: "", location: "", billRate: "" };
-  if (!text || !String(text).trim()) return empty;
-  const lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const plain = htmlToPlain(text);
+  if (!plain.trim()) return empty;
+  const lines = plain.split("\n");
   const sections = [];
   let current = { key: "preamble", lines: [] };
+  function push() { sections.push(current); }
   lines.forEach(function (line) {
-    const header = matchCommentHeader(line);
+    const header = matchStandaloneHeader(line);
     if (header) {
-      sections.push(current);
-      current = { key: header.key, lines: header.value ? [header.value] : [] };
-    } else {
-      current.lines.push(line);
+      push();
+      current = { key: header.key, lines: [] };
+      return;
     }
+    const parts = splitInlineLabels(line);
+    if (!parts) {
+      current.lines.push(line);
+      return;
+    }
+    parts.forEach(function (part) {
+      if (!part.key) {
+        if (part.text) current.lines.push(part.text);
+        return;
+      }
+      push();
+      current = { key: part.key, lines: part.text ? [part.text] : [] };
+    });
   });
-  sections.push(current);
+  push();
   const joined = {};
   sections.forEach(function (s) {
     const t = s.lines.join("\n").trim();
     if (!t) return;
+    if (s.key === "payRate") return;
     joined[s.key] = joined[s.key] ? joined[s.key] + "\n" + t : t;
   });
-  if (joined.preamble) {
+  if (!joined.name && joined.preamble) {
     const plines = joined.preamble.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
-    if (!joined.name && plines.length && plines[0].length <= 80 && plines[0].indexOf(".") < 0) joined.name = plines.shift();
-    const rest = plines.join("\n").trim();
-    if (rest && !joined.whyMe) joined.whyMe = rest;
+    if (plines.length && plines[0].length <= 80 && plines[0].indexOf(".") < 0 && plines[0].split(/\s+/).length <= 6) {
+      joined.name = plines[0];
+    }
   }
   return {
     name: joined.name || "",
@@ -189,38 +313,45 @@ function parseSubmissionComments(text) {
 
 function pickBillRate(parts) {
   const flags = [];
-  const comment = (parts.commentRate || "").trim();
+  const commentRaw = (parts.commentRate || "").trim();
+  const comment = commentRaw ? cleanBill(commentRaw) : "";
   const pay = parts.payRate || parts.jobPay || "";
-  const structured = [parts.customText10, parts.submissionBill, parts.jobBill]
-    .map(function (x) { return x == null ? "" : String(x).trim(); })
-    .filter(function (x) { return x && moneyNumber(x) != null && moneyNumber(x) > 0; });
-  const note = (parts.rateNotes || "").trim();
-  if (note && note.length <= 40 && /\$|\/hr|per hour|bill/i.test(note) && moneyNumber(note) > 0) structured.push(note);
+  function consider(value, source) {
+    const n = positiveMoney(value);
+    if (n == null) return null;
+    if (pay && sameMoney(value, pay)) return null;
+    return { billRate: formatRate(value), flags: flags, source: source, amount: n };
+  }
+  const submission = consider(parts.customText10, "from submission") || consider(parts.submissionBill, "from submission");
+  const job = consider(parts.jobBill, "from job") || consider(parts.rateNotes, "from job");
   function annualFlag(text) {
     const n = moneyNumber(text);
-    if (n != null && n >= 1000 && !/[a-z]/i.test(String(text))) {
+    if (n != null && n >= 1000 && !/[a-z]/i.test(String(text).replace(/hr/ig, ""))) {
       flags.push({ level: "warn", code: "rate_scale", message: "This figure is over $1,000. Confirm it is an hourly bill rate before sending." });
     }
   }
   if (comment) {
     const commentIsPay = pay && sameMoney(comment, pay);
-    const knownBill = structured.find(function (s) { return !sameMoney(s, pay); });
-    if (commentIsPay && knownBill && !sameMoney(comment, knownBill)) {
-      flags.push({ level: "warn", code: "pay_vs_bill", message: "The rate in the submission comments matches the pay rate. The draft uses the bill rate on the job or submission instead." });
-      annualFlag(knownBill);
-      return { billRate: formatRate(knownBill), flags: flags, source: "structured" };
+    if (commentIsPay && (submission || job)) {
+      const known = submission || job;
+      flags.push({ level: "warn", code: "pay_vs_bill", message: "The rate in the submission comments matches the pay rate. The draft uses the bill rate on the " + (known.source === "from job" ? "job" : "submission") + " instead." });
+      annualFlag(known.billRate);
+      return known;
     }
-    if (commentIsPay && !knownBill) {
+    if (commentIsPay) {
       flags.push({ level: "alert", code: "pay_vs_bill", message: "Only a pay rate is on file (" + formatRate(pay) + "). It was left out of the draft so it is not sent to the client." });
       return { billRate: "", flags: flags, source: "withheld_pay" };
     }
     annualFlag(comment);
-    return { billRate: formatRate(comment), flags: flags, source: "comments" };
+    return { billRate: comment, flags: flags, source: "from comments" };
   }
-  const bill = structured.find(function (s) { return !(pay && sameMoney(s, pay)); }) || "";
-  if (bill) {
-    annualFlag(bill);
-    return { billRate: formatRate(bill), flags: flags, source: "structured" };
+  if (submission) {
+    annualFlag(submission.billRate);
+    return submission;
+  }
+  if (job) {
+    annualFlag(job.billRate);
+    return job;
   }
   if (pay && moneyNumber(pay)) {
     flags.push({ level: "alert", code: "bill_rate_missing", message: "No bill rate on the submission or job. Pay rate is " + formatRate(pay) + " and was not put in the draft." });
@@ -230,44 +361,49 @@ function pickBillRate(parts) {
   return { billRate: "", flags: flags, source: "missing" };
 }
 
+function jobIsRemote(parts) {
+  return /remote/i.test(parts.onSite || "") || /remote/i.test(parts.jobTitle || "") || /remote/i.test(parts.employmentType || "");
+}
 function pickLocation(parts) {
-  if (parts.commentLocation && String(parts.commentLocation).trim()) return String(parts.commentLocation).trim();
-  const city = parts.candCity || parts.candCityCustom || "";
-  const state = parts.candState || parts.candStateCustom || "";
-  const base = [city, state].filter(Boolean).join(", ");
-  const jobLoc = [parts.jobCity, parts.jobState].filter(Boolean).join(", ");
-  const remote = /remote/i.test(parts.onSite || "") || /remote/i.test(parts.jobTitle || "");
-  if (remote && base) return "Remote · based in " + base;
-  if (remote) return "Remote";
-  if (base && jobLoc && base.toLowerCase() !== jobLoc.toLowerCase()) return base + " (role in " + jobLoc + ")";
-  return base || jobLoc || "";
+  const flags = [];
+  let loc = "";
+  if (parts.commentLocation && String(parts.commentLocation).trim()) loc = String(parts.commentLocation).trim();
+  else {
+    const city = parts.candCity || parts.candCityCustom || "";
+    const state = parts.candState || parts.candStateCustom || "";
+    loc = [city, state].filter(Boolean).join(", ");
+  }
+  const remote = jobIsRemote(parts);
+  if (remote && loc && !/remote/i.test(loc)) loc = loc + " · Remote";
+  else if (remote && !loc) loc = "Remote";
+  const geo = loc.replace(/remote/ig, "").replace(/[·,]/g, " ").replace(/\s+/g, " ").trim();
+  if (/^[A-Za-z]{2}$/.test(geo)) {
+    flags.push({ level: "warn", code: "location_state", message: "Location is only a state code. Add a city before sending." });
+  }
+  return { text: loc, flags: flags };
 }
 
 function pickAvailability(parts, now) {
-  if (parts.commentAvail && String(parts.commentAvail).trim()) return { text: String(parts.commentAvail).trim(), fromField: false };
-  if (parts.customAvail && String(parts.customAvail).trim()) return { text: String(parts.customAvail).trim(), fromField: false };
+  if (parts.commentAvail && String(parts.commentAvail).trim()) return { text: String(parts.commentAvail).trim(), fromField: false, passed: false };
+  if (parts.customAvail && String(parts.customAvail).trim()) return { text: String(parts.customAvail).trim(), fromField: false, passed: false };
   if (parts.dateAvailable) {
-    const when = fmtDate(parts.dateAvailable);
-    const daysAgo = daysSince(parts.dateAvailable, now);
-    const text = when ? "Available " + when : "";
-    return { text: text, fromField: true, daysAgo: daysAgo };
+    const when = utcParts(parts.dateAvailable);
+    const today = utcParts(now || Date.now());
+    if (when && today) {
+      const a = Date.UTC(when.y, when.m, when.day);
+      const b = Date.UTC(today.y, today.m, today.day);
+      if (a <= b) return { text: "Immediately", fromField: true, passed: true };
+    }
+    return { text: fmtUtcDate(parts.dateAvailable), fromField: true, passed: false };
   }
-  return { text: "", fromField: false, daysAgo: null };
+  return { text: "", fromField: false, passed: false };
 }
 
+/** Why Me is the labeled section only. No preamble, no candidate description. */
 function templateWhyMe(parts) {
   const comment = (parts.commentWhy || "").trim();
-  if (comment.length >= 40) return { text: comment, source: "comments" };
-  const who = parts.name || "This consultant";
-  const roleRaw = (parts.occupation || parts.epicRole || "consultant").trim();
-  const role = roleRaw.replace(/^epic\s+/i, "");
-  const cert = parts.primaryCert ? " (" + parts.primaryCert + ")" : "";
-  const job = parts.jobTitle ? " for the " + parts.jobTitle + " role" : "";
-  const client = parts.clientName ? " at " + parts.clientName : "";
-  const bits = [who + " is an Epic " + role + cert + ", submitted" + job + client + "."];
-  if (comment) bits.push(comment);
-  else if (parts.candDescription) bits.push(clip(stripHtml(parts.candDescription), 700));
-  return { text: bits.filter(Boolean).join("\n\n"), source: comment ? "comments" : "template" };
+  if (comment) return { text: comment, source: "comments" };
+  return { text: "", source: "missing" };
 }
 
 function detectModule(text) {
@@ -277,84 +413,70 @@ function detectModule(text) {
   }
   return "";
 }
-
-function subjectFor(jobTitle, certs) {
-  const fromJob = detectModule(jobTitle || "");
+function cleanJobTitle(title) {
+  return String(title || "").replace(/\s+/g, " ").replace(/\s+[|–—-]\s*$/, "").trim();
+}
+/** Subject comes from the job title, then job skills. Candidate certifications are ignored. */
+function subjectFor(jobTitle, jobSkills, candidateName) {
+  const fromJob = detectModule(jobTitle || "") || detectModule(jobSkills || "");
   if (fromJob) return fromJob + " Consultant Resume";
-  const fromCert = detectModule(certs || "");
-  if (fromCert) return fromCert + " Consultant Resume";
+  const title = cleanJobTitle(jobTitle);
+  const who = String(candidateName || "").trim();
+  if (title && who) return title + " \u2013 " + who;
+  if (title) return title;
   return "Consultant Resume";
 }
 
-function resumeFilename(name) {
-  const clean = String(name || "Consultant").replace(/\s+/g, " ").trim() || "Consultant";
-  return "Anura Connect " + clean + " Resume.pdf";
+function resolveClient(row) {
+  const subName = String(row.sub_client_name != null ? row.sub_client_name : row.client_name || "").trim();
+  const jobName = String(row.job_client_name || "").trim();
+  const subId = row.sub_client_id != null ? row.sub_client_id : row.client_id;
+  const id = (subId || row.job_client_id || null);
+  return {
+    clientId: id ? Number(id) : null,
+    clientName: subName || jobName || "",
+  };
 }
 
-function scoreFit(input, now) {
-  const flags = (input.flags || []).slice();
-  let score = 40;
-  const certBlob = [input.primaryCert, input.secondaryCert, input.epicRole, input.occupation].filter(Boolean).join(" ");
-  const jobBlob = [input.jobTitle, input.jobDescription, input.jobSkills].filter(Boolean).join(" ");
-  const moduleName = detectModule(input.jobTitle || "") || detectModule(jobBlob);
-  const moduleRe = moduleName ? new RegExp(moduleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
-  const certHit = !!(moduleName && certBlob && moduleRe.test(certBlob));
-  if (certHit) {
-    score += 25;
-  } else if (moduleName && certBlob) {
-    score -= 8;
-    flags.push({ level: "warn", code: "cert", message: "The role looks like " + moduleName + " and the candidate certs do not name it." });
-  } else if (!certBlob.trim()) {
-    flags.push({ level: "warn", code: "cert_missing", message: "No primary certification on the candidate." });
-  } else {
-    score += 8;
+function normalizeFileName(name) {
+  return String(name || "").toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function isPdfFile(file) {
+  if (!file) return false;
+  const name = String(file.name || "");
+  const ext = String(file.fileExtension || "").replace(/^\./, "").toLowerCase();
+  const ct = String(file.contentType || "").toLowerCase();
+  if (ext === "pdf") return true;
+  if (/\.pdf$/i.test(name)) return true;
+  if (ct.indexOf("pdf") >= 0) return true;
+  return false;
+}
+/** Newest PDF whose name contains the client, else newest PDF starting "anura connect", else none. */
+function pickResumeFile(files, clientName) {
+  const pdfs = (files || []).filter(isPdfFile).slice().sort(function (a, b) {
+    return Number(b.dateAdded || 0) - Number(a.dateAdded || 0);
+  });
+  const client = normalizeFileName(clientName);
+  if (client) {
+    const hit = pdfs.filter(function (f) { return normalizeFileName(f.name).indexOf(client) >= 0; })[0];
+    if (hit) return hit;
   }
-  if (!input.location) {
-    score -= 5;
-    flags.push({ level: "warn", code: "location", message: "Location is blank." });
-  } else {
-    score += 10;
-    const remote = /remote/i.test(input.location);
-    const candState = (input.candState || input.candStateCustom || "").trim().toLowerCase();
-    const jobState = (input.jobState || "").trim().toLowerCase();
-    if (!remote && candState && jobState && candState !== jobState && !input.willRelocate) {
-      score -= 8;
-      flags.push({ level: "warn", code: "location_mismatch", message: "Candidate is in " + (input.candState || input.candStateCustom) + " and the role is in " + input.jobState + "." });
-    }
-  }
-  if (!input.availability) {
-    score -= 10;
-    flags.push({ level: "warn", code: "availability", message: "Availability is blank." });
-  } else {
-    score += 10;
-  }
-  if (input.dateAvailable) {
-    const age = daysSince(input.dateAvailable, now);
-    if (age != null && age > 14) {
-      score -= 12;
-      flags.push({ level: "alert", code: "availability_stale", message: "Available date is " + age + " days ago. Confirm it is still current." });
-    }
-  } else if (input.candModified && daysSince(input.candModified, now) > 14) {
-    flags.push({ level: "warn", code: "availability_freshness", message: "Candidate record has not been updated in 14+ days. Confirm availability." });
-  }
-  if (!input.billRate) score -= 15;
-  else score += 15;
-  const why = (input.whyMe || "").trim();
-  if (why.length < 40) {
-    score -= 8;
-    flags.push({ level: "warn", code: "why_me", message: "Why Me is thin. Add the Epic fit before sending." });
-  } else score += 10;
-  const waiting = input.daysWaiting;
-  if (waiting != null && waiting >= 2) flags.push({ level: "alert", code: "sla", message: "Internally submitted " + waiting + " days ago (past the 48-hour mark)." });
-  else if (waiting != null && waiting >= 1) flags.push({ level: "warn", code: "sla", message: "Internally submitted " + waiting + " day ago. Aim to send inside 48 hours." });
-  score = Math.max(0, Math.min(100, score));
-  return { score: score, flags: flags };
+  const branded = pdfs.filter(function (f) { return normalizeFileName(f.name).indexOf("anura connect") === 0; })[0];
+  return branded || null;
+}
+
+function signatureLines(fields) {
+  const name = String(fields.signerName || "").trim();
+  const title = String(fields.signerTitle || "").trim();
+  const phone = String(fields.signerPhone || "").trim();
+  const lines = [name, title, phone].filter(Boolean);
+  return lines.length ? lines.join("\n") : "Anura Connect";
 }
 
 function composeEmail(fields) {
   const name = (fields.candidateName || "").trim();
-  const greeting = fields.greetingName ? "Hi " + String(fields.greetingName).trim() + "," : "Hi,";
-  const signer = (fields.signerName || "Anura Connect").trim() || "Anura Connect";
+  const greet = String(fields.greetingName || "").trim().replace(/,+$/, "");
+  const greeting = greet ? "Hi " + greet + "," : "Hi,";
   const roleBit = fields.jobTitle ? " for the " + fields.jobTitle + " role" : "";
   const clientBit = fields.clientName ? " at " + fields.clientName : "";
   const intro = name ? "Sharing " + name + roleBit + clientBit + "." : "Sharing a consultant for your review.";
@@ -362,34 +484,90 @@ function composeEmail(fields) {
   const availability = (fields.availability || "").trim();
   const location = (fields.location || "").trim();
   const bill = (fields.billRate || "").trim();
-  const text = [
-    greeting, "", intro, "",
-    "Candidate Name: " + name, "",
-    "Why Me:", why, "",
-    "Availability: " + availability,
-    "Location: " + location,
-    "Bill rate: " + bill, "",
-    "Happy to line up time if this looks like a fit.", "",
-    signer,
-  ].join("\n");
+  const sig = signatureLines(fields);
+  const lines = [greeting, "", intro, ""];
+  if (why) lines.push(why, "");
+  lines.push("Availability: " + availability, "Location: " + location, "Bill rate: " + bill, "", sig);
+  const text = lines.join("\n");
   const whyHtml = why
     ? why.split(/\n{2,}/).map(function (p) { return "<p style=\"margin:0 0 10px\">" + esc(p).replace(/\n/g, "<br>") + "</p>"; }).join("")
-    : "<p style=\"margin:0 0 10px\"></p>";
+    : "";
   const html = [
     "<div style=\"font-family:Calibri,'Segoe UI',sans-serif;font-size:14px;color:#1a1a1a;line-height:1.45\">",
     "<p style=\"margin:0 0 12px\">" + esc(greeting) + "</p>",
     "<p style=\"margin:0 0 12px\">" + esc(intro) + "</p>",
-    "<p style=\"margin:0 0 12px\"><b>Candidate Name:</b> " + esc(name) + "</p>",
-    "<p style=\"margin:0 0 4px\"><b>Why Me</b></p>",
     whyHtml,
     "<p style=\"margin:0 0 6px\"><b>Availability:</b> " + esc(availability) + "</p>",
     "<p style=\"margin:0 0 6px\"><b>Location:</b> " + esc(location) + "</p>",
     "<p style=\"margin:0 0 12px\"><b>Bill rate:</b> " + esc(bill) + "</p>",
-    "<p style=\"margin:0 0 12px\">Happy to line up time if this looks like a fit.</p>",
-    "<p style=\"margin:0\">" + esc(signer) + "</p>",
+    "<p style=\"margin:0\">" + esc(sig).replace(/\n/g, "<br>") + "</p>",
     "</div>",
   ].join("");
   return { text: text, html: html, subject: fields.subject || "Consultant Resume" };
+}
+
+function snippetAround(text, index, length) {
+  const start = Math.max(0, index - 28);
+  const end = Math.min(text.length, index + length + 28);
+  let s = text.slice(start, end).replace(/\s+/g, " ").trim();
+  if (start > 0) s = "\u2026" + s;
+  if (end < text.length) s = s + "\u2026";
+  return s;
+}
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+/**
+ * Block client copy that leaks pay, employment type, references, or a greeting to an internal user.
+ * Returns { snippet, rule } or null.
+ */
+function findInternalLeak(parts, internalFirstNames) {
+  const blob = (parts || []).map(function (p) { return p == null ? "" : String(p); }).join("\n");
+  if (!blob.trim()) return null;
+  const rules = [
+    { rule: "pay rate", re: /pay\s*rate/i },
+    { rule: "pay:", re: /\bpay\s*:/i },
+    { rule: "1099", re: /\b1099\b/i },
+    { rule: "w2", re: /\bw-?2\b/i },
+    { rule: "c2c", re: /\bc2c\b/i },
+    { rule: "corp to corp", re: /corp(?:orate)?\s*to\s*corp/i },
+    { rule: "margin", re: /\bmargin\b/i },
+    { rule: "references", re: /\breferences?\b/i },
+    { rule: "contract-to-hire", re: /contract[\s-]*to[\s-]*hire/i },
+  ];
+  for (let i = 0; i < rules.length; i++) {
+    const m = blob.match(rules[i].re);
+    if (m) return { rule: rules[i].rule, snippet: snippetAround(blob, m.index, m[0].length) };
+  }
+  const flex = /flexibility/ig;
+  let fm;
+  while ((fm = flex.exec(blob))) {
+    const windowStart = Math.max(0, fm.index - 40);
+    const windowText = blob.slice(windowStart, fm.index + fm[0].length + 40);
+    if (/\$|\d/.test(windowText)) {
+      return { rule: "flexibility", snippet: snippetAround(blob, fm.index, fm[0].length) };
+    }
+  }
+  const names = internalFirstNames || [];
+  for (let n = 0; n < names.length; n++) {
+    const name = String(names[n] || "").trim();
+    if (name.length < 2) continue;
+    const re = new RegExp("\\b(?:hi|hey)\\s+" + escapeRegExp(name) + "\\b", "i");
+    const m = blob.match(re);
+    if (m) return { rule: "internal greeting", snippet: snippetAround(blob, m.index, m[0].length) };
+  }
+  return null;
+}
+
+function missingChecklist(fields) {
+  const missing = [];
+  if (!(fields.whyMe || "").trim()) missing.push("Why Me");
+  if (!(fields.availability || "").trim()) missing.push("availability");
+  if (!(fields.location || "").trim()) missing.push("location");
+  if (!(fields.billRate || "").trim()) missing.push("bill rate");
+  if (!fields.resumeFileId) missing.push("resume");
+  if (!(fields.to || fields.recipient || "").trim()) missing.push("recipient");
+  return missing;
 }
 
 function classifyGraphError(err) {
@@ -398,7 +576,6 @@ function classifyGraphError(err) {
   if (/No Outlook connection/i.test(m)) return "no_mailbox";
   return "error";
 }
-
 function scopeHelp() {
   return "Graph refused to save the draft. Sign-in requests Mail.Read, Mail.ReadWrite, Mail.Send, and User.Read. " +
     "Add delegated Mail.ReadWrite on the Azure app and grant admin consent if required, then reconnect Outlook (Outreach → Connect Outlook Account). " +
@@ -412,17 +589,16 @@ async function polishWhyMe(source, context) {
     "You polish a Why Me for an Anura Connect client submittal. Anura is a boutique Epic healthcare IT staffing firm.",
     "Voice: short, warm, specific, honest. Two short paragraphs. No hype, no exclamation points.",
     "Keep every fact that is in the source. Do not invent projects, modules, employers, dates, or certifications.",
-    "Do not mention pay, salary, or margin. The client sees bill rate separately.",
+    "Do not mention pay, salary, margin, employment type, references, or internal notes. The client sees bill rate separately.",
+    "The source is the only text you may use. If it is empty, return an empty string.",
     "If the source is thin, tighten the wording and stop. Do not add new claims to fill space.",
     "Return only the Why Me text. No heading, no quotes, no markdown.",
     "",
     "SOURCE:",
-    source || "(empty)",
+    source || "",
     "",
     "ROLE: " + (context.jobTitle || "") + (context.clientName ? " at " + context.clientName : ""),
-    "CERTS: " + [context.primaryCert, context.secondaryCert, context.epicRole].filter(Boolean).join("; "),
-    context.notes ? "RECRUITER NOTES (context only — do not add facts that are not in SOURCE):\n" + context.notes : "",
-  ].filter(Boolean).join("\n");
+  ].join("\n");
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
@@ -437,11 +613,40 @@ async function polishWhyMe(source, context) {
   return text;
 }
 
+function reportingContactFrom(row, live) {
+  const liveC = live && live.clientContact;
+  if (liveC && (liveC.id || liveC.email || liveC.firstName)) {
+    const first = liveC.firstName || "";
+    const last = liveC.lastName || "";
+    return {
+      id: liveC.id || null,
+      firstName: first,
+      lastName: last,
+      name: liveC.name || (first + " " + last).trim(),
+      email: liveC.email || "",
+    };
+  }
+  if (row && (row.job_contact_id || row.job_contact_email || row.job_contact_first)) {
+    const first = row.job_contact_first || "";
+    const last = row.job_contact_last || "";
+    return {
+      id: row.job_contact_id ? Number(row.job_contact_id) : null,
+      firstName: first,
+      lastName: last,
+      name: row.job_contact_name || (first + " " + last).trim(),
+      email: row.job_contact_email || "",
+    };
+  }
+  return null;
+}
+
 function registerForge(app, deps) {
   const db = deps.db;
   const graphFetch = deps.graphFetch;
   const outlookUsers = deps.outlookUsers;
   const getUser = deps.getUser || function () { return null; };
+  const bhFetch = deps.bhFetch;
+  const bhWrite = deps.bhWrite;
   let tableReady = null;
 
   function ensureTable() {
@@ -467,9 +672,34 @@ function registerForge(app, deps) {
         "flags JSONB," +
         "draft_status TEXT NOT NULL," +
         "note TEXT)"
-      ).then(function () { return true; }).catch(function (err) { tableReady = null; throw err; });
+      ).then(function () {
+        return db.query(
+          "CREATE TABLE IF NOT EXISTS submittal_forge_dismissals (" +
+          "id SERIAL PRIMARY KEY," +
+          "submission_id INTEGER NOT NULL," +
+          "reason TEXT NOT NULL," +
+          "note TEXT," +
+          "created_by TEXT," +
+          "created_at TIMESTAMPTZ DEFAULT NOW())"
+        );
+      }).then(function () {
+        return db.query(
+          "CREATE TABLE IF NOT EXISTS submittal_forge_profiles (" +
+          "user_key TEXT PRIMARY KEY," +
+          "name TEXT," +
+          "title TEXT," +
+          "phone TEXT," +
+          "updated_at TIMESTAMPTZ DEFAULT NOW())"
+        );
+      }).then(function () { return true; }).catch(function (err) { tableReady = null; throw err; });
     }
     return tableReady;
+  }
+
+  function profileKey(user) {
+    if (!user) return "";
+    if (user.id != null && user.id !== "") return "bh:" + user.id;
+    return "email:" + String(user.email || "").toLowerCase();
   }
 
   async function mailboxes() {
@@ -503,28 +733,136 @@ function registerForge(app, deps) {
     if (!clientId || !db || !db.ready) return [];
     try {
       const rows = await db.getAll(
-        "SELECT id, first_name, last_name, name, email, email2, occupation FROM client_contacts " +
+        "SELECT id, first_name, last_name, name, email, email2, occupation, client_name FROM client_contacts " +
         "WHERE client_id = $1 AND is_deleted IS NOT TRUE AND COALESCE(email, email2, '') <> '' " +
         "ORDER BY date_last_modified DESC NULLS LAST LIMIT 25",
         [clientId]
       );
-      return rows.map(function (r) {
-        return {
-          id: r.id,
-          name: (r.name || ((r.first_name || "") + " " + (r.last_name || "")).trim()),
-          firstName: r.first_name || "",
-          email: r.email || r.email2 || "",
-          occupation: r.occupation || "",
-        };
-      }).filter(function (r) { return r.email; });
+      return rows.map(mapContact).filter(function (r) { return r.email; });
     } catch (e) { return []; }
   }
 
-  function project(row, notes, now) {
+  function mapContact(r) {
+    const first = r.first_name || r.firstName || "";
+    const last = r.last_name || r.lastName || "";
+    return {
+      id: r.id,
+      name: (r.name || (first + " " + last).trim()),
+      firstName: first || firstNameOf(r.name),
+      email: r.email || r.email2 || "",
+      occupation: r.occupation || "",
+      company: r.client_name || r.clientName || r.company || "",
+    };
+  }
+
+  async function loadInternalUsers() {
+    if (!db || !db.ready) return [];
+    try {
+      const rows = await db.getAll(
+        "SELECT id, first_name, last_name, name, email, phone, mobile, occupation, status FROM corporate_users " +
+        "WHERE is_deleted IS NOT TRUE AND COALESCE(is_locked, false) = false " +
+        "AND COALESCE(status, '') !~* '^(inactive|terminated|archived|disabled)' " +
+        "ORDER BY first_name NULLS LAST, last_name NULLS LAST"
+      );
+      return (rows || []).filter(function (r) { return r && r.candidate_name == null && r.comments == null; });
+    } catch (e) { return []; }
+  }
+
+  function internalFirstNames(users) {
+    const out = [];
+    const seen = {};
+    (users || []).forEach(function (u) {
+      const n = String(u.first_name || u.firstName || "").trim();
+      if (n.length < 2) return;
+      const k = n.toLowerCase();
+      if (seen[k]) return;
+      seen[k] = true;
+      out.push(n);
+    });
+    return out;
+  }
+
+  async function loadProfile(user) {
+    const baseName = personName(user);
+    let saved = null;
+    let corp = null;
+    if (user && db && db.ready) {
+      try {
+        await ensureTable();
+        saved = await db.getOne("SELECT name, title, phone FROM submittal_forge_profiles WHERE user_key = $1", [profileKey(user)]);
+      } catch (e) { saved = null; }
+      if (user.id != null) {
+        try {
+          corp = await db.getOne("SELECT occupation, phone, mobile, first_name, last_name, name FROM corporate_users WHERE id = $1", [user.id]);
+        } catch (e) { corp = null; }
+      }
+    }
+    const savedOk = saved && saved.candidate_name == null && saved.comments == null && saved.occupation == null && saved.job_title == null;
+    const corpOk = corp && corp.candidate_name == null && corp.comments == null && corp.job_title == null;
+    return {
+      name: (savedOk && saved.name) || baseName || (corpOk && (corp.name || ((corp.first_name || "") + " " + (corp.last_name || "")).trim())) || "",
+      title: (savedOk && saved.title) || (corpOk && corp.occupation) || "",
+      phone: (savedOk && saved.phone) || (corpOk && (corp.phone || corp.mobile)) || "",
+    };
+  }
+
+  async function loadDismissedIds() {
+    if (!db || !db.ready) return [];
+    try {
+      await ensureTable();
+      const rows = await db.getAll("SELECT submission_id FROM submittal_forge_dismissals");
+      return (rows || []).map(function (r) { return r.submission_id; }).filter(function (id) { return id != null && id.candidate_name == null; });
+    } catch (e) { return []; }
+  }
+
+  async function loadDraftMap(ids) {
+    const map = {};
+    if (!ids.length || !db || !db.ready) return map;
+    try {
+      await ensureTable();
+      const rows = await db.getAll(
+        "SELECT DISTINCT ON (submission_id) submission_id, created_at, created_by FROM submittal_forge_drafts " +
+        "WHERE draft_status = 'created' AND submission_id = ANY($1::int[]) ORDER BY submission_id, created_at DESC",
+        [ids]
+      );
+      (rows || []).forEach(function (r) {
+        if (!r || r.submission_id == null || r.created_at == null || r.comments != null) return;
+        map[r.submission_id] = draftStamp(r);
+      });
+    } catch (e) {}
+    return map;
+  }
+
+  function draftStamp(r) {
+    if (!r || !r.created_at) return null;
+    const by = r.created_by || "someone";
+    const date = formatStamp(r.created_at);
+    return {
+      createdAt: r.created_at,
+      createdBy: by,
+      label: "Draft created " + (date || "earlier") + " by " + by,
+    };
+  }
+
+  async function latestDraft(submissionId) {
+    if (!db || !db.ready) return null;
+    try {
+      await ensureTable();
+      const row = await db.getOne(
+        "SELECT submission_id, created_at, created_by FROM submittal_forge_drafts WHERE submission_id = $1 AND draft_status = 'created' ORDER BY created_at DESC LIMIT 1",
+        [submissionId]
+      );
+      if (!row || row.created_at == null || row.comments != null) return null;
+      return draftStamp(row);
+    } catch (e) { return null; }
+  }
+
+  function project(row, now) {
     const parsed = parseSubmissionComments(row.comments);
+    const client = resolveClient(row);
     const name = (row.candidate_name || parsed.name || "").trim();
     const jobTitle = row.job_title_live || row.job_title || "";
-    const clientName = row.client_name || "";
+    const clientName = client.clientName;
     const bill = pickBillRate({
       commentRate: parsed.billRate,
       customText10: row.sub_custom_bill,
@@ -544,41 +882,24 @@ function registerForge(app, deps) {
       jobState: row.job_state,
       onSite: row.on_site,
       jobTitle: jobTitle,
+      employmentType: row.employment_type,
     });
     const avail = pickAvailability({ commentAvail: parsed.availability, customAvail: row.sub_custom_avail, dateAvailable: row.date_available }, now);
-    const why = templateWhyMe({
-      commentWhy: parsed.whyMe,
-      name: name,
-      occupation: row.occupation,
-      epicRole: row.epic_role,
-      primaryCert: row.primary_cert,
-      jobTitle: jobTitle,
-      clientName: clientName,
-      candDescription: row.cand_description,
-    });
+    const why = templateWhyMe({ commentWhy: parsed.whyMe });
+    const flags = bill.flags.concat(location.flags);
+    if (!why.text) flags.push({ level: "alert", code: "why_me_missing", message: "No Why Me in Bullhorn comments. Write one." });
+    if (avail.passed) flags.push({ level: "warn", code: "availability_passed", message: "Availability date has passed. Confirm." });
+    if (!avail.text) flags.push({ level: "warn", code: "availability", message: "Availability is blank." });
+    if (!location.text) flags.push({ level: "warn", code: "location", message: "Location is blank." });
     const daysWaiting = daysSince(row.date_added, now);
-    const scored = scoreFit({
-      flags: bill.flags,
-      primaryCert: row.primary_cert,
-      secondaryCert: row.secondary_cert,
-      epicRole: row.epic_role,
-      occupation: row.occupation,
-      jobTitle: jobTitle,
-      jobDescription: row.job_description,
-      jobSkills: row.job_skills,
-      location: location,
-      candState: row.cand_state,
-      candStateCustom: row.cand_state_custom,
-      jobState: row.job_state,
-      willRelocate: row.will_relocate,
-      availability: avail.text,
-      dateAvailable: row.date_available,
-      candModified: row.cand_modified,
-      billRate: bill.billRate,
+    const subject = subjectFor(jobTitle, row.job_skills || "", name);
+    const ownerName = row.job_owner || "";
+    const missing = missingChecklist({
       whyMe: why.text,
-      daysWaiting: daysWaiting,
-    }, now);
-    const subject = subjectFor(jobTitle, [row.primary_cert, row.secondary_cert, row.epic_role].filter(Boolean).join(" "));
+      availability: avail.text,
+      location: location.text,
+      billRate: bill.billRate,
+    });
     return {
       submissionId: row.id,
       status: row.status,
@@ -595,68 +916,131 @@ function registerForge(app, deps) {
         id: row.job_id,
         title: jobTitle,
         status: row.job_status || "",
-        clientId: row.client_id,
+        clientId: client.clientId,
         clientName: clientName,
-        owner: row.job_owner || "",
+        owner: ownerName,
+        ownerId: row.job_owner_id || null,
+        ownerFirst: row.job_owner_first_name || firstNameOf(ownerName),
         city: row.job_city || "",
         state: row.job_state || "",
+        reportingContact: reportingContactFrom(row, null),
       },
       submittedBy: row.sending_user || "",
+      submittedById: row.sending_user_id || null,
+      submittedByFirst: firstNameOf(row.sending_user),
       dateAdded: row.date_added || null,
       daysWaiting: daysWaiting,
       sla: slaFor(daysWaiting),
       whyMe: why.text,
       whyMeSource: why.source,
       availability: avail.text,
-      location: location,
+      location: location.text,
       billRate: bill.billRate,
-      billRateSource: bill.source,
+      billRateSource: bill.source === "withheld_pay" || bill.source === "missing" ? "" : bill.source,
       subject: subject,
-      fitScore: scored.score,
-      flags: scored.flags,
-      notes: (notes || []).map(function (n) { return { action: n.action || "", text: clip(stripHtml(n.comments_text), 400) }; }),
+      flags: flags,
+      missing: missing,
     };
   }
 
-  async function lookupResume(candidateId, candidateName) {
-    const filename = resumeFilename(candidateName);
-    const openUrl = RESUME_BASE + "/";
-    const apiTpl = (process.env.RESUME_TOOL_API_URL || "").trim();
-    if (!apiTpl) return { attached: false, status: "todo", filename: filename, openUrl: openUrl, todo: RESUME_TODO };
-    const url = apiTpl
-      .replace(/\{candidateId\}/g, encodeURIComponent(String(candidateId || "")))
-      .replace(/\{name\}/g, encodeURIComponent(candidateName || ""));
+  async function liveJob(jobId) {
+    if (!bhFetch || !jobId) return null;
     try {
-      const headers = {};
-      if (process.env.RESUME_TOOL_TOKEN) headers.Authorization = "Bearer " + process.env.RESUME_TOOL_TOKEN;
-      const resp = await fetch(url, { headers: headers, signal: AbortSignal.timeout(20000), redirect: "manual" });
-      const ct = resp.headers.get("content-type") || "";
-      if (resp.status >= 300 && resp.status < 400) {
-        return { attached: false, status: "auth_required", filename: filename, openUrl: openUrl, todo: "Resume Tool redirected to a login. " + RESUME_TODO };
-      }
-      if (!resp.ok) return { attached: false, status: "http_" + resp.status, filename: filename, openUrl: openUrl, todo: RESUME_TODO };
-      if (!/pdf|octet-stream/i.test(ct)) {
-        return { attached: false, status: "not_pdf", filename: filename, openUrl: openUrl, todo: "Resume Tool did not return a PDF (" + ct + "). " + RESUME_TODO };
-      }
-      const buf = Buffer.from(await resp.arrayBuffer());
-      if (buf.length < 100) return { attached: false, status: "empty", filename: filename, openUrl: openUrl, todo: RESUME_TODO };
-      if (buf.length > 3 * 1024 * 1024) {
-        return { attached: false, status: "too_large", filename: filename, openUrl: openUrl, bytes: buf.length, todo: "PDF is over 3MB, so it was not attached. Download it from ResumeKiln and attach it in Outlook." };
-      }
-      return { attached: true, status: "ok", filename: filename, openUrl: openUrl, contentType: ct.indexOf("pdf") >= 0 ? "application/pdf" : "application/octet-stream", contentBytes: buf.toString("base64"), bytes: buf.length };
+      const data = await bhFetch("entity/JobOrder/" + jobId, {
+        fields: "id,title,clientBillRate,skillList,clientContact(id,firstName,lastName,name,email),clientCorporation(id,name),owner(id,firstName,lastName,email)",
+      });
+      return (data && (data.data || data)) || null;
     } catch (e) {
-      return { attached: false, status: "error", filename: filename, openUrl: openUrl, todo: RESUME_TODO, error: e.message };
+      return null;
     }
   }
 
-  function publicResume(resume) {
-    if (!resume) return null;
-    return { attached: !!resume.attached, status: resume.status, filename: resume.filename, openUrl: resume.openUrl, bytes: resume.bytes || null, todo: resume.todo || "" };
+  async function liveBill(submissionId, jobId) {
+    if (!bhFetch) return null;
+    let subWrap;
+    try {
+      subWrap = await bhFetch("entity/JobSubmission/" + submissionId, { fields: "id,billRate,payRate,customText10" });
+    } catch (e) {
+      throw Object.assign(new Error("Could not re-read the bill rate from Bullhorn. " + e.message), { status: 502 });
+    }
+    const sub = (subWrap && (subWrap.data || subWrap)) || {};
+    const subAmount = positiveMoney(sub.customText10);
+    const subBill = subAmount != null ? subAmount : positiveMoney(sub.billRate);
+    if (subBill != null) return { amount: subBill, source: "from submission" };
+    let jobWrap;
+    try {
+      jobWrap = await bhFetch("entity/JobOrder/" + jobId, { fields: "id,clientBillRate" });
+    } catch (e) {
+      throw Object.assign(new Error("Could not re-read the job bill rate from Bullhorn. " + e.message), { status: 502 });
+    }
+    const job = (jobWrap && (jobWrap.data || jobWrap)) || {};
+    const jobBill = positiveMoney(job.clientBillRate);
+    if (jobBill != null) return { amount: jobBill, source: "from job" };
+    return { amount: null, source: "missing" };
   }
 
-  function signerName(user) {
-    if (!user) return "Anura Connect";
-    return user.firstName || (user.name || "").split(" ")[0] || "Anura Connect";
+  function ratesDiffer(displayed, liveAmount) {
+    const shown = moneyNumber(displayed);
+    if ((shown == null || shown === 0) && (liveAmount == null || liveAmount === 0)) return false;
+    if (shown == null || liveAmount == null) return true;
+    return Math.abs(shown - Number(liveAmount)) >= 0.01;
+  }
+
+  function unwrapFiles(data) {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.fileAttachments)) return data.fileAttachments;
+    return [];
+  }
+
+  async function listCandidateFiles(candidateId) {
+    if (!bhFetch || !candidateId) return [];
+    const data = await bhFetch("entity/Candidate/" + candidateId + "/fileAttachments", {
+      fields: "id,name,type,dateAdded,contentType,fileExtension,fileSize",
+      count: 100,
+    });
+    return unwrapFiles(data).map(function (f) {
+      return {
+        id: f.id,
+        name: f.name || "file",
+        type: f.type || "",
+        dateAdded: f.dateAdded || 0,
+        contentType: f.contentType || "",
+        fileExtension: f.fileExtension || "",
+        fileSize: f.fileSize || 0,
+      };
+    }).filter(isPdfFile).sort(function (a, b) { return Number(b.dateAdded || 0) - Number(a.dateAdded || 0); });
+  }
+
+  async function downloadCandidateFile(candidateId, fileId) {
+    if (typeof deps.downloadCandidateFile === "function") return deps.downloadCandidateFile(candidateId, fileId);
+    if (typeof deps.authenticate !== "function") {
+      throw Object.assign(new Error("Bullhorn file download is not configured"), { status: 503 });
+    }
+    const s = await deps.authenticate();
+    const url = s.restUrl + "file/Candidate/" + encodeURIComponent(candidateId) + "/" + encodeURIComponent(fileId) + "?BhRestToken=" + encodeURIComponent(s.bhRestToken);
+    const fileRes = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!fileRes.ok) {
+      const err = await fileRes.text();
+      throw Object.assign(new Error("Bullhorn file error (" + fileRes.status + "): " + err.slice(0, 300)), { status: 502 });
+    }
+    const ct = fileRes.headers.get("content-type") || "";
+    if (/json/i.test(ct)) {
+      const json = await fileRes.json();
+      const fileObj = json.File || json.file || json;
+      const b64 = fileObj.fileContent || fileObj.content || "";
+      return {
+        name: fileObj.name || "resume.pdf",
+        contentType: fileObj.contentType || "application/pdf",
+        buffer: Buffer.from(b64, "base64"),
+      };
+    }
+    return {
+      name: "resume.pdf",
+      contentType: ct || "application/pdf",
+      buffer: Buffer.from(await fileRes.arrayBuffer()),
+    };
   }
 
   async function writeAudit(entry) {
@@ -666,11 +1050,27 @@ function registerForge(app, deps) {
       await db.query(
         "INSERT INTO submittal_forge_drafts (submission_id, candidate_id, candidate_name, job_id, client_name, created_by, mailbox, to_email, subject, outlook_message_id, outlook_web_link, resume_status, fit_score, flags, draft_status, note) " +
         "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16)",
-        [entry.submissionId, entry.candidateId || null, entry.candidateName || "", entry.jobId || null, entry.clientName || "", entry.createdBy || "", entry.mailbox || "", entry.toEmail || "", entry.subject || "", entry.messageId || "", entry.webLink || "", entry.resumeStatus || "", entry.fitScore, JSON.stringify(entry.flags || []), entry.draftStatus, entry.note || ""]
+        [entry.submissionId, entry.candidateId || null, entry.candidateName || "", entry.jobId || null, entry.clientName || "", entry.createdBy || "", entry.mailbox || "", entry.toEmail || "", entry.subject || "", entry.messageId || "", entry.webLink || "", entry.resumeStatus || "", null, JSON.stringify(entry.flags || []), entry.draftStatus, entry.note || ""]
       );
     } catch (e) {
       console.log("[Forge] audit insert failed:", e.message);
     }
+  }
+
+  function publicFiles(files, candidateId, clientName) {
+    const suggested = pickResumeFile(files, clientName);
+    return {
+      files: (files || []).map(function (f) {
+        return {
+          id: f.id,
+          name: f.name,
+          dateAdded: f.dateAdded || null,
+          fileSize: f.fileSize || 0,
+          viewUrl: "/api/candidates/" + candidateId + "/files/" + f.id,
+        };
+      }),
+      suggestedId: suggested ? suggested.id : null,
+    };
   }
 
   app.get("/api/forge/queue", async function (req, res) {
@@ -683,9 +1083,14 @@ function registerForge(app, deps) {
         " ORDER BY s.date_added ASC NULLS LAST LIMIT 200",
         []
       );
+      const hidden = await loadDismissedIds();
+      const visible = rows.filter(function (row) { return hidden.indexOf(row.id) < 0; });
       const now = Date.now();
-      const data = rows.map(function (row) {
-        const p = project(row, [], now);
+      const user = getUser(req);
+      const internals = await loadInternalUsers();
+      const drafts = await loadDraftMap(visible.map(function (r) { return r.id; }));
+      const all = visible.map(function (row) {
+        const p = project(row, now);
         return {
           submissionId: p.submissionId,
           candidateId: p.candidate.id,
@@ -693,19 +1098,104 @@ function registerForge(app, deps) {
           primaryCert: p.candidate.primaryCert,
           jobId: p.job.id,
           jobTitle: p.job.title,
+          clientId: p.job.clientId,
           clientName: p.job.clientName,
+          jobOwnerId: p.job.ownerId,
+          jobOwner: p.job.owner,
+          jobOwnerFirst: p.job.ownerFirst,
+          jobOwnerEmail: row.job_owner_email || "",
           submittedBy: p.submittedBy,
+          submittedByFirst: p.submittedByFirst,
           daysWaiting: p.daysWaiting,
           sla: p.sla,
-          fitScore: p.fitScore,
           flagCount: p.flags.length,
+          missing: p.missing,
           billRate: p.billRate,
+          billRateSource: p.billRateSource,
           subject: p.subject,
+          existingDraft: drafts[p.submissionId] || null,
         };
       });
-      res.json({ total: data.length, data: data });
+      const owners = internals.map(function (u) {
+        const name = u.name || ((u.first_name || "") + " " + (u.last_name || "")).trim();
+        return {
+          id: u.id,
+          name: name,
+          firstName: u.first_name || firstNameOf(name),
+          email: u.email || "",
+          count: all.filter(function (row) {
+            return samePerson({ id: u.id, name: name, email: u.email, firstName: u.first_name, lastName: u.last_name }, row.jobOwnerId, row.jobOwner, row.jobOwnerEmail);
+          }).length,
+        };
+      });
+      const requested = String(req.query.owner == null || req.query.owner === "" ? "mine" : req.query.owner);
+      let data = all;
+      if (requested === "mine") {
+        data = all.filter(function (row) { return samePerson(user, row.jobOwnerId, row.jobOwner, row.jobOwnerEmail); });
+      } else if (requested !== "all") {
+        data = all.filter(function (row) { return String(row.jobOwnerId) === requested; });
+      }
+      res.json({
+        total: data.length,
+        data: data,
+        owners: owners,
+        ownerFilter: requested,
+        me: user ? { id: user.id || null, name: personName(user), email: user.email || "", firstName: user.firstName || firstNameOf(personName(user)) } : null,
+      });
     } catch (e) {
       console.error("[Forge] queue", e.message);
+      res.status(e.status || 500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/forge/contacts", async function (req, res) {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (q.length < 2) return res.json({ data: [] });
+      if (!db || !db.ready) return res.status(503).json({ error: "Database is not connected." });
+      const like = "%" + q.replace(/[%_\\]/g, "") + "%";
+      const rows = await db.getAll(
+        "SELECT id, first_name, last_name, name, email, email2, occupation, client_name FROM client_contacts " +
+        "WHERE is_deleted IS NOT TRUE AND COALESCE(email, email2, '') <> '' " +
+        "AND (COALESCE(name, '') ILIKE $1 OR COALESCE(email, '') ILIKE $1 OR COALESCE(first_name, '') ILIKE $1 OR COALESCE(last_name, '') ILIKE $1 OR COALESCE(client_name, '') ILIKE $1) " +
+        "ORDER BY date_last_modified DESC NULLS LAST LIMIT 20",
+        [like]
+      );
+      res.json({ data: (rows || []).map(mapContact).filter(function (r) { return r.email; }) });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/forge/profile", async function (req, res) {
+    try {
+      const user = getUser(req);
+      const profile = await loadProfile(user);
+      res.json(profile);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/forge/profile", async function (req, res) {
+    try {
+      const user = getUser(req);
+      if (!user) return res.status(401).json({ error: "Sign in required" });
+      if (!db || !db.ready) return res.status(503).json({ error: "Database is not connected." });
+      const body = req.body || {};
+      const profile = {
+        name: String(body.name != null ? body.name : personName(user)).trim(),
+        title: String(body.title || "").trim(),
+        phone: String(body.phone || "").trim(),
+      };
+      await ensureTable();
+      await db.query(
+        "INSERT INTO submittal_forge_profiles (user_key, name, title, phone, updated_at) VALUES ($1,$2,$3,$4,NOW()) " +
+        "ON CONFLICT (user_key) DO UPDATE SET name = $2, title = $3, phone = $4, updated_at = NOW()",
+        [profileKey(user), profile.name, profile.title, profile.phone]
+      );
+      res.json(profile);
+    } catch (e) {
       res.status(e.status || 500).json({ error: e.message });
     }
   });
@@ -716,50 +1206,46 @@ function registerForge(app, deps) {
       if (!id) return res.status(400).json({ error: "Submission id is required" });
       const row = await loadBundle(id);
       const notes = await loadNotes(row.candidate_id);
-      const contacts = await loadContacts(row.client_id);
       const now = Date.now();
-      const draft = project(row, notes, now);
+      const draft = project(row, now);
+      const live = await liveJob(draft.job.id);
+      if (live) {
+        if (!draft.job.clientName && live.clientCorporation && live.clientCorporation.name) {
+          draft.job.clientName = live.clientCorporation.name;
+          draft.job.clientId = live.clientCorporation.id || draft.job.clientId;
+        }
+        const report = reportingContactFrom(row, live);
+        if (report) draft.job.reportingContact = report;
+      }
+      const contacts = await loadContacts(draft.job.clientId);
+      if (draft.job.reportingContact && draft.job.reportingContact.email && !contacts.some(function (c) { return c.email.toLowerCase() === draft.job.reportingContact.email.toLowerCase(); })) {
+        contacts.unshift(draft.job.reportingContact);
+      }
+      const names = internalFirstNames(await loadInternalUsers());
       const polish = req.query.polish !== "0" && req.query.polish !== "false";
       if (polish && process.env.ANTHROPIC_API_KEY && draft.whyMe) {
         try {
-          const noteText = draft.notes.map(function (n) { return (n.action ? n.action + ": " : "") + n.text; }).join("\n");
-          const polished = await polishWhyMe(draft.whyMe, {
-            jobTitle: draft.job.title,
-            clientName: draft.job.clientName,
-            primaryCert: draft.candidate.primaryCert,
-            secondaryCert: draft.candidate.secondaryCert,
-            epicRole: draft.candidate.epicRole,
-            notes: noteText,
-          });
-          if (polished) {
+          const polished = await polishWhyMe(draft.whyMe, { jobTitle: draft.job.title, clientName: draft.job.clientName });
+          const leak = polished ? findInternalLeak([polished], names) : null;
+          if (polished && !leak) {
             draft.whyMe = polished;
             draft.whyMeSource = "anthropic";
-            const rescored = scoreFit(Object.assign({}, draft, {
-              primaryCert: draft.candidate.primaryCert,
-              secondaryCert: draft.candidate.secondaryCert,
-              epicRole: draft.candidate.epicRole,
-              occupation: draft.candidate.occupation,
-              jobTitle: draft.job.title,
-              jobDescription: row.job_description,
-              jobSkills: row.job_skills,
-              candState: row.cand_state,
-              candStateCustom: row.cand_state_custom,
-              jobState: row.job_state,
-              willRelocate: row.will_relocate,
-              dateAvailable: row.date_available,
-              candModified: row.cand_modified,
-              flags: [],
-            }), now);
-            draft.fitScore = rescored.score;
-            draft.flags = rescored.flags.concat(draft.flags.filter(function (f) { return f.code === "pay_vs_bill" || f.code === "bill_rate_missing" || f.code === "rate_scale"; }));
+          } else if (leak) {
+            draft.flags = draft.flags.concat([{ level: "warn", code: "polish_blocked", message: "Polished Why Me was blocked (" + leak.snippet + "). The labeled Why Me is unchanged." }]);
           }
         } catch (e) {
-          draft.flags = draft.flags.concat([{ level: "warn", code: "polish", message: "Why Me was not polished (" + e.message + "). The Bullhorn text is shown instead." }]);
+          draft.flags = draft.flags.concat([{ level: "warn", code: "polish", message: "Why Me was not polished (" + e.message + "). The labeled Why Me is shown." }]);
         }
       }
+      draft.missing = missingChecklist({ whyMe: draft.whyMe, availability: draft.availability, location: draft.location, billRate: draft.billRate });
+      draft.existingDraft = await latestDraft(id);
+      draft.notes = (notes || []).map(function (n) { return { action: n.action || "", text: clip(htmlToPlain(n.comments_text), 400) }; });
       const user = getUser(req);
+      const profile = await loadProfile(user);
       const boxes = await mailboxes();
-      const resume = publicResume(await lookupResume(draft.candidate.id, draft.candidate.name));
+      let files = [];
+      try { files = await listCandidateFiles(draft.candidate.id); } catch (e) { files = []; }
+      const resume = publicFiles(files, draft.candidate.id, draft.job.clientName);
       const email = composeEmail({
         candidateName: draft.candidate.name,
         jobTitle: draft.job.title,
@@ -769,13 +1255,16 @@ function registerForge(app, deps) {
         location: draft.location,
         billRate: draft.billRate,
         subject: draft.subject,
-        signerName: signerName(user),
+        signerName: profile.name || (user && (user.firstName || personName(user))) || "Anura Connect",
+        signerTitle: profile.title,
+        signerPhone: profile.phone,
       });
       res.json({
         draft: draft,
         contacts: contacts,
         email: email,
         resume: resume,
+        profile: profile,
         outlook: {
           mailboxes: boxes,
           suggestedMailbox: (user && boxes.indexOf((user.email || "").toLowerCase()) >= 0) ? user.email.toLowerCase() : (boxes[0] || ""),
@@ -783,7 +1272,7 @@ function registerForge(app, deps) {
           draftsNeedMailReadWrite: false,
           hint: "Forge saves a draft. You send it. Sign-in includes Mail.ReadWrite along with Mail.Read, Mail.Send, and User.Read. Reconnect Outlook if this mailbox was linked before that permission.",
         },
-        signerName: signerName(user),
+        signerName: profile.name || (user && (user.firstName || personName(user))) || "Anura Connect",
       });
     } catch (e) {
       console.error("[Forge] preview", e.message);
@@ -797,9 +1286,8 @@ function registerForge(app, deps) {
       if (!id) return res.status(400).json({ error: "Submission id is required" });
       const row = await loadBundle(id);
       const now = Date.now();
-      const base = project(row, [], now);
+      const base = project(row, now);
       const body = req.body || {};
-      // Human-edited fields win. There is no send flag; this route only creates a draft.
       const candidateName = (body.candidateName || base.candidate.name || "").trim();
       const whyMe = body.whyMe != null ? String(body.whyMe) : base.whyMe;
       const availability = body.availability != null ? String(body.availability) : base.availability;
@@ -807,9 +1295,15 @@ function registerForge(app, deps) {
       const billRate = body.billRate != null ? String(body.billRate) : base.billRate;
       const subject = (body.subject || base.subject || "Consultant Resume").trim();
       const to = (body.to || "").trim();
-      if (to && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: "That recipient address does not look like an email." });
+      const cc = (body.cc || "").trim();
+      if (to && !isEmail(to)) return res.status(400).json({ error: "That recipient address does not look like an email." });
+      if (cc && !isEmail(cc)) return res.status(400).json({ error: "That CC address does not look like an email." });
       const user = getUser(req);
+      const profile = await loadProfile(user);
       const greetingName = (body.greetingName || "").trim();
+      const signerName = (body.signerName || profile.name || (user && (user.firstName || personName(user))) || "Anura Connect").trim();
+      const signerTitle = body.signerTitle != null ? String(body.signerTitle) : profile.title;
+      const signerPhone = body.signerPhone != null ? String(body.signerPhone) : profile.phone;
       const email = composeEmail({
         candidateName: candidateName,
         jobTitle: body.jobTitle || base.job.title,
@@ -820,14 +1314,78 @@ function registerForge(app, deps) {
         billRate: billRate,
         subject: subject,
         greetingName: greetingName,
-        signerName: signerName(user),
+        signerName: signerName,
+        signerTitle: signerTitle,
+        signerPhone: signerPhone,
       });
+      const names = internalFirstNames(await loadInternalUsers());
+      const leak = findInternalLeak([
+        email.subject, email.text, whyMe, availability, location, billRate, candidateName, greetingName, signerName, signerTitle,
+      ], names);
+      if (leak) {
+        return res.status(400).json({
+          error: "This draft was blocked because it includes internal language. Edit it, then try again.",
+          code: "internal_leak",
+          snippet: leak.snippet,
+          rule: leak.rule,
+        });
+      }
+
+      if (bhFetch) {
+        const live = await liveBill(id, base.job.id);
+        if (live && ratesDiffer(billRate, live.amount)) {
+          const liveShown = live.amount == null ? "(blank)" : formatRate(live.amount);
+          const displayed = billRate || "(blank)";
+          return res.status(400).json({
+            error: "Bill rate does not match Bullhorn. This draft shows " + displayed + " and Bullhorn has " + liveShown + " (" + live.source + ").",
+            code: "bill_rate_mismatch",
+            snippet: displayed + " vs " + liveShown,
+            displayed: displayed,
+            live: liveShown,
+            liveSource: live.source,
+          });
+        }
+      }
+
+      const resumeFileId = body.resumeFileId != null ? String(body.resumeFileId).trim() : "";
+      if (!resumeFileId) {
+        return res.status(400).json({ error: "Choose a résumé PDF before creating the draft.", code: "resume_required" });
+      }
+      let files = [];
+      try {
+        files = await listCandidateFiles(base.candidate.id);
+      } catch (e) {
+        return res.status(502).json({ error: "Could not read this candidate's files from Bullhorn. " + e.message });
+      }
+      const file = files.filter(function (f) { return String(f.id) === resumeFileId; })[0];
+      if (!file) {
+        return res.status(400).json({ error: "That file is not a PDF on this candidate.", code: "resume_file" });
+      }
+      let downloaded;
+      try {
+        downloaded = await downloadCandidateFile(base.candidate.id, file.id);
+      } catch (e) {
+        return res.status(e.status || 502).json({ error: e.message });
+      }
+      const buf = downloaded && downloaded.buffer ? downloaded.buffer : Buffer.alloc(0);
+      const tooLarge = buf.length > MAX_RESUME_BYTES;
+      const attachName = (downloaded && downloaded.name) || file.name || "resume.pdf";
+
+      const prior = await latestDraft(id);
+      if (prior && !body.confirmAnother) {
+        return res.status(409).json({
+          error: prior.label + ". Confirm to create another.",
+          code: "duplicate_draft",
+          existingDraft: prior,
+        });
+      }
+
       const boxes = await mailboxes();
       const wanted = (body.mailbox || "").trim().toLowerCase();
       const mailbox = (wanted && boxes.map(function (b) { return b.toLowerCase(); }).indexOf(wanted) >= 0)
         ? boxes.filter(function (b) { return b.toLowerCase() === wanted; })[0]
         : ((user && boxes.filter(function (b) { return b.toLowerCase() === (user.email || "").toLowerCase(); })[0]) || boxes[0] || "");
-      const resumeFull = await lookupResume(base.candidate.id, candidateName);
+      const resumeStatus = tooLarge ? "too_large" : "ok";
       const auditBase = {
         submissionId: id,
         candidateId: base.candidate.id,
@@ -837,8 +1395,7 @@ function registerForge(app, deps) {
         createdBy: user ? (user.email || user.name || "") : "",
         toEmail: to,
         subject: email.subject,
-        resumeStatus: resumeFull.status,
-        fitScore: base.fitScore,
+        resumeStatus: resumeStatus,
         flags: base.flags,
       };
 
@@ -853,7 +1410,7 @@ function registerForge(app, deps) {
           subject: email.subject,
           bodyHtml: email.html,
           bodyText: email.text,
-          resume: publicResume(resumeFull),
+          resume: { attached: false, status: resumeStatus, filename: attachName },
         });
       }
 
@@ -862,6 +1419,7 @@ function registerForge(app, deps) {
         body: { contentType: "HTML", content: email.html },
         toRecipients: to ? [{ emailAddress: { address: to } }] : [],
       };
+      if (cc) message.ccRecipients = [{ emailAddress: { address: cc } }];
       let created;
       try {
         created = await graphFetch(mailbox, "/me/messages", { method: "POST", body: JSON.stringify(message) });
@@ -878,7 +1436,7 @@ function registerForge(app, deps) {
             bodyHtml: email.html,
             bodyText: email.text,
             mailbox: mailbox,
-            resume: publicResume(resumeFull),
+            resume: { attached: false, status: resumeStatus, filename: attachName },
           });
         }
         await writeAudit(Object.assign({}, auditBase, { mailbox: mailbox, draftStatus: "failed", note: e.message }));
@@ -886,20 +1444,24 @@ function registerForge(app, deps) {
       }
 
       let attachNote = "";
-      if (resumeFull.attached && resumeFull.contentBytes && created && created.id) {
+      if (tooLarge) {
+        attachNote = "PDF is over 3MB, so it was not attached. Download it from Bullhorn and attach it in Outlook.";
+      } else if (buf.length && created && created.id) {
         try {
           await graphFetch(mailbox, "/me/messages/" + encodeURIComponent(created.id) + "/attachments", {
             method: "POST",
             body: JSON.stringify({
               "@odata.type": "#microsoft.graph.fileAttachment",
-              name: resumeFull.filename,
-              contentType: resumeFull.contentType || "application/pdf",
-              contentBytes: resumeFull.contentBytes,
+              name: attachName,
+              contentType: (downloaded && downloaded.contentType) || "application/pdf",
+              contentBytes: buf.toString("base64"),
             }),
           });
         } catch (e) {
           attachNote = "Draft was created. The résumé PDF was not attached (" + e.message + ").";
         }
+      } else if (!buf.length) {
+        attachNote = "Draft was created. Bullhorn returned an empty file, so it was not attached.";
       }
 
       await writeAudit(Object.assign({}, auditBase, {
@@ -917,12 +1479,88 @@ function registerForge(app, deps) {
         messageId: created && created.id || "",
         webLink: created && created.webLink || "",
         subject: email.subject,
-        resume: publicResume(resumeFull),
+        resume: { attached: !tooLarge && !!buf.length && !attachNote, status: resumeStatus, filename: attachName, bytes: buf.length },
         attachNote: attachNote,
-        instructions: "Draft saved in " + mailbox + ". Open it in Outlook, attach the résumé if it is missing, and send it yourself. Bullhorn status was not changed.",
+        instructions: "Draft saved in " + mailbox + ". Open it in Outlook, confirm the résumé, and send it yourself.",
       });
     } catch (e) {
       console.error("[Forge] draft", e.message);
+      res.status(e.status || 500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/forge/submissions/:id/client-submitted", async function (req, res) {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!id) return res.status(400).json({ error: "Submission id is required" });
+      const body = req.body || {};
+      if (!body.confirm) return res.status(400).json({ error: "Confirm before marking this client submitted.", code: "confirm_required" });
+      const prior = await latestDraft(id);
+      if (!prior) return res.status(400).json({ error: "Create an Outlook draft before marking this client submitted.", code: "draft_required" });
+      if (typeof bhWrite !== "function") return res.status(503).json({ error: "Bullhorn writes are not configured" });
+      const row = await loadBundle(id);
+      await bhWrite("entity/JobSubmission/" + id, { status: CLIENT_SUBMITTED_STATUS }, "POST");
+      try {
+        await db.query("UPDATE submissions SET status = $1, date_last_modified = $2 WHERE id = $3", [CLIENT_SUBMITTED_STATUS, Date.now(), id]);
+      } catch (e) { console.log("[Forge] local status update failed:", e.message); }
+      res.json({ ok: true, status: CLIENT_SUBMITTED_STATUS, submissionId: id, candidateName: row.candidate_name || "" });
+    } catch (e) {
+      console.error("[Forge] client-submitted", e.message);
+      res.status(e.status || 500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/forge/submissions/:id/dismiss", async function (req, res) {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!id) return res.status(400).json({ error: "Submission id is required" });
+      const reasonKey = String((req.body || {}).reason || "");
+      const reason = DISMISS_REASONS[reasonKey];
+      if (!reason) return res.status(400).json({ error: "Choose a reason: stale, withdrawn, or job on hold." });
+      if (typeof bhWrite !== "function") return res.status(503).json({ error: "Bullhorn writes are not configured" });
+      const row = await loadBundle(id);
+      const user = getUser(req);
+      const client = resolveClient(row);
+      const who = (row.candidate_name || "Candidate");
+      const jobTitle = row.job_title_live || row.job_title || "the role";
+      const comments = "Not sending to the client (" + reason.label + "). " + who + " for " + jobTitle + (client.clientName ? " at " + client.clientName : "") + ".";
+      if (!row.candidate_id) return res.status(400).json({ error: "This submission has no candidate to attach the note to." });
+      const noteBody = {
+        personReference: { id: Number(row.candidate_id) },
+        action: "Other",
+        comments: comments,
+        dateAdded: Date.now(),
+      };
+      if (user && user.id) noteBody.commentingPerson = { id: Number(user.id) };
+      let result;
+      try {
+        result = await bhWrite("entity/Note", noteBody, "PUT");
+      } catch (e) {
+        if (noteBody.commentingPerson) {
+          delete noteBody.commentingPerson;
+          result = await bhWrite("entity/Note", noteBody, "PUT");
+        } else throw e;
+      }
+      const noteId = result && (result.changedEntityId || result.id);
+      if (noteId && row.job_id) {
+        try { await bhWrite("entity/Note/" + noteId + "/jobOrders/" + row.job_id, {}, "PUT"); } catch (e) {}
+      }
+      if (reason.status) {
+        try {
+          await bhWrite("entity/JobSubmission/" + id, { status: reason.status }, "POST");
+          await db.query("UPDATE submissions SET status = $1, date_last_modified = $2 WHERE id = $3", [reason.status, Date.now(), id]);
+        } catch (e) {
+          console.log("[Forge] dismiss status update failed:", e.message);
+        }
+      }
+      await ensureTable();
+      await db.query(
+        "INSERT INTO submittal_forge_dismissals (submission_id, reason, note, created_by) VALUES ($1,$2,$3,$4)",
+        [id, reasonKey, comments, user ? (user.email || user.name || "") : ""]
+      );
+      res.json({ ok: true, hidden: true, reason: reasonKey, noteId: noteId || null });
+    } catch (e) {
+      console.error("[Forge] dismiss", e.message);
       res.status(e.status || 500).json({ error: e.message });
     }
   });
@@ -935,9 +1573,13 @@ module.exports.pickLocation = pickLocation;
 module.exports.pickAvailability = pickAvailability;
 module.exports.templateWhyMe = templateWhyMe;
 module.exports.subjectFor = subjectFor;
-module.exports.scoreFit = scoreFit;
 module.exports.composeEmail = composeEmail;
-module.exports.resumeFilename = resumeFilename;
 module.exports.classifyGraphError = classifyGraphError;
 module.exports.formatRate = formatRate;
-module.exports.RESUME_TODO = RESUME_TODO;
+module.exports.htmlToPlain = htmlToPlain;
+module.exports.findInternalLeak = findInternalLeak;
+module.exports.pickResumeFile = pickResumeFile;
+module.exports.resolveClient = resolveClient;
+module.exports.missingChecklist = missingChecklist;
+module.exports.CLIENT_SUBMITTED_STATUS = CLIENT_SUBMITTED_STATUS;
+module.exports.samePerson = samePerson;
