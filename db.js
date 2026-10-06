@@ -981,6 +981,7 @@ var SUBMISSION_FIELDS = [
   "comments","isDeleted",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
+  "customText11","customText12",
   "customTextBlock1","customTextBlock2",
   "customInt1","customInt2","customInt3",
   "customFloat1","customFloat2","customFloat3",

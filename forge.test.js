@@ -76,6 +76,79 @@ test("prefers the job bill rate when comments repeat pay", function () {
   assert.equal(bill.source, "from job");
 });
 
+test("bill rate ignores submissions.client_bill_rate", function () {
+  const custom = forge.pickBillRate({ customText10: "160", submissionBill: 999, jobBill: 185 });
+  assert.equal(custom.billRate, "$160/hr");
+  assert.equal(custom.source, "from submission");
+  const ignored = forge.pickBillRate({ submissionBill: 999 });
+  assert.equal(ignored.billRate, "");
+  assert.equal(ignored.source, "missing");
+  const comments = forge.pickBillRate({ commentRate: "$185/hr", customText10: "160", submissionBill: 999 });
+  assert.equal(comments.billRate, "$185/hr");
+  assert.equal(comments.source, "from comments");
+});
+
+test("submit template keeps pay and margin out of the client fields", function () {
+  const submitted = [
+    "Pay Rate: $95/hr",
+    "Bill Rate: $185/hr",
+    "Margin: $90.00/hr",
+    "Availability Date: 2026-10-01",
+    "Why Me: Led the build.",
+  ].join("\n");
+  const p = forge.parseSubmissionComments(submitted);
+  assert.equal(p.billRate, "$185/hr");
+  assert.equal(p.availability, "2026-10-01");
+  assert.match(p.whyMe, /Led the build/);
+  assert.doesNotMatch(p.whyMe, /95|Margin|Pay Rate/i);
+  assert.doesNotMatch(p.billRate, /Margin|90/);
+  const email = forge.composeEmail({
+    candidateName: "Jack Corbell",
+    jobTitle: "Epic HB Analyst",
+    clientName: "Memorial Hermann",
+    whyMe: p.whyMe,
+    availability: p.availability,
+    location: "Houston, TX",
+    billRate: forge.pickBillRate({ commentRate: p.billRate, payRate: 95 }).billRate,
+    subject: "HB Consultant Resume",
+    signerName: "Rachel",
+  });
+  assert.doesNotMatch(email.text, /\$95/);
+  assert.doesNotMatch(email.text, /\bmargin\b/i);
+  assert.doesNotMatch(email.text, /pay rate/i);
+  assert.match(email.text, /\$185\/hr/);
+});
+
+test("submit to job writes Internally Submitted and editable rate fields", function () {
+  const body = forge.buildJobSubmissionCreate({
+    candidateId: "7",
+    jobId: "9",
+    payRate: "95",
+    billRate: "185",
+    availDate: "2026-10-01",
+    comments: "Why Me: Led the build.",
+    dateWebResponse: 1,
+  });
+  assert.equal(body.status, "Internally Submitted");
+  assert.equal(body.customText10, "185");
+  assert.equal(body.customText11, "95");
+  assert.equal(body.customText12, "2026-10-01");
+  assert.equal(body.comments, "Why Me: Led the build.");
+  assert.equal(body.billRate, undefined);
+  assert.equal(body.payRate, undefined);
+  assert.equal(body.customDate2, undefined);
+  const src = fs.readFileSync(__dirname + "/server.js", "utf8");
+  assert.match(src, /buildJobSubmissionCreate/);
+  assert.doesNotMatch(src, /status:\s*"Internal Submission"/);
+  const fields = fs.readFileSync(__dirname + "/db.js", "utf8").match(/var SUBMISSION_FIELDS = \[([\s\S]*?)\]\.join/);
+  assert.ok(fields);
+  assert.match(fields[1], /"customText10"/);
+  assert.match(fields[1], /"customText11"/);
+  assert.match(fields[1], /"customText12"/);
+  assert.match(fields[1], /"customDate2"/);
+  assert.equal(forge.matchMailbox(["Rachel@AnuraConnect.com", "other@example.com"], "rachel@anuraconnect.com"), "Rachel@AnuraConnect.com");
+});
+
 test("subject stays on the job", function () {
   assert.equal(forge.subjectFor("Beaker CP Analyst", "HB"), "Beaker Consultant Resume");
   assert.equal(forge.subjectFor("Project role", ""), "Project role");
@@ -96,6 +169,25 @@ test("availability uses the UTC calendar date", function () {
   assert.doesNotMatch(upcoming.text, /Sep 30/);
   const today = forge.pickAvailability({ dateAvailable: Date.parse("2026-10-01T00:00:00Z") }, Date.parse("2026-10-01T18:00:00Z"));
   assert.equal(today.text, "Immediately");
+  const notice = forge.pickAvailability({
+    customAvail: "2 weeks",
+    customDate2: Date.parse("2026-10-01T00:00:00Z"),
+    dateAvailable: Date.parse("2026-11-01T00:00:00Z"),
+  }, Date.parse("2026-09-01T00:00:00Z"));
+  assert.equal(notice.text, "2 weeks");
+  const submissionDate = forge.pickAvailability({
+    customDate2: Date.parse("2026-10-01T00:00:00Z"),
+    dateAvailable: Date.parse("2026-11-02T00:00:00Z"),
+  }, Date.parse("2026-09-01T00:00:00Z"));
+  assert.match(submissionDate.text, /Oct 1/);
+  assert.doesNotMatch(submissionDate.text, /Nov 2/);
+  const iso = forge.pickAvailability({ customAvail: "2026-10-01" }, Date.parse("2026-09-01T00:00:00Z"));
+  assert.match(iso.text, /Oct 1/);
+  const commentsFirst = forge.pickAvailability({
+    commentAvail: "ASAP",
+    customAvail: "2026-10-01",
+  }, Date.parse("2026-09-01T00:00:00Z"));
+  assert.equal(commentsFirst.text, "ASAP");
 });
 
 test("outlook sign-in requests Mail.ReadWrite and still includes Mail.Send", function () {
@@ -200,6 +292,7 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
     flags: ctx._forge.view.draft.flags,
   }];
   ctx._forge.owners = [];
+  ctx._forge.sync = { stale: true, oldestIncrementalSync: null, entities: {} };
   ctx.forgePaintQueue();
   ctx.forgePaintDraft();
   assert.match(main.innerHTML, /Create Outlook draft/);
@@ -225,6 +318,7 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
   assert.match(main.innerHTML, /No client submission/);
   assert.match(queueBox.innerHTML, /Also on 1 other job/);
   assert.match(queueBox.innerHTML, /Ben Walsh/);
+  assert.match(queueBox.innerHTML, /Bullhorn sync looks stale/);
   assert.ok(queueBox.innerHTML.indexOf("<details") > queueBox.innerHTML.indexOf("</button>"));
 });
 
@@ -527,6 +621,14 @@ test("owner filter Mine returns only the signed-in user's jobs", async function 
       query: async function () { return { rows: [] }; },
       getOne: async function () { return null; },
       getAll: async function (sql) {
+        if (/sync_state/.test(sql)) {
+          const recent = new Date().toISOString();
+          return [
+            { entity_type: "submissions", last_incremental_sync: recent },
+            { entity_type: "candidates", last_incremental_sync: recent },
+            { entity_type: "jobs", last_incremental_sync: recent },
+          ];
+        }
         if (/FROM submissions/.test(sql)) return [mine, other];
         if (/corporate_users/.test(sql)) {
           return [
@@ -551,6 +653,8 @@ test("owner filter Mine returns only the signed-in user's jobs", async function 
     assert.equal(all.json.data.length, 2);
     const unnamed = await req(server.address().port, "GET", "/api/forge/queue");
     assert.deepEqual(unnamed.json.data.map(function (r) { return r.submissionId; }), [42]);
+    assert.equal(filtered.json.sync.stale, false);
+    assert.ok(filtered.json.sync.entities.submissions);
   } finally {
     server.close();
   }

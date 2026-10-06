@@ -140,7 +140,7 @@ const DISMISS_REASONS = {
   job_on_hold: { label: "job on hold", status: "On Hold" },
 };
 
-const LABEL_WORD = "why\\s*me|bill\\s*rate|pay\\s*rate|availability|available|avail\\.?|location|loc\\.?|candidate\\s+name|rate|name";
+const LABEL_WORD = "availability\\s*date|date\\s*available|why\\s*me|bill\\s*rate|pay\\s*rate|margin|availability|available|avail\\.?|location|loc\\.?|candidate\\s+name|rate|name";
 const INLINE_RE = new RegExp("\\b(" + LABEL_WORD + ")\\b\\s*[:\\-\\u2013\\u2014]\\s*", "gi");
 const HEADER_RE = new RegExp("^(" + LABEL_WORD + ")\\s*[:\\-\\u2013\\u2014]?\\s*$", "i");
 
@@ -159,7 +159,9 @@ const BUNDLE_SELECT = `
          j.client_name AS job_client_name,
          s.status, s.date_added, s.sending_user, s.sending_user_id, s.comments, s.pay_rate, s.client_bill_rate,
          s.raw_json->>'customText10' AS sub_custom_bill,
+         s.raw_json->>'customText11' AS sub_custom_pay,
          s.raw_json->>'customText12' AS sub_custom_avail,
+         s.raw_json->>'customDate2' AS sub_custom_date2,
          j.title AS job_title_live, j.status AS job_status, j.client_bill_rate AS job_bill_rate,
          j.pay_rate AS job_pay_rate, LEFT(COALESCE(j.description, j.public_description, ''), 2000) AS job_description,
          j.address_city AS job_city, j.address_state AS job_state, j.on_site, j.owner_name AS job_owner,
@@ -305,10 +307,11 @@ function isEmail(s) {
 function labelKey(word) {
   const w = String(word || "").toLowerCase().replace(/\s+/g, " ").replace(/\.$/, "").trim();
   if (w === "why me") return "whyMe";
-  if (w === "availability" || w === "available" || w === "avail") return "availability";
+  if (w === "availability" || w === "available" || w === "avail" || w === "availability date" || w === "date available") return "availability";
   if (w === "location" || w === "loc") return "location";
   if (w === "bill rate" || w === "rate") return "billRate";
   if (w === "pay rate") return "payRate";
+  if (w === "margin") return "margin";
   if (w === "candidate name" || w === "name") return "name";
   return null;
 }
@@ -379,7 +382,7 @@ function parseSubmissionComments(text) {
   sections.forEach(function (s) {
     const t = s.lines.join("\n").trim();
     if (!t) return;
-    if (s.key === "payRate") return;
+    if (s.key === "payRate" || s.key === "margin") return;
     joined[s.key] = joined[s.key] ? joined[s.key] + "\n" + t : t;
   });
   if (!joined.name && joined.preamble) {
@@ -408,7 +411,7 @@ function pickBillRate(parts) {
     if (pay && sameMoney(value, pay)) return null;
     return { billRate: formatRate(value), flags: flags, source: source, amount: n };
   }
-  const submission = consider(parts.customText10, "from submission") || consider(parts.submissionBill, "from submission");
+  const submission = consider(parts.customText10, "from submission");
   const job = consider(parts.jobBill, "from job") || consider(parts.rateNotes, "from job");
   function annualFlag(text) {
     const n = moneyNumber(text);
@@ -469,20 +472,62 @@ function pickLocation(parts) {
   return { text: loc, flags: flags };
 }
 
+function calendarAvailability(value, now) {
+  if (value == null || value === "") return null;
+  let ms = value;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value.trim())) ms = Date.parse(value.trim().length === 10 ? value.trim() + "T00:00:00Z" : value.trim());
+  const when = utcParts(ms);
+  if (!when) return null;
+  const today = utcParts(now || Date.now());
+  if (today) {
+    const a = Date.UTC(when.y, when.m, when.day);
+    const b = Date.UTC(today.y, today.m, today.day);
+    if (a <= b) return { text: "Immediately", fromField: true, passed: true };
+  }
+  return { text: fmtUtcDate(ms), fromField: true, passed: false };
+}
+
+/** Comments, then customText12, then customDate2, then the candidate date. Date fields use the UTC calendar day. */
 function pickAvailability(parts, now) {
   if (parts.commentAvail && String(parts.commentAvail).trim()) return { text: String(parts.commentAvail).trim(), fromField: false, passed: false };
-  if (parts.customAvail && String(parts.customAvail).trim()) return { text: String(parts.customAvail).trim(), fromField: false, passed: false };
-  if (parts.dateAvailable) {
-    const when = utcParts(parts.dateAvailable);
-    const today = utcParts(now || Date.now());
-    if (when && today) {
-      const a = Date.UTC(when.y, when.m, when.day);
-      const b = Date.UTC(today.y, today.m, today.day);
-      if (a <= b) return { text: "Immediately", fromField: true, passed: true };
+  if (parts.customAvail && String(parts.customAvail).trim()) {
+    const text = String(parts.customAvail).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{12,}$/.test(text)) {
+      const dated = calendarAvailability(text, now);
+      if (dated && dated.text) return dated;
     }
-    return { text: fmtUtcDate(parts.dateAvailable), fromField: true, passed: false };
+    return { text: text, fromField: false, passed: false };
   }
+  const fromSubmissionDate = calendarAvailability(parts.customDate2, now);
+  if (fromSubmissionDate && fromSubmissionDate.text) return fromSubmissionDate;
+  const fromCandidate = calendarAvailability(parts.dateAvailable, now);
+  if (fromCandidate && fromCandidate.text) return fromCandidate;
   return { text: "", fromField: false, passed: false };
+}
+
+function matchMailbox(boxes, email) {
+  const want = String(email || "").trim().toLowerCase();
+  if (!want) return "";
+  return (boxes || []).filter(function (b) { return String(b || "").trim().toLowerCase() === want; })[0] || "";
+}
+
+/** Create body for Submit to Job. Writes editable Anura text fields only. */
+function buildJobSubmissionCreate(input) {
+  const src = input || {};
+  const body = {
+    candidate: { id: parseInt(src.candidateId, 10) },
+    jobOrder: { id: parseInt(src.jobId, 10) },
+    status: "Internally Submitted",
+    comments: src.comments || "",
+  };
+  if (src.dateWebResponse != null) body.dateWebResponse = src.dateWebResponse;
+  const bill = src.billRate != null ? String(src.billRate).trim() : "";
+  const pay = src.payRate != null ? String(src.payRate).trim() : "";
+  const avail = src.availDate != null ? String(src.availDate).trim() : "";
+  if (bill) body.customText10 = bill;
+  if (pay) body.customText11 = pay;
+  if (avail) body.customText12 = avail;
+  return body;
 }
 
 /** Why Me is the labeled section only. No preamble, no candidate description. */
@@ -1013,10 +1058,9 @@ function registerForge(app, deps) {
     const bill = pickBillRate({
       commentRate: parsed.billRate,
       customText10: row.sub_custom_bill,
-      submissionBill: row.client_bill_rate,
       jobBill: row.job_bill_rate,
       rateNotes: row.job_rate_notes,
-      payRate: row.pay_rate,
+      payRate: row.pay_rate || row.sub_custom_pay,
       jobPay: row.job_pay_rate,
     });
     const location = pickLocation({
@@ -1031,7 +1075,12 @@ function registerForge(app, deps) {
       jobTitle: jobTitle,
       employmentType: row.employment_type,
     });
-    const avail = pickAvailability({ commentAvail: parsed.availability, customAvail: row.sub_custom_avail, dateAvailable: row.date_available }, now);
+    const avail = pickAvailability({
+      commentAvail: parsed.availability,
+      customAvail: row.sub_custom_avail,
+      customDate2: row.sub_custom_date2,
+      dateAvailable: row.date_available,
+    }, now);
     const why = templateWhyMe({ commentWhy: parsed.whyMe });
     const flags = bill.flags.concat(location.flags);
     if (!why.text) flags.push({ level: "alert", code: "why_me_missing", message: "No Why Me in Bullhorn comments. Write one." });
@@ -1204,6 +1253,42 @@ function registerForge(app, deps) {
     }
   }
 
+  async function loadSyncFreshness() {
+    const wanted = ["submissions", "candidates", "jobs"];
+    const empty = { entities: {}, oldestIncrementalSync: null, stale: true };
+    if (!db || !db.ready) return empty;
+    try {
+      const rows = await db.getAll(
+        "SELECT entity_type, last_incremental_sync, last_full_sync FROM sync_state WHERE entity_type = ANY($1::text[])",
+        [wanted]
+      );
+      const entities = {};
+      (rows || []).forEach(function (row) {
+        if (!row || wanted.indexOf(row.entity_type) < 0) return;
+        entities[row.entity_type] = {
+          lastIncrementalSync: row.last_incremental_sync || null,
+          lastFullSync: row.last_full_sync || null,
+        };
+      });
+      const times = wanted.map(function (name) {
+        const row = entities[name];
+        if (!row || !row.lastIncrementalSync) return null;
+        const t = new Date(row.lastIncrementalSync).getTime();
+        return isNaN(t) ? null : t;
+      }).filter(function (t) { return t != null; });
+      const complete = times.length === wanted.length;
+      const oldest = complete ? Math.min.apply(null, times) : null;
+      const stale = !complete || (Date.now() - oldest) > 15 * 60 * 1000;
+      return {
+        entities: entities,
+        oldestIncrementalSync: oldest ? new Date(oldest).toISOString() : null,
+        stale: stale,
+      };
+    } catch (e) {
+      return empty;
+    }
+  }
+
   function publicFiles(files, candidateId, clientName, preferredFileId) {
     const preferred = preferredFileId != null && String(preferredFileId) !== ""
       ? (files || []).filter(function (f) { return String(f.id) === String(preferredFileId); })[0]
@@ -1293,6 +1378,7 @@ function registerForge(app, deps) {
           }).length,
         };
       });
+      const sync = await loadSyncFreshness();
       const requested = String(req.query.owner == null || req.query.owner === "" ? "mine" : req.query.owner);
       let data = all;
       if (requested === "mine") {
@@ -1305,6 +1391,7 @@ function registerForge(app, deps) {
         data: data,
         owners: owners,
         ownerFilter: requested,
+        sync: sync,
         me: user ? { id: user.id || null, name: personName(user), email: user.email || "", firstName: user.firstName || firstNameOf(personName(user)) } : null,
       });
     } catch (e) {
@@ -1447,7 +1534,7 @@ function registerForge(app, deps) {
         profile: profile,
         outlook: {
           mailboxes: boxes,
-          suggestedMailbox: (user && boxes.indexOf((user.email || "").toLowerCase()) >= 0) ? user.email.toLowerCase() : (boxes[0] || ""),
+          suggestedMailbox: matchMailbox(boxes, user && user.email) || (boxes[0] || ""),
           reconnectUrl: "/auth/outlook/login",
           draftsNeedMailReadWrite: false,
           hint: "Forge saves a draft. You send it. Sign-in includes Mail.ReadWrite along with Mail.Read, Mail.Send, and User.Read. Reconnect Outlook if this mailbox was linked before that permission.",
@@ -1579,10 +1666,7 @@ function registerForge(app, deps) {
       }
 
       const boxes = await mailboxes();
-      const wanted = (body.mailbox || "").trim().toLowerCase();
-      const mailbox = (wanted && boxes.map(function (b) { return b.toLowerCase(); }).indexOf(wanted) >= 0)
-        ? boxes.filter(function (b) { return b.toLowerCase() === wanted; })[0]
-        : ((user && boxes.filter(function (b) { return b.toLowerCase() === (user.email || "").toLowerCase(); })[0]) || boxes[0] || "");
+      const mailbox = matchMailbox(boxes, body.mailbox) || matchMailbox(boxes, user && user.email) || boxes[0] || "";
       const resumeStatus = tooLarge ? "too_large" : "ok";
       const auditBase = {
         submissionId: id,
@@ -1784,3 +1868,5 @@ module.exports.CLIENT_SUBMITTED_STATUS = CLIENT_SUBMITTED_STATUS;
 module.exports.samePerson = samePerson;
 module.exports.buildSiblingView = buildSiblingView;
 module.exports.isClientSubmittedStatus = isClientSubmittedStatus;
+module.exports.buildJobSubmissionCreate = buildJobSubmissionCreate;
+module.exports.matchMailbox = matchMailbox;

@@ -117,6 +117,7 @@ async function forgeLoadQueue() {
     _forge.queue = r.data || [];
     _forge.owners = r.owners || [];
     _forge.me = r.me || null;
+    _forge.sync = r.sync || null;
     forgePaintQueue();
     var want = window._forgeSelectId;
     if (want) forgeOpen(want);
@@ -131,10 +132,33 @@ function forgeOwnerChanged(value) {
   forgeLoadQueue();
 }
 
+function forgeSyncWhen(iso) {
+  if (!iso) return "unknown";
+  var t = new Date(iso).getTime();
+  if (isNaN(t)) return "unknown";
+  var mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return mins + "m ago";
+  var hours = Math.round(mins / 60);
+  if (hours < 48) return hours + "h ago";
+  return new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+function forgeSyncHtml() {
+  var sync = _forge.sync;
+  if (!sync) return "";
+  if (sync.stale) {
+    var when = sync.oldestIncrementalSync ? " Oldest update " + forgeSyncWhen(sync.oldestIncrementalSync) + "." : "";
+    return '<div class="fg-flag warn">Bullhorn sync looks stale.' + when + ' Rates and availability may be behind Bullhorn.</div>';
+  }
+  return '<div class="fg-note">Bullhorn sync: submissions, candidates, and jobs updated ' + esc(forgeSyncWhen(sync.oldestIncrementalSync)) + '.</div>';
+}
+
 function forgePaintQueue() {
   var box = document.getElementById("forge-queue");
   if (!box) return;
-  var h = '<label class="fg-lab" style="margin-top:0">Owner</label><select class="fg-in" id="forge-owner" onchange="forgeOwnerChanged(this.value)">';
+  var h = forgeSyncHtml();
+  h += '<label class="fg-lab" style="margin-top:0">Owner</label><select class="fg-in" id="forge-owner" onchange="forgeOwnerChanged(this.value)">';
   h += '<option value="mine"' + (_forge.ownerFilter === "mine" ? " selected" : "") + '>Mine</option>';
   (_forge.owners || []).forEach(function (o) {
     h += '<option value="' + forgeAttr(String(o.id)) + '"' + (String(_forge.ownerFilter) === String(o.id) ? " selected" : "") + '>' + esc(o.firstName || o.name || "User") + ' (' + (o.count || 0) + ')</option>';

@@ -1264,21 +1264,23 @@ app.post("/api/candidates/:id/notes", async (req, res) => {
 // ── Submit Candidate to Job ────────────────────
 app.post("/api/submissions", async (req, res) => {
   try {
-    const { candidateId, jobId, comments, notifyUsers } = req.body;
+    const { candidateId, jobId, comments, notifyUsers, payRate, billRate, availDate } = req.body;
     if (!candidateId || !jobId) {
       return res.status(400).json({ error: "candidateId and jobId are required" });
     }
 
-    // Create JobSubmission in Bullhorn
-    const subBody = {
-      candidate: { id: parseInt(candidateId) },
-      jobOrder: { id: parseInt(jobId) },
-      status: "Internal Submission",
+    // Editable Anura fields only. billRate, payRate, and customDate2 are read-only and fail the create.
+    const subBody = require("./forge").buildJobSubmissionCreate({
+      candidateId: candidateId,
+      jobId: jobId,
+      comments: comments,
+      payRate: payRate,
+      billRate: billRate,
+      availDate: availDate,
       dateWebResponse: Date.now(),
-      comments: comments || "",
-    };
+    });
     const result = await bhWrite("entity/JobSubmission", subBody, "PUT");
-    console.log("[Submission] Created internal submission", candidateId, "→ Job", jobId, "→", result);
+    console.log("[Submission] Created Internally Submitted", candidateId, "→ Job", jobId, "→", result);
 
     // Also log a note about the submission
     try {
