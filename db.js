@@ -938,7 +938,7 @@ var JOB_FIELDS = [
   "source","externalID","reasonClosed","markUpPercentage",
   "taxRate","travelRequirements","bonusPackage","benefits",
   "degreeList","certificationList","educationDegree",
-  "publishedZip","hoursPerWeek"
+  "publishedZip","hoursPerWeek","skillList"
 ].join(",");
 
 var PLACEMENT_FIELDS = [
@@ -977,10 +977,11 @@ var SUBMISSION_FIELDS = [
   "id","candidate","jobOrder","status","source",
   "dateAdded","dateLastModified","dateWebResponse",
   "sendingUser","owners",
-  "payRate","salary",
+  "payRate","billRate","salary",
   "comments","isDeleted",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
+  "customText11","customText12",
   "customTextBlock1","customTextBlock2",
   "customInt1","customInt2","customInt3",
   "customFloat1","customFloat2","customFloat3",
@@ -1398,7 +1399,8 @@ var SYNC_ENTITIES = {
         sending_user_id: su.id || null,
         sending_user: ownerName(su),
         pay_rate: safeNum(r.payRate),
-        client_bill_rate: safeNum(r.clientBillRate),
+        // JobSubmission has billRate (read-only "Bill Rate"), not clientBillRate.
+        client_bill_rate: safeNum(r.billRate != null && r.billRate !== "" ? r.billRate : r.clientBillRate),
         salary: safeNum(r.salary),
         comments: safeStr(r.comments),
         custom_text1: safeStr(r.customText1),
