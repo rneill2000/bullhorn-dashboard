@@ -55,6 +55,7 @@ var _forge = {
   busy: false,
   resumeConfirmed: false,
   resumeFileId: "",
+  confirmSameClient: false,
   toHits: [],
   ccHits: [],
 };
@@ -65,7 +66,10 @@ function renderForge() {
     + '.fg{display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start}'
     + '.fg-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px}'
     + '.fg-q{max-height:calc(100vh - 180px);overflow:auto}'
-    + '.fg-row{display:block;width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer;font-family:inherit}'
+    + '.fg-item{margin-bottom:8px}.fg-row{display:block;width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer;font-family:inherit}'
+    + '.fg-item .fg-row{margin-bottom:4px}'
+    + '.fg-others{font-size:12px;color:#334155}.fg-others summary{cursor:pointer;font-weight:700;color:#92400e;display:inline-block;background:#fffbeb;border:1px solid #fde68a;border-radius:999px;padding:2px 8px}'
+    + '.fg-other{margin-top:6px;padding:6px 8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;line-height:1.45}'
     + '.fg-row.on{border-color:#176087;box-shadow:0 0 0 1px #176087}'
     + '.fg-row .nm{font-weight:700;color:#0f172a;font-size:14px}'
     + '.fg-row .sub{color:#64748b;font-size:12px;margin-top:2px}'
@@ -145,21 +149,45 @@ function forgePaintQueue() {
   _forge.queue.forEach(function (row) {
     var on = _forge.selected === row.submissionId ? " on" : "";
     var missing = (row.missing || []).slice();
+    h += '<div class="fg-item">';
     h += '<button type="button" class="fg-row' + on + '" onclick="forgeOpen(' + row.submissionId + ')">';
     h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span class="nm">' + esc(row.candidateName || "Candidate") + '</span><span class="fg-sla ' + esc(row.sla || "unknown") + '">' + esc(forgeSlaLabel(row.daysWaiting, row.sla)) + '</span></div>';
     h += '<div class="sub">' + esc(row.clientName || "Client") + ' · ' + esc(row.jobTitle || "Role") + '</div>';
     h += '<div class="sub">Owner: ' + esc(row.jobOwnerFirst || "—") + ' · Submitted by: ' + esc(row.submittedByFirst || "—") + '</div>';
     h += '<div class="sub">' + (row.billRate ? esc(row.billRate) : "bill rate missing") + (missing.length ? " · missing " + esc(missing.join(", ")) : "") + '</div>';
     if (row.existingDraft && row.existingDraft.label) h += '<div class="sub">' + esc(row.existingDraft.label) + '</div>';
+    (row.flags || []).forEach(function (f) {
+      h += '<div class="sub">' + esc(f.message) + '</div>';
+    });
     h += '</button>';
+    h += forgeOthersHtml(row);
+    h += '</div>';
   });
   box.innerHTML = h;
+}
+
+function forgeOthersHtml(row) {
+  if (!row || !row.otherJobsLabel) return "";
+  var h = '<details class="fg-others"><summary>' + esc(row.otherJobsLabel) + '</summary>';
+  (row.otherSubmissions || []).forEach(function (s) {
+    var draftBit = s.hasForgeDraft ? (s.forgeDraftLabel || "Forge draft exists") : "No Forge draft";
+    var clientBit = s.clientSubmitted ? "Client submission exists" : "No client submission";
+    h += '<div class="fg-other">';
+    h += esc(s.job || "Job") + " · " + esc(s.client || "Client");
+    h += "<br>Owner: " + esc(s.owner || "—") + " · " + esc(s.status || "—");
+    h += "<br>Bill rate: " + esc(s.billRate || "—") + " · Submitted: " + esc(s.dateSubmitted || "—");
+    h += "<br>" + esc(draftBit) + " · " + esc(clientBit);
+    h += "</div>";
+  });
+  h += "</details>";
+  return h;
 }
 
 async function forgeOpen(id) {
   _forge.selected = id;
   _forge.resumeConfirmed = false;
   _forge.resumeFileId = "";
+  _forge.confirmSameClient = false;
   window._forgeSelectId = id;
   if (typeof setHash === "function") setHash("forge/" + id);
   forgePaintQueue();
@@ -210,7 +238,9 @@ function forgePaintDraft() {
   h += '<div><div style="font-size:18px;font-weight:700;color:#0f172a">' + esc(c.name || "Candidate") + '</div>';
   h += '<div style="color:#475569;font-size:13px;margin-top:2px">' + esc(j.title || "") + (j.clientName ? " · " + esc(j.clientName) : "") + '</div>';
   h += '<div class="fg-note">Owner: ' + esc(j.ownerFirst || "—") + ' · Submitted by: ' + esc(d.submittedByFirst || "—") + '</div>';
-  h += '<div style="margin-top:6px"><span class="fg-sla ' + esc(d.sla || "unknown") + '">' + esc(forgeSlaLabel(d.daysWaiting, d.sla)) + '</span></div></div>';
+  h += '<div style="margin-top:6px"><span class="fg-sla ' + esc(d.sla || "unknown") + '">' + esc(forgeSlaLabel(d.daysWaiting, d.sla)) + '</span></div>';
+  h += forgeOthersHtml(d);
+  h += '</div>';
   if (d.existingDraft && d.existingDraft.label) h += '<div class="fg-flag warn">' + esc(d.existingDraft.label) + '</div>';
   (d.flags || []).forEach(function (f) {
     h += '<div class="fg-flag ' + (f.level === "alert" ? "alert" : "warn") + '">' + esc(f.message) + '</div>';
@@ -323,6 +353,7 @@ function forgeFields() {
     signerPhone: forgeVal("forge-sign-phone") || profile.phone || "",
     resumeFileId: _forge.resumeConfirmed ? (_forge.resumeFileId || forgeVal("forge-resume")) : "",
     confirmAnother: !!(d.existingDraft),
+    confirmSameClient: !!_forge.confirmSameClient,
   };
 }
 
@@ -545,6 +576,15 @@ async function forgeCreate() {
     if (!ok) return;
     f.confirmAnother = true;
   }
+  var draftView = _forge.view && _forge.view.draft;
+  if (draftView && draftView.needsSameClientConfirm && !_forge.confirmSameClient) {
+    var sentFlags = (draftView.flags || []).filter(function (flag) { return flag.code === "same_client_sent"; });
+    var prompt = sentFlags.map(function (flag) { return flag.message; }).join("\n\n") || "This candidate is already client submitted at this client.";
+    var allow = typeof confirm === "function" ? confirm(prompt + "\n\nCreate the Outlook draft anyway?") : false;
+    if (!allow) return;
+    _forge.confirmSameClient = true;
+    f.confirmSameClient = true;
+  }
   if (f.to && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.to)) {
     if (result) result.innerHTML = '<div class="fg-flag alert">That recipient address does not look like an email.</div>';
     return;
@@ -573,6 +613,7 @@ async function forgeCreate() {
       signerPhone: f.signerPhone,
       resumeFileId: _forge.resumeFileId,
       confirmAnother: !!f.confirmAnother,
+      confirmSameClient: !!f.confirmSameClient,
     });
     if (r.created) {
       var link = r.webLink ? '<div style="margin-top:8px"><a href="' + forgeAttr(r.webLink) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:700">Open draft in Outlook</a></div>' : "";
@@ -588,7 +629,9 @@ async function forgeCreate() {
     }
   } catch (e) {
     if (e.body && (e.body.snippet || e.body.code === "bill_rate_mismatch" || e.body.code === "internal_leak")) forgeShowBlock(result, e);
-    else if (e.body && e.body.code === "duplicate_draft") {
+    else if (e.body && e.body.code === "same_client_submitted") {
+      if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.body.error || e.message) + '</div>';
+    } else if (e.body && e.body.code === "duplicate_draft") {
       if (_forge.view && _forge.view.draft && e.body.existingDraft) _forge.view.draft.existingDraft = e.body.existingDraft;
       if (result) result.innerHTML = '<div class="fg-flag warn">' + esc((e.body.existingDraft && e.body.existingDraft.label) || e.body.error || e.message) + ' Use Create another to make a second draft.</div>';
     } else if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.message) + '</div>';

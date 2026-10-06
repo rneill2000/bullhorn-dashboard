@@ -121,6 +121,7 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
   const vm = require("vm");
   const main = { innerHTML: "" };
   const preview = { textContent: "" };
+  const queueBox = { innerHTML: "" };
   const ctx = {
     console: console,
     esc: function (s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); },
@@ -133,6 +134,7 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
     setTimeout: function (fn) { ctx._later = fn; },
     document: { getElementById: function (id) {
       if (id === "forge-main") return main;
+      if (id === "forge-queue") return queueBox;
       if (id === "forge-preview") return preview;
       if (id === "forge-to") return { value: "dana@mh.example", selectedIndex: 0, options: [{ getAttribute: function () { return "Dana"; } }] };
       const values = {
@@ -174,9 +176,31 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
       sla: "red",
       daysWaiting: 3,
       submittedBy: "Ben",
-      flags: [{ level: "warn", code: "sla", message: "Internally submitted 3 days ago." }],
+      otherJobsLabel: "Also on 1 other job",
+      otherSubmissions: [{ job: "Cogito Analyst", client: "Memorial Hermann", owner: "Ben Walsh", status: "Internally Submitted", billRate: "$160/hr", dateSubmitted: "Oct 1, 2026", hasForgeDraft: true, forgeDraftLabel: "Draft created Oct 1, 2026 by ben@anuraconnect.com", clientSubmitted: false }],
+      flags: [
+        { level: "warn", code: "sla", message: "Internally submitted 3 days ago." },
+        { level: "warn", code: "same_client", message: "Jack Corbell is also submitted to Memorial Hermann for Cogito Analyst by Ben Walsh. Coordinate before sending." },
+      ],
     },
   };
+  ctx._forge.queue = [{
+    submissionId: 42,
+    candidateName: "Jack Corbell",
+    clientName: "Memorial Hermann",
+    jobTitle: "Epic HB Analyst",
+    jobOwnerFirst: "Rachel",
+    submittedByFirst: "Ben",
+    sla: "red",
+    daysWaiting: 3,
+    billRate: "$185/hr",
+    missing: [],
+    otherJobsLabel: "Also on 1 other job",
+    otherSubmissions: ctx._forge.view.draft.otherSubmissions,
+    flags: ctx._forge.view.draft.flags,
+  }];
+  ctx._forge.owners = [];
+  ctx.forgePaintQueue();
   ctx.forgePaintDraft();
   assert.match(main.innerHTML, /Create Outlook draft/);
   assert.match(main.innerHTML, /Mark client submitted/);
@@ -193,6 +217,15 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
   assert.doesNotMatch(preview.textContent, /Candidate Name:/);
   assert.match(preview.textContent, /Bill rate: \$185\/hr/);
   assert.match(preview.textContent, /Epic HB Analyst/);
+  assert.match(main.innerHTML, /Also on 1 other job/);
+  assert.match(main.innerHTML, /Cogito Analyst/);
+  assert.match(main.innerHTML, /Ben Walsh/);
+  assert.match(main.innerHTML, /Coordinate before sending/);
+  assert.match(main.innerHTML, /Draft created Oct 1, 2026 by ben@anuraconnect.com/);
+  assert.match(main.innerHTML, /No client submission/);
+  assert.match(queueBox.innerHTML, /Also on 1 other job/);
+  assert.match(queueBox.innerHTML, /Ben Walsh/);
+  assert.ok(queueBox.innerHTML.indexOf("<details") > queueBox.innerHTML.indexOf("</button>"));
 });
 
 function fixtureRow() {
@@ -632,6 +665,211 @@ test("bill rate mismatch with live Bullhorn blocks creation", async function () 
 test("missing checklist names the blank client fields", function () {
   const missing = forge.missingChecklist({ whyMe: "", availability: "Immediately", location: "", billRate: "", resumeFileId: "", to: "" });
   assert.deepEqual(missing, ["Why Me", "location", "bill rate", "resume", "recipient"]);
+});
+
+test("same candidate on two jobs at one client keeps the badge under Mine", async function () {
+  const rowA = Object.assign(fixtureRow(), {
+    id: 42,
+    candidate_id: 7,
+    candidate_name: "Jack Corbell",
+    job_id: 9,
+    job_title_live: "Epic HB Analyst",
+    job_owner_id: 5,
+    job_owner: "Rachel Neill",
+    job_owner_email: "rachel@anuraconnect.com",
+    status: "Internally Submitted",
+    client_id: 3,
+    client_name: "Memorial Hermann",
+    date_added: Date.parse("2026-10-01T00:00:00Z"),
+  });
+  const rowB = Object.assign(fixtureRow(), {
+    id: 43,
+    candidate_id: 7,
+    candidate_name: "Jack Corbell",
+    job_id: 12,
+    job_title: "Cogito Analyst",
+    job_title_live: "Cogito Analyst",
+    job_skills: "",
+    job_owner_id: 9,
+    job_owner: "Ben Walsh",
+    job_owner_email: "ben@anuraconnect.com",
+    status: "Internally Submitted",
+    comments: "",
+    pay_rate: "95",
+    client_bill_rate: null,
+    sub_custom_bill: "",
+    job_bill_rate: "160",
+    job_pay_rate: "95",
+    client_id: 3,
+    client_name: "Memorial Hermann",
+    date_added: Date.parse("2026-10-01T00:00:00Z"),
+  });
+  const rowC = Object.assign(fixtureRow(), {
+    id: 44,
+    candidate_id: 7,
+    candidate_name: "Jack Corbell",
+    job_id: 15,
+    job_title: "Beaker Analyst",
+    job_title_live: "Beaker Analyst",
+    job_skills: "",
+    job_owner_id: 11,
+    job_owner: "Pat Kim",
+    job_owner_email: "pat@anuraconnect.com",
+    status: "Client Submission",
+    comments: "",
+    pay_rate: "95",
+    job_bill_rate: "185",
+    job_pay_rate: "95",
+    client_id: 3,
+    client_name: "Memorial Hermann",
+    date_added: Date.parse("2026-09-15T00:00:00Z"),
+  });
+  const graphCalls = [];
+  const app = express();
+  app.use(express.json());
+  forge(app, {
+    db: {
+      ready: true,
+      query: async function () { return { rows: [] }; },
+      getOne: async function (sql) {
+        if (/FROM submissions/.test(sql)) return rowA;
+        return null;
+      },
+      getAll: async function (sql) {
+        if (/sibling submissions/.test(sql)) return [rowA, rowB, rowC];
+        if (/internally submitted/i.test(sql)) return [rowA, rowB];
+        if (/submittal_forge_drafts/.test(sql)) {
+          return [{ submission_id: 43, created_at: "2026-10-02T00:00:00Z", created_by: "ben@anuraconnect.com", resume_file_id: "77" }];
+        }
+        if (/corporate_users/.test(sql)) {
+          return [
+            { id: 5, first_name: "Rachel", last_name: "Neill", name: "Rachel Neill", email: "rachel@anuraconnect.com", status: "Active" },
+            { id: 9, first_name: "Ben", last_name: "Walsh", name: "Ben Walsh", email: "ben@anuraconnect.com", status: "Active" },
+            { id: 11, first_name: "Pat", last_name: "Kim", name: "Pat Kim", email: "pat@anuraconnect.com", status: "Active" },
+          ];
+        }
+        return [];
+      },
+    },
+    graphFetch: async function (email, endpoint) { graphCalls.push(endpoint); return { id: "M" }; },
+    bhFetch: async function (endpoint) {
+      if (String(endpoint).indexOf("fileAttachments") >= 0) {
+        return { data: [
+          { id: 3, name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", fileExtension: "pdf", dateAdded: 90 },
+          { id: 77, name: "generic.pdf", contentType: "application/pdf", fileExtension: "pdf", dateAdded: 10 },
+        ] };
+      }
+      if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: { customText10: "185" } };
+      return { data: { clientBillRate: 185 } };
+    },
+    downloadCandidateFile: async function () { return { name: "generic.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF") }; },
+    outlookUsers: function () { return {}; },
+    getUser: function () { return { id: 5, firstName: "Rachel", lastName: "Neill", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+  });
+  const server = await listen(app);
+  try {
+    const all = await req(server.address().port, "GET", "/api/forge/queue?owner=all");
+    assert.equal(all.status, 200, all.text);
+    assert.deepEqual(all.json.data.map(function (r) { return r.submissionId; }).sort(), [42, 43]);
+    all.json.data.forEach(function (row) {
+      assert.equal(row.otherJobsLabel, "Also on 2 other jobs");
+      assert.equal(row.otherJobCount, 2);
+    });
+    const a = all.json.data.filter(function (r) { return r.submissionId === 42; })[0];
+    const b = all.json.data.filter(function (r) { return r.submissionId === 43; })[0];
+    assert.ok(a.flags.some(function (f) {
+      return f.code === "same_client" && /Cogito Analyst/.test(f.message) && /Ben Walsh/.test(f.message) && /Coordinate before sending/.test(f.message);
+    }));
+    assert.ok(a.flags.some(function (f) {
+      return f.code === "same_client_sent" && f.level === "alert" && /Beaker Analyst/.test(f.message) && /Pat Kim/.test(f.message);
+    }));
+    assert.ok(a.flags.some(function (f) {
+      return f.code === "same_client_rate" && f.level === "alert" && /\$185\/hr/.test(f.message) && /\$160\/hr/.test(f.message);
+    }));
+    assert.ok(!a.flags.some(function (f) { return f.code === "same_client_rate" && /Beaker/.test(f.message); }));
+    const ben = a.otherSubmissions.filter(function (s) { return s.submissionId === 43; })[0];
+    assert.equal(ben.job, "Cogito Analyst");
+    assert.equal(ben.client, "Memorial Hermann");
+    assert.equal(ben.owner, "Ben Walsh");
+    assert.equal(ben.status, "Internally Submitted");
+    assert.equal(ben.billRate, "$160/hr");
+    assert.equal(ben.dateSubmitted, "Oct 1, 2026");
+    assert.equal(ben.hasForgeDraft, true);
+    assert.match(ben.forgeDraftLabel, /ben@anuraconnect.com/);
+    assert.equal(ben.clientSubmitted, false);
+    const pat = a.otherSubmissions.filter(function (s) { return s.submissionId === 44; })[0];
+    assert.equal(pat.clientSubmitted, true);
+    assert.equal(pat.status, "Client Submission");
+    assert.ok(b.flags.some(function (f) {
+      return f.code === "same_client" && /Rachel Neill/.test(f.message) && /Epic HB Analyst/.test(f.message);
+    }));
+    assert.equal(b.otherJobsLabel, "Also on 2 other jobs");
+
+    const mine = await req(server.address().port, "GET", "/api/forge/queue?owner=mine");
+    assert.deepEqual(mine.json.data.map(function (r) { return r.submissionId; }), [42]);
+    assert.equal(mine.json.data[0].otherJobsLabel, "Also on 2 other jobs");
+    assert.ok(mine.json.data[0].otherSubmissions.some(function (s) { return s.owner === "Ben Walsh" && s.job === "Cogito Analyst"; }));
+    assert.ok(mine.json.data[0].flags.some(function (f) { return /Ben Walsh/.test(f.message) && f.code === "same_client"; }));
+
+    const preview = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
+    assert.equal(preview.status, 200, preview.text);
+    assert.equal(preview.json.draft.otherJobsLabel, "Also on 2 other jobs");
+    assert.equal(preview.json.draft.needsSameClientConfirm, true);
+    assert.equal(preview.json.resume.suggestedId, 77);
+    assert.ok(preview.json.draft.flags.some(function (f) { return f.code === "same_client" && /Ben Walsh/.test(f.message); }));
+
+    const blocked = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      whyMe: "Led the HB implementation.",
+      availability: "2 weeks",
+      location: "Houston, TX",
+      billRate: "$185/hr",
+      resumeFileId: 77,
+    });
+    assert.equal(blocked.status, 409);
+    assert.equal(blocked.json.code, "same_client_submitted");
+    assert.match(blocked.json.error, /Pat Kim/);
+    assert.match(blocked.json.error, /Coordinate before sending/);
+    assert.equal(graphCalls.length, 0);
+
+    const allowed = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      whyMe: "Led the HB implementation.",
+      availability: "2 weeks",
+      location: "Houston, TX",
+      billRate: "$185/hr",
+      resumeFileId: 77,
+      confirmSameClient: true,
+    });
+    assert.equal(allowed.status, 200, allowed.text);
+    assert.equal(allowed.json.created, false);
+    assert.equal(allowed.json.stub, true);
+    assert.equal(graphCalls.length, 0);
+  } finally {
+    server.close();
+  }
+
+  const cross = forge.buildSiblingView({
+    submissionId: 1,
+    candidateName: "Ada Lovelace",
+    jobId: 10,
+    jobTitle: "HB Analyst",
+    clientId: 3,
+    clientName: "Memorial Hermann",
+    billRate: "$185/hr",
+  }, [{
+    submissionId: 2,
+    jobId: 11,
+    job: "Cogito Analyst",
+    clientId: 9,
+    client: "Skagit Regional Health",
+    owner: "Ben Walsh",
+    status: "Internally Submitted",
+    billRate: "$160/hr",
+    clientSubmitted: false,
+  }]);
+  assert.equal(cross.otherJobsLabel, "Also on 1 other job");
+  assert.equal(cross.flags.length, 0);
+  assert.equal(forge.isClientSubmittedStatus("Candidate"), false);
+  assert.equal(forge.isClientSubmittedStatus("Client Submission"), true);
 });
 
 test("bare state location is flagged and remote is added", function () {

@@ -48,6 +48,92 @@ const MODULES = [
 /** Bullhorn's client-facing stage after Internally Submitted. Matches the dashboard pipeline. */
 const CLIENT_SUBMITTED_STATUS = "Client Submission";
 
+/** Later client-facing stages. "Candidate" stays internal and is not treated as already sent. */
+const CLIENT_FACING_STATUSES = [
+  "Client Submission", "Client Rejected",
+  "First Interview", "Second Interview", "Third Interview", "Interview",
+  "Offer Out", "Offer Extended", "Offer Accepted", "Offer Rejected",
+  "Placed",
+];
+
+function isClientSubmittedStatus(status) {
+  const st = String(status || "").trim().toLowerCase();
+  return CLIENT_FACING_STATUSES.some(function (v) { return v.toLowerCase() === st; });
+}
+
+function sameClientMatch(aId, aName, bId, bName) {
+  const ai = aId != null && aId !== "" && Number(aId) !== 0 ? Number(aId) : null;
+  const bi = bId != null && bId !== "" && Number(bId) !== 0 ? Number(bId) : null;
+  if (ai != null && bi != null) return ai === bi;
+  const an = String(aName || "").trim().toLowerCase();
+  const bn = String(bName || "").trim().toLowerCase();
+  return !!(an && bn && an === bn);
+}
+
+function billRatesDiffer(a, b) {
+  const na = moneyNumber(a);
+  const nb = moneyNumber(b);
+  if (na == null && nb == null) return false;
+  if (na == null || nb == null) return true;
+  return Math.abs(na - nb) >= 0.01;
+}
+
+function otherJobsBadge(count) {
+  const n = Number(count) || 0;
+  if (n <= 0) return "";
+  if (n === 1) return "Also on 1 other job";
+  return "Also on " + n + " other jobs";
+}
+
+/**
+ * Other submissions for this candidate, any status and any owner.
+ * sameClient is a different job at the same client. Rate flags stay inside that client.
+ */
+function buildSiblingView(current, snapshots) {
+  const cur = current || {};
+  const others = (snapshots || []).filter(function (s) {
+    return s && String(s.submissionId) !== String(cur.submissionId);
+  }).map(function (s) {
+    const differentJob = String(s.jobId || "") !== String(cur.jobId || "");
+    const same = differentJob && sameClientMatch(cur.clientId, cur.clientName, s.clientId, s.client);
+    return Object.assign({}, s, { sameClient: !!same });
+  });
+  const flags = [];
+  const name = cur.candidateName || "This candidate";
+  others.forEach(function (s) {
+    if (!s.sameClient) return;
+    const owner = s.owner || "another owner";
+    const job = s.job || "another role";
+    const client = s.client || cur.clientName || "this client";
+    const message = name + " is also submitted to " + client + " for " + job + " by " + owner + ". Coordinate before sending.";
+    flags.push({
+      level: s.clientSubmitted ? "alert" : "warn",
+      code: s.clientSubmitted ? "same_client_sent" : "same_client",
+      message: message,
+    });
+    if (billRatesDiffer(cur.billRate, s.billRate)) {
+      flags.push({
+        level: "alert",
+        code: "same_client_rate",
+        message: "Bill rates differ for " + client + ": " + (cur.billRate || "(blank)") + " on " + (cur.jobTitle || "this job") + " and " + (s.billRate || "(blank)") + " on " + job + ".",
+      });
+    }
+  });
+  const dated = others.filter(function (s) { return s.sameClient && s.resumeFileId; }).slice().sort(function (a, b) {
+    const ta = new Date(a.draftCreatedAt || 0).getTime() || 0;
+    const tb = new Date(b.draftCreatedAt || 0).getTime() || 0;
+    return tb - ta;
+  });
+  return {
+    otherSubmissions: others,
+    otherJobCount: others.length,
+    otherJobsLabel: otherJobsBadge(others.length),
+    flags: flags,
+    needsConfirm: flags.some(function (f) { return f.code === "same_client_sent"; }),
+    priorResumeFileId: dated.length ? String(dated[0].resumeFileId) : "",
+  };
+}
+
 const DISMISS_REASONS = {
   stale: { label: "stale", status: "" },
   withdrawn: { label: "withdrawn", status: "Withdrew" },
@@ -668,11 +754,14 @@ function registerForge(app, deps) {
         "outlook_message_id TEXT," +
         "outlook_web_link TEXT," +
         "resume_status TEXT," +
+        "resume_file_id TEXT," +
         "fit_score INTEGER," +
         "flags JSONB," +
         "draft_status TEXT NOT NULL," +
         "note TEXT)"
       ).then(function () {
+        return db.query("ALTER TABLE submittal_forge_drafts ADD COLUMN IF NOT EXISTS resume_file_id TEXT");
+      }).then(function () {
         return db.query(
           "CREATE TABLE IF NOT EXISTS submittal_forge_dismissals (" +
           "id SERIAL PRIMARY KEY," +
@@ -821,7 +910,7 @@ function registerForge(app, deps) {
     try {
       await ensureTable();
       const rows = await db.getAll(
-        "SELECT DISTINCT ON (submission_id) submission_id, created_at, created_by FROM submittal_forge_drafts " +
+        "SELECT DISTINCT ON (submission_id) submission_id, created_at, created_by, resume_file_id FROM submittal_forge_drafts " +
         "WHERE draft_status = 'created' AND submission_id = ANY($1::int[]) ORDER BY submission_id, created_at DESC",
         [ids]
       );
@@ -840,6 +929,7 @@ function registerForge(app, deps) {
     return {
       createdAt: r.created_at,
       createdBy: by,
+      resumeFileId: r.resume_file_id || "",
       label: "Draft created " + (date || "earlier") + " by " + by,
     };
   }
@@ -849,12 +939,69 @@ function registerForge(app, deps) {
     try {
       await ensureTable();
       const row = await db.getOne(
-        "SELECT submission_id, created_at, created_by FROM submittal_forge_drafts WHERE submission_id = $1 AND draft_status = 'created' ORDER BY created_at DESC LIMIT 1",
+        "SELECT submission_id, created_at, created_by, resume_file_id FROM submittal_forge_drafts WHERE submission_id = $1 AND draft_status = 'created' ORDER BY created_at DESC LIMIT 1",
         [submissionId]
       );
       if (!row || row.created_at == null || row.comments != null) return null;
       return draftStamp(row);
     } catch (e) { return null; }
+  }
+
+  function siblingSnapshot(row, now, drafts) {
+    const p = project(row, now);
+    const draft = drafts[p.submissionId] || null;
+    const status = row.status || "";
+    return {
+      submissionId: p.submissionId,
+      candidateId: row.candidate_id,
+      jobId: p.job.id,
+      job: p.job.title,
+      clientId: p.job.clientId,
+      client: p.job.clientName,
+      owner: p.job.owner || "",
+      ownerFirst: p.job.ownerFirst || "",
+      status: status,
+      billRate: p.billRate || "",
+      dateSubmitted: formatStamp(row.date_added) || "",
+      hasForgeDraft: !!(draft && draft.label),
+      forgeDraftLabel: draft ? (draft.label || "") : "",
+      clientSubmitted: isClientSubmittedStatus(status),
+      resumeFileId: draft && draft.resumeFileId ? String(draft.resumeFileId) : "",
+      draftCreatedAt: draft ? draft.createdAt : null,
+    };
+  }
+
+  async function loadSiblingRows(candidateIds) {
+    const ids = [];
+    const seen = {};
+    (candidateIds || []).forEach(function (id) {
+      if (id == null || id === "" || seen[id]) return;
+      seen[id] = true;
+      ids.push(id);
+    });
+    if (!ids.length || !db || !db.ready) return [];
+    try {
+      const rows = await db.getAll(
+        BUNDLE_SELECT +
+        " WHERE s.is_deleted IS NOT TRUE AND s.candidate_id = ANY($1::int[]) /* sibling submissions */ ORDER BY s.date_added DESC NULLS LAST",
+        [ids]
+      );
+      return (rows || []).filter(function (row) {
+        return row && row.candidate_id != null && (row.job_id != null || row.candidate_name != null || row.status != null);
+      });
+    } catch (e) { return []; }
+  }
+
+  async function siblingPack(candidateIds, now) {
+    const rows = await loadSiblingRows(candidateIds);
+    const drafts = await loadDraftMap(rows.map(function (row) { return row.id; }));
+    const byCand = {};
+    rows.forEach(function (row) {
+      const key = String(row.candidate_id);
+      if (!byCand[key]) byCand[key] = [];
+      byCand[key].push(siblingSnapshot(row, now, drafts));
+    });
+    return byCand;
   }
 
   function project(row, now) {
@@ -1048,17 +1195,20 @@ function registerForge(app, deps) {
       if (!db || !db.ready) return;
       await ensureTable();
       await db.query(
-        "INSERT INTO submittal_forge_drafts (submission_id, candidate_id, candidate_name, job_id, client_name, created_by, mailbox, to_email, subject, outlook_message_id, outlook_web_link, resume_status, fit_score, flags, draft_status, note) " +
-        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16)",
-        [entry.submissionId, entry.candidateId || null, entry.candidateName || "", entry.jobId || null, entry.clientName || "", entry.createdBy || "", entry.mailbox || "", entry.toEmail || "", entry.subject || "", entry.messageId || "", entry.webLink || "", entry.resumeStatus || "", null, JSON.stringify(entry.flags || []), entry.draftStatus, entry.note || ""]
+        "INSERT INTO submittal_forge_drafts (submission_id, candidate_id, candidate_name, job_id, client_name, created_by, mailbox, to_email, subject, outlook_message_id, outlook_web_link, resume_status, resume_file_id, fit_score, flags, draft_status, note) " +
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)",
+        [entry.submissionId, entry.candidateId || null, entry.candidateName || "", entry.jobId || null, entry.clientName || "", entry.createdBy || "", entry.mailbox || "", entry.toEmail || "", entry.subject || "", entry.messageId || "", entry.webLink || "", entry.resumeStatus || "", entry.resumeFileId || "", null, JSON.stringify(entry.flags || []), entry.draftStatus, entry.note || ""]
       );
     } catch (e) {
       console.log("[Forge] audit insert failed:", e.message);
     }
   }
 
-  function publicFiles(files, candidateId, clientName) {
-    const suggested = pickResumeFile(files, clientName);
+  function publicFiles(files, candidateId, clientName, preferredFileId) {
+    const preferred = preferredFileId != null && String(preferredFileId) !== ""
+      ? (files || []).filter(function (f) { return String(f.id) === String(preferredFileId); })[0]
+      : null;
+    const suggested = preferred || pickResumeFile(files, clientName);
     return {
       files: (files || []).map(function (f) {
         return {
@@ -1089,8 +1239,18 @@ function registerForge(app, deps) {
       const user = getUser(req);
       const internals = await loadInternalUsers();
       const drafts = await loadDraftMap(visible.map(function (r) { return r.id; }));
+      const siblings = await siblingPack(visible.map(function (r) { return r.candidate_id; }), now);
       const all = visible.map(function (row) {
         const p = project(row, now);
+        const sib = buildSiblingView({
+          submissionId: p.submissionId,
+          candidateName: p.candidate.name,
+          jobId: p.job.id,
+          jobTitle: p.job.title,
+          clientId: p.job.clientId,
+          clientName: p.job.clientName,
+          billRate: p.billRate,
+        }, siblings[String(row.candidate_id)] || []);
         return {
           submissionId: p.submissionId,
           candidateId: p.candidate.id,
@@ -1108,12 +1268,17 @@ function registerForge(app, deps) {
           submittedByFirst: p.submittedByFirst,
           daysWaiting: p.daysWaiting,
           sla: p.sla,
-          flagCount: p.flags.length,
           missing: p.missing,
           billRate: p.billRate,
           billRateSource: p.billRateSource,
           subject: p.subject,
           existingDraft: drafts[p.submissionId] || null,
+          otherJobsLabel: sib.otherJobsLabel,
+          otherJobCount: sib.otherJobCount,
+          otherSubmissions: sib.otherSubmissions,
+          flags: sib.flags,
+          needsSameClientConfirm: sib.needsConfirm,
+          flagCount: p.flags.length + sib.flags.length,
         };
       });
       const owners = internals.map(function (u) {
@@ -1239,13 +1404,28 @@ function registerForge(app, deps) {
       }
       draft.missing = missingChecklist({ whyMe: draft.whyMe, availability: draft.availability, location: draft.location, billRate: draft.billRate });
       draft.existingDraft = await latestDraft(id);
+      const sibPack = await siblingPack([draft.candidate.id], now);
+      const sib = buildSiblingView({
+        submissionId: draft.submissionId,
+        candidateName: draft.candidate.name,
+        jobId: draft.job.id,
+        jobTitle: draft.job.title,
+        clientId: draft.job.clientId,
+        clientName: draft.job.clientName,
+        billRate: draft.billRate,
+      }, sibPack[String(draft.candidate.id)] || []);
+      draft.otherSubmissions = sib.otherSubmissions;
+      draft.otherJobsLabel = sib.otherJobsLabel;
+      draft.otherJobCount = sib.otherJobCount;
+      draft.needsSameClientConfirm = sib.needsConfirm;
+      draft.flags = draft.flags.concat(sib.flags);
       draft.notes = (notes || []).map(function (n) { return { action: n.action || "", text: clip(htmlToPlain(n.comments_text), 400) }; });
       const user = getUser(req);
       const profile = await loadProfile(user);
       const boxes = await mailboxes();
       let files = [];
       try { files = await listCandidateFiles(draft.candidate.id); } catch (e) { files = []; }
-      const resume = publicFiles(files, draft.candidate.id, draft.job.clientName);
+      const resume = publicFiles(files, draft.candidate.id, draft.job.clientName, sib.priorResumeFileId);
       const email = composeEmail({
         candidateName: draft.candidate.name,
         jobTitle: draft.job.title,
@@ -1380,6 +1560,24 @@ function registerForge(app, deps) {
         });
       }
 
+      const sibPack = await siblingPack([base.candidate.id], now);
+      const sib = buildSiblingView({
+        submissionId: id,
+        candidateName: candidateName || base.candidate.name,
+        jobId: base.job.id,
+        jobTitle: body.jobTitle || base.job.title,
+        clientId: base.job.clientId,
+        clientName: body.clientName || base.job.clientName,
+        billRate: billRate,
+      }, sibPack[String(base.candidate.id)] || []);
+      if (sib.needsConfirm && !body.confirmSameClient) {
+        const sent = sib.flags.filter(function (f) { return f.code === "same_client_sent"; })[0];
+        return res.status(409).json({
+          error: sent ? sent.message : "This candidate is already client submitted at this client. Confirm to create the draft.",
+          code: "same_client_submitted",
+        });
+      }
+
       const boxes = await mailboxes();
       const wanted = (body.mailbox || "").trim().toLowerCase();
       const mailbox = (wanted && boxes.map(function (b) { return b.toLowerCase(); }).indexOf(wanted) >= 0)
@@ -1396,7 +1594,8 @@ function registerForge(app, deps) {
         toEmail: to,
         subject: email.subject,
         resumeStatus: resumeStatus,
-        flags: base.flags,
+        resumeFileId: resumeFileId,
+        flags: base.flags.concat(sib.flags),
       };
 
       if (!mailbox) {
@@ -1583,3 +1782,5 @@ module.exports.resolveClient = resolveClient;
 module.exports.missingChecklist = missingChecklist;
 module.exports.CLIENT_SUBMITTED_STATUS = CLIENT_SUBMITTED_STATUS;
 module.exports.samePerson = samePerson;
+module.exports.buildSiblingView = buildSiblingView;
+module.exports.isClientSubmittedStatus = isClientSubmittedStatus;
