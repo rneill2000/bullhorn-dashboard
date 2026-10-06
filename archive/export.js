@@ -23,6 +23,9 @@ const WANT_FILES = process.argv.includes("--files");
 const ENTITIES = ["CorporateUser", "Department", "ClientCorporation", "ClientContact", "Candidate", "Lead", "Opportunity", "JobOrder", "JobSubmission", "JobSubmissionHistory", "Placement", "PlacementChangeRequest", "PlacementCommission", "Note", "NoteEntity", "Task", "Appointment", "AppointmentAttendee", "Sendout", "Tearsheet", "TearsheetMember", "CandidateEducation", "CandidateWorkHistory", "CandidateReference", "CandidateCertification", "Certification", "Skill", "Category", "Specialty", "BusinessSector", "CandidateSource", "Location", "TimeUnit", "JobBoardPost", "HousingComplex", "WorkersCompensationRate", "Country", "State"];
 const FILE_ENTITIES = ["Candidate", "ClientContact", "ClientCorporation", "JobOrder", "Placement", "Opportunity"];
 const PAGE = 500;
+// Entities the API account can't read through query/, or where query/ silently returns a subset:
+// these go through search/, sliced by dateAdded so no slice ever reaches Bullhorn's 20,000-row cap.
+const SEARCH_ENTITIES = new Set(["Candidate", "ClientContact", "Note", "ClientCorporation", "JobOrder", "JobSubmission", "Placement", "Opportunity", "Lead", "Task"]);
 
 let S = null;
 async function login() {
@@ -53,8 +56,46 @@ async function get(p, params) {
   throw lastErr;
 }
 async function fieldList(entity) { const m = await get("meta/" + entity, { fields: "*" }); return (m.fields || []).map(f => f.name).filter(n => n !== "_score"); }
+// Independent truth: search/ total with no filter (what Bullhorn's own list views count)
+async function searchTotal(entity) { try { const r = await get("search/" + entity, { query: "id:[1 TO *]", fields: "id", count: 1, sort: "-id" }); return { total: r.total ?? null, maxId: r.data && r.data[0] ? r.data[0].id : 0 }; } catch (e) { return null; } }
 async function expectedCount(entity) {
+  const st = await searchTotal(entity);
+  if (st) return st;
   try { const r = await get("query/" + entity, { where: "id>0", fields: "id", count: 1, orderBy: "-id" }); return r.data && r.data[0] ? { total: r.total ?? null, maxId: r.data[0].id } : { total: 0, maxId: 0 }; } catch (e) { return null; }
+}
+// search/ paged inside a dateAdded slice; splits the slice when it would exceed the 20k start cap
+async function searchSlice(entity, fields, from, to, onRows) {
+  const q = "dateAdded:[" + from + " TO " + to + "]";
+  const head = await get("search/" + entity, { query: q, fields: "id", count: 1 });
+  const total = head.total || 0;
+  if (!total) return 0;
+  if (total > 19000 && from !== to) { // split in half by date
+    const a = new Date(from), b = new Date(to), mid = new Date((a.getTime() + b.getTime()) / 2).toISOString().slice(0, 10);
+    const midNext = new Date(new Date(mid).getTime() + 86400000).toISOString().slice(0, 10);
+    return (await searchSlice(entity, fields, from, mid, onRows)) + (await searchSlice(entity, fields, midNext, to, onRows));
+  }
+  let start = 0, got = 0;
+  while (start < total) {
+    const r = await get("search/" + entity, { query: q, fields, count: PAGE, start, sort: "id" });
+    const data = r.data || []; if (!data.length) break;
+    onRows(data); got += data.length; start += data.length;
+  }
+  return got;
+}
+async function dumpViaSearch(entity, file, exp) {
+  const out = fs.createWriteStream(file); const seen = new Set(); let rows = 0, err = null, fields = "*";
+  try {
+    // records with no dateAdded (rare) first, then yearly slices from 2000 to next year
+    const years = []; const y0 = 2000, y1 = new Date().getFullYear() + 1;
+    for (let y = y0; y <= y1; y++) years.push([y + "-01-01", y + "-12-31"]);
+    const onRows = data => { for (const d of data) if (!seen.has(d.id)) { seen.add(d.id); out.write(JSON.stringify(d) + "\n"); rows++; } process.stdout.write("\r  " + entity + ": " + rows + (exp.total != null ? " / " + exp.total : "") + "      "); };
+    for (const [a, b] of years) { try { await searchSlice(entity, fields, a, b, onRows); } catch (e) { if (fields === "*" && /field/i.test(e.message)) { fields = (await fieldList(entity)).join(","); await searchSlice(entity, fields, a, b, onRows); } else throw e; } }
+    if (exp.total != null && rows < exp.total) { // anything without dateAdded or outside the range
+      try { const r = await get("search/" + entity, { query: "NOT dateAdded:[2000-01-01 TO 2100-01-01]", fields, count: PAGE, start: 0, sort: "id" }); onRows(r.data || []); } catch (e) {}
+    }
+  } catch (e) { err = e.message; }
+  await new Promise(res => out.end(res));
+  return { rows, err };
 }
 
 async function dump(entity) {
@@ -62,6 +103,14 @@ async function dump(entity) {
   const exp = await expectedCount(entity);
   if (exp === null) { console.log("  " + entity + ": not queryable for this account — skipped"); return { entity, rows: 0, skipped: "not queryable" }; }
   if (fs.existsSync(done)) { const d = JSON.parse(fs.readFileSync(done, "utf8")); if (d.maxId === exp.maxId && d.rows >= (exp.total || 0)) { console.log("  " + entity + ": already complete (" + d.rows + ")"); return Object.assign({ entity, resumed: true }, d); } }
+  if (SEARCH_ENTITIES.has(entity)) {
+    const r = await dumpViaSearch(entity, file, exp);
+    const ok = !r.err && (exp.total == null || r.rows >= exp.total);
+    console.log("\r  " + entity + ": " + r.rows + (exp.total != null ? " / " + exp.total : "") + (ok ? "  ✓" : "  ✗ " + (r.err || "count short")) + "      ");
+    const rec = { rows: r.rows, expected: exp.total, maxId: exp.maxId, verified: ok, error: r.err, via: "search" };
+    if (ok) fs.writeFileSync(done, JSON.stringify(rec));
+    return Object.assign({ entity }, rec);
+  }
   const out = fs.createWriteStream(file);
   const seen = new Set();
   let lastId = 0, rows = 0, fields = "*", err = null;
