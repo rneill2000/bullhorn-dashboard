@@ -50,3 +50,11 @@ test("oauth redirect uris stay on the registered railway host", function () {
   assert.match(src, /canonicalPublicOrigin\(\)/);
   assert.match(src, /issueSessionHandoff/);
 });
+
+test("custom domain owns the session whether Railway reports the railway host or the custom host", function () {
+  const ph = require("./public-host");
+  assert.equal(ph.canonicalPublicOrigin({ RAILWAY_PUBLIC_DOMAIN: "bullhorn-dashboard-production.up.railway.app" }), "https://dashboard.anuraconnect.com");
+  assert.equal(ph.canonicalPublicOrigin({ RAILWAY_PUBLIC_DOMAIN: "dashboard.anuraconnect.com" }), "https://dashboard.anuraconnect.com");
+  assert.equal(ph.canonicalPublicOrigin({ RAILWAY_ENVIRONMENT_NAME: "production" }), "https://dashboard.anuraconnect.com");
+  assert.equal(ph.canonicalPublicOrigin({}), "");
+});

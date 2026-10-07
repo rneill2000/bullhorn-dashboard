@@ -11432,6 +11432,8 @@ function render(){
   renderNav();
   document.getElementById("page-title").textContent=getPageLabel();
 }
+// forge-ui.js / capture-ui.js load after this script; the first loadPage() can race them on a slow server.
+function _waitForScript(fnName){return new Promise(function(res){var n=0;(function tick(){if(typeof window[fnName]==="function"||n++>100)return res();setTimeout(tick,50);})();});}
 async function loadPage(){
   currentPage=canonicalizePage(currentPage);
   renderNav();
@@ -11487,6 +11489,7 @@ async function loadPage(){
         var stData=await apiFetch("submission-analytics",stParams);
         h=renderSubTracker(stData);break;
       case "forge":
+        if(typeof renderForge!=="function") await _waitForScript("renderForge");
         h=renderForge();break;
       case "interviews":
         var ivData=await apiFetch("interviews");
@@ -11565,6 +11568,7 @@ async function loadPage(){
       case "resumeparser":
         h=renderResumeParser();break;
       case "capture":
+        if(typeof renderCapture!=="function") await _waitForScript("renderCapture");
         h=renderCapture();break;
     }
   }catch(e){

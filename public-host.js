@@ -38,7 +38,11 @@ function canonicalPublicOrigin(env) {
     } catch (e) {}
     return "";
   }
-  if (String(env.RAILWAY_PUBLIC_DOMAIN || "").toLowerCase() === RAILWAY_HOST) return CUSTOM_ORIGIN;
+  // Railway sets RAILWAY_PUBLIC_DOMAIN to whichever domain is primary — the *.up.railway.app host
+  // or the custom one once it is attached. Either way, production owns the session on the custom domain.
+  const pub = String(env.RAILWAY_PUBLIC_DOMAIN || "").toLowerCase();
+  if (pub === RAILWAY_HOST || pub === CUSTOM_ORIGIN.replace(/^https:\/\//, "")) return CUSTOM_ORIGIN;
+  if (env.RAILWAY_ENVIRONMENT_NAME === "production" || env.RAILWAY_ENVIRONMENT === "production") return CUSTOM_ORIGIN;
   return "";
 }
 

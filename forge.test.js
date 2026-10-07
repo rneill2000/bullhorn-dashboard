@@ -1121,3 +1121,9 @@ test("desktop toast paints warn in amber, not red", function () {
   assert.match(phone, /type==="warn"\?"warn"/);
   assert.match(phone, /err\.auth=true/);
 });
+
+test("page waits for forge-ui.js before rendering Forge (script load race)", function () {
+  const ui = fs.readFileSync(__dirname + "/public/index.html", "utf8");
+  assert.match(ui, /case "forge":\s*\n\s*if\(typeof renderForge!=="function"\) await _waitForScript\("renderForge"\);/);
+  assert.match(ui, /function _waitForScript\(/);
+});
