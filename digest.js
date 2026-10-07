@@ -60,7 +60,13 @@ module.exports = function registerDigest(app, deps) {
     });
     const out = Object.values(clients).map(function (c) { c.jobs = Object.values(c.jobs); c.count = c.jobs.reduce(function (n, j) { return n + j.candidates.length; }, 0); c.oldest = Math.max.apply(null, c.jobs.map(function (j) { return Math.max.apply(null, j.candidates.map(function (x) { return x.daysWaiting || 0; })); })); return c; })
       .sort(function (a, b) { return b.oldest - a.oldest || b.count - a.count; });
-    return { generatedAt: new Date().toISOString(), totalCandidates: rows.length, clients: out };
+    const digest = { generatedAt: new Date().toISOString(), totalCandidates: rows.length, clients: out };
+    try {
+      await require("./linkedin-graph").decorateDigest(db, digest);
+    } catch (liErr) {
+      console.log("[Digest] linkedin warmth:", liErr.message);
+    }
+    return digest;
   }
 
   function render(d) {
@@ -75,14 +81,29 @@ module.exports = function registerDigest(app, deps) {
     } else {
       h += "<p style=\"font-size:15px;margin:0 0 16px\"><b>" + d.totalCandidates + " candidate" + (d.totalCandidates === 1 ? "" : "s") + "</b> across <b>" + d.clients.length + " client" + (d.clients.length === 1 ? "" : "s") + "</b> " + (d.totalCandidates === 1 ? "is" : "are") + " internally submitted and waiting to go to the client. Oldest first.</p>";
       d.clients.forEach(function (c) {
-        h += "<div style=\"margin:18px 0 6px;padding-top:14px;border-top:1px solid #e2e8f0\"><div style=\"font-size:17px;font-weight:700\">" + (c.clientId ? "<a href=\"" + DASH + "/#clients\" style=\"color:#0E2E47;text-decoration:none\">" + esc(c.clientName) + "</a>" : esc(c.clientName)) + " <span style=\"font-weight:500;color:#64748b;font-size:13px\">\u00b7 " + c.count + " waiting" + (c.oldest >= 5 ? " \u00b7 <span style=\\\"color:#b91c1c\\\">oldest " + c.oldest + " days</span>" : "") + "</span></div></div>";
+        h += "<div style=\"margin:18px 0 6px;padding-top:14px;border-top:1px solid #e2e8f0\"><div style=\"font-size:17px;font-weight:700\">" + (c.clientId ? "<a href=\"" + DASH + "/#clients\" style=\"color:#0E2E47;text-decoration:none\">" + esc(c.clientName) + "</a>" : esc(c.clientName)) + " <span style=\"font-weight:500;color:#64748b;font-size:13px\">\u00b7 " + c.count + " waiting" + (c.oldest >= 5 ? " \u00b7 <span style=\\\"color:#b91c1c\\\">oldest " + c.oldest + " days</span>" : "") + "</span></div>";
+        if (c.linkedinWarm && c.linkedinWarm.count) {
+          var notable = (c.linkedinWarm.notable || []).map(function (n) {
+            var who = esc(n.name) + (n.position ? " (" + esc(n.position) + ")" : "");
+            return n.linkedinUrl ? "<a href=\"" + esc(n.linkedinUrl) + "\" style=\"color:#0a66c2;text-decoration:none\">" + who + "</a>" : who;
+          }).join("; ");
+          h += "<div style=\"font-size:13px;color:#0a66c2;margin:2px 0 6px\">LinkedIn: " + c.linkedinWarm.count + " warm connection" + (c.linkedinWarm.count === 1 ? "" : "s") + (notable ? " \u00b7 " + notable : "") + "</div>";
+        }
+        h += "</div>";
         c.jobs.forEach(function (j) {
           h += "<div style=\"margin:8px 0 4px;font-size:14px;font-weight:600\"><a href=\"" + bhLink("JobOrder", j.jobId) + "\" style=\"color:#176087;text-decoration:none\">" + esc(j.title) + "</a>" + (j.owner ? " <span style=\"" + sty.muted + ";font-weight:400\">\u00b7 " + esc(j.owner) + "</span>" : "") + "</div>";
           h += "<table style=\"width:100%;border-collapse:collapse;font-size:14px\">";
           j.candidates.forEach(function (x) {
             const age = x.daysWaiting == null ? "" : (x.daysWaiting === 0 ? "today" : x.daysWaiting + "d");
             const ageColor = x.daysWaiting >= 5 ? "#b91c1c" : (x.daysWaiting >= 2 ? "#b45309" : "#64748b");
-            h += "<tr><td style=\"padding:5px 0;border-bottom:1px solid #f1f5f9\"><a href=\"" + bhLink("Candidate", x.candidateId) + "\" style=\"color:#0f172a;text-decoration:none;font-weight:600\">" + esc(x.name) + "</a>" + (x.cert || x.title ? " <span style=\"" + sty.muted + "\">" + esc(x.cert || x.title) + "</span>" : "") + "</td>"
+            var li = "";
+            if (x.linkedin && x.linkedin.connected) {
+              var liLabel = esc(x.linkedin.label || "LinkedIn connected") + (x.linkedin.connectedOn ? " " + esc(x.linkedin.connectedOn) : "");
+              li = x.linkedin.linkedinUrl
+                ? " <a href=\"" + esc(x.linkedin.linkedinUrl) + "\" style=\"color:#0a66c2;text-decoration:none;font-size:12px\">\u00b7 " + liLabel + "</a>"
+                : " <span style=\"color:#0a66c2;font-size:12px\">\u00b7 " + liLabel + "</span>";
+            }
+            h += "<tr><td style=\"padding:5px 0;border-bottom:1px solid #f1f5f9\"><a href=\"" + bhLink("Candidate", x.candidateId) + "\" style=\"color:#0f172a;text-decoration:none;font-weight:600\">" + esc(x.name) + "</a>" + (x.cert || x.title ? " <span style=\"" + sty.muted + "\">" + esc(x.cert || x.title) + "</span>" : "") + li + "</td>"
               + "<td style=\"padding:5px 0;border-bottom:1px solid #f1f5f9;text-align:right;white-space:nowrap;" + sty.muted + "\">" + (x.submittedBy ? esc(x.submittedBy) + " \u00b7 " : "") + "<span style=\"color:" + ageColor + ";font-weight:600\">" + age + "</span></td></tr>";
           });
           h += "</table>";

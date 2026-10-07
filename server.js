@@ -16,6 +16,12 @@ const crypto = require("crypto");
 require("dotenv").config();
 const publicHost = require("./public-host");
 const db = require("./db");
+const linkedinGraph = require("./linkedin-graph");
+
+async function withLinkedIn(fn) {
+  if (!db.ready) return;
+  try { await fn(); } catch (e) { console.log("[LinkedIn]", e.message); }
+}
 
 /* ── Submission stages ───────────────────────────────────────────────
    A "client submission" means the candidate actually reached the client.
@@ -878,7 +884,10 @@ app.get("/api/candidates", async (req, res) => {
     if (db.ready) {
       try {
         var dbResult = await db.searchCandidates({ q, status, location, cert, avail, grade, epicRole });
-        if (dbResult) return res.json({ data: dbResult.data, total: dbResult.total });
+        if (dbResult) {
+          await withLinkedIn(function () { return linkedinGraph.decorateCandidates(db, dbResult.data); });
+          return res.json({ data: dbResult.data, total: dbResult.total });
+        }
       } catch (dbErr) { console.log("[Candidates] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
 
@@ -1003,6 +1012,7 @@ app.get("/api/candidates", async (req, res) => {
       } catch (lcErr) { console.log("[Candidates] LastContacted enrichment failed:", lcErr.message); }
     }
 
+    await withLinkedIn(function () { return linkedinGraph.decorateCandidates(db, candidates); });
     res.json({ data: candidates, total: data.total });
   } catch (e) {
     console.error("[Candidates]", e.message);
@@ -1101,6 +1111,7 @@ app.get("/api/consultants", async (req, res) => {
       });
     }
 
+    await withLinkedIn(function () { return linkedinGraph.decorateCandidates(db, result); });
     res.json({ data: result, total: result.length });
   } catch (e) {
     console.error("[Consultants]", e.message);
@@ -1233,6 +1244,7 @@ app.get("/api/candidates/:id", async (req, res) => {
       status: r.status || "",
     }));
 
+    await withLinkedIn(function () { return linkedinGraph.decorateCandidateDetail(db, detail); });
     res.json(detail);
   } catch (e) {
     console.error("[Candidate Detail]", e.message);
@@ -1619,6 +1631,7 @@ app.get("/api/submission-pipeline", async (req, res) => {
         jobId: s.jobOrder ? s.jobOrder.id : null,
         jobTitle,
         client,
+        clientId: s.jobOrder && s.jobOrder.clientCorporation ? s.jobOrder.clientCorporation.id : null,
         status: s.status || "Submitted",
         dateAdded: s.dateAdded ? new Date(s.dateAdded).toLocaleDateString() : "",
         dateAddedRaw: s.dateAdded || 0,
@@ -1646,6 +1659,7 @@ app.get("/api/submission-pipeline", async (req, res) => {
       submissions = submissions.filter(s => s.submittedBy.toLowerCase().includes(ol));
     }
 
+    await withLinkedIn(function () { return linkedinGraph.decorateQueueRows(db, submissions, "candidateId", "clientId"); });
     res.json({
       data: submissions,
       total: submissions.length,
@@ -2571,7 +2585,10 @@ app.get("/api/clients", async (req, res) => {
     if (db.ready) {
       try {
         var dbResult = await db.searchClients({ q, status });
-        if (dbResult && dbResult.data && dbResult.data.length > 0) return res.json({ data: dbResult.data, total: dbResult.total });
+        if (dbResult && dbResult.data && dbResult.data.length > 0) {
+          await withLinkedIn(function () { return linkedinGraph.decorateClients(db, dbResult.data); });
+          return res.json({ data: dbResult.data, total: dbResult.total });
+        }
       } catch (dbErr) { console.log("[Clients] DB query failed, falling back to Bullhorn:", dbErr.message); }
     }
 
@@ -2681,6 +2698,7 @@ app.get("/api/clients", async (req, res) => {
       placedConsultants: placByClient[c.id] || [],
     }));
 
+    await withLinkedIn(function () { return linkedinGraph.decorateClients(db, clients); });
     res.json({ data: clients, total: data.total });
   } catch (e) {
     console.error("[Clients]", e.message);
@@ -2809,7 +2827,7 @@ app.get("/api/clients/:id", async (req, res) => {
       totalFees += fe;
     });
 
-    res.json({
+    var detailPayload = {
       id: corp.id,
       name: corp.name || "",
       address: corp.address || {},
@@ -2842,7 +2860,9 @@ app.get("/api/clients/:id", async (req, res) => {
         totalFees: totalFees,
         avgBillRate: activePlacements.length > 0 ? Math.round(totalBillRate / activePlacements.length * 100) / 100 : 0,
       }
-    });
+    };
+    await withLinkedIn(function () { return linkedinGraph.decorateClientDetail(db, detailPayload); });
+    res.json(detailPayload);
   } catch (e) {
     console.error("[Client Detail]", e.message);
     res.status(500).json({ error: e.message });
@@ -10212,6 +10232,7 @@ app.get("/api/starred", async (req, res) => {
       console.error("[Starred] Join query failed, falling back to simple list:", joinErr.message);
       data = await db.listStarred();
     }
+    await withLinkedIn(function () { return linkedinGraph.decorateCandidates(db, data); });
     res.json({ candidates: data });
   } catch (e) {
     console.error("[Starred]", e.message, e.stack);
@@ -11730,6 +11751,7 @@ app.get("/", (req, res) => {
 // Catch any unhandled errors in route handlers so they return 500 instead of crashing
 /* ═══ QUICK CAPTURE (notes dump → Bullhorn) ═══ */
 require("./events")(app, { db: db, bhFetch: bhFetch, bhWrite: bhWriteAsService });
+linkedinGraph.register(app, { db: db, getUser: getUser });
 require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetchAll: bhFetchAll });
 require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
 require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate });

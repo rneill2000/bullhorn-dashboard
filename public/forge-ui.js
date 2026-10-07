@@ -75,6 +75,7 @@ function renderForge() {
     + '.fg-row .nm{font-weight:700;color:#0f172a;font-size:14px}'
     + '.fg-row .sub{color:#64748b;font-size:12px;margin-top:2px}'
     + '.fg-sla{font-size:11px;font-weight:700;border-radius:999px;padding:2px 7px}'
+    + '.fg-warm{display:inline-block;margin-left:6px;font-size:11px;font-weight:700;border-radius:999px;padding:2px 7px;background:#e8f3fc;color:#0a66c2;text-decoration:none}'
     + '.fg-sla.green{background:#dcfce7;color:#166534}.fg-sla.yellow{background:#fef3c7;color:#b45309}.fg-sla.red{background:#fee2e2;color:#b91c1c}.fg-sla.unknown{background:#f1f5f9;color:#64748b}'
     + '.fg-flag{font-size:12px;border-radius:8px;padding:6px 10px;margin-top:6px}'
     + '.fg-flag.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}'
@@ -97,6 +98,20 @@ function renderForge() {
   h += '<div style="font-size:14px;color:#475569;margin-bottom:12px;max-width:760px">Internally submitted candidates waiting on a client email. Forge drafts Why Me, availability, location, and bill rate. <b>You send it</b> from Outlook. Nothing is sent until you send the draft.</div>';
   h += '<div class="fg"><div class="fg-card fg-q" id="forge-queue"><div style="padding:20px;color:#64748b">Loading the ready-to-submit queue…</div></div><div id="forge-main"><div class="fg-card" style="color:#64748b">Pick a submission to preview the client draft.</div></div></div>';
   return h;
+}
+
+function forgeWarmBits(row, asLink) {
+  var li = row && row.linkedin;
+  if (!li) return "";
+  var bits = [];
+  if (li.candidate && li.candidate.connected) {
+    var label = li.candidate.label || "LinkedIn connected";
+    if (li.candidate.connectedOn) label += " " + li.candidate.connectedOn;
+    if (asLink && li.candidate.linkedinUrl) bits.push('<a class="fg-warm" href="' + forgeAttr(li.candidate.linkedinUrl) + '" target="_blank" rel="noopener">' + esc(label) + "</a>");
+    else bits.push('<span class="fg-warm">' + esc(label) + "</span>");
+  }
+  if (li.clientCount) bits.push('<span class="fg-warm">' + li.clientCount + " at client</span>");
+  return bits.join(" ");
 }
 
 function forgeSlaLabel(days, sla) {
@@ -177,7 +192,7 @@ function forgePaintQueue() {
     var missing = (row.missing || []).slice();
     h += '<div class="fg-item">';
     h += '<button type="button" class="fg-row' + on + '" onclick="forgeOpen(' + row.submissionId + ')">';
-    h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span class="nm">' + esc(row.candidateName || "Candidate") + '</span><span class="fg-sla ' + esc(row.sla || "unknown") + '">' + esc(forgeSlaLabel(row.daysWaiting, row.sla)) + '</span></div>';
+    h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span class="nm">' + esc(row.candidateName || "Candidate") + " " + forgeWarmBits(row) + '</span><span class="fg-sla ' + esc(row.sla || "unknown") + '">' + esc(forgeSlaLabel(row.daysWaiting, row.sla)) + '</span></div>';
     h += '<div class="sub">' + esc(row.clientName || "Client") + ' · ' + esc(row.jobTitle || "Role") + '</div>';
     h += '<div class="sub">Owner: ' + esc(row.jobOwnerFirst || "—") + ' · Submitted by: ' + esc(row.submittedByFirst || "—") + '</div>';
     h += '<div class="sub">' + (row.billRate ? esc(row.billRate) : "bill rate missing") + (missing.length ? " · missing " + esc(missing.join(", ")) : "") + '</div>';
@@ -265,7 +280,8 @@ function forgePaintDraft() {
   h += '<div><div style="font-size:18px;font-weight:700;color:#0f172a">' + esc(c.name || "Candidate") + '</div>';
   h += '<div style="color:#475569;font-size:13px;margin-top:2px">' + esc(j.title || "") + (j.clientName ? " · " + esc(j.clientName) : "") + '</div>';
   h += '<div class="fg-note">Owner: ' + esc(j.ownerFirst || "—") + ' · Submitted by: ' + esc(d.submittedByFirst || "—") + '</div>';
-  h += '<div style="margin-top:6px"><span class="fg-sla ' + esc(d.sla || "unknown") + '">' + esc(forgeSlaLabel(d.daysWaiting, d.sla)) + '</span></div>';
+  var warmRow = (_forge.queue || []).filter(function (row) { return row.submissionId === d.submissionId; })[0] || d;
+  h += '<div style="margin-top:6px"><span class="fg-sla ' + esc(d.sla || "unknown") + '">' + esc(forgeSlaLabel(d.daysWaiting, d.sla)) + "</span> " + forgeWarmBits(warmRow, true) + "</div>";
   h += forgeOthersHtml(d);
   h += '</div>';
   if (d.existingDraft && d.existingDraft.label) h += '<div class="fg-flag warn">' + esc(d.existingDraft.label) + '</div>';

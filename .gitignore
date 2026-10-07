@@ -1,3 +1,7 @@
 node_modules/
 .DS_Store
 .env
+# LinkedIn Connections exports are personal. Never commit them.
+*Connections.csv
+linkedin-connections*.csv
+uploads/

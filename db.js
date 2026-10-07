@@ -68,6 +68,17 @@ async function getAll(text, params) {
   return res.rows;
 }
 
+/** One pooled client, so a caller can BEGIN/COMMIT across statements. */
+async function withClient(fn) {
+  if (!pool) throw new Error("Database not initialized");
+  var client = await pool.connect();
+  try {
+    return await fn(client);
+  } finally {
+    client.release();
+  }
+}
+
 /* ═══ SCHEMA ═══ */
 async function createTables() {
   if (!pool) return;
@@ -876,6 +887,13 @@ async function createTables() {
   await query(`CREATE INDEX IF NOT EXISTS idx_appointments_raw ON appointments USING GIN (raw_json)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_tasks_raw ON tasks USING GIN (raw_json)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_leads_raw ON leads USING GIN (raw_json)`);
+
+  // LinkedIn warm graph (connections upload + matches). Additive; does not touch Bullhorn sync.
+  try {
+    await require("./linkedin-graph").ensureSchema({ query: query });
+  } catch (e) {
+    console.log("[DB] LinkedIn graph schema:", e.message);
+  }
 
   dbReady = true;
   console.log("[DB] Tables and indexes ready");
@@ -3153,6 +3171,7 @@ module.exports = {
   query: query,
   getOne: getOne,
   getAll: getAll,
+  withClient: withClient,
   setBullhornFetchers: setBullhornFetchers,
   syncEntity: syncEntity,
   fullSync: fullSync,

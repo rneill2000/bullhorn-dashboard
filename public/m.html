@@ -169,13 +169,13 @@ async function runSearch(){
     if(_skind==="candidate"){
       var r=await apiFetch("candidates",{q:_sq,status:"All"});
       var d=(r.data||[]).slice(0,30);
-      h=d.length?'<div class="list">'+d.map(function(c){return '<div class="row" onclick="openCandidate('+c.id+')"><div class="t"><b>'+esc(c.firstName+" "+c.lastName)+'</b><span>'+esc([c.primaryCert,c.title].filter(Boolean).join(" · "))+'</span></div><div class="r">'+(c.grade?'<span class="chip">'+esc(c.grade)+'</span>':'')+(c.available?'<br>'+esc(c.available):'')+'</div></div>';}).join("")+'</div>':'<div class="empty">No candidates match.</div>';
+      h=d.length?'<div class="list">'+d.map(function(c){return '<div class="row" onclick="openCandidate('+c.id+')"><div class="t"><b>'+esc(c.firstName+" "+c.lastName)+'</b>'+(c.linkedin&&c.linkedin.connected?' <span class="chip">LinkedIn</span>':'')+'<span>'+esc([c.primaryCert,c.title].filter(Boolean).join(" · "))+'</span></div><div class="r">'+(c.grade?'<span class="chip">'+esc(c.grade)+'</span>':'')+(c.available?'<br>'+esc(c.available):'')+'</div></div>';}).join("")+'</div>':'<div class="empty">No candidates match.</div>';
     } else if(_skind==="contact"){
       var r2=await apiFetch("mobile/contacts",{q:_sq});
       h=r2.data.length?'<div class="list">'+r2.data.map(function(c){return '<div class="row" onclick="openContact('+c.id+')"><div class="t"><b>'+esc(c.name)+'</b><span>'+esc([c.occupation,c.clientName].filter(Boolean).join(" · "))+'</span></div><div class="r">'+(c.mobile||c.phone?'\u260E':'')+'</div></div>';}).join("")+'</div>':'<div class="empty">No contacts match.</div>';
     } else {
       var r3=await apiFetch("clients",{q:_sq});
-      h=(r3.data||[]).length?'<div class="list">'+r3.data.slice(0,30).map(function(c){return '<div class="row" onclick="openClient('+c.id+')"><div class="t"><b>'+esc(c.name)+'</b><span>'+esc(c.status||"")+(c.activePlacements?' · '+c.activePlacements+' on contract':'')+'</span></div></div>';}).join("")+'</div>':'<div class="empty">No clients match.</div>';
+      h=(r3.data||[]).length?'<div class="list">'+r3.data.slice(0,30).map(function(c){return '<div class="row" onclick="openClient('+c.id+')"><div class="t"><b>'+esc(c.name)+'</b><span>'+esc(c.status||"")+(c.activePlacements?' · '+c.activePlacements+' on contract':'')+(c.linkedin&&c.linkedin.count?' · '+c.linkedin.count+' LinkedIn':'')+'</span></div></div>';}).join("")+'</div>':'<div class="empty">No clients match.</div>';
     }
     out.innerHTML=h;
   }catch(e){out.innerHTML='<div class="empty">Search failed: '+esc(e.message)+'</div>';}
@@ -242,7 +242,8 @@ async function openCandidate(id){
   openSheet("Candidate",'<div class="empty"><span class="spin"></span></div>');
   try{
     var cr=await Promise.all([apiFetch("candidates/"+id),apiFetch("candidates/"+id+"/submissions").catch(function(){return {data:[]};})]);var c=cr[0];c.submissions=cr[1].data||[];
-    var h='<div class="hero"><h2>'+esc(c.firstName+" "+c.lastName)+'</h2><p>'+esc([c.title,c.primaryCert].filter(Boolean).join(" · "))+'</p>'+actsRow(c)+'</div>';
+    var li=c.linkedin&&c.linkedin.connected?(c.linkedin.linkedinUrl?'<a href="'+esc(c.linkedin.linkedinUrl)+'" target="_blank" rel="noopener">'+(c.linkedin.label||"LinkedIn connected")+(c.linkedin.connectedOn?" · "+esc(c.linkedin.connectedOn):"")+'</a>':esc(c.linkedin.label||"LinkedIn connected")):"";
+    var h='<div class="hero"><h2>'+esc(c.firstName+" "+c.lastName)+'</h2><p>'+esc([c.title,c.primaryCert].filter(Boolean).join(" · "))+(li?" · "+li:"")+'</p>'+actsRow(c)+'</div>';
     h+='<div class="kv">';
     [["Status",c.status],["Grade",c.grade],["Epic role",c.epicRole],["Available",c.available],["Rate",c.hourlyRate?"$"+c.hourlyRate+"/hr":""],["Location",[c.city,c.state].filter(Boolean).join(", ")||c.location],["Mobile",c.mobile],["Phone",c.phone],["Email",c.email],["Owner",c.owner],["Last contact",c.lastContactedAt?dt(c.lastContactedAt)+(c.lastContactedBy?" by "+c.lastContactedBy:""):""]].forEach(function(kv){if(kv[1])h+='<div><span>'+kv[0]+'</span><span>'+esc(kv[1])+'</span></div>';});
     h+='</div>';
@@ -274,7 +275,8 @@ async function openClient(id){
   try{
     var r=await Promise.all([apiFetch("clients/"+id),apiFetch("mobile/contacts",{clientId:id})]);
     var c=r[0],contacts=r[1].data||[];
-    var h='<div class="hero"><h2>'+esc(c.name)+'</h2><p>'+esc([c.status,[c.city,c.state].filter(Boolean).join(", ")].filter(Boolean).join(" · "))+'</p>'+(c.phone?'<div class="acts"><a href="tel:'+tel(c.phone)+'">Call main line</a></div>':'')+'</div>';
+    var warm=c.linkedin&&c.linkedin.count?('<div class="sec">LinkedIn · '+c.linkedin.count+'</div>'+((c.linkedin.notable||[]).slice(0,5).map(function(n){var label=esc(n.name)+(n.position?" — "+esc(n.position):"");return n.linkedinUrl?'<div class="note"><a href="'+esc(n.linkedinUrl)+'" target="_blank" rel="noopener">'+label+'</a></div>':'<div class="note">'+label+'</div>';}).join(""))):"";
+    var h='<div class="hero"><h2>'+esc(c.name)+'</h2><p>'+esc([c.status,[c.city,c.state].filter(Boolean).join(", ")].filter(Boolean).join(" · "))+'</p>'+(c.phone?'<div class="acts"><a href="tel:'+tel(c.phone)+'">Call main line</a></div>':'')+'</div>'+warm;
     if(contacts.length){h+='<div class="sec">Contacts <span class="n">'+contacts.length+'</span></div><div class="list">'+contacts.map(function(k){return '<div class="row" onclick="openContact('+k.id+')"><div class="t"><b>'+esc(k.name)+'</b><span>'+esc(k.occupation||"")+'</span></div><div class="r">'+(k.mobile||k.phone?'\u260E ':'')+(k.email?'\u2709':'')+'</div></div>';}).join("")+'</div>';}
     var jobs=(c.jobs||[]).filter(function(j){return /accepting|open/i.test(j.status);});
     if(jobs.length){h+='<div class="sec">Open jobs</div><div class="list">'+jobs.map(function(j){return '<div class="row" onclick="openJob('+j.id+')"><div class="t"><b>'+esc(j.title)+'</b><span>'+esc(j.type)+' · '+esc(j.dateAdded)+'</span></div><div class="r"><b>'+j.submissions+'</b>subs</div></div>';}).join("")+'</div>';}

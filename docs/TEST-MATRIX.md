@@ -54,6 +54,19 @@ Axes: owner (mine / other) · status (internal / client-submitted / closed) · c
 | F15 | Draft already exists | Duplicate drafts |
 | M2 | Manual smoke: create draft with PDF, open in Outlook, confirm PDF name and that nothing was sent | Real Graph/attachment behavior |
 
+## LinkedIn warm graph
+
+Axes: key (email / LinkedIn URL / name+company / company only) · uniqueness (one record / two records) · company (exact / fuzzy / generic)
+
+| # | Case | Risk if wrong | Covered by |
+|---|------|---------------|------------|
+| L1 | Two candidates share an email | Connection pinned to a guessed person | test: email match is high and unique |
+| L2 | Name matches, company does not | Name-only match | test: unique name plus exact company is medium; name alone is not a match |
+| L3 | Name matches two fuzzy companies (Epic Systems and Epic Games) | Guessed employer | test: fuzzy company is low, and two fuzzy companies are not a guess |
+| L4 | Self-employed / Health as a company | Every generic row sticks to a client | test: client company match … skips generic labels |
+| L5 | Badge or status payload includes the connection email | Personal graph leaves the app | test: badge payload never includes the connection email |
+| L6 | Tools page offers a connection export | Full graph download | test: dashboard surfaces do not add a connection export |
+
 ## Live toasts and session host
 
 | # | Case | Risk if wrong | Covered by |

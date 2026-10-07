@@ -69,6 +69,9 @@ td{padding:10px 12px;color:#334155;border-bottom:1px solid #f1f5f9;overflow:hidd
 tbody tr{cursor:pointer;transition:background .1s}
 tbody tr:hover{background:#eff6ff}
 .badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600}
+.li-badge{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#e8f3fc;color:#0a66c2;font-size:10px;font-weight:700;text-decoration:none;vertical-align:middle;white-space:nowrap}
+.li-badge.low{background:#f1f5f9;color:#475569}
+a.li-badge:hover{text-decoration:underline}
 .name-link{font-weight:600;color:#176087}
 .fw600{font-weight:600}
 .muted{color:#94a3b8}
@@ -1626,7 +1629,9 @@ function openClientDetail(clientId) {
 function renderClientDetail(d) {
   var h = '<div class="cd-header" style="display:flex;align-items:start;justify-content:space-between">';
   h += '<div><h2>🏢 ' + esc(d.name) + '</h2>';
-  h += '<div class="cd-sub">' + esc(d.location) + (d.industry ? ' • ' + esc(d.industry) : '') + ' • ' + badge(d.status) + '</div></div>';
+  h += '<div class="cd-sub">' + esc(d.location) + (d.industry ? ' • ' + esc(d.industry) : '') + ' • ' + badge(d.status) + '</div>';
+  h += liClientWarmHtml(d.linkedin);
+  h += '</div>';
   h += '<div style="display:flex;align-items:center;gap:8px">';
   h += detailBackBtn();
   h += '<button style="padding:4px 10px;border-radius:6px;border:1px solid #f59e0b;background:#fffbeb;color:#d97706;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit" onclick="editClientProfile()">✏️ Edit</button>';
@@ -1690,7 +1695,7 @@ function renderClientContacts(contacts) {
     h += '<div class="contact-card">';
     h += '<div class="contact-avatar" style="background:' + bgColor + '">' + esc(initials) + '</div>';
     h += '<div class="contact-info">';
-    h += '<div class="contact-name">' + esc(c.name) + '</div>';
+    h += '<div class="contact-name">' + esc(c.name) + liPersonBadge(c.linkedin) + '</div>';
     h += '<div class="contact-title">' + esc(c.title) + '</div>';
     h += '<div class="contact-meta">';
     if (c.email) h += '<span>📧 ' + esc(c.email) + '</span>';
@@ -2954,7 +2959,7 @@ function renderDetailContent(c) {
   var h = '<div class="detail-header"><div><div class="detail-name">'+esc((c.firstName||"")+" "+(c.lastName||""))+'</div>';
   if(c.nickName) h += '<div style="font-size:12px;color:#94a3b8">aka "'+esc(c.nickName)+'"</div>';
   h += '<div class="detail-title">'+esc(c.title||"")+'</div>';
-  h += '<div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+badge(c.status);
+  h += '<div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+badge(c.status)+liPersonBadge(c.linkedin);
   if(c.employeeType) h += '<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:#eff6ff;color:#176087">'+esc(c.employeeType)+'</span>';
   h += '</div>';
   // Action buttons row
@@ -3767,6 +3772,7 @@ var NAV_GROUPS=[
   {section:"Tools", items:[
     {key:"portal",label:"Portal",emoji:"\uD83D\uDCE8"},
     {key:"customsheets",label:"Custom Sheets",emoji:"\uD83D\uDCCC"},
+    {key:"linkedingraph",label:"LinkedIn Graph",emoji:"\uD83D\uDD17"},
   ]},
   {section:"Insights", items:[
     {key:"revenue",label:"Revenue",emoji:"\uD83D\uDCB0"},
@@ -3871,6 +3877,104 @@ function _mobileSetPage(key){
 }
 
 /* ═══ PAGE RENDERERS ═══ */
+function liDateLabel(iso){
+  var m=String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!m) return "";
+  var months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return parseInt(m[3],10)+" "+months[parseInt(m[2],10)-1]+" "+m[1];
+}
+function liPersonBadge(w){
+  if(!w||!w.connected) return "";
+  var when=liDateLabel(w.connectedOn);
+  var text=(w.label||"LinkedIn connected")+(when?" · "+when:"");
+  var title=text+(w.confidence?" ("+w.confidence+")":"")+(w.position?" — "+w.position:"");
+  var cls="li-badge"+(w.confidence==="low"?" low":"");
+  if(w.linkedinUrl) return ' <a class="'+cls+'" href="'+esc(w.linkedinUrl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="'+esc(title)+'">'+esc(text)+'</a>';
+  return ' <span class="'+cls+'" title="'+esc(title)+'">'+esc(text)+'</span>';
+}
+function liClientCountBadge(w){
+  if(!w||!w.count) return "";
+  var n=w.count;
+  var text=n+" LinkedIn";
+  return ' <span class="li-badge" title="'+n+' LinkedIn connection'+(n===1?"":"s")+' at this company">'+esc(text)+'</span>';
+}
+function liQueueBadge(s){
+  if(!s||!s.linkedin) return "";
+  var bits=[];
+  if(s.linkedin.candidate&&s.linkedin.candidate.connected) bits.push(liPersonBadge(s.linkedin.candidate));
+  if(s.linkedin.clientCount) bits.push(liClientCountBadge({count:s.linkedin.clientCount}));
+  return bits.join("");
+}
+function liClientWarmHtml(w){
+  if(!w||!w.count) return "";
+  var h='<div style="margin-top:8px;font-size:13px;color:#0a66c2"><b>'+w.count+' LinkedIn connection'+(w.count===1?"":"s")+'</b>';
+  var notable=(w.notable||[]).filter(function(n){return n&&n.name;});
+  if(notable.length){
+    h+='<div style="margin-top:4px;color:#334155;font-size:12px;line-height:1.5">';
+    notable.forEach(function(n){
+      var label=esc(n.name)+(n.position?" — "+esc(n.position):"")+(n.connectedOn?" · "+esc(liDateLabel(n.connectedOn)):"");
+      if(n.linkedinUrl) h+='<div><a href="'+esc(n.linkedinUrl)+'" target="_blank" rel="noopener" style="color:#0a66c2;text-decoration:none">'+label+'</a></div>';
+      else h+='<div>'+label+'</div>';
+    });
+    h+='</div>';
+  }
+  h+='</div>';
+  return h;
+}
+async function renderLinkedInGraph(){
+  var st={loaded:false,connections:0,matches:{},clientOrgs:0};
+  try{ st=await apiFetch("linkedin/status"); }catch(e){ return '<div class="empty-state"><div class="title">LinkedIn graph is unavailable</div><div class="sub">'+esc(e.message)+'</div></div>'; }
+  var m=st.matches||{};
+  function bucket(name){ var b=m[name]||{}; return (b.high||0)+" high · "+(b.medium||0)+" medium · "+(b.low||0)+" low"; }
+  var when=st.lastUpload&&st.lastUpload.at?new Date(st.lastUpload.at).toLocaleString():"No upload yet";
+  var h='<div style="max-width:760px">';
+  h+='<div style="font-size:14px;color:#64748b;margin-bottom:16px">Rachel’s Connections export, matched to Bullhorn candidates, client contacts, and clients. Counts only — the connection list is not exported from this page.</div>';
+  h+='<div class="stats-row">';
+  h+=statCard("\uD83D\uDD17","Connections",st.connections||0,st.withEmail?st.withEmail+" with email":"none with email","#0a66c2");
+  h+=statCard("\uD83C\uDFE2","Client orgs",st.clientOrgs||0,"Companies with a warm link","#176087");
+  h+='</div>';
+  h+='<div class="chart-card" style="margin-bottom:16px"><h3>Last upload</h3>';
+  h+='<div style="font-size:13px;color:#334155">'+esc(when)+(st.lastUpload&&st.lastUpload.by?" · "+esc(st.lastUpload.by):"")+(st.lastUpload&&st.lastUpload.filename?" · "+esc(st.lastUpload.filename):"")+'</div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-top:8px">Candidates: '+esc(bucket("candidate"))+'<br>Client contacts: '+esc(bucket("client_contact"))+'<br>Clients: '+esc(bucket("client"))+'</div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-top:10px;line-height:1.5"><b>Confidence.</b> High is a unique email or LinkedIn URL. Medium is a unique first and last name plus the same company. Low is a unique name plus a fuzzy company (Epic vs Epic Systems). A tie is not a match. Re-uploading replaces the graph and runs the match again.</div>';
+  h+='</div>';
+  h+='<div class="chart-card"><h3>Upload a fresh Connections CSV</h3>';
+  h+='<div style="font-size:13px;color:#64748b;margin-bottom:10px">LinkedIn → Settings → Data privacy → Get a copy of your data → Connections. The header can sit below LinkedIn’s note. The file stays on the server; it is not written into git.</div>';
+  h+='<input id="li-csv" type="file" accept=".csv,text/csv" style="font-size:13px">';
+  h+='<div style="margin-top:12px;display:flex;gap:8px;align-items:center">';
+  h+='<button class="btn-primary" onclick="uploadLinkedInCsv()">Upload and match</button>';
+  h+='<button class="btn-outline" onclick="rematchLinkedIn()">Re-match</button>';
+  h+='</div>';
+  h+='<div id="li-upload-msg" style="margin-top:12px;font-size:13px;color:#334155"></div>';
+  h+='</div></div>';
+  return h;
+}
+async function uploadLinkedInCsv(){
+  var input=document.getElementById("li-csv");
+  var msg=document.getElementById("li-upload-msg");
+  var file=input&&input.files&&input.files[0];
+  if(!file){ if(msg) msg.textContent="Choose the Connections CSV first."; return; }
+  if(msg) msg.textContent="Reading "+file.name+"…";
+  var text=await file.text();
+  if(msg) msg.textContent="Uploading and matching. A full export takes a minute.";
+  try{
+    var r=await apiFetch("linkedin/upload",{method:"POST",headers:{"Content-Type":"text/csv","X-Filename":encodeURIComponent(file.name)},body:text});
+    if(msg) msg.textContent="Stored "+(r.rows||0)+" connections. "+(r.matchRows||0)+" matches. Removed "+(r.removed||0)+" that were not in this file.";
+    showToast("LinkedIn graph updated");
+    setTimeout(function(){ if(currentPage==="linkedingraph") loadPage(); }, 600);
+  }catch(e){ if(msg) msg.textContent=e.message; showToast(e.message,"error"); }
+}
+async function rematchLinkedIn(){
+  var msg=document.getElementById("li-upload-msg");
+  if(msg) msg.textContent="Re-matching against Bullhorn…";
+  try{
+    var r=await apiFetch("linkedin/rematch",{method:"POST",body:{}});
+    if(msg) msg.textContent="Re-matched "+(r.connections||0)+" connections into "+(r.matchRows||0)+" links.";
+    showToast("Re-match finished");
+    setTimeout(function(){ if(currentPage==="linkedingraph") loadPage(); }, 600);
+  }catch(e){ if(msg) msg.textContent=e.message; showToast(e.message,"error"); }
+}
+
 function renderCandidates(data,bhTotal){
   var sf=filters.status||"All";
   // Exclude Placed candidates — they show on the Consultants page
@@ -3881,7 +3985,7 @@ function renderCandidates(data,bhTotal){
   var displayTotal=bhTotal||f.length;
   var cols=[
     {key:"star",label:"\u2605",render:function(r){return starBtnHtml(r.id);},exportVal:function(r){return isStarred(r.id)?"Yes":"No";}},
-    {key:"name",label:"Name",render:function(r){return '<span class="name-link">'+esc(r.firstName+" "+r.lastName)+'</span>';},exportVal:function(r){return r.firstName+" "+r.lastName;}},
+    {key:"name",label:"Name",render:function(r){return '<span class="name-link">'+esc(r.firstName+" "+r.lastName)+'</span>'+liPersonBadge(r.linkedin);},exportVal:function(r){return r.firstName+" "+r.lastName;}},
     {key:"title",label:"Title",exportVal:function(r){return r.title||"";}},
     {key:"primaryCert",label:"Primary Cert",render:function(r){return r.primaryCert?'<span style="font-size:12px;color:#176087;max-width:200px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.primaryCert)+'">'+esc(r.primaryCert)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.primaryCert||"";}},
     {key:"grade",label:"Grade",render:function(r){var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};return r.grade?'<span class="fw600" style="color:'+(gc[r.grade]||"#64748b")+'">'+esc(r.grade)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.grade||"";}},
@@ -3938,7 +4042,7 @@ function renderConsultants(data,bhTotal){
   var displayTotal=f.length;
   var cols=[
     {key:"star",label:"\u2605",render:function(r){return starBtnHtml(r.id);},exportVal:function(r){return isStarred(r.id)?"Yes":"No";}},
-    {key:"name",label:"Name",render:function(r){return '<span class="name-link">'+esc(r.firstName+" "+r.lastName)+'</span>';},exportVal:function(r){return r.firstName+" "+r.lastName;}},
+    {key:"name",label:"Name",render:function(r){return '<span class="name-link">'+esc(r.firstName+" "+r.lastName)+'</span>'+liPersonBadge(r.linkedin);},exportVal:function(r){return r.firstName+" "+r.lastName;}},
     {key:"title",label:"Title",exportVal:function(r){return r.title||"";}},
     {key:"primaryCert",label:"Primary Cert",render:function(r){return r.primaryCert?'<span style="font-size:12px;color:#176087;max-width:200px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.primaryCert)+'">'+esc(r.primaryCert)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.primaryCert||"";}},
     {key:"grade",label:"Grade",render:function(r){var gc={"A":"#16a34a","B":"#f59e0b","C":"#ef4444"};return r.grade?'<span class="fw600" style="color:'+(gc[r.grade]||"#64748b")+'">'+esc(r.grade)+'</span>':'<span class="muted">\u2014</span>';},exportVal:function(r){return r.grade||"";}},
@@ -4061,7 +4165,7 @@ function renderStarCandidates(data){
     html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
     html += starBtnHtml(c.id);
     html += '<div style="flex:1;min-width:0">';
-    html += '<div style="font-size:15px;font-weight:700;color:#0E2E47;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onclick="openDetail(' + c.id + ',null)" title="' + esc(c.name) + '">' + esc(c.name) + '</div>';
+    html += '<div style="font-size:15px;font-weight:700;color:#0E2E47;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onclick="openDetail(' + c.id + ',null)" title="' + esc(c.name) + '">' + esc(c.name) + liPersonBadge(c.linkedin) + '</div>';
     html += '<div style="font-size:12px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(c.title || "No title") + '</div>';
     html += '</div>';
     var gc = {"A":"#16a34a","A+":"#16a34a","B":"#f59e0b","C":"#ef4444"};
@@ -4733,7 +4837,7 @@ function renderSubmissionPipeline(result) {
     sorted.forEach(function(s) {
       var colors = subPipeStatusColor(s.status);
       h += '<tr>';
-      h += '<td><span class="name-link" onclick="openDetail(' + s.candidateId + ')">' + esc(s.candidateName) + '</span></td>';
+      h += '<td><span class="name-link" onclick="openDetail(' + s.candidateId + ')">' + esc(s.candidateName) + '</span>' + liQueueBadge(s) + '</td>';
       h += '<td>' + esc(s.jobTitle) + '</td>';
       h += '<td>' + esc(s.client) + '</td>';
       // Status dropdown
@@ -5022,7 +5126,7 @@ function renderClients(data,bhTotal){
   var totalPlaced=f.reduce(function(s,r){return s+(r.activePlacements||0);},0);
   var clientsWithPlaced=f.filter(function(r){return r.activePlacements>0;}).length;
   var cols=[
-    {key:"name",label:"Company",render:function(r){return '<span class="name-link">'+esc(r.name)+'</span>';},exportVal:function(r){return r.name||"";}},
+    {key:"name",label:"Company",render:function(r){return '<span class="name-link">'+esc(r.name)+'</span>'+liClientCountBadge(r.linkedin);},exportVal:function(r){return r.name||"";}},
     {key:"owner",label:"Account Owner",render:function(r){return r.owner?'\uD83D\uDC64 '+esc(r.owner):'<span class="muted">\u2014</span>';},exportVal:function(r){return r.owner||"";}},
     {key:"location",label:"Location",render:function(r){return '\uD83D\uDCCD '+esc(r.location);},exportVal:function(r){return r.location||"";}},
     {key:"activePlacements",label:"Consultants",render:function(r){
@@ -11540,6 +11644,8 @@ async function loadPage(){
         h=renderCustomSheets(csData);break;
       case "portal":
         h=await renderPortal();break;
+      case "linkedingraph":
+        h=await renderLinkedInGraph();break;
       case "relationships":
         var relData=await apiFetch("relationship-scores",{type:_relTab||"candidates",sort:_relSort||"risk",limit:200});
         h=renderRelationships(relData);break;

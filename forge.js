@@ -1380,6 +1380,12 @@ function registerForge(app, deps) {
           }).length,
         };
       });
+      try {
+        const linkedin = require("./linkedin-graph");
+        await linkedin.decorateQueueRows(db, all, "candidateId", "clientId");
+      } catch (liErr) {
+        console.log("[Forge] linkedin warmth:", liErr.message);
+      }
       const sync = await loadSyncFreshness();
       const requested = String(req.query.owner == null || req.query.owner === "" ? "mine" : req.query.owner);
       let data = all;
@@ -1528,6 +1534,13 @@ function registerForge(app, deps) {
         signerTitle: profile.title,
         signerPhone: profile.phone,
       });
+      try {
+        const holder = [{ candidateId: draft.candidate.id, clientId: draft.job.clientId }];
+        await require("./linkedin-graph").decorateQueueRows(db, holder, "candidateId", "clientId");
+        draft.linkedin = holder[0].linkedin || null;
+      } catch (liErr) {
+        console.log("[Forge] linkedin warmth:", liErr.message);
+      }
       res.json({
         draft: draft,
         contacts: contacts,
