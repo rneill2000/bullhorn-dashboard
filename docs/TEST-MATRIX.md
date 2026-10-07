@@ -77,6 +77,8 @@ Axes: key (email / LinkedIn URL / name+company / company only) · uniqueness (on
 | L4 | Self-employed / Health as a company | Every generic row sticks to a client | test: client company match … skips generic labels |
 | L5 | Badge or status payload includes the connection email | Personal graph leaves the app | test: badge payload never includes the connection email |
 | L6 | Tools page offers a connection export | Full graph download | test: dashboard surfaces do not add a connection export |
+| L7 | Connections.csv of 26k rows stays on one HTTP request through ingest and match | Edge returns 499; the browser shows Failed to fetch after the rows have landed | test: upload acks before matching and status stays readable |
+| L8 | The upload response is lost after the server has accepted the file | UI shows Failed to fetch for a job that is still matching | test: a dropped upload response follows the running job |
 
 ## Live toasts and session host
 

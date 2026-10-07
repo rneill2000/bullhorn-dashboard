@@ -3936,43 +3936,170 @@ async function renderLinkedInGraph(){
   h+='<div class="chart-card" style="margin-bottom:16px"><h3>Last upload</h3>';
   h+='<div style="font-size:13px;color:#334155">'+esc(when)+(st.lastUpload&&st.lastUpload.by?" · "+esc(st.lastUpload.by):"")+(st.lastUpload&&st.lastUpload.filename?" · "+esc(st.lastUpload.filename):"")+'</div>';
   h+='<div style="font-size:12px;color:#64748b;margin-top:8px">Candidates: '+esc(bucket("candidate"))+'<br>Client contacts: '+esc(bucket("client_contact"))+'<br>Clients: '+esc(bucket("client"))+'</div>';
-  h+='<div style="font-size:12px;color:#64748b;margin-top:10px;line-height:1.5"><b>Confidence.</b> High is a unique email or LinkedIn URL. Medium is a unique first and last name plus the same company. Low is a unique name plus a fuzzy company (Epic vs Epic Systems). A tie is not a match. Re-uploading replaces the graph and runs the match again.</div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-top:10px;line-height:1.5"><b>Confidence.</b> High is a unique email or LinkedIn URL. Medium is a unique first and last name plus the same company. Low is a unique name plus a fuzzy company (Epic vs Epic Systems). A tie is not a match. Re-uploading replaces the graph and runs the match again. A large file is accepted right away; matching continues in the background.</div>';
   h+='</div>';
   h+='<div class="chart-card"><h3>Upload a fresh Connections CSV</h3>';
   h+='<div style="font-size:13px;color:#64748b;margin-bottom:10px">LinkedIn → Settings → Data privacy → Get a copy of your data → Connections. The header can sit below LinkedIn’s note. The file stays on the server; it is not written into git.</div>';
   h+='<input id="li-csv" type="file" accept=".csv,text/csv" style="font-size:13px">';
   h+='<div style="margin-top:12px;display:flex;gap:8px;align-items:center">';
-  h+='<button class="btn-primary" onclick="uploadLinkedInCsv()">Upload and match</button>';
-  h+='<button class="btn-outline" onclick="rematchLinkedIn()">Re-match</button>';
+  h+='<button id="li-upload-btn" class="btn-primary"'+(liJobBusy(st.job)?' disabled':'')+' onclick="uploadLinkedInCsv()">Upload and match</button>';
+  h+='<button id="li-rematch-btn" class="btn-outline"'+(liJobBusy(st.job)?' disabled':'')+' onclick="rematchLinkedIn()">Re-match</button>';
   h+='</div>';
-  h+='<div id="li-upload-msg" style="margin-top:12px;font-size:13px;color:#334155"></div>';
+  h+='<div id="li-upload-msg" style="margin-top:12px;font-size:13px;font-weight:600;color:'+liJobColor(st.job)+'">'+esc(liJobText(st.job))+'</div>';
   h+='</div></div>';
+  _liWatch=liJobBusy(st.job);
   return h;
+}
+var _liPoll=null;
+var _liWatch=false;
+function liJobBusy(job){
+  return !!(job&&(job.status==="queued"||job.status==="matching"));
+}
+function liJobColor(job){
+  if(!job) return "#334155";
+  if(job.status==="error") return "#b91c1c";
+  if(job.status==="queued"||job.status==="matching") return "#176087";
+  return "#166534";
+}
+function liJobText(job){
+  if(!job) return "";
+  if(job.status==="queued") return "Queued — matching will continue on the server.";
+  if(job.status==="matching"){
+    if(job.kind==="rematch") return "Matching — re-checking connections against Bullhorn.";
+    return "Matching"+(job.rows?" "+job.rows+" connections":"")+" — this finishes on the server.";
+  }
+  if(job.status==="error") return "Error — "+(job.error||"LinkedIn import failed.");
+  if(job.status==="done"&&job.result){
+    var r=job.result;
+    if(job.kind==="rematch") return "Done — re-matched "+(r.connections||0)+" connections into "+(r.matchRows||0)+" links.";
+    return "Done — stored "+(r.rows||0)+" connections. "+(r.matchRows||0)+" matches. Removed "+(r.removed||0)+" that were not in this file.";
+  }
+  if(job.status==="done") return "Done.";
+  return "";
+}
+function liSetBusy(busy){
+  ["li-upload-btn","li-rematch-btn"].forEach(function(id){
+    var b=document.getElementById(id);
+    if(b) b.disabled=!!busy;
+  });
+}
+function liShowJob(job){
+  var msg=document.getElementById("li-upload-msg");
+  if(msg&&job){
+    msg.style.color=liJobColor(job);
+    msg.textContent=liJobText(job);
+  }
+  liSetBusy(liJobBusy(job));
+}
+function liStopPoll(){
+  if(_liPoll){ clearInterval(_liPoll); _liPoll=null; }
+}
+function liFinishJob(job){
+  liStopPoll();
+  liShowJob(job);
+  if(job&&job.status==="done"){
+    showToast(job.kind==="rematch"?"Re-match finished":"LinkedIn graph updated");
+    setTimeout(function(){ if(currentPage==="linkedingraph") loadPage(); }, 600);
+  }else if(job&&job.status==="error"){
+    showToast(job.error||"LinkedIn import failed","error");
+  }
+}
+function liEnsurePoll(){
+  if(_liPoll) return;
+  _liPoll=setInterval(async function(){
+    if(currentPage!=="linkedingraph"){ liStopPoll(); return; }
+    try{
+      var st=await apiFetch("linkedin/status");
+      var job=st&&st.job;
+      if(!job||!liJobBusy(job)){
+        if(job) liFinishJob(job);
+        else liStopPoll();
+        return;
+      }
+      liShowJob(job);
+    }catch(e){}
+  }, 2000);
+}
+function linkedinGraphAfterRender(){
+  if(_liWatch) liEnsurePoll();
+  else liStopPoll();
+}
+function liNetworkFailure(e){
+  if(!e||e.auth) return false;
+  if(e.name==="TypeError") return true;
+  return /failed to fetch|networkerror|load failed|network request failed/i.test(String(e.message||""));
+}
+async function liRecoverJob(kind, startedMs){
+  try{
+    var st=await apiFetch("linkedin/status");
+    var job=st&&st.job;
+    if(!job||job.kind!==kind) return false;
+    var startedAt=job.startedAt?new Date(job.startedAt).getTime():0;
+    if(!(liJobBusy(job)||(startedAt&&startedAt>=startedMs-5000))) return false;
+    liShowJob(job);
+    if(job.status==="done"){ liFinishJob(job); return true; }
+    if(job.status==="error"){ showToast(job.error||"LinkedIn import failed","error"); return true; }
+    liEnsurePoll();
+    return true;
+  }catch(ignore){ return false; }
 }
 async function uploadLinkedInCsv(){
   var input=document.getElementById("li-csv");
   var msg=document.getElementById("li-upload-msg");
   var file=input&&input.files&&input.files[0];
-  if(!file){ if(msg) msg.textContent="Choose the Connections CSV first."; return; }
-  if(msg) msg.textContent="Reading "+file.name+"…";
-  var text=await file.text();
-  if(msg) msg.textContent="Uploading and matching. A full export takes a minute.";
+  if(!file){ if(msg){ msg.style.color="#334155"; msg.textContent="Choose the Connections CSV first."; } return; }
+  liSetBusy(true);
+  if(msg){ msg.style.color="#176087"; msg.textContent="Uploading "+file.name+"…"; }
+  var started=Date.now();
   try{
+    var text=await file.text();
     var r=await apiFetch("linkedin/upload",{method:"POST",headers:{"Content-Type":"text/csv","X-Filename":encodeURIComponent(file.name)},body:text});
-    if(msg) msg.textContent="Stored "+(r.rows||0)+" connections. "+(r.matchRows||0)+" matches. Removed "+(r.removed||0)+" that were not in this file.";
-    showToast("LinkedIn graph updated");
-    setTimeout(function(){ if(currentPage==="linkedingraph") loadPage(); }, 600);
-  }catch(e){ if(msg) msg.textContent=e.message; showToast(e.message,"error"); }
+    var job=r.job||{status:"queued",kind:"upload",rows:r.rows||0};
+    liShowJob(job);
+    if(job.status==="done") liFinishJob(job);
+    else liEnsurePoll();
+  }catch(e){
+    if(e.auth) return;
+    if(liNetworkFailure(e)){
+      var recovered=await liRecoverJob("upload", started);
+      if(recovered) return;
+    }
+    if(/API 409/.test(String(e.message||""))){
+      if(msg){ msg.style.color="#176087"; msg.textContent=e.message; }
+      liEnsurePoll();
+      return;
+    }
+    liSetBusy(false);
+    if(msg){ msg.style.color="#b91c1c"; msg.textContent=e.message; }
+    showToast(e.message,"error");
+  }
 }
 async function rematchLinkedIn(){
   var msg=document.getElementById("li-upload-msg");
-  if(msg) msg.textContent="Re-matching against Bullhorn…";
+  liSetBusy(true);
+  if(msg){ msg.style.color="#176087"; msg.textContent="Queued — matching will continue on the server."; }
+  var started=Date.now();
   try{
     var r=await apiFetch("linkedin/rematch",{method:"POST",body:{}});
-    if(msg) msg.textContent="Re-matched "+(r.connections||0)+" connections into "+(r.matchRows||0)+" links.";
-    showToast("Re-match finished");
-    setTimeout(function(){ if(currentPage==="linkedingraph") loadPage(); }, 600);
-  }catch(e){ if(msg) msg.textContent=e.message; showToast(e.message,"error"); }
+    var job=r.job||{status:"queued",kind:"rematch"};
+    liShowJob(job);
+    if(job.status==="done") liFinishJob(job);
+    else liEnsurePoll();
+  }catch(e){
+    if(e.auth) return;
+    if(liNetworkFailure(e)){
+      var recovered=await liRecoverJob("rematch", started);
+      if(recovered) return;
+    }
+    if(/API 409/.test(String(e.message||""))){
+      if(msg){ msg.style.color="#176087"; msg.textContent=e.message; }
+      liEnsurePoll();
+      return;
+    }
+    liSetBusy(false);
+    if(msg){ msg.style.color="#b91c1c"; msg.textContent=e.message; }
+    showToast(e.message,"error");
+  }
 }
 
 function renderCandidates(data,bhTotal){
@@ -11687,6 +11814,8 @@ async function loadPage(){
   if(currentPage==="smartmatch") populateJobDropdown();
 
   if(currentPage==="capture") captureAfterRender();
+  if(currentPage==="linkedingraph") linkedinGraphAfterRender();
+  else liStopPoll();
   if(currentPage==="portal"&&_portalTab==="generate"&&_portalSelectedClient){
     var genTmpl=document.querySelector('input[name="gen-template"]:checked');
     if(genTmpl) loadPrefillFields(genTmpl.value);

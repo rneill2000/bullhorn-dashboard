@@ -403,7 +403,10 @@ function publicPerson(row) {
   };
 }
 
+const SCHEMA_READY = Symbol("linkedinSchemaReady");
+
 async function ensureSchema(db) {
+  if (db && db[SCHEMA_READY]) return;
   var q = db.query.bind(db);
   await q(`CREATE TABLE IF NOT EXISTS linkedin_imports (
     id SERIAL PRIMARY KEY,
@@ -447,6 +450,7 @@ async function ensureSchema(db) {
   )`);
   await q(`CREATE INDEX IF NOT EXISTS idx_li_match_entity ON linkedin_matches(entity_type, entity_id)`);
   await q(`CREATE INDEX IF NOT EXISTS idx_li_match_conn ON linkedin_matches(connection_id)`);
+  if (db) db[SCHEMA_READY] = true;
 }
 
 const SLUG_SQL = "substring(lower(coalesce(%s,'')) from 'linkedin\\.com/(?:in|pub)/([a-z0-9_%\\-\\.]+)')";
@@ -576,8 +580,7 @@ async function rematchWith(db) {
   return { connections: connections.length, matches: summarizeMatches(planned), matchRows: planned.length };
 }
 
-async function ingestCsv(db, text, meta) {
-  var parsed = parseConnectionsCsv(text);
+async function ingestParsed(db, parsed, meta) {
   await ensureSchema(db);
   return withTx(db, async function (tx) {
     var imp = await tx.getOne(
@@ -597,6 +600,69 @@ async function ingestCsv(db, text, meta) {
       matchRows: stats.matchRows,
     };
   });
+}
+
+async function ingestCsv(db, text, meta) {
+  return ingestParsed(db, parseConnectionsCsv(text), meta);
+}
+
+function jobView(job) {
+  if (!job) return null;
+  return {
+    id: job.id,
+    kind: job.kind,
+    status: job.status,
+    filename: job.filename || "",
+    rows: job.rows || 0,
+    error: job.error || "",
+    result: job.result || null,
+    startedAt: job.startedAt || null,
+    finishedAt: job.finishedAt || null,
+  };
+}
+
+function jobBusy(job) {
+  return !!(job && (job.status === "queued" || job.status === "matching"));
+}
+
+/** Accept work and return. Ingest/match must not stay on the HTTP request. */
+function startJob(state, kind, meta, work) {
+  if (jobBusy(state.current)) {
+    var err = new Error("A LinkedIn import is already running.");
+    err.status = 409;
+    throw err;
+  }
+  var job = {
+    id: ++state.seq,
+    kind: kind,
+    status: "queued",
+    filename: (meta && meta.filename) || "",
+    rows: (meta && meta.rows) || 0,
+    error: "",
+    result: null,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+  };
+  state.current = job;
+  setImmediate(function () {
+    job.status = "matching";
+    Promise.resolve().then(work).then(function (result) {
+      job.result = result || null;
+      job.status = "done";
+      job.finishedAt = new Date().toISOString();
+      if (kind === "upload" && result) {
+        console.log("[LinkedIn] upload rows=" + result.rows + " matches=" + result.matchRows + " removed=" + result.removed);
+      } else if (result) {
+        console.log("[LinkedIn] rematch connections=" + result.connections + " matches=" + result.matchRows);
+      }
+    }).catch(function (e) {
+      job.status = "error";
+      job.error = (e && e.message) || "LinkedIn import failed";
+      job.finishedAt = new Date().toISOString();
+      console.error("[LinkedIn] " + kind + " failed: " + job.error);
+    });
+  });
+  return job;
 }
 
 async function statusPayload(db) {
@@ -847,31 +913,46 @@ function register(app, deps) {
   const express = require("express");
   const db = deps.db;
   const getUser = deps.getUser || function () { return null; };
+  const jobs = { seq: 0, current: null };
 
   app.get("/api/linkedin/status", async function (req, res) {
     try {
       if (!db || !db.ready) return res.status(503).json({ error: "Database is not connected" });
-      res.json(await statusPayload(db));
+      var payload = await statusPayload(db);
+      payload.job = jobView(jobs.current);
+      res.json(payload);
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
   });
 
+  // Ack before ingest/match. A full Connections export outlives the edge timeout,
+  // and the browser then reports Failed to fetch after the rows have already landed.
   app.post("/api/linkedin/upload", express.text({ type: wantsCsv, limit: "20mb" }), async function (req, res) {
     try {
       if (!db || !db.ready) return res.status(503).json({ error: "Database is not connected" });
       var text = typeof req.body === "string" ? req.body : "";
       if (!text || text.length < 20) return res.status(400).json({ error: "Upload the Connections CSV as text/csv." });
+      var parsed = parseConnectionsCsv(text);
       var user = getUser(req);
       var filename = String(req.headers["x-filename"] || "");
       try { filename = decodeURIComponent(filename); } catch (ignore) {}
-      var result = await ingestCsv(db, text, {
+      var meta = {
         uploadedBy: user ? (user.name || user.email || "") : "",
         filename: filename.slice(0, 200),
         source: "upload",
+      };
+      var job = startJob(jobs, "upload", { filename: meta.filename, rows: parsed.rows.length }, function () {
+        return ingestParsed(db, parsed, meta);
       });
-      console.log("[LinkedIn] upload rows=" + result.rows + " matches=" + result.matchRows + " removed=" + result.removed);
-      res.json(result);
+      console.log("[LinkedIn] upload accepted rows=" + parsed.rows.length);
+      res.status(202).json({
+        ok: true,
+        accepted: true,
+        rows: parsed.rows.length,
+        skipped: parsed.skipped,
+        job: jobView(job),
+      });
     } catch (e) {
       res.status(e.status || 500).json({ error: e.message });
     }
@@ -881,11 +962,15 @@ function register(app, deps) {
     try {
       if (!db || !db.ready) return res.status(503).json({ error: "Database is not connected" });
       await ensureSchema(db);
-      var stats = await withTx(db, function (tx) { return rematchWith(tx); });
-      console.log("[LinkedIn] rematch connections=" + stats.connections + " matches=" + stats.matchRows);
-      res.json({ ok: true, connections: stats.connections, matches: stats.matches, matchRows: stats.matchRows });
+      var job = startJob(jobs, "rematch", {}, function () {
+        return withTx(db, function (tx) { return rematchWith(tx); }).then(function (stats) {
+          return { ok: true, connections: stats.connections, matches: stats.matches, matchRows: stats.matchRows };
+        });
+      });
+      console.log("[LinkedIn] rematch accepted");
+      res.status(202).json({ ok: true, accepted: true, job: jobView(job) });
     } catch (e) {
-      res.status(500).json({ error: e.message });
+      res.status(e.status || 500).json({ error: e.message });
     }
   });
 
