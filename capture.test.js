@@ -186,3 +186,14 @@ test("commit flags the entry if Bullhorn does not show the job link on read-back
   assert.strictEqual(r.body.results[0].ok, false);
   assert.match(r.body.results[0].error, /not linked to 336/);
 });
+
+test("picking a person by hand loads their jobs and pre-selects the one the note names", async () => {
+  fresh();
+  const h = harness([], { getAll: subsDb });
+  const r = await new Promise((resolve) => {
+    const res = { status() { return this; }, json: resolve };
+    h.routes["GET /api/capture/lookup"]({ query: { kind: "notejobs", personType: "candidate", personId: "5486", hint: "the SBO role" } }, res);
+  });
+  assert.deepStrictEqual(r.data.map((j) => j.id), [357, 338]);
+  assert.deepStrictEqual(r.suggested, [357]);
+});

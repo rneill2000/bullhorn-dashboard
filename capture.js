@@ -348,12 +348,19 @@ module.exports = function registerCapture(app, deps) {
   app.get("/api/capture/lookup", async function (req, res) {
     try {
       const q = (req.query.q || "").trim(), kind = req.query.kind || "contact";
-      if (!q && kind !== "job") return res.json({ data: [] });
+      if (!q && kind !== "job" && kind !== "notejobs") return res.json({ data: [] });
       const bits = q.split(/\s+/); const first = bits[0], last = bits.slice(1).join(" ");
       let data = [];
       if (kind === "contact") data = last ? await findContacts(first, last, "") : (await findContacts("", first, "")).concat(await findContacts(first, "", ""));
       else if (kind === "candidate") data = last ? await findCandidates(first, last) : (await findCandidates("", first)).concat(await findCandidates(first, ""));
       else if (kind === "job") data = await findJobs(parseInt(req.query.clientId), q);
+      else if (kind === "notejobs") {
+        // Jobs a note could belong to once the person is picked by hand: candidate -> their submissions, contact -> client's open jobs
+        const pid = parseInt(req.query.personId), cid = parseInt(req.query.clientId), hint = req.query.hint || "";
+        const list = req.query.personType === "candidate" ? await candidateSubmissions(pid) : (await findJobs(cid, hint)).filter(function (j) { return j.open; });
+        const best = hint ? pickJob(list, hint) : null;
+        return res.json({ data: list.slice(0, 8), suggested: best ? [best.id] : [] });
+      }
       else data = await findClients(q);
       const seen = {}; data = data.filter(function (d) { if (seen[d.id]) return false; seen[d.id] = 1; return true; });
       res.json({ data: data.slice(0, 10) });

@@ -154,6 +154,7 @@ function _capAnswer(i,qi,oi){
   // a company chosen for one entry applies to the other entries with the same company name
   if(o.clientId){ var nm=(it.newClient.name||"").toLowerCase(); _cap.items.forEach(function(x){ if(x!==it && !x.clientId && (x.newClient.name||"").toLowerCase()===nm && nm){ x.clientId=o.clientId; x.clientLabel=it.clientLabel; (x.questions||[]).forEach(function(qq){ if(qq.id==="company") qq.answered=true; }); } }); }
   _capRenderItems();
+  if(o.personId){ _cap.items.forEach(function(x,j){ if(x.kind==="note" && x.personId===o.personId) _capLoadNoteJobs(j); }); }
 }
 function _capAnswerFree(i,qi,val){
   var it=_cap.items[i], q=it.questions[qi]; val=(val||"").trim(); var key=i+":"+qi;
@@ -285,7 +286,18 @@ function _capNoteJobsRow(it,i){
 function _capNoteJob(i,id,add){ var it=_cap.items[i]; it.jobIds=(it.jobIds||[]).filter(function(x){return x!==id;}); if(add) it.jobIds.push(id); _capRefresh(i); }
 function _capSet(i,k,v){ _cap.items[i][k]=v; }
 function _capRefresh(i){ var el=document.getElementById("cap-card-"+i); if(el) el.outerHTML=_capCard(_cap.items[i],i); }
-function _capPick(i,id,label,clientId,clientName){ var it=_cap.items[i]; it.personId=id; it.personLabel=label; if(clientId&&!it.clientId){ it.clientId=clientId; it.clientLabel=clientName; } _capRefresh(i); }
+function _capPick(i,id,label,clientId,clientName){ var it=_cap.items[i]; it.personId=id; it.personLabel=label; if(clientId&&!it.clientId){ it.clientId=clientId; it.clientLabel=clientName; } _capRefresh(i); _capLoadNoteJobs(i); }
+// Once a person is picked by hand on a note, load the jobs it could belong to (candidate: submissions; contact: client's open jobs)
+async function _capLoadNoteJobs(i){
+  var it=_cap.items[i]; if(!it || it.kind!=="note" || !it.personId) return;
+  try{
+    var r=await apiFetch("capture/lookup",{kind:"notejobs",personType:it.personType,personId:it.personId,clientId:it.clientId||"",hint:it.jobHint||""});
+    it.noteJobs=r.data||[];
+    var keep=(it.jobIds||[]).filter(function(id){ return it.noteJobs.some(function(m){return m.id===id;}); });
+    it.jobIds=keep.length?keep:(r.suggested||[]);
+    _capRefresh(i);
+  }catch(e){}
+}
 function _capPickJob(i,id,label){ _cap.items[i].jobId=id; _cap.items[i].jobLabel=label; (_cap.items[i].questions||[]).forEach(function(q){ if(q.id==="job") q.answered=true; }); _capRenderItems(); }
 function _capPickClient(i,id,name){ _cap.items[i].clientId=id; _cap.items[i].clientLabel=name; _capRefresh(i); _capLoadJobs(i); }
 async function _capLoadJobs(i){ var it=_cap.items[i]; if(it.kind!=="job_update"||!it.clientId) return; try{ var r=await apiFetch("capture/lookup",{kind:"job",q:it.jobHint||"",clientId:it.clientId}); it.matches.jobs=r.data||[]; if(it.matches.jobs.length===1){ it.jobId=it.matches.jobs[0].id; it.jobLabel=it.matches.jobs[0].name+" — "+it.matches.jobs[0].sub; } _capRefresh(i); }catch(e){} }
