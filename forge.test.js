@@ -353,3 +353,121 @@ test("scope refusal returns the email instead of sending", async function () {
     server.close();
   }
 });
+
+function loadForgeCreate() {
+  const vm = require("vm");
+  const result = { innerHTML: "" };
+  const button = { disabled: false, textContent: "Create Outlook draft" };
+  const toasts = [];
+  const ctx = {
+    console: console,
+    esc: function (s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); },
+    NAV_GROUPS: [{ section: "Candidates", items: [{ key: "subtracker", label: "Submittal Tracker" }] }],
+    currentPage: "forge",
+    location: { hash: "#forge" },
+    setTimeout: function () {},
+    showToast: function (msg, type) { toasts.push({ msg: msg, type: type || "" }); },
+    document: { getElementById: function (id) {
+      if (id === "forge-result") return result;
+      if (id === "forge-create") return button;
+      if (id === "forge-to") return { value: "", selectedIndex: -1, options: [] };
+      return { value: "", style: {} };
+    } },
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(__dirname + "/public/forge-ui.js", "utf8"), ctx);
+  ctx._forge.selected = 42;
+  ctx._forge.view = { signerName: "Rachel", draft: { job: {} } };
+  ctx.toasts = toasts;
+  ctx.result = result;
+  return ctx;
+}
+
+test("soft outlook failure does not raise an error toast", async function () {
+  const ctx = loadForgeCreate();
+  ctx.apiFetch = async function () { return { created: false, instructions: "Reconnect Outlook to grant Mail.ReadWrite." }; };
+  await ctx.forgeCreate();
+  assert.equal(ctx.toasts.length, 0);
+  assert.match(ctx.result.innerHTML, /Draft was not saved in Outlook/);
+  assert.match(ctx.result.innerHTML, /Mail\.ReadWrite/);
+  assert.doesNotMatch(ctx.result.innerHTML, /fg-flag alert/);
+});
+
+test("sign-in redirect does not also toast", async function () {
+  const forge = loadForgeCreate();
+  forge.apiFetch = async function () {
+    const err = new Error("Sign in required");
+    err.auth = true;
+    throw err;
+  };
+  await forge.forgeCreate();
+  assert.equal(forge.toasts.length, 0);
+  assert.equal(forge.result.innerHTML, "");
+
+  const vm = require("vm");
+  const toasts = [];
+  const button = { disabled: false, textContent: "Write" };
+  const cap = {
+    console: console,
+    esc: function (s) { return String(s == null ? "" : s); },
+    showToast: function (msg, type) { toasts.push({ msg: msg, type: type || "" }); },
+    confirm: function () { return true; },
+    alert: function () {},
+    localStorage: { removeItem: function () {} },
+    document: { getElementById: function () { return button; } },
+  };
+  cap.window = cap;
+  vm.createContext(cap);
+  vm.runInContext(fs.readFileSync(__dirname + "/public/capture-ui.js", "utf8"), cap);
+  cap._capRenderItems = function () {};
+  cap._cap.items = [{ kind: "note", skip: false, personId: 1, clientId: 2, newPerson: {}, newClient: { name: "" }, comments: "Met today" }];
+  cap.apiFetch = forge.apiFetch;
+  await cap.captureCommit();
+  assert.equal(toasts.length, 0);
+});
+
+test("partial capture commit uses a warn toast", async function () {
+  const vm = require("vm");
+  const toasts = [];
+  const button = { disabled: false, textContent: "Write" };
+  const ctx = {
+    console: console,
+    esc: function (s) { return String(s == null ? "" : s); },
+    showToast: function (msg, type) { toasts.push({ msg: msg, type: type || "" }); },
+    confirm: function () { return true; },
+    alert: function () {},
+    localStorage: { removeItem: function () {} },
+    document: { getElementById: function () { return button; } },
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(__dirname + "/public/capture-ui.js", "utf8"), ctx);
+  ctx._capRenderItems = function () {};
+  ctx._cap.items = [
+    { kind: "note", skip: false, personId: 1, clientId: 2, newPerson: {}, newClient: { name: "" }, comments: "One" },
+    { kind: "note", skip: false, personId: 3, clientId: 2, newPerson: {}, newClient: { name: "" }, comments: "Two" },
+  ];
+  ctx.apiFetch = async function () { return { results: [{ ok: true }, { ok: false, error: "Bullhorn rejected it" }], user: "Rachel" }; };
+  await ctx.captureCommit();
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].type, "warn");
+  assert.match(toasts[0].msg, /1 written, 1 failed/);
+
+  toasts.length = 0;
+  ctx._cap.results = null;
+  ctx.apiFetch = async function () { throw new Error("API 500: down"); };
+  await ctx.captureCommit();
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].type, "error");
+  assert.match(toasts[0].msg, /API 500/);
+});
+
+test("desktop toast paints warn in amber, not red", function () {
+  const ui = fs.readFileSync(__dirname + "/public/index.html", "utf8");
+  assert.match(ui, /type==="warn"\?"#d97706"/);
+  assert.match(ui, /err\.auth = true/);
+  const phone = fs.readFileSync(__dirname + "/public/m.html", "utf8");
+  assert.match(phone, /type==="warn"\?"warn"/);
+  assert.match(phone, /err\.auth=true/);
+});

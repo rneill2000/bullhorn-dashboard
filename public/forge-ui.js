@@ -1,6 +1,7 @@
 /* Submittal Forge — pick an Internally Submitted row, preview the client email, save an Outlook draft.
    Expects globals from index.html: esc, apiFetch, showToast, setHash, NAV_GROUPS, currentPage. */
 function forgeAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
+function forgeSignIn(e) { return !!(e && (e.auth || e.message === "Sign in required")); }
 (function () {
   if (typeof NAV_GROUPS !== "undefined") {
     var forgeItem = { key: "forge", label: "Submittal Forge", emoji: "\u2692\uFE0F" };
@@ -76,6 +77,7 @@ async function forgeLoadQueue() {
     if (want && _forge.queue.some(function (row) { return row.submissionId === want; })) forgeOpen(want);
     else if (want) forgeOpen(want);
   } catch (e) {
+    if (forgeSignIn(e)) return;
     box.innerHTML = '<div style="color:#b91c1c;font-size:13px">' + esc(e.message) + '</div>';
   }
 }
@@ -112,6 +114,7 @@ async function forgeOpen(id) {
     _forge.view = r;
     forgePaintDraft();
   } catch (e) {
+    if (forgeSignIn(e)) return;
     main.innerHTML = '<div class="fg-card" style="color:#b91c1c">' + esc(e.message) + '</div>';
   }
 }
@@ -255,9 +258,9 @@ async function forgeCreate() {
     } else {
       var copyNote = "The email is ready below. Copy it into Outlook if a draft was not saved.";
       if (result) result.innerHTML = '<div class="fg-flag warn"><b>Draft was not saved in Outlook.</b><div style="margin-top:4px">' + esc(r.instructions || copyNote) + '</div></div>';
-      if (typeof showToast === "function") showToast("Draft not saved — copy the email", "error");
     }
   } catch (e) {
+    if (forgeSignIn(e)) return;
     if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.message) + '</div>';
     if (typeof showToast === "function") showToast(e.message, "error");
   } finally {

@@ -14,6 +14,7 @@ const cors = require("cors");
 const path = require("path");
 const crypto = require("crypto");
 require("dotenv").config();
+const publicHost = require("./public-host");
 const db = require("./db");
 
 /* ── Submission stages ───────────────────────────────────────────────
@@ -121,6 +122,7 @@ setInterval(function () {
     }
   });
   if (count > 0) console.log("[Session] Cleaned up " + count + " expired user sessions");
+  publicHost.sweepSessionHandoffs();
 }, 60 * 60 * 1000);
 
 /* ═══ USER SSO ROUTES ═══ */
@@ -194,16 +196,34 @@ app.get("/auth/callback", async (req, res) => {
 
     console.log(`[SSO] User logged in: ${userSessions[sessionToken].name} (ID: ${user.id})`);
 
-    // Set cookie and redirect to dashboard
-    const isSecure = BH.redirectUri.startsWith("https");
-    const nxtRaw = parseCookies(req).bh_next; let nxt = "/";
-    try { const d = decodeURIComponent(nxtRaw || ""); if (d.startsWith("/") && !d.startsWith("//")) nxt = d; } catch (e) {}
-    res.setHeader("Set-Cookie", [`bh_session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${isSecure ? "; Secure" : ""}`, "bh_next=; Path=/; Max-Age=0"]);
+    // Bullhorn's registered redirect_uri is the *.up.railway.app callback, so this
+    // response is often served on a different host than dashboard.anuraconnect.com.
+    // A host-only cookie set here would not be sent on the custom domain. Hand the
+    // session over with a one-time code and set the cookie on the canonical host.
+    const isSecure = (publicHost.canonicalPublicOrigin() || BH.redirectUri).startsWith("https");
+    const nxt = publicHost.readNextCookie(parseCookies(req).bh_next) || "/";
+    if (publicHost.sessionNeedsHandoff(req)) {
+      const code = publicHost.issueSessionHandoff(sessionToken, nxt);
+      const origin = publicHost.canonicalPublicOrigin();
+      console.log("[SSO] Handing session to " + origin + " for " + userSessions[sessionToken].name);
+      return res.redirect(origin + "/auth/finish?code=" + encodeURIComponent(code));
+    }
+    res.setHeader("Set-Cookie", [publicHost.sessionCookie(sessionToken, isSecure), "bh_next=; Path=/; Max-Age=0"]);
     res.redirect(nxt);
   } catch (e) {
     console.error("[SSO Callback]", e.message);
     res.redirect("/login?error=" + encodeURIComponent(e.message));
   }
+});
+
+// Set the session cookie on the canonical host after Bullhorn returns on the railway.app callback.
+app.get("/auth/finish", (req, res) => {
+  const row = publicHost.takeSessionHandoff(typeof req.query.code === "string" ? req.query.code : "");
+  if (!row || !userSessions[row.sessionToken]) return res.redirect("/login?error=expired");
+  const secure = (publicHost.canonicalPublicOrigin() || BH.redirectUri).startsWith("https");
+  const nxt = publicHost.readNextCookie(parseCookies(req).bh_next) || row.next || "/";
+  res.setHeader("Set-Cookie", [publicHost.sessionCookie(row.sessionToken, secure), "bh_next=; Path=/; Max-Age=0"]);
+  res.redirect(nxt);
 });
 
 // Get current logged-in user
@@ -221,7 +241,8 @@ app.get("/auth/logout", (req, res) => {
   const cookies = parseCookies(req);
   const tok = cookies.bh_session;
   if (tok && userSessions[tok]) delete userSessions[tok];
-  res.setHeader("Set-Cookie", "bh_session=; Path=/; HttpOnly; Max-Age=0");
+  const secure = (publicHost.canonicalPublicOrigin() || BH.redirectUri).startsWith("https");
+  res.setHeader("Set-Cookie", publicHost.sessionCookie("", secure));
   if (!req.query.api) return res.redirect("/login");
   res.redirect("/");
 });
@@ -8853,6 +8874,9 @@ function outlookScopes(extra) {
 var OUTLOOK_CONFIG = {
   clientId: (process.env.OUTLOOK_CLIENT_ID || "").trim(),
   clientSecret: (process.env.OUTLOOK_CLIENT_SECRET || "").trim(),
+  // Keep this on the registered Azure redirect (RAILWAY_PUBLIC_DOMAIN). Pointing it
+  // at the custom domain before that URI is added in Azure breaks Outlook sign-in.
+  // The callback below sends the browser back to canonicalPublicOrigin() afterward.
   redirectUri: (process.env.RAILWAY_PUBLIC_DOMAIN ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.BASE_URL || "https://bullhorn-dashboard-production.up.railway.app") + "/auth/outlook/callback",
   scopes: outlookScopes(OUTLOOK_EXTRA_SCOPES),
   authorizeUrl: "https://login.microsoftonline.com/" + OUTLOOK_TENANT + "/oauth2/v2.0/authorize",
@@ -8957,8 +8981,10 @@ app.get("/auth/outlook/callback", async (req, res) => {
       } catch (e) { console.log("[Outlook] DB persist failed:", e.message); }
     }
 
-    // Redirect back to dashboard
-    res.redirect("/?outlook=connected&user=" + encodeURIComponent(userEmail));
+    // Land on the custom domain when one is configured, so this hop does not
+    // leave the user on *.up.railway.app without their session cookie.
+    var home = publicHost.canonicalPublicOrigin();
+    res.redirect((home || "") + "/?outlook=connected&user=" + encodeURIComponent(userEmail));
   } catch (e) {
     console.error("[Outlook Callback]", e.message);
     res.status(500).send("Error connecting Outlook: " + e.message);
