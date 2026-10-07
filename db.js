@@ -963,7 +963,9 @@ var JOB_FIELDS = [
 ].join(",");
 
 var PLACEMENT_FIELDS = [
-  "id","candidate","jobOrder","status","employmentType",
+  // query/Placement returns jobOrder as {id, title} and omits jobOrder.clientCorporation
+  // unless it is requested. Placement.clientCorporation is the company (not the contact).
+  "id","candidate(id,firstName,lastName)","jobOrder(id,title,clientCorporation(id,name))","clientCorporation(id,name)","status","employmentType",
   "dateBegin","dateEnd","dateAdded","dateLastModified",
   "payRate","clientBillRate","salary","salaryUnit",
   "fee","overtimeRate","clientOvertimeRate",
@@ -1096,6 +1098,180 @@ function safeCert(v) {
 function ownerName(o) {
   if (!o) return "";
   return ((o.firstName || "") + " " + (o.lastName || "")).trim();
+}
+
+/**
+ * Bullhorn association ids arrive as a number, a numeric string, or {id}.
+ * Client corporation ids and client contact ids are different numbers.
+ * Returns a canonical decimal string, or null.
+ */
+function associationId(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "number") {
+    if (!isFinite(value) || value === 0) return null;
+    return String(Math.trunc(value));
+  }
+  if (typeof value === "string") {
+    var s = value.trim();
+    if (!/^-?\d+$/.test(s) || s === "0" || s === "-0") return null;
+    return String(parseInt(s, 10));
+  }
+  if (typeof value === "object") {
+    if (value.id == null || value.id === "") return null;
+    return associationId(value.id);
+  }
+  return null;
+}
+
+function associationIdNumber(value) {
+  var id = associationId(value);
+  if (!id) return null;
+  var n = parseInt(id, 10);
+  return isFinite(n) ? n : null;
+}
+
+/** Company on a Bullhorn record. Never the client contact. */
+function companyAssociation(value) {
+  if (value == null || value === "") return { id: null, name: "" };
+  if (typeof value === "number" || typeof value === "string") {
+    return { id: associationIdNumber(value), name: "" };
+  }
+  if (typeof value === "object") {
+    return { id: associationIdNumber(value.id), name: safeStr(value.name) };
+  }
+  return { id: null, name: "" };
+}
+
+function companyFromBullhornPlacement(r) {
+  r = r || {};
+  var jo = r.jobOrder && typeof r.jobOrder === "object" ? r.jobOrder : {};
+  var fromPlacement = companyAssociation(r.clientCorporation);
+  var fromJob = companyAssociation(jo.clientCorporation);
+  return {
+    id: fromPlacement.id != null ? fromPlacement.id : (fromJob.id != null ? fromJob.id : null),
+    name: fromPlacement.name || fromJob.name || "",
+  };
+}
+
+function jobRef(value) {
+  if (value == null || value === "") return { id: null, title: "" };
+  if (typeof value === "number" || typeof value === "string") {
+    return { id: associationIdNumber(value), title: "" };
+  }
+  if (typeof value === "object") {
+    return { id: associationIdNumber(value.id), title: safeStr(value.title) };
+  }
+  return { id: null, title: "" };
+}
+
+function parseJsonField(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "object") return value;
+  if (typeof value === "string") {
+    try { return JSON.parse(value); } catch (e) { return null; }
+  }
+  return null;
+}
+
+function missingColumnError(e) {
+  return /column "[^"]+" does not exist/i.test(String(e && e.message || ""));
+}
+
+/** Same status the Placements page uses for "Total Active". */
+var ACTIVE_PLACEMENT_STATUS = "Actively On Contract";
+
+// These selects must not reference is_deleted. The Neon mirror is missing that
+// column on some tables; a missing-column error used to be swallowed and the
+// Clients page then showed zero placements.
+var CLIENT_PLACEMENT_QUERIES = [
+  "SELECT client_id, candidate_name, job_id, status, raw_json FROM placements WHERE status = 'Actively On Contract'",
+  "SELECT client_id, candidate_name, job_id, status FROM placements WHERE status = 'Actively On Contract'",
+];
+
+function clientJobQueries(jobIds) {
+  return [
+    { sql: "SELECT id, client_id, raw_json FROM jobs WHERE id = ANY($1)", params: [jobIds] },
+    { sql: "SELECT id, client_id FROM jobs WHERE id = ANY($1)", params: [jobIds] },
+  ];
+}
+
+async function selectFirstWorking(run, attempts) {
+  var lastErr = null;
+  for (var i = 0; i < attempts.length; i++) {
+    try {
+      return await run(attempts[i].sql, attempts[i].params);
+    } catch (e) {
+      lastErr = e;
+      if (!missingColumnError(e)) throw e;
+      if (i === attempts.length - 1) {
+        console.log("[Clients] Placement columns missing:", e.message);
+        return [];
+      }
+      console.log("[Clients] Query missing a column, retrying without it:", e.message);
+    }
+  }
+  throw lastErr;
+}
+
+function placementJobId(p) {
+  var fromCol = associationId(p && p.job_id);
+  if (fromCol) return fromCol;
+  var raw = parseJsonField(p && p.raw_json);
+  if (!raw) return null;
+  return associationId(jobRef(raw.jobOrder).id);
+}
+
+/**
+ * Company id for one placement row already stored in Postgres.
+ * query/Placement does not include the company, so placements.client_id is
+ * often null. The job (synced via search/JobOrder) has clientCorporation.
+ * Client contact ids are ignored.
+ */
+function placementClientId(p, job) {
+  var raw = parseJsonField(p && p.raw_json);
+  if (raw) {
+    var fromPlacement = associationId(companyAssociation(raw.clientCorporation).id);
+    if (fromPlacement) return fromPlacement;
+    var jo = raw.jobOrder && typeof raw.jobOrder === "object" ? raw.jobOrder : {};
+    var fromNested = associationId(companyAssociation(jo.clientCorporation).id);
+    if (fromNested) return fromNested;
+  }
+  var fromCol = associationId(p && p.client_id);
+  if (fromCol) return fromCol;
+  if (job) {
+    var fromJobCol = associationId(job.client_id);
+    if (fromJobCol) return fromJobCol;
+    var jraw = parseJsonField(job.raw_json);
+    if (jraw) {
+      var fromJobRaw = associationId(companyAssociation(jraw.clientCorporation).id);
+      if (fromJobRaw) return fromJobRaw;
+    }
+  }
+  return null;
+}
+
+function groupActivePlacementsByClient(placementRows, jobRows) {
+  var jobsById = {};
+  (jobRows || []).forEach(function (j) {
+    var id = associationId(j && j.id);
+    if (id) jobsById[id] = j;
+  });
+  var byClient = {};
+  (placementRows || []).forEach(function (p) {
+    if (String(p && p.status || "") !== ACTIVE_PLACEMENT_STATUS) return;
+    var job = jobsById[placementJobId(p)] || null;
+    var cid = placementClientId(p, job);
+    if (!cid) return;
+    if (!byClient[cid]) byClient[cid] = [];
+    byClient[cid].push({ candidateName: (p.candidate_name || "Unknown") });
+  });
+  return byClient;
+}
+
+function placedConsultantsForClient(byClient, clientId) {
+  var key = associationId(clientId);
+  if (!key || !byClient[key]) return [];
+  return byClient[key];
 }
 
 
@@ -1270,18 +1446,18 @@ var SYNC_ENTITIES = {
     sortField: "-dateLastModified",
     transform: function (r) {
       var cand = r.candidate || {};
-      var jo = r.jobOrder || {};
-      var cc = jo.clientCorporation || {};
+      var job = jobRef(r.jobOrder);
+      var company = companyFromBullhornPlacement(r);
       var hm = r.housingManager || {};
       var ru = {};
       return {
         id: r.id,
         candidate_id: cand.id || null,
         candidate_name: ((cand.firstName || "") + " " + (cand.lastName || "")).trim(),
-        job_id: jo.id || null,
-        job_title: safeStr(jo.title),
-        client_id: cc.id || null,
-        client_name: safeStr(cc.name),
+        job_id: job.id,
+        job_title: job.title,
+        client_id: company.id,
+        client_name: company.name,
         status: safeStr(r.status),
         employment_type: safeStr(r.employmentType),
         date_begin: safeNum(r.dateBegin),
@@ -2332,27 +2508,48 @@ async function dbSearchClients(filters) {
   var totalRes = await getOne(countSql, params);
   var total = totalRes ? parseInt(totalRes.count) : rows.length;
 
-  // Get active placement counts per client from local DB
+  // Active placements grouped by client corporation.
+  // placements.client_id is null for rows synced from query/Placement, which
+  // returns jobOrder as {id, title} and does not include the company. The job
+  // row (search/JobOrder) has clientCorporation. Match ids as numbers or
+  // numeric strings. Do not use the client contact id.
   var placByClient = {};
   try {
-    var placRows = await getAll("SELECT client_id, candidate_name FROM placements WHERE status = 'Actively On Contract'");
+    var placRows = await selectFirstWorking(function (sql, params) {
+      return getAll(sql, params);
+    }, CLIENT_PLACEMENT_QUERIES.map(function (sql) { return { sql: sql, params: [] }; }));
+    var jobIds = [];
     placRows.forEach(function (p) {
-      if (p.client_id) {
-        if (!placByClient[p.client_id]) placByClient[p.client_id] = [];
-        placByClient[p.client_id].push({ candidateName: p.candidate_name || "Unknown" });
-      }
+      var jid = placementJobId(p);
+      if (!jid) return;
+      var jobNum = parseInt(jid, 10);
+      if (jobIds.indexOf(jobNum) < 0) jobIds.push(jobNum);
     });
-  } catch (e) { /* non-blocking */ }
+    var jobRows = [];
+    if (jobIds.length) {
+      try {
+        jobRows = await selectFirstWorking(function (sql, params) {
+          return getAll(sql, params);
+        }, clientJobQueries(jobIds));
+      } catch (jobErr) {
+        console.log("[Clients] Job lookup for placements failed:", jobErr.message);
+      }
+    }
+    placByClient = groupActivePlacementsByClient(placRows, jobRows);
+  } catch (e) {
+    console.log("[Clients] Placement query failed:", e.message);
+  }
 
   var data = rows.map(function (c) {
+    var placed = placedConsultantsForClient(placByClient, c.id);
     return {
       id: c.id,
       name: c.name || "",
       owner: c.owner_name || "",
       location: [c.address_city, c.address_state].filter(Boolean).join(", "),
       status: c.status || "Unknown",
-      activePlacements: placByClient[c.id] ? placByClient[c.id].length : 0,
-      placedConsultants: placByClient[c.id] || [],
+      activePlacements: placed.length,
+      placedConsultants: placed,
     };
   });
 
@@ -3194,6 +3391,14 @@ module.exports = {
   jobStatusesFor: jobStatusesFor,
   searchPlacements: dbSearchPlacements,
   searchClients: dbSearchClients,
+  associationId: associationId,
+  companyFromBullhornPlacement: companyFromBullhornPlacement,
+  groupActivePlacementsByClient: groupActivePlacementsByClient,
+  placedConsultantsForClient: placedConsultantsForClient,
+  selectFirstWorking: selectFirstWorking,
+  CLIENT_PLACEMENT_QUERIES: CLIENT_PLACEMENT_QUERIES,
+  clientJobQueries: clientJobQueries,
+  ACTIVE_PLACEMENT_STATUS: ACTIVE_PLACEMENT_STATUS,
   getDashboard: dbGetDashboard,
   getSmartLists: dbGetSmartLists,
   getStaleCandidates: dbGetStaleCandidates,

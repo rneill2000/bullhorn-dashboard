@@ -80,6 +80,16 @@ Axes: key (email / LinkedIn URL / name+company / company only) · uniqueness (on
 | L7 | Connections.csv of 26k rows stays on one HTTP request through ingest and match | Edge returns 499; the browser shows Failed to fetch after the rows have landed | test: upload acks before matching and status stays readable |
 | L8 | The upload response is lost after the server has accepted the file | UI shows Failed to fetch for a job that is still matching | test: a dropped upload response follows the running job |
 
+## Clients page placement counts
+
+Axes: company id shape (integer / numeric string / `{id}` / bare id) · where the company lives (placement column / placement.clientCorporation / jobOrder.clientCorporation / jobs.client_id) · person (client corporation vs client contact) · status (Actively On Contract / anything else)
+
+| # | Case | Risk if wrong | Covered by |
+|---|------|---------------|------------|
+| C1 | query/Placement stores no company id; the job's clientCorporation is an integer, a numeric string, or a bare id. A client contact id is also present. | Clients page shows 0 placed consultants while Placements shows the active rows | test: active placements join to clients across real id shapes |
+| C2 | Neon placements/jobs query mentions is_deleted, and that column is missing | The placement query throws, the error is swallowed, and the counts stay 0 | test: client placement SQL does not require is_deleted |
+| M6 | Manual: Clients summary "Placed Consultants" equals Placements "Total Active". "Clients w/ Placements" equals the distinct companies on those active rows. | Counts still disagree after deploy | Record date + result in the PR |
+
 ## Live toasts and session host
 
 | # | Case | Risk if wrong | Covered by |
