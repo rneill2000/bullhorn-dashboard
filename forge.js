@@ -1554,6 +1554,9 @@ function registerForge(app, deps) {
       const row = await loadBundle(id);
       const now = Date.now();
       const base = project(row, now);
+      if (!base.job || !base.job.clientId) {
+        return res.status(400).json({ error: "This submission's client could not be resolved from the job. Fix the job's client in Bullhorn and re-sync before drafting.", code: "client_unresolved" });
+      }
       const body = req.body || {};
       const candidateName = (body.candidateName || base.candidate.name || "").trim();
       const whyMe = body.whyMe != null ? String(body.whyMe) : base.whyMe;

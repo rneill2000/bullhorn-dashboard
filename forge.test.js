@@ -984,3 +984,25 @@ test("bare state location is flagged and remote is added", function () {
   assert.match(remote.text, /Houston, TX/);
   assert.match(remote.text, /Remote/);
 });
+
+test("draft is refused when the client cannot be resolved from the job (F6)", async function () {
+  const calls = [];
+  const app = express();
+  app.use(express.json());
+  const row = fixtureRow();
+  row.client_id = null; row.client_name = ""; row.sub_client_id = null; row.sub_client_name = ""; row.job_client_id = null; row.job_client_name = "";
+  forge(app, {
+    db: { ready: true, query: async function () { return { rows: [] }; }, getOne: async function () { return row; }, getAll: async function () { return []; } },
+    graphFetch: async function (email, endpoint, options) { calls.push(endpoint); return { id: "MSG1" }; },
+    bhFetch: async function () { return { data: {} }; },
+    outlookUsers: function () { return { "rachel@anuraconnect.com": { name: "Rachel" } }; },
+    getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+  });
+  const server = await listen(app);
+  try {
+    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", { mailbox: "rachel@anuraconnect.com", resumeFileId: "none" });
+    assert.equal(r.status, 400);
+    assert.equal(r.json.code, "client_unresolved");
+    assert.equal(calls.length, 0, "no Graph call when the client is unknown");
+  } finally { server.close(); }
+});
