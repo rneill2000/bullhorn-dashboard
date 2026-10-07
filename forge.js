@@ -617,11 +617,11 @@ function composeEmail(fields) {
   const bill = (fields.billRate || "").trim();
   const sig = signatureLines(fields);
   const lines = [greeting, "", intro, ""];
-  if (why) lines.push(why, "");
+  if (why) lines.push("Why Me", "", why, "");
   lines.push("Availability: " + availability, "Location: " + location, "Bill rate: " + bill, "", sig);
   const text = lines.join("\n");
   const whyHtml = why
-    ? why.split(/\n{2,}/).map(function (p) { return "<p style=\"margin:0 0 10px\">" + esc(p).replace(/\n/g, "<br>") + "</p>"; }).join("")
+    ? "<p style=\"margin:0 0 6px\"><b>Why Me</b></p>" + why.split(/\n{2,}/).map(function (p) { return "<p style=\"margin:0 0 10px\">" + esc(p).replace(/\n/g, "<br>") + "</p>"; }).join("")
     : "";
   const html = [
     "<div style=\"font-family:Calibri,'Segoe UI',sans-serif;font-size:14px;color:#1a1a1a;line-height:1.45\">",
