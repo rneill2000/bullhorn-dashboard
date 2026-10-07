@@ -6,6 +6,8 @@
  *        GET  /api/capture/lookup  ?kind=&q=         -> manual re-match search
  *        POST /api/capture/commit  { items }         -> writes to Bullhorn, per-item results
  */
+const { ANURA_TEAM } = require("./team");
+
 module.exports = function registerCapture(app, deps) {
   const { db, bhWrite, bhFetchAll, bhFetch, getUser } = deps;
 
@@ -18,7 +20,7 @@ module.exports = function registerCapture(app, deps) {
   const YEARS_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7];
   const OPP_STATUSES = ["Identified", "Qualifying", "Negotiating", "Legal Review"];
   // Anura's own team. A task about one of them is an internal reminder, never a client/candidate link.
-  const TEAM = ["Rachel Neill", "Peter Oppermann", "Ben Oppermann", "Ben Gray", "Dan Neill", "Suzie Hall", "Melissa Alfiero", "Jennifer Hemming", "Jen Hemming"];
+  const TEAM = ANURA_TEAM;
   function isColleague(person, company) {
     const f = String((person && person.firstName) || "").trim().toLowerCase(), l = String((person && person.lastName) || "").trim().toLowerCase();
     if (!f && !l) return false;

@@ -319,6 +319,8 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
   assert.match(queueBox.innerHTML, /Also on 1 other job/);
   assert.match(queueBox.innerHTML, /Ben Walsh/);
   assert.match(queueBox.innerHTML, /Bullhorn sync looks stale/);
+  assert.match(queueBox.innerHTML, />Mine</);
+  assert.match(queueBox.innerHTML, />All</);
   assert.ok(queueBox.innerHTML.indexOf("<details") > queueBox.innerHTML.indexOf("</button>"));
 });
 
@@ -655,6 +657,69 @@ test("owner filter Mine returns only the signed-in user's jobs", async function 
     assert.deepEqual(unnamed.json.data.map(function (r) { return r.submissionId; }), [42]);
     assert.equal(filtered.json.sync.stale, false);
     assert.ok(filtered.json.sync.entities.submissions);
+  } finally {
+    server.close();
+  }
+});
+
+test("owner dropdown lists only Anura teammates", async function () {
+  const team = require("./team");
+  assert.equal(team.isAnuraTeammate({ name: "Rachel Neill" }), true);
+  assert.equal(team.isAnuraTeammate({ first_name: "Jen", last_name: "Hemming" }), true);
+  assert.equal(team.isAnuraTeammate({ firstName: "Jennifer", lastName: "Hemming" }), true);
+  assert.equal(team.isAnuraTeammate("jen hemming"), true);
+  assert.equal(team.isAnuraTeammate({ name: "Ben Walsh" }), false);
+  assert.equal(team.isAnuraTeammate({ name: "API User" }), false);
+  assert.equal(team.isAnuraTeammate({ name: "Rachel" }), false);
+  const captureSrc = fs.readFileSync(__dirname + "/capture.js", "utf8");
+  assert.match(captureSrc, /require\("\.\/team"\)/);
+  assert.doesNotMatch(captureSrc, /const TEAM = \[/);
+  const users = [
+    { id: 1, first_name: "API", last_name: "User", name: "API User", email: "api@bullhorn.com", status: "Active" },
+    { id: 5, first_name: "Rachel", last_name: "Neill", name: "Rachel Neill", email: "rachel@anuraconnect.com", status: "Active" },
+    { id: 8, first_name: "Peter", last_name: "Oppermann", name: "Peter Oppermann", email: "peter@anuraconnect.com", status: "Active" },
+    { id: 9, first_name: "Ben", last_name: "Walsh", name: "Ben Walsh", email: "ben.walsh@example.com", status: "Active" },
+    { id: 11, first_name: "Jen", last_name: "Hemming", name: "Jen Hemming", email: "jen@anuraconnect.com", status: "Active" },
+    { id: 12, first_name: "Jennifer", last_name: "Hemming", name: "", email: "jennifer@anuraconnect.com", status: "Active" },
+    { id: 13, first_name: "Melissa", last_name: "Alfiero", name: "Melissa Alfiero", email: "melissa@anuraconnect.com", status: "Active" },
+    { id: 14, first_name: "Suzie", last_name: "Hall", name: "Suzie Hall", email: "suzie@anuraconnect.com", status: "Active" },
+    { id: 15, first_name: "Dan", last_name: "Neill", name: "Dan Neill", email: "dan@anuraconnect.com", status: "Active" },
+    { id: 16, first_name: "Ben", last_name: "Gray", name: "Ben Gray", email: "ben.gray@anuraconnect.com", status: "Active" },
+    { id: 17, first_name: "Ben", last_name: "Oppermann", name: "Ben Oppermann", email: "ben.o@anuraconnect.com", status: "Active" },
+  ];
+  const app = express();
+  app.use(express.json());
+  forge(app, {
+    db: {
+      ready: true,
+      query: async function () { return { rows: [] }; },
+      getOne: async function () { return null; },
+      getAll: async function (sql) {
+        if (/FROM submissions/.test(sql)) return [];
+        if (/FROM corporate_users/.test(sql)) return users;
+        return [];
+      },
+    },
+    graphFetch: async function () { return {}; },
+    outlookUsers: function () { return {}; },
+    getUser: function () { return { id: 5, firstName: "Rachel", lastName: "Neill", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+  });
+  const server = await listen(app);
+  try {
+    const queue = await req(server.address().port, "GET", "/api/forge/queue?owner=all");
+    assert.equal(queue.status, 200, queue.text);
+    assert.deepEqual(queue.json.owners.map(function (o) { return o.name; }), [
+      "Rachel Neill",
+      "Peter Oppermann",
+      "Jen Hemming",
+      "Jennifer Hemming",
+      "Melissa Alfiero",
+      "Suzie Hall",
+      "Dan Neill",
+      "Ben Gray",
+      "Ben Oppermann",
+    ]);
+    assert.ok(!queue.json.owners.some(function (o) { return o.name === "Ben Walsh" || o.name === "API User"; }));
   } finally {
     server.close();
   }
