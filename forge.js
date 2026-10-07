@@ -10,6 +10,8 @@
  */
 "use strict";
 
+const { isAnuraTeammate } = require("./team");
+
 const MODULES = [
   ["SBO", /\bSBO\b/i],
   ["PB", /\bPB\b/i],
@@ -1366,7 +1368,7 @@ function registerForge(app, deps) {
           flagCount: p.flags.length + sib.flags.length,
         };
       });
-      const owners = internals.map(function (u) {
+      const owners = internals.filter(isAnuraTeammate).map(function (u) {
         const name = u.name || ((u.first_name || "") + " " + (u.last_name || "")).trim();
         return {
           id: u.id,
