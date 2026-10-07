@@ -68,12 +68,17 @@ module.exports = function registerDigest(app, deps) {
         notesBy = forgeApi.groupNotes(await db.getAll(forgeApi.NOTES_FOR_CANDIDATES_SQL, [ids]));
       } catch (e) { notesBy = {}; }
     }
+    let clientNames = [];
+    try {
+      const nameRows = await db.getAll(forgeApi.CLIENT_NAMES_SQL);
+      clientNames = (nameRows || []).map(function (r) { return r && r.name; }).filter(Boolean);
+    } catch (e) { clientNames = []; }
     const clients = {};
     rows.forEach(function (r) {
       const ck = r.client_id || r.client_name || "?";
       const cl = clients[ck] = clients[ck] || { clientId: r.client_id, clientName: r.client_name || "(no client)", clientStatus: r.client_status, jobs: {} };
       const jb = cl.jobs[r.job_id] = cl.jobs[r.job_id] || { jobId: r.job_id, title: r.job_title, owner: r.job_owner, openings: r.num_openings, candidates: [] };
-      const facts = forgeApi.submissionFacts(r, notesBy[String(r.candidate_id)] || []);
+      const facts = forgeApi.submissionFacts(r, notesBy[String(r.candidate_id)] || [], clientNames);
       const missing = [];
       if (!facts.why.text) missing.push("Why Me");
       if (!facts.bill.billRate) missing.push("bill rate");

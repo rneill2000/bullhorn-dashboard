@@ -1513,6 +1513,160 @@ test("Why Me from notes never includes an internal or other-client note", functi
   assert.equal(sentence, null);
 });
 
+const SYNCED_CLIENTS = [
+  "Memorial Hermann",
+  "Hermann Medical",
+  "Lahey",
+  "Lahey Hospital",
+  "SSM",
+  "SSM Health",
+  "CHRISTUS",
+  "University Hospitals",
+  "Cook Children's",
+];
+
+test("Why Me drops every other synced client and keeps this client", function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  assert.deepEqual(forge.clientAliases("Lahey"), ["lahey"]);
+  assert.ok(forge.clientAliases("Lahey Hospital").indexOf("lahey") >= 0);
+  assert.ok(forge.clientAliases("SSM Health").indexOf("ssm") >= 0);
+  assert.deepEqual(forge.clientAliases("CHRISTUS"), ["christus"]);
+  assert.ok(forge.clientAliases("University Hospitals").indexOf("university") < 0);
+  assert.ok(forge.clientAliases("University Hospitals").indexOf("hospital") < 0);
+  assert.ok(forge.clientAliases("University Hospitals").indexOf("hospitals") < 0);
+  assert.ok(forge.clientAliases("SSM Health").indexOf("health") < 0);
+  assert.equal(forge.clientAliases("Cook Children's").indexOf("children") < 0, true);
+  assert.ok(forge.clientAliases("Cook Children's").indexOf("cook children") >= 0);
+
+  const mixed = [
+    "Why Me: Led the SBO analyst work and kept the last go-live on track.",
+    "Lahey: strong Epic analyst, would return.",
+    "He is calm with physicians and clear with analysts.",
+    "SSM ran a clean Waves go-live.",
+    "Memorial Hermann: kept the last HB go-live on track.",
+    "The hospital team liked the build.",
+    "CHRISTUS: kept the last HB cutover on track.",
+    "University Hospitals: he is a strong analyst.",
+    "Cook Children's: on site for the last build.",
+    "Hermann Medical: did a short contract.",
+    "Lahey's team would bring him back.",
+    "SSM's Waves cutover was already staffed.",
+    "Bill Rate: $185/hr",
+  ].join("\n");
+  const row = {
+    comments: "",
+    sub_custom_bill: "",
+    job_bill_rate: null,
+    pay_rate: 120,
+    job_id: 9,
+    job_title: "SBO Analyst",
+    client_name: "Memorial Hermann",
+    candidate_name: "Christopher Frary",
+    date_added: when,
+  };
+  const facts = forge.submissionFacts(row, [
+    noteRow(mixed, { date_added: when, job_order_id: 9 }),
+  ], SYNCED_CLIENTS);
+  assert.equal(facts.why.source, "from notes");
+  assert.match(facts.why.text, /Led the SBO analyst work/);
+  assert.match(facts.why.text, /calm with physicians/);
+  assert.match(facts.why.text, /Memorial Hermann: kept the last HB go-live on track/);
+  assert.match(facts.why.text, /The hospital team liked the build/);
+  assert.doesNotMatch(facts.why.text, /\bLahey\b|\bSSM\b|\bCHRISTUS\b|University Hospitals|Cook Children|Hermann Medical/);
+  assert.equal(facts.bill.billRate, "$185/hr");
+  const email = forge.composeEmail({
+    candidateName: "Christopher Frary",
+    jobTitle: "SBO Analyst",
+    clientName: "Memorial Hermann",
+    whyMe: facts.why.text,
+    availability: "Immediately",
+    location: "Houston, TX",
+    billRate: facts.bill.billRate,
+    subject: forge.subjectFor("SBO Analyst", "", "Christopher Frary"),
+    signerName: "Rachel",
+  });
+  assert.doesNotMatch(email.subject + "\n" + email.text + "\n" + email.html, /\bLahey\b|\bSSM\b|\bCHRISTUS\b|University Hospitals|Cook Children|Hermann Medical/);
+
+  function whyFor(clientName) {
+    return forge.submissionFacts(Object.assign({}, row, { client_name: clientName }), [
+      noteRow(mixed, { date_added: when, job_order_id: 9 }),
+    ], SYNCED_CLIENTS).why.text;
+  }
+  const asLahey = whyFor("Lahey");
+  assert.match(asLahey, /\bLahey\b/);
+  assert.match(asLahey, /Lahey's team would bring him back/);
+  assert.doesNotMatch(asLahey, /Memorial Hermann|\bSSM\b|\bCHRISTUS\b|University Hospitals|Cook Children|Hermann Medical/);
+  const asSsm = whyFor("SSM");
+  assert.match(asSsm, /\bSSM\b/);
+  assert.match(asSsm, /SSM's Waves cutover was already staffed/);
+  assert.doesNotMatch(asSsm, /\bLahey\b|\bCHRISTUS\b|Memorial Hermann|University Hospitals/);
+  const asChristus = whyFor("CHRISTUS");
+  assert.match(asChristus, /\bCHRISTUS\b/);
+  assert.doesNotMatch(asChristus, /\bLahey\b|\bSSM\b|Memorial Hermann|University Hospitals/);
+  const asLaheyHospital = whyFor("Lahey Hospital");
+  assert.match(asLaheyHospital, /\bLahey\b/);
+  assert.doesNotMatch(asLaheyHospital, /\bSSM\b|\bCHRISTUS\b|Memorial Hermann/);
+
+  const guessed = forge.submissionFacts(row, [
+    noteRow("Why Me: Lahey: strong Epic analyst.\nSSM ran a clean Waves go-live.\nCHRISTUS: kept the cutover.\nThe hospital team liked the build.", { date_added: when, job_order_id: 9 }),
+  ]);
+  assert.match(guessed.why.text, /\bLahey\b/);
+  assert.match(guessed.why.text, /\bSSM\b/);
+  assert.match(guessed.why.text, /\bCHRISTUS\b/);
+  assert.match(guessed.why.text, /hospital team/);
+
+  const loc = forge.pickLocation({
+    commentLocation: "Houston, TX\nLahey: on site three days",
+    clientName: "Memorial Hermann",
+    jobTitle: "SBO Analyst",
+    clients: SYNCED_CLIENTS,
+  });
+  assert.equal(loc.text, "Houston, TX");
+  const avail = forge.pickAvailability({
+    commentAvail: "Immediately\nSSM can start next month",
+    clientName: "Memorial Hermann",
+    jobTitle: "SBO Analyst",
+    clients: SYNCED_CLIENTS,
+  });
+  assert.equal(avail.text, "Immediately");
+
+  const blocked = forge.findInternalLeak(
+    ["Lahey: strong Epic analyst, would return."],
+    [],
+    { clientName: "Memorial Hermann", jobTitle: "SBO Analyst", clients: SYNCED_CLIENTS }
+  );
+  assert.ok(blocked);
+  assert.equal(blocked.rule, "other client");
+  assert.match(blocked.snippet, /Lahey/);
+  assert.equal(forge.findInternalLeak(
+    ["Memorial Hermann: kept the last HB go-live on track.", "The hospital team liked the build."],
+    [],
+    { clientName: "Memorial Hermann", jobTitle: "SBO Analyst", clients: SYNCED_CLIENTS }
+  ), null);
+  assert.equal(forge.findInternalLeak(
+    ["Lahey: kept the last go-live on track."],
+    [],
+    { clientName: "Lahey", jobTitle: "SBO Analyst", clients: SYNCED_CLIENTS }
+  ), null);
+
+  const ambiguous = forge.submissionFacts({
+    comments: "",
+    job_id: 9,
+    job_title: "SBO Analyst",
+    client_name: "Memorial Hermann",
+    date_added: when,
+  }, [
+    noteRow("Why Me: First version.\nBill Rate: $150/hr", { date_added: when }),
+    noteRow("Why Me: Second version.\nBill Rate: $180/hr", { date_added: when + 1000 }),
+  ], SYNCED_CLIENTS);
+  assert.equal(ambiguous.bill.billRate, "");
+  assert.equal(ambiguous.why.text, "");
+  assert.ok(ambiguous.flags.some(function (f) {
+    return f.code === "bill_rate_ambiguous" && /More than one note has a bill rate and none is clearly this job/.test(f.message);
+  }));
+  assert.ok(ambiguous.flags.some(function (f) { return f.code === "why_me_ambiguous"; }));
+});
+
 test("an internal note does not loosen an ambiguous bill rate", function () {
   const when = Date.parse("2026-10-01T15:00:00Z");
   const facts = forge.submissionFacts({
@@ -1590,6 +1744,93 @@ test("preview email drops a trailing internal note from the Why Me note", async 
     assert.equal(blocked.status, 400);
     assert.equal(blocked.json.code, "internal_leak");
     assert.match(blocked.json.snippet, /University Hospitals|the AM|weird stuff/);
+  } finally {
+    server.close();
+  }
+});
+
+test("preview drops short client names from the synced clients table", async function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  const row = fixtureRow();
+  row.candidate_name = "Christopher Frary";
+  row.comments = "";
+  row.sub_custom_bill = "";
+  row.job_bill_rate = null;
+  row.pay_rate = 120;
+  row.date_added = when;
+  row.job_title = "SBO Analyst";
+  row.job_title_live = "SBO Analyst";
+  row.client_name = "Memorial Hermann";
+  row.job_skills = "";
+  const note = noteRow([
+    "Why Me: Led the SBO analyst work and kept the last go-live on track.",
+    "Memorial Hermann: kept the last HB go-live on track.",
+    "The hospital team liked the build.",
+    "Lahey: strong Epic analyst, would return.",
+    "SSM ran a clean Waves go-live.",
+    "CHRISTUS: kept the last HB cutover on track.",
+    "Bill Rate: $185/hr",
+    "Pay Rate: 120 at 1099",
+  ].join("\n"), { date_added: when, job_order_id: 9 });
+  const app = express();
+  app.use(express.json());
+  forge(app, {
+    db: {
+      ready: true,
+      query: async function () { return { rows: [] }; },
+      getOne: async function () { return row; },
+      getAll: async function (sql) {
+        if (/FROM notes/.test(sql)) return [note];
+        if (/FROM clients/.test(sql)) return SYNCED_CLIENTS.map(function (name) { return { name: name }; });
+        return [];
+      },
+    },
+    graphFetch: async function () { throw new Error("should not draft"); },
+    bhFetch: async function (endpoint) {
+      if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: { id: 42, customText10: "", billRate: null, comments: "", payRate: 120 } };
+      if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { id: 9, clientBillRate: null } };
+      return { data: [] };
+    },
+    outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
+    getUser: function () { return { firstName: "Rachel", email: "rachel@anuraconnect.com" }; },
+  });
+  const server = await listen(app);
+  try {
+    const preview = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
+    assert.equal(preview.status, 200, preview.text);
+    assert.equal(preview.json.draft.whyMeSource, "from notes");
+    assert.match(preview.json.draft.whyMe, /go-live/);
+    assert.match(preview.json.draft.whyMe, /Memorial Hermann/);
+    assert.match(preview.json.draft.whyMe, /hospital team/);
+    assert.doesNotMatch(preview.json.draft.whyMe, /\bLahey\b|\bSSM\b|\bCHRISTUS\b/);
+    const emailBlob = preview.json.email.subject + "\n" + preview.json.email.text + "\n" + preview.json.email.html;
+    assert.doesNotMatch(emailBlob, /\bLahey\b|\bSSM\b|\bCHRISTUS\b/);
+    const blocked = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      whyMe: "Lahey: strong Epic analyst, would return.",
+      availability: "Immediately",
+      location: "Houston, TX",
+      billRate: "$185/hr",
+      to: "dana@mh.example",
+    });
+    assert.equal(blocked.status, 400);
+    assert.equal(blocked.json.code, "internal_leak");
+    assert.equal(blocked.json.rule, "other client");
+    assert.match(blocked.json.snippet, /Lahey/);
+
+    row.client_name = "SSM";
+    const ssm = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
+    assert.equal(ssm.status, 200, ssm.text);
+    assert.match(ssm.json.draft.whyMe, /\bSSM\b/);
+    assert.doesNotMatch(ssm.json.draft.whyMe, /\bLahey\b|\bCHRISTUS\b|Memorial Hermann/);
+    const kept = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      whyMe: "SSM ran a clean Waves go-live.",
+      availability: "Immediately",
+      location: "Houston, TX",
+      billRate: "$185/hr",
+      to: "dana@mh.example",
+    });
+    assert.equal(kept.json.code, "resume_required");
+    assert.notEqual(kept.json.code, "internal_leak");
   } finally {
     server.close();
   }

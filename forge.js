@@ -8,8 +8,8 @@
  * Résumés come from Bullhorn Candidate file attachments (PDFs). The client
  * email may only use Why Me, Availability, Location, and Bill Rate.
  * Blank bill rate and Why Me fall back to Bullhorn notes. A filled field is kept.
- * A client draft only keeps Why Me for this job. Another client's note and
- * internal recruiter commentary are left out of the email.
+ * A client draft only keeps Why Me for this job. A line that names any other
+ * client from the synced clients table is left out, as is recruiter commentary.
  * Rate checks use Dan's W-2 / 1099 split and never invent a rate.
  */
 "use strict";
@@ -193,6 +193,9 @@ const NOTES_FOR_CANDIDATES_SQL =
   "ROW_NUMBER() OVER (PARTITION BY person_id ORDER BY date_added DESC NULLS LAST) AS rn " +
   "FROM notes WHERE person_id = ANY($1::int[]) AND is_deleted IS NOT TRUE" +
   ") ranked WHERE rn <= 30";
+
+/** Synced Bullhorn client corporations. This is the list a Why Me line is checked against. */
+const CLIENT_NAMES_SQL = "SELECT name FROM clients WHERE COALESCE(name, '') <> ''";
 
 const MAX_RESUME_BYTES = 3 * 1024 * 1024;
 
@@ -556,22 +559,131 @@ function buildJobSubmissionCreate(input) {
   return body;
 }
 
-function orgLabel(label) {
-  const words = String(label || "").trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return false;
-  if (!words.every(function (w) { return /^[A-Z][A-Za-z0-9.'’&/-]*$/.test(w); })) return false;
-  if (words.some(function (w) { return w.length < 2; })) return false;
-  if (words.length >= 2) return true;
-  return /hospital|health|medical|children|university|clinic|regional/i.test(label);
+/** Words that are not a client by themselves. Stripped only from the tail of a stored name. */
+const GENERIC_CLIENT_WORD = {
+  health: 1, hospital: 1, hospitals: 1, healthcare: 1, medical: 1, center: 1,
+  system: 1, systems: 1, clinic: 1, clinics: 1, university: 1, regional: 1,
+  group: 1, inc: 1, llc: 1, corp: 1, corporation: 1, co: 1, company: 1,
+  the: 1, and: 1, of: 1,
+};
+
+function normalizeClientName(s) {
+  return String(s || "").toLowerCase()
+    .replace(/[’']s\b/gi, " ")
+    .replace(/[’']/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function aboutThisJob(label, ctx) {
-  const name = String(label || "").trim().toLowerCase();
-  const client = String((ctx && (ctx.clientName || ctx.client)) || "").trim().toLowerCase();
-  const title = String((ctx && (ctx.jobTitle || ctx.job)) || "").trim().toLowerCase();
-  if (name && client.length >= 4 && (name.indexOf(client) >= 0 || client.indexOf(name) >= 0)) return true;
-  if (name && title.length >= 6 && (name.indexOf(title) >= 0 || title.indexOf(name) >= 0)) return true;
+function acronymToken(original, norm) {
+  const tokens = String(original || "").split(/[^A-Za-z0-9]+/).filter(Boolean);
+  return tokens.some(function (t) {
+    return t.toLowerCase() === norm && t.length >= 2 && t === t.toUpperCase() && /[A-Z]/.test(t);
+  });
+}
+
+/**
+ * Match keys for one synced client name. The full name always counts.
+ * A trailing Hospital / Health / Inc is dropped so "Lahey Hospital" also matches "Lahey",
+ * and an all-caps short name such as SSM or CHRISTUS matches on its own.
+ * A leftover generic word ("university", "health") is not a key.
+ */
+function clientAliases(raw) {
+  const original = String(raw || "").trim();
+  if (!original) return [];
+  const full = normalizeClientName(original);
+  const out = [];
+  function add(norm, official) {
+    if (!norm) return;
+    const parts = norm.split(" ").filter(Boolean);
+    if (!parts.length) return;
+    if (!official && parts.every(function (p) { return GENERIC_CLIENT_WORD[p]; })) return;
+    if (norm.length < 3 && !(official && acronymToken(original, norm) && full === norm)) return;
+    if (out.indexOf(norm) < 0) out.push(norm);
+  }
+  add(full, true);
+  original.split(/\s*\/\s*/).forEach(function (part) {
+    const piece = String(part || "").trim();
+    if (piece && piece !== original) add(normalizeClientName(piece), false);
+  });
+  let words = full.split(" ").filter(Boolean);
+  while (words.length > 1 && GENERIC_CLIENT_WORD[words[words.length - 1]]) {
+    words = words.slice(0, -1);
+    add(words.join(" "), false);
+  }
+  return out;
+}
+
+function clientRecordName(entry) {
+  if (entry && typeof entry === "object") return entry.name || entry.clientName || "";
+  return entry;
+}
+
+/** Others are aliases that are not this submission's client. Longest first. */
+function clientMatchIndex(ctx) {
+  const src = ctx || {};
+  if (src._clientIndex) return src._clientIndex;
+  const thisName = src.clientName || src.client || "";
+  const mineFull = normalizeClientName(thisName);
+  const mine = {};
+  clientAliases(thisName).forEach(function (a) { mine[a] = true; });
+  const others = [];
+  const seen = {};
+  (src.clients || src.clientNames || []).forEach(function (entry) {
+    const raw = String(clientRecordName(entry) || "").trim();
+    const full = normalizeClientName(raw);
+    if (!full) return;
+    const aliases = clientAliases(raw);
+    const same = full === mineFull || !!mine[full] || aliases.indexOf(mineFull) >= 0;
+    if (same) {
+      aliases.forEach(function (a) { mine[a] = true; });
+      return;
+    }
+    aliases.forEach(function (a) {
+      if (mine[a] || seen[a]) return;
+      seen[a] = true;
+      others.push(a);
+    });
+  });
+  others.sort(function (a, b) { return b.length - a.length; });
+  src._clientIndex = { others: others, mine: mine };
+  return src._clientIndex;
+}
+
+function spanCoveredBy(hay, start, end, longerAliases) {
+  for (let i = 0; i < longerAliases.length; i++) {
+    const needle = " " + longerAliases[i] + " ";
+    let from = 0;
+    while (from < hay.length) {
+      const at = hay.indexOf(needle, from);
+      if (at < 0) break;
+      if (start >= at && end <= at + needle.length) return true;
+      from = at + 1;
+    }
+  }
   return false;
+}
+
+/** Alias of some other synced client found in this line, or "". A hit inside this client's own name does not count. */
+function otherClientMention(line, ctx) {
+  const index = clientMatchIndex(ctx);
+  if (!index.others.length) return "";
+  const hay = " " + normalizeClientName(line) + " ";
+  const mineAliases = Object.keys(index.mine).filter(function (a) { return a.length >= 3; }).sort(function (a, b) { return b.length - a.length; });
+  for (let i = 0; i < index.others.length; i++) {
+    const alias = index.others[i];
+    const needle = " " + alias + " ";
+    let from = 0;
+    while (from < hay.length) {
+      const at = hay.indexOf(needle, from);
+      if (at < 0) break;
+      if (!spanCoveredBy(hay, at, at + needle.length, mineAliases)) return alias;
+      from = at + 1;
+    }
+  }
+  return "";
 }
 
 /** Recruiter asides. These are never a client-facing Why Me, location, or availability. */
@@ -594,36 +706,22 @@ function internalCommentaryIndex(line) {
 
 /**
  * Index where client-facing text must stop, or -1 to keep the line.
- * A title-case "Other Client:" note is another submission. A line about this
- * job's client stays unless it is recruiter commentary.
+ * A line that names any synced client other than this submission is dropped.
+ * Recruiter commentary is cut at the sentence that starts it.
  */
 function findCut(line, ctx) {
   const text = String(line || "");
-  const re = /([A-Z][A-Za-z0-9.'’&/-]*(?:\s+[A-Z][A-Za-z0-9.'’&/-]*){0,5}):\s+\S/g;
-  let m;
-  while ((m = re.exec(text))) {
-    const start = m.index;
-    const before = text.slice(0, start);
-    const atBoundary = !before.trim() || /[.!?]\s*$/.test(before);
-    const label = m[1];
-    if (labelKey(label)) continue;
-    if (!orgLabel(label)) continue;
-    const rest = text.slice(start);
-    const mine = aboutThisJob(label, ctx);
-    const internal = internalCommentaryIndex(rest) >= 0;
-    if (mine && !internal) continue;
-    if (!atBoundary && !internal) continue;
-    return start;
-  }
+  if (otherClientMention(text, ctx)) return 0;
   const internalAt = internalCommentaryIndex(text);
   if (internalAt < 0) return -1;
+  if (internalAt === 0) return 0;
   const prev = text.slice(0, internalAt);
   const boundary = Math.max(prev.lastIndexOf(". "), prev.lastIndexOf("! "), prev.lastIndexOf("? "), prev.lastIndexOf("\n"));
   if (boundary >= 0) return boundary + 1;
   return 0;
 }
 
-/** Drop other-client notes and internal commentary. Keep the Why Me that precedes them. */
+/** Drop lines that name another synced client, and internal commentary. Keep this client's lines. */
 function clientFacingText(text, ctx) {
   const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
   const kept = [];
@@ -633,9 +731,9 @@ function clientFacingText(text, ctx) {
       kept.push(lines[i]);
       continue;
     }
+    if (cut === 0) continue;
     const head = lines[i].slice(0, cut).trim();
     if (head) kept.push(head);
-    break;
   }
   return kept.join("\n").trim();
 }
@@ -643,6 +741,13 @@ function clientFacingText(text, ctx) {
 function findClientNoteLeak(blob, ctx) {
   const lines = String(blob || "").split("\n");
   for (let i = 0; i < lines.length; i++) {
+    const other = otherClientMention(lines[i], ctx);
+    if (other) {
+      const re = new RegExp("\\b" + escapeRegExp(other.split(" ")[0]) + "\\b", "i");
+      const m = lines[i].match(re);
+      const at = m ? m.index : 0;
+      return { rule: "other client", snippet: snippetAround(lines[i], at, m ? m[0].length : other.length) };
+    }
     const cut = findCut(lines[i], ctx || {});
     if (cut < 0) continue;
     const from = lines[i].slice(cut).trim() || lines[i].trim();
@@ -899,11 +1004,12 @@ function applyNoteFallback(bill, why, notes, ctx) {
   return { bill: nextBill, why: nextWhy, siteLead: siteLead, payFromNote: payFromNote, employment: employment, noteText: noteText };
 }
 
-function submissionFacts(row, notes) {
+function submissionFacts(row, notes, clients) {
   const src = row || {};
   const parsed = parseSubmissionComments(src.comments);
   const client = resolveClient(src);
   const payField = src.pay_rate || src.sub_custom_pay || "";
+  const names = clients || [];
   const bill = pickBillRate({
     commentRate: parsed.billRate,
     customText10: src.sub_custom_bill,
@@ -914,6 +1020,7 @@ function submissionFacts(row, notes) {
     commentWhy: parsed.whyMe,
     clientName: client.clientName,
     jobTitle: src.job_title_live || src.job_title || "",
+    clients: names,
   });
   const ctx = {
     jobId: src.job_id,
@@ -921,6 +1028,7 @@ function submissionFacts(row, notes) {
     clientName: client.clientName,
     submittedAt: src.date_added,
     pay: payField || parsed.payRate,
+    clients: names,
   };
   const filled = applyNoteFallback(bill, why, notes || [], ctx);
   if (!filled.bill.billRate) {
@@ -1429,8 +1537,8 @@ function registerForge(app, deps) {
     } catch (e) { return null; }
   }
 
-  function siblingSnapshot(row, now, drafts, notes) {
-    const p = project(row, now, notes);
+  function siblingSnapshot(row, now, drafts, notes, clients) {
+    const p = project(row, now, notes, clients);
     const draft = drafts[p.submissionId] || null;
     const status = row.status || "";
     return {
@@ -1474,7 +1582,18 @@ function registerForge(app, deps) {
     } catch (e) { return []; }
   }
 
-  async function siblingPack(candidateIds, now) {
+  async function loadClientNames() {
+    if (!db || !db.ready) return [];
+    try {
+      const rows = await db.getAll(CLIENT_NAMES_SQL);
+      return (rows || []).map(function (r) { return r && r.name; }).filter(Boolean);
+    } catch (e) {
+      console.log("[Forge] client names:", e.message);
+      return [];
+    }
+  }
+
+  async function siblingPack(candidateIds, now, clients) {
     const rows = await loadSiblingRows(candidateIds);
     const drafts = await loadDraftMap(rows.map(function (row) { return row.id; }));
     const notesBy = await loadNotesForCandidates(candidateIds);
@@ -1482,13 +1601,13 @@ function registerForge(app, deps) {
     rows.forEach(function (row) {
       const key = String(row.candidate_id);
       if (!byCand[key]) byCand[key] = [];
-      byCand[key].push(siblingSnapshot(row, now, drafts, notesBy[key] || []));
+      byCand[key].push(siblingSnapshot(row, now, drafts, notesBy[key] || [], clients));
     });
     return byCand;
   }
 
-  function project(row, now, notes) {
-    const facts = submissionFacts(row, notes || []);
+  function project(row, now, notes, clients) {
+    const facts = submissionFacts(row, notes || [], clients);
     const parsed = facts.parsed;
     const client = facts.client;
     const name = (row.candidate_name || parsed.name || "").trim();
@@ -1507,6 +1626,7 @@ function registerForge(app, deps) {
       onSite: row.on_site,
       jobTitle: jobTitle,
       clientName: clientName,
+      clients: clients || [],
       employmentType: row.employment_type,
     });
     const avail = pickAvailability({
@@ -1516,6 +1636,7 @@ function registerForge(app, deps) {
       dateAvailable: row.date_available,
       clientName: clientName,
       jobTitle: jobTitle,
+      clients: clients || [],
     }, now);
     const flags = facts.flags.concat(location.flags);
     if (avail.passed) flags.push({ level: "warn", code: "availability_passed", message: "Availability date has passed. Confirm." });
@@ -1787,9 +1908,10 @@ function registerForge(app, deps) {
       const internals = await loadInternalUsers();
       const drafts = await loadDraftMap(visible.map(function (r) { return r.id; }));
       const notesBy = await loadNotesForCandidates(visible.map(function (r) { return r.candidate_id; }));
-      const siblings = await siblingPack(visible.map(function (r) { return r.candidate_id; }), now);
+      const clientNames = await loadClientNames();
+      const siblings = await siblingPack(visible.map(function (r) { return r.candidate_id; }), now, clientNames);
       const all = visible.map(function (row) {
-        const p = project(row, now, notesBy[String(row.candidate_id)] || []);
+        const p = project(row, now, notesBy[String(row.candidate_id)] || [], clientNames);
         const sib = buildSiblingView({
           submissionId: p.submissionId,
           candidateName: p.candidate.name,
@@ -1933,7 +2055,8 @@ function registerForge(app, deps) {
       const notesBy = await loadNotesForCandidates([row.candidate_id]);
       const notes = notesBy[String(row.candidate_id)] || [];
       const now = Date.now();
-      const draft = project(row, now, notes);
+      const clientNames = await loadClientNames();
+      const draft = project(row, now, notes, clientNames);
       const live = await liveJob(draft.job.id);
       if (live) {
         if (!draft.job.clientName && live.clientCorporation && live.clientCorporation.name) {
@@ -1952,7 +2075,7 @@ function registerForge(app, deps) {
       if (polish && process.env.ANTHROPIC_API_KEY && draft.whyMe) {
         try {
           const polished = await polishWhyMe(draft.whyMe, { jobTitle: draft.job.title, clientName: draft.job.clientName });
-          const leak = polished ? findInternalLeak([polished], names, { clientName: draft.job.clientName, jobTitle: draft.job.title }) : null;
+          const leak = polished ? findInternalLeak([polished], names, { clientName: draft.job.clientName, jobTitle: draft.job.title, clients: clientNames }) : null;
           if (polished && !leak) {
             draft.whyMe = polished;
             draft.whyMeSource = "anthropic";
@@ -1965,7 +2088,7 @@ function registerForge(app, deps) {
       }
       draft.missing = missingChecklist({ whyMe: draft.whyMe, availability: draft.availability, location: draft.location, billRate: draft.billRate });
       draft.existingDraft = await latestDraft(id);
-      const sibPack = await siblingPack([draft.candidate.id], now);
+      const sibPack = await siblingPack([draft.candidate.id], now, clientNames);
       const sib = buildSiblingView({
         submissionId: draft.submissionId,
         candidateName: draft.candidate.name,
@@ -2035,7 +2158,8 @@ function registerForge(app, deps) {
       const row = await loadBundle(id);
       const now = Date.now();
       const noteMap = await loadNotesForCandidates([row.candidate_id]);
-      const base = project(row, now, noteMap[String(row.candidate_id)] || []);
+      const clientNames = await loadClientNames();
+      const base = project(row, now, noteMap[String(row.candidate_id)] || [], clientNames);
       if (!base.job || !base.job.clientId) {
         return res.status(400).json({ error: "This submission's client could not be resolved from the job. Fix the job's client in Bullhorn and re-sync before drafting.", code: "client_unresolved" });
       }
@@ -2073,7 +2197,7 @@ function registerForge(app, deps) {
       const names = internalFirstNames(await loadInternalUsers());
       const leak = findInternalLeak([
         email.subject, email.text, whyMe, availability, location, billRate, candidateName, greetingName, signerName, signerTitle,
-      ], names, { clientName: body.clientName || base.job.clientName, jobTitle: body.jobTitle || base.job.title });
+      ], names, { clientName: body.clientName || base.job.clientName, jobTitle: body.jobTitle || base.job.title, clients: clientNames });
       if (leak) {
         return res.status(400).json({
           error: "This draft was blocked because it includes internal language. Edit it, then try again.",
@@ -2138,7 +2262,7 @@ function registerForge(app, deps) {
         });
       }
 
-      const sibPack = await siblingPack([base.candidate.id], now);
+      const sibPack = await siblingPack([base.candidate.id], now, clientNames);
       const sib = buildSiblingView({
         submissionId: id,
         candidateName: candidateName || base.candidate.name,
@@ -2368,3 +2492,5 @@ module.exports.applyNoteFallback = applyNoteFallback;
 module.exports.submissionFacts = submissionFacts;
 module.exports.groupNotes = groupNotes;
 module.exports.NOTES_FOR_CANDIDATES_SQL = NOTES_FOR_CANDIDATES_SQL;
+module.exports.CLIENT_NAMES_SQL = CLIENT_NAMES_SQL;
+module.exports.clientAliases = clientAliases;
