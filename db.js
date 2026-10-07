@@ -7,6 +7,9 @@
  * - Every record stores raw_json JSONB for FULL fidelity of all Bullhorn fields
  * - Structured columns cover the most-queried fields for fast indexed queries
  * - Graceful fallback: if DATABASE_URL is not set, db is disabled
+ *
+ * DATABASE_URL is the Neon Bullhorn mirror. Login sessions are not stored
+ * here — see session-store.js (SESSION_DATABASE_URL, Railway Postgres, schema app).
  */
 
 const { Pool } = require("pg");

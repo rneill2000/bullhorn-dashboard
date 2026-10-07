@@ -82,4 +82,7 @@ Axes: key (email / LinkedIn URL / name+company / company only) · uniqueness (on
 | T2 | Forge Create or Capture Commit while the session is dead (401) | "Sign in required" error toast on top of the login redirect | test: sign-in redirect does not also toast |
 | T3 | Capture commit HTTP 200 with some results ok:false | Red "N written, M failed" for a partial write | test: partial capture commit uses a warn toast |
 | T4 | Bullhorn callback host is *.up.railway.app, user is on dashboard.anuraconnect.com | Session cookie stuck on the railway host | test: production callback host hands the session to the custom domain |
+| T5 | Deploy or process restart while the bh_session cookie is still inside 24h | Everyone is sent back through Bullhorn login | test: a session saved in Postgres is restored by a new process |
+| T6 | Session table created on the Neon Bullhorn mirror (DATABASE_URL) | App login rows mixed into the Bullhorn clone | test: the Neon Bullhorn mirror is not the session database |
 | M3 | Manual: Forge Create with Outlook disconnected — yellow panel, no red toast. Expired session on Create or Write to Bullhorn — login page, no red toast | Real cookie / Graph behavior | Record date + result in the PR |
+| M5 | Manual: log in on dashboard.anuraconnect.com, redeploy or restart the Railway service, reload. Still signed in. Forge and Mail still see that user. Log out, restart, still logged out. Confirm app.user_sessions is on Railway Postgres, not Neon. | Real cookie and Railway Postgres | Record date + result in the PR |

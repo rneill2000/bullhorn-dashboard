@@ -16,6 +16,7 @@ const crypto = require("crypto");
 require("dotenv").config();
 const publicHost = require("./public-host");
 const db = require("./db");
+const { createUserSessions } = require("./session-store");
 const linkedinGraph = require("./linkedin-graph");
 
 async function withLinkedIn(fn) {
@@ -70,7 +71,17 @@ async function extractPdfText(buf) {
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(function (req, res, next) { reqContext.run({ user: getUser(req) }, next); });
+app.use(function (req, res, next) {
+  const tok = parseCookies(req).bh_session;
+  function enter(user) { reqContext.run({ user: user || null }, next); }
+  if (!tok) return enter(null);
+  const cached = sessions.get(tok);
+  if (cached) return enter(cached);
+  sessions.hydrate(tok).then(enter).catch(function (err) {
+    console.error("[Session] load failed:", err.message);
+    enter(null);
+  });
+});
 app.use(express.urlencoded({ extended: true }));
 
 /* ═══ PROCESS STABILITY ═══ */
@@ -99,8 +110,9 @@ const BH = {
 let session = { bhRestToken: null, restUrl: null, expiresAt: 0 };
 let _authPromise = null; // dedup concurrent auth calls
 
-// User sessions — maps sessionToken → user info
-const userSessions = {};
+// User sessions — this process's cache, backed by app.user_sessions on Railway Postgres.
+// Not the Neon mirror (DATABASE_URL). A deploy reloads bh_session from SESSION_DATABASE_URL.
+const sessions = createUserSessions();
 function parseCookies(req) {
   const raw = req.headers.cookie || "";
   const out = {};
@@ -113,21 +125,16 @@ function parseCookies(req) {
 function getUser(req) {
   const cookies = parseCookies(req);
   const tok = cookies.bh_session;
-  return tok && userSessions[tok] ? userSessions[tok] : null;
+  return tok ? sessions.get(tok) : null;
 }
 
-// Clean up expired user sessions every hour (prevent memory leak)
+// Drop expired logins from memory and Postgres. The cookie Max-Age is the same 24h.
 setInterval(function () {
-  var now = Date.now();
-  var maxAge = 24 * 60 * 60 * 1000; // 24 hours
-  var count = 0;
-  Object.keys(userSessions).forEach(function (tok) {
-    if (now - (userSessions[tok].loggedInAt || 0) > maxAge) {
-      delete userSessions[tok];
-      count++;
-    }
+  sessions.purgeExpired().then(function (count) {
+    if (count > 0) console.log("[Session] Cleaned up " + count + " expired user sessions");
+  }).catch(function (err) {
+    console.error("[Session] cleanup failed:", err.message);
   });
-  if (count > 0) console.log("[Session] Cleaned up " + count + " expired user sessions");
   publicHost.sweepSessionHandoffs();
 }, 60 * 60 * 1000);
 
@@ -183,9 +190,9 @@ app.get("/auth/callback", async (req, res) => {
     const userData = await userRes.json();
     const user = userData.data || userData;
 
-    // Create session
+    // Create session. Persist before the redirect so a restart keeps this login.
     const sessionToken = crypto.randomBytes(32).toString("hex");
-    userSessions[sessionToken] = {
+    const userSession = {
       id: user.id,
       firstName: user.firstName || "",
       lastName: user.lastName || "",
@@ -199,8 +206,9 @@ app.get("/auth/callback", async (req, res) => {
       refreshToken: tokenData.refresh_token || null,
       restExpiresAt: Date.now() + 55 * 60 * 1000,
     };
+    await sessions.put(sessionToken, userSession);
 
-    console.log(`[SSO] User logged in: ${userSessions[sessionToken].name} (ID: ${user.id})`);
+    console.log(`[SSO] User logged in: ${userSession.name} (ID: ${user.id})`);
 
     // Bullhorn's registered redirect_uri is the *.up.railway.app callback, so this
     // response is often served on a different host than dashboard.anuraconnect.com.
@@ -211,7 +219,7 @@ app.get("/auth/callback", async (req, res) => {
     if (publicHost.sessionNeedsHandoff(req)) {
       const code = publicHost.issueSessionHandoff(sessionToken, nxt);
       const origin = publicHost.canonicalPublicOrigin();
-      console.log("[SSO] Handing session to " + origin + " for " + userSessions[sessionToken].name);
+      console.log("[SSO] Handing session to " + origin + " for " + userSession.name);
       return res.redirect(origin + "/auth/finish?code=" + encodeURIComponent(code));
     }
     res.setHeader("Set-Cookie", [publicHost.sessionCookie(sessionToken, isSecure), "bh_next=; Path=/; Max-Age=0"]);
@@ -223,9 +231,10 @@ app.get("/auth/callback", async (req, res) => {
 });
 
 // Set the session cookie on the canonical host after Bullhorn returns on the railway.app callback.
-app.get("/auth/finish", (req, res) => {
+app.get("/auth/finish", async (req, res) => {
   const row = publicHost.takeSessionHandoff(typeof req.query.code === "string" ? req.query.code : "");
-  if (!row || !userSessions[row.sessionToken]) return res.redirect("/login?error=expired");
+  const user = row && (sessions.get(row.sessionToken) || await sessions.hydrate(row.sessionToken));
+  if (!user) return res.redirect("/login?error=expired");
   const secure = (publicHost.canonicalPublicOrigin() || BH.redirectUri).startsWith("https");
   const nxt = publicHost.readNextCookie(parseCookies(req).bh_next) || row.next || "/";
   res.setHeader("Set-Cookie", [publicHost.sessionCookie(row.sessionToken, secure), "bh_next=; Path=/; Max-Age=0"]);
@@ -243,10 +252,10 @@ app.get("/auth/me", (req, res) => {
 });
 
 // Logout
-app.get("/auth/logout", (req, res) => {
+app.get("/auth/logout", async (req, res) => {
   const cookies = parseCookies(req);
   const tok = cookies.bh_session;
-  if (tok && userSessions[tok]) delete userSessions[tok];
+  if (tok) await sessions.destroy(tok);
   const secure = (publicHost.canonicalPublicOrigin() || BH.redirectUri).startsWith("https");
   res.setHeader("Set-Cookie", publicHost.sessionCookie("", secure));
   if (!req.query.api) return res.redirect("/login");
@@ -424,6 +433,8 @@ async function refreshUserRestSession(u) {
     u.bhRestToken = loginData.BhRestToken; u.restUrl = loginData.restUrl;
     u.refreshToken = tokenData.refresh_token || u.refreshToken;
     u.restExpiresAt = Date.now() + 55 * 60 * 1000;
+    // Bullhorn rotates the refresh token. A deploy must see the new one.
+    await sessions.save(u);
     return true;
   } catch (e) { console.log("[WriteAs] refresh error:", e.message); return false; }
 }
@@ -11776,6 +11787,15 @@ app.listen(PORT, async () => {
       "  ⚠️  Missing credentials — copy .env.example to .env and fill in your Bullhorn API details\n"
     );
   }
+
+  // Login sessions live on Railway Postgres, separate from the Neon mirror.
+  sessions.ensure().then(function (ok) {
+    if (ok) console.log("[Session] Login store ready (Railway Postgres, app.user_sessions)");
+    else console.log("[Session] SESSION_DATABASE_URL is not set — logins stay in memory and reset on deploy");
+  }).catch(function (err) {
+    var msg = String(err && err.message || err).replace(/postgres(?:ql)?:\/\/\S+/gi, "postgres://[redacted]");
+    console.error("[Session] schema failed:", msg);
+  });
 
   // Initialize database sync layer (non-blocking — failures don't crash the server)
   if (db.isEnabled()) {
