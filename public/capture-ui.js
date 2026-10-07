@@ -2,6 +2,7 @@
    Expects globals: esc, apiFetch, showToast, loadPage. */
 /* ═══ QUICK CAPTURE ═══ */
 var _cap = { items: null, results: null, busy: false, text: "", answers: {} };
+function _capSignIn(e){ return !!(e && (e.auth || e.message==="Sign in required")); }
 function _capDraftKey(){ return "capture_draft"; }
 function renderCapture(){
   var draft = ""; try{ draft = localStorage.getItem(_capDraftKey()) || ""; }catch(e){}
@@ -86,7 +87,7 @@ async function captureParse(){
     _cap.results=null;
     if(!_cap.items.length){ document.getElementById("cap-items").innerHTML='<div class="cap-warn">I couldn\'t find any people, companies or deals in that text. Add a name or two and try again.</div>'; }
     else _capRenderItems();
-  }catch(e){ document.getElementById("cap-items").innerHTML='<div class="cap-err">Couldn\'t parse: '+esc(e.message)+'</div>'; }
+  }catch(e){ if(!_capSignIn(e)) document.getElementById("cap-items").innerHTML='<div class="cap-err">Couldn\'t parse: '+esc(e.message)+'</div>'; }
   btn.disabled=false; btn.textContent="\u26A1 Parse notes";
 }
 function _capMatchLabel(it,s){
@@ -360,10 +361,10 @@ async function captureCommit(){
     _cap.results=r.results.map(function(x,i){ return (prev[i]&&prev[i].ok)?prev[i]:x; });
     var okN=_cap.results.filter(function(x){return x.ok&&!x.skipped;}).length, bad=_cap.results.filter(function(x){return !x.ok;}).length;
     _capRenderItems();
-    if(bad){ showToast(okN+" written, "+bad+" failed \u2014 fix the red ones and write again","error"); }
+    if(bad){ showToast(okN+" written, "+bad+" failed \u2014 fix the red ones and write again","warn"); }
     else { showToast("All "+okN+" written to Bullhorn"+(r.user?" as "+r.user:""),"success"); try{localStorage.removeItem(_capDraftKey());}catch(e){} }
     var b2=document.getElementById("cap-commit-btn"); if(b2){ if(bad){ b2.textContent="\u21BB Retry failed ("+bad+")"; b2.disabled=false; } else { b2.textContent="\u2713 Done"; b2.disabled=true; } }
-  }catch(e){ showToast("Write failed: "+e.message,"error"); btn.disabled=false; btn.textContent="\u2713 Write to Bullhorn"; }
+  }catch(e){ if(!_capSignIn(e)){ showToast("Write failed: "+e.message,"error"); btn.disabled=false; btn.textContent="\u2713 Write to Bullhorn"; } }
   _cap.busy=false;
 }
 function captureAfterRender(){ if(_cap.items) _capRenderItems(); }

@@ -23,6 +23,7 @@ function forgeJsonGet(key, fallback) {
 function forgeJsonSet(key, value) {
   try { if (typeof localStorage !== "undefined") localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
 }
+function forgeSignIn(e) { return !!(e && (e.auth || e.message === "Sign in required")); }
 (function () {
   if (typeof NAV_GROUPS !== "undefined") {
     var forgeItem = { key: "forge", label: "Submittal Forge", emoji: "\u2692\uFE0F" };
@@ -122,6 +123,7 @@ async function forgeLoadQueue() {
     var want = window._forgeSelectId;
     if (want) forgeOpen(want);
   } catch (e) {
+    if (forgeSignIn(e)) return;
     box.innerHTML = '<div style="color:#b91c1c;font-size:13px">' + esc(e.message) + '</div>';
   }
 }
@@ -226,6 +228,7 @@ async function forgeOpen(id) {
     _forge.resumeConfirmed = false;
     forgePaintDraft();
   } catch (e) {
+    if (forgeSignIn(e)) return;
     main.innerHTML = '<div class="fg-card" style="color:#b91c1c">' + esc(e.message) + '</div>';
   }
 }
@@ -571,9 +574,10 @@ async function forgeSend(path, body, method) {
   var json = {};
   try { json = await res.json(); } catch (e) {}
   if (!res.ok) {
-    var err = new Error(json.error || ("API " + res.status));
+    var err = new Error(res.status === 401 ? "Sign in required" : (json.error || ("API " + res.status)));
     err.status = res.status;
     err.body = json;
+    if (res.status === 401) { err.auth = true; try { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.hash); } catch (e2) {} }
     throw err;
   }
   return json;
@@ -649,9 +653,9 @@ async function forgeCreate() {
       forgeLoadQueue();
     } else {
       if (result) result.innerHTML = '<div class="fg-flag warn"><b>Draft was not saved in Outlook.</b><div style="margin-top:4px">' + esc(r.instructions || "Copy the email into Outlook.") + '</div></div>';
-      if (typeof showToast === "function") showToast("Draft not saved — copy the email", "error");
     }
   } catch (e) {
+    if (forgeSignIn(e)) return;
     if (e.body && (e.body.snippet || e.body.code === "bill_rate_mismatch" || e.body.code === "internal_leak")) forgeShowBlock(result, e);
     else if (e.body && e.body.code === "same_client_submitted") {
       if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.body.error || e.message) + '</div>';

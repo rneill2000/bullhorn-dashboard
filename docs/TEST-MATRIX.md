@@ -53,3 +53,13 @@ Axes: owner (mine / other) · status (internal / client-submitted / closed) · c
 | F14 | Availability in the past | Stale date to client |
 | F15 | Draft already exists | Duplicate drafts |
 | M2 | Manual smoke: create draft with PDF, open in Outlook, confirm PDF name and that nothing was sent | Real Graph/attachment behavior |
+
+## Live toasts and session host
+
+| # | Case | Risk if wrong | Covered by |
+|---|------|---------------|------------|
+| T1 | Forge Create gets HTTP 200 created:false (no mailbox / missing Graph scope) | Red toast reads as a crash; copy-the-email panel is the instruction | test: soft outlook failure does not raise an error toast |
+| T2 | Forge Create or Capture Commit while the session is dead (401) | "Sign in required" error toast on top of the login redirect | test: sign-in redirect does not also toast |
+| T3 | Capture commit HTTP 200 with some results ok:false | Red "N written, M failed" for a partial write | test: partial capture commit uses a warn toast |
+| T4 | Bullhorn callback host is *.up.railway.app, user is on dashboard.anuraconnect.com | Session cookie stuck on the railway host | test: production callback host hands the session to the custom domain |
+| M3 | Manual: Forge Create with Outlook disconnected — yellow panel, no red toast. Expired session on Create or Write to Bullhorn — login page, no red toast | Real cookie / Graph behavior | Record date + result in the PR |
