@@ -8,9 +8,12 @@
  *                                       Bullhorn when a card is opened
  *   reference-named files               not in the Neon sync; text read live
  *
- * The quote that leaves this module has already dropped the writer's name,
- * other person names, email, phone, URLs, and the reference's organization
- * or client names. A health-system name becomes "a health system".
+ * The quote that leaves this module keeps the candidate's own name.
+ * It drops the writer's name, other person names, email, phone, URLs,
+ * and the reference's organization or client names. A health-system name
+ * becomes "a health system" only when that sentence still reads cleanly.
+ * A sentence that would break if a name or detail were cut out of the
+ * middle is dropped whole. If nothing readable is left, there is no offer.
  * The role is an explicit title, or "Former manager". It is never guessed
  * from the prose.
  */
@@ -35,6 +38,7 @@ const PAIR_KEEP = {
   billing: 1, patient: 1, access: 1, operations: 1, go: 1, live: 1, strong: 1, excellent: 1,
   outstanding: 1, service: 1, services: 1, project: 1, team: 1, application: 1, technical: 1,
   associate: 1, assistant: 1, executive: 1, controller: 1, head: 1, department: 1,
+  revenue: 1, cycle: 1,
 };
 
 const ROLE_FALLBACK = "Former manager";
@@ -170,11 +174,38 @@ function namePhrases(full) {
   return phrases;
 }
 
-function stripNames(text, names) {
+function candidateOf(name) {
+  const parts = cleanSpace(name).split(/\s+/).filter(Boolean);
+  const tokens = {};
+  parts.forEach(function (part) {
+    if (part.length >= 2) tokens[part.toLowerCase()] = true;
+  });
+  const full = parts.join(" ");
+  if (full) tokens[full.toLowerCase()] = true;
+  return { full: full, tokens: tokens };
+}
+
+function isCandidatePhrase(phrase, candidate) {
+  const key = cleanSpace(phrase).toLowerCase();
+  if (!key || !candidate) return false;
+  return !!candidate.tokens[key];
+}
+
+function phraseIn(text, phrase) {
+  const raw = cleanSpace(phrase);
+  if (raw.length < 3) return false;
+  const flex = flexName(raw);
+  if (!flex) return false;
+  return new RegExp("(?:^|[^A-Za-z0-9])(?:" + flex + ")(?=[^A-Za-z0-9]|$)", "i").test(String(text || ""));
+}
+
+function dropPhrases(ctx, candidate) {
+  const src = ctx || {};
   const list = [];
   const seen = {};
-  (names || []).forEach(function (name) {
+  [src.writerName].concat(src.personNames || []).forEach(function (name) {
     namePhrases(name).forEach(function (phrase) {
+      if (isCandidatePhrase(phrase, candidate)) return;
       const key = phrase.toLowerCase();
       if (seen[key]) return;
       seen[key] = true;
@@ -182,20 +213,79 @@ function stripNames(text, names) {
     });
   });
   list.sort(function (a, b) { return b.length - a.length; });
-  let t = String(text || "");
-  list.forEach(function (phrase) {
-    if (phrase.indexOf(" ") >= 0) {
-      t = replacePhrase(t, phrase, "");
-      return;
-    }
-    const re = new RegExp("(^|[^A-Za-z0-9])" + escapeRegExp(phrase) + "(?=[^A-Za-z0-9]|$)", "gi");
-    t = t.replace(re, "$1");
+  return list;
+}
+
+function hasUnknownPerson(sentence, candidate) {
+  const re = /\b([A-Z][a-z]{2,})\s+([A-Z][a-z]{2,})\b/g;
+  let match;
+  while ((match = re.exec(String(sentence || "")))) {
+    if (PAIR_KEEP[match[1].toLowerCase()] || PAIR_KEEP[match[2].toLowerCase()]) continue;
+    const pair = match[1] + " " + match[2];
+    if (isCandidatePhrase(pair, candidate)) continue;
+    if (isCandidatePhrase(match[1], candidate) && isCandidatePhrase(match[2], candidate)) continue;
+    return true;
+  }
+  return false;
+}
+
+function hasContact(text) {
+  const t = String(text || "");
+  if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(t)) return true;
+  if (/https?:\/\/|www\.|linkedin\.com/i.test(t)) return true;
+  if (/(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]\d{4}/.test(t)) return true;
+  return false;
+}
+
+function splitSentences(text) {
+  return String(text || "").replace(/\s+/g, " ").split(/(?<=[.!?])\s+/).map(function (sentence) {
+    return sentence.trim();
+  }).filter(Boolean);
+}
+
+/** A sentence we can show a client. Empty means drop it. */
+function readsCleanly(sentence) {
+  let s = cleanSpace(sentence);
+  s = s.replace(/\s+([,.;:!?])/g, "$1");
+  s = s.replace(/\(\s*\)/g, "");
+  s = s.replace(/\s{2,}/g, " ").trim();
+  s = s.replace(/^[\s,;:.-]+|[\s,;:-]+$/g, "");
+  if (!s) return "";
+  if (!/[.!?]$/.test(s)) s += ".";
+  if (/\b(?:a|an|the)\s+a health system\b/i.test(s)) return "";
+  if (/\b(?:at|with|for|from|by|to|of|and|or)\s*[.!?]$/i.test(s)) return "";
+  if (/^(?:reach me|email me|call me|contact me|phone|email)\b/i.test(s)) return "";
+  if (/^(?:has|have|had|is|are|was|were|would|will|could|should|said|says|managed|manages)\b/i.test(s)) return "";
+  if (/\b(?:and|or)\s+(?:and|or)\b/i.test(s)) return "";
+  if (/\b(?:analysts?|consultants?)\s+(?:has|have|had|would|will)\b/i.test(s)) return "";
+  const letters = s.replace(/[^A-Za-z]/g, "");
+  if (letters.length < 12) return "";
+  s = s.replace(/^[a-z]/, function (ch) { return ch.toUpperCase(); });
+  return s;
+}
+
+function orgList(ctx) {
+  const src = ctx || {};
+  const list = [];
+  const seen = {};
+  [src.organization].concat(src.organizations || []).concat(src.clientName || []).concat(src.clients || []).forEach(function (name) {
+    const s = cleanSpace(name);
+    const key = s.toLowerCase();
+    if (s.length < 4 || seen[key]) return;
+    seen[key] = true;
+    list.push(s);
   });
-  t = t.replace(/\b([A-Z][a-z]{2,})\s+([A-Z][a-z]{2,})\b/g, function (match, a, b) {
-    if (PAIR_KEEP[a.toLowerCase()] || PAIR_KEEP[b.toLowerCase()]) return match;
-    return "";
+  list.sort(function (a, b) { return b.length - a.length; });
+  return list;
+}
+
+function clientSet(names) {
+  const clients = {};
+  (names || []).forEach(function (name) {
+    const key = String(name || "").trim().toLowerCase();
+    if (key.length >= 4) clients[key] = true;
   });
-  return t;
+  return clients;
 }
 
 function stripContacts(text) {
@@ -210,23 +300,33 @@ function stripContacts(text) {
   return t;
 }
 
-function tidyQuote(text) {
-  let t = cleanSpace(text);
-  t = t.replace(/\s+([,.;:])/g, "$1");
-  t = t.replace(/\(\s*\)/g, "");
-  t = t.replace(/\b(?:at|with|for|from|by)\s+(?=[,.]|$)/gi, "");
-  t = t.replace(/\s{2,}/g, " ").trim();
-  const sentences = t.split(/(?<=[.!?])\s+/).map(function (sentence) {
-    return sentence.replace(/\s{2,}/g, " ").replace(/\s+([,.;:])/g, "$1").trim();
-  }).filter(function (sentence) {
-    if (!sentence) return false;
-    if (/^(?:reach me|email me|call me|contact me|phone|email)\b/i.test(sentence)) return false;
-    const letters = sentence.replace(/[^A-Za-z]/g, "");
-    return letters.length >= 12;
-  });
-  t = sentences.join(" ").replace(/^[,;:\s.-]+/, "").replace(/\s+$/g, "").trim();
-  t = t.replace(/^[a-z]/, function (ch) { return ch.toUpperCase(); });
-  return t.trim();
+function cleanSentence(sentence, ctx, candidate) {
+  let s = cleanSpace(sentence);
+  if (!s) return "";
+  const drop = dropPhrases(ctx, candidate);
+  for (let i = 0; i < drop.length; i++) {
+    if (phraseIn(s, drop[i])) return "";
+  }
+  if (hasUnknownPerson(s, candidate)) return "";
+  if (hasContact(s)) {
+    s = readsCleanly(stripContacts(s));
+    if (!s) return "";
+  }
+  const orgs = orgList(ctx);
+  const present = orgs.filter(function (org) { return phraseIn(s, org); });
+  if (present.length) {
+    const clients = clientSet([ctx.clientName].concat(ctx.clients || []));
+    for (let i = 0; i < present.length; i++) {
+      if (!(clients[present[i].toLowerCase()] || looksLikeHealthOrg(present[i]))) return "";
+    }
+    s = readsCleanly(replaceOrgs(s, present, [ctx.clientName].concat(ctx.clients || [])));
+    if (!s) return "";
+  } else {
+    s = readsCleanly(s);
+    if (!s) return "";
+  }
+  if (bannedRemainder(s, ctx)) return "";
+  return s;
 }
 
 function anonymizeReferenceQuote(quote, ctx, deps) {
@@ -239,35 +339,51 @@ function anonymizeReferenceQuote(quote, ctx, deps) {
   let t = plain(deps, quote);
   t = facing(deps, t, view);
   if (!t) return "";
-  t = stripContacts(t);
-  const orgs = [src.organization].concat(src.organizations || []);
-  t = replaceOrgs(t, orgs, [src.clientName].concat(src.clients || []));
-  const names = [src.writerName].concat(src.personNames || []).concat(src.candidateName || []);
-  t = stripNames(t, names);
-  t = tidyQuote(t);
-  if (bannedRemainder(t, src)) return "";
+  const candidate = candidateOf(src.candidateName);
+  const kept = [];
+  splitSentences(t).forEach(function (sentence) {
+    const clean = cleanSentence(sentence, src, candidate);
+    if (clean) kept.push(clean);
+  });
+  t = kept.join(" ").trim();
+  if (!t || bannedRemainder(t, src)) return "";
   return t;
 }
 
 function bannedRemainder(text, ctx) {
+  const src = ctx || {};
   const t = String(text || "");
   if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(t)) return true;
   if (/(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]\d{4}/.test(t)) return true;
   if (/https?:\/\/|www\.|linkedin\.com/i.test(t)) return true;
-  const names = [ctx.writerName].concat(ctx.personNames || []).concat(ctx.candidateName || []);
+  const candidate = candidateOf(src.candidateName);
   const phrases = [];
-  names.forEach(function (name) { namePhrases(name).forEach(function (phrase) { phrases.push(phrase); }); });
-  [ctx.organization].concat(ctx.organizations || []).concat(ctx.clients || []).concat(ctx.clientName || []).forEach(function (name) {
+  [src.writerName].concat(src.personNames || []).forEach(function (name) {
+    namePhrases(name).forEach(function (phrase) {
+      if (!isCandidatePhrase(phrase, candidate)) phrases.push(phrase);
+    });
+  });
+  [src.organization].concat(src.organizations || []).concat(src.clients || []).concat(src.clientName || []).forEach(function (name) {
     const phrase = cleanSpace(name);
     if (phrase.length >= 4) phrases.push(phrase);
   });
   for (let i = 0; i < phrases.length; i++) {
-    const flex = flexName(phrases[i]);
-    if (!flex) continue;
-    const re = new RegExp("(?:^|[^A-Za-z0-9])(?:" + flex + ")(?=[^A-Za-z0-9]|$)", "i");
-    if (re.test(t)) return true;
+    if (phraseIn(t, phrases[i])) return true;
   }
   return false;
+}
+
+function guardEditedReference(quote, ctx, deps) {
+  const cleaned = anonymizeReferenceQuote(quote, ctx || {}, deps);
+  if (!cleaned || cleaned.length < 24) return "";
+  if (bannedRemainder(cleaned, ctx || {})) return "";
+  const leak = leakOf(deps, cleaned, {
+    clientName: ctx && ctx.clientName || "",
+    jobTitle: ctx && ctx.jobTitle || "",
+    clients: ctx && ctx.clients || [],
+  });
+  if (leak && leak.rule !== "references") return "";
+  return cleaned.replace(/"/g, "'").replace(/\s+/g, " ").trim();
 }
 
 function isPositive(text, status) {
@@ -390,7 +506,7 @@ function toOffer(raw, input, deps) {
     jobTitle: input.jobTitle || "",
     clients: input.clients || [],
     writerName: raw.writerName || "",
-    personNames: [input.candidateName || "", raw.writerName || ""].concat(input.personNames || []),
+    personNames: [raw.writerName || ""].concat(input.personNames || []),
     organization: raw.organization || "",
     organizations: [raw.organization || ""].concat(input.organizations || []),
   };
@@ -408,10 +524,11 @@ function toOffer(raw, input, deps) {
     role: role,
     at: raw.at || 0,
     sourceRank: raw.sourceRank || 0,
+    ctx: ctx,
   };
 }
 
-function collectReferenceOffers(input, deps) {
+function collectReferenceBundle(input, deps) {
   const src = input || {};
   const raws = [];
   (src.notes || []).forEach(function (note) {
@@ -448,11 +565,19 @@ function collectReferenceOffers(input, deps) {
       prev.role = offer.role;
       prev.id = offer.id;
       prev.sourceRank = offer.sourceRank;
+      prev.ctx = offer.ctx;
     }
   });
-  return kept.map(function (offer) {
+  const contexts = {};
+  const publicOffers = kept.map(function (offer) {
+    contexts[offer.id] = offer.ctx || {};
     return { id: offer.id, quote: offer.quote, role: offer.role };
   });
+  return { offers: publicOffers, contexts: contexts };
+}
+
+function collectReferenceOffers(input, deps) {
+  return collectReferenceBundle(input, deps).offers;
 }
 
 function referenceLine(offer) {
@@ -482,7 +607,9 @@ module.exports = {
   ROLE_FALLBACK: ROLE_FALLBACK,
   explicitRole: explicitRole,
   anonymizeReferenceQuote: anonymizeReferenceQuote,
+  guardEditedReference: guardEditedReference,
   collectReferenceOffers: collectReferenceOffers,
+  collectReferenceBundle: collectReferenceBundle,
   referenceLine: referenceLine,
   selectReferenceOffers: selectReferenceOffers,
 };

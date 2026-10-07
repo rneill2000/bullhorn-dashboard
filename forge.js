@@ -1630,12 +1630,12 @@ function registerForge(app, deps) {
     return out;
   }
 
-  async function buildReferenceOffers(candidateId, notes, ctx) {
+  async function buildReferenceBundle(candidateId, notes, ctx) {
     const extra = await loadReferenceNotes([candidateId]);
     const merged = mergeNoteRows(notes, extra[String(candidateId)] || []);
     const records = await loadCandidateReferenceRecords(candidateId);
     const files = await loadReferenceFileTexts(candidateId);
-    return referenceLib.collectReferenceOffers({
+    return referenceLib.collectReferenceBundle({
       notes: merged,
       records: records,
       files: files,
@@ -1665,6 +1665,69 @@ function registerForge(app, deps) {
       if (s && out.indexOf(s) < 0) out.push(s);
     });
     return out;
+  }
+
+  function requestedReferenceQuotes(body) {
+    const src = body && (body.referenceQuotes || body.references);
+    const out = {};
+    if (Array.isArray(src)) {
+      src.forEach(function (item) {
+        if (!item || item.id == null || item.quote == null) return;
+        out[String(item.id)] = String(item.quote);
+      });
+      return out;
+    }
+    if (!src || typeof src !== "object") return {};
+    Object.keys(src).forEach(function (id) {
+      const key = String(id || "").trim();
+      if (key) out[key] = String(src[id] == null ? "" : src[id]);
+    });
+    return out;
+  }
+
+  function guardChosenReferences(bundle, ids, edits) {
+    const selected = referenceLib.selectReferenceOffers((bundle && bundle.offers) || [], ids);
+    if (selected.error) return { error: selected.error, code: "too_many_references", offers: [] };
+    const contexts = (bundle && bundle.contexts) || {};
+    const out = [];
+    for (let i = 0; i < selected.offers.length; i++) {
+      const offer = selected.offers[i];
+      const hasEdit = !!(edits && Object.prototype.hasOwnProperty.call(edits, offer.id));
+      const edited = hasEdit ? edits[offer.id] : null;
+      if (!hasEdit || String(edited == null ? "" : edited).trim() === String(offer.quote)) {
+        out.push({ id: offer.id, quote: offer.quote, role: offer.role });
+        continue;
+      }
+      const guarded = referenceLib.guardEditedReference(String(edited), contexts[offer.id] || {}, referenceDeps());
+      if (!guarded) {
+        return {
+          error: "That reference still names the writer, their organization, or contact details. Edit the quote, or use the cleaned wording.",
+          code: "reference_not_anonymous",
+          offers: [],
+        };
+      }
+      out.push({ id: offer.id, quote: guarded, role: offer.role });
+    }
+    return { error: "", code: "", offers: out };
+  }
+
+  function displayReferenceOffers(bundle, entries) {
+    const offers = ((bundle && bundle.offers) || []).map(function (offer) {
+      return { id: offer.id, quote: offer.quote, role: offer.role };
+    });
+    const byId = {};
+    offers.forEach(function (offer) { byId[offer.id] = offer; });
+    const selected = [];
+    (entries || []).forEach(function (entry) {
+      const id = entry && typeof entry === "object" ? entry.id : entry;
+      if (!byId[id] || selected.indexOf(id) >= 0 || selected.length >= 2) return;
+      selected.push(id);
+      const raw = entry && typeof entry === "object" ? String(entry.quote || "") : "";
+      if (!raw || raw.trim() === byId[id].quote) return;
+      const guarded = referenceLib.guardEditedReference(raw, ((bundle && bundle.contexts) || {})[id] || {}, referenceDeps());
+      if (guarded) byId[id].quote = guarded;
+    });
+    return { offers: offers, selectedIds: selected };
   }
 
   async function loadContacts(clientId) {
@@ -2370,15 +2433,18 @@ function registerForge(app, deps) {
       draft.needsSameClientConfirm = sib.needsConfirm;
       draft.flags = draft.flags.concat(sib.flags);
       const user = getUser(req);
-      const referenceOffers = await buildReferenceOffers(draft.candidate.id, notes, {
+      const referenceBundle = await buildReferenceBundle(draft.candidate.id, notes, {
         candidateName: draft.candidate.name,
         clientName: draft.job.clientName,
         jobTitle: draft.job.title,
         clients: clientNames,
       });
-      draft.references = referenceOffers;
+      let savedReferenceEntries = [];
+      try { savedReferenceEntries = await referencePicks.getEntries(profileKey(user), id); } catch (e) { savedReferenceEntries = []; }
+      const shownReferences = displayReferenceOffers(referenceBundle, savedReferenceEntries);
+      draft.references = shownReferences.offers;
       const quoteByNote = {};
-      referenceOffers.forEach(function (offer) {
+      shownReferences.offers.forEach(function (offer) {
         if (String(offer.id).indexOf("note:") === 0) quoteByNote[offer.id] = offer.quote;
       });
       draft.notes = (notes || []).map(function (n) {
@@ -2389,9 +2455,7 @@ function registerForge(app, deps) {
         }
         return { action: action, text: clip(htmlToPlain(n.comments_text), 400) };
       });
-      let savedReferenceIds = [];
-      try { savedReferenceIds = await referencePicks.get(profileKey(user), id); } catch (e) { savedReferenceIds = []; }
-      draft.selectedReferenceIds = referenceLib.selectReferenceOffers(referenceOffers, savedReferenceIds).offers.map(function (offer) { return offer.id; });
+      draft.selectedReferenceIds = shownReferences.selectedIds;
       const profile = await loadProfile(user);
       const boxes = await mailboxes();
       let files = [];
@@ -2406,7 +2470,7 @@ function registerForge(app, deps) {
         location: draft.location,
         billRate: draft.billRate,
         subject: draft.subject,
-        references: referenceLib.selectReferenceOffers(referenceOffers, draft.selectedReferenceIds).offers,
+        references: referenceLib.selectReferenceOffers(shownReferences.offers, draft.selectedReferenceIds).offers,
         signerName: profile.name || (user && (user.firstName || personName(user))) || "Anura Connect",
         signerTitle: profile.title,
         signerPhone: profile.phone,
@@ -2450,12 +2514,16 @@ function registerForge(app, deps) {
       const row = await loadBundle(id);
       const clientNames = await loadClientNames();
       const noteMap = await loadNotesForCandidates([row.candidate_id]);
-      const offers = await buildReferenceOffers(row.candidate_id, noteMap[String(row.candidate_id)] || [], referenceContext(row, clientNames));
-      const chosen = referenceLib.selectReferenceOffers(offers, requestedIds).offers;
+      const bundle = await buildReferenceBundle(row.candidate_id, noteMap[String(row.candidate_id)] || [], referenceContext(row, clientNames));
+      const chosen = guardChosenReferences(bundle, requestedIds, requestedReferenceQuotes(req.body || {}));
+      if (chosen.error) return res.status(400).json({ error: chosen.error, code: chosen.code || "reference_not_anonymous" });
       const user = getUser(req);
       if (!profileKey(user)) return res.status(401).json({ error: "Sign in required" });
-      await referencePicks.set(profileKey(user), id, chosen.map(function (offer) { return offer.id; }));
-      res.json({ referenceIds: chosen.map(function (offer) { return offer.id; }) });
+      await referencePicks.set(profileKey(user), id, chosen.offers.map(function (offer) { return { id: offer.id, quote: offer.quote }; }));
+      res.json({
+        referenceIds: chosen.offers.map(function (offer) { return offer.id; }),
+        references: chosen.offers,
+      });
     } catch (e) {
       res.status(e.status || 500).json({ error: e.message });
     }
@@ -2489,15 +2557,21 @@ function registerForge(app, deps) {
         return res.status(400).json({ error: "Pick at most two references.", code: "too_many_references" });
       }
       const user = getUser(req);
-      const referenceOffers = await buildReferenceOffers(base.candidate.id, noteMap[String(row.candidate_id)] || [], {
+      const referenceBundle = await buildReferenceBundle(base.candidate.id, noteMap[String(row.candidate_id)] || [], {
         candidateName: candidateName || base.candidate.name,
         clientName: body.clientName || base.job.clientName,
         jobTitle: body.jobTitle || base.job.title,
         clients: clientNames,
       });
-      const chosenReferences = referenceLib.selectReferenceOffers(referenceOffers, requestedIds).offers;
+      const guardedReferences = guardChosenReferences(referenceBundle, requestedIds, requestedReferenceQuotes(body));
+      if (guardedReferences.error) {
+        return res.status(400).json({ error: guardedReferences.error, code: guardedReferences.code || "reference_not_anonymous" });
+      }
+      const chosenReferences = guardedReferences.offers;
       if (profileKey(user)) {
-        try { await referencePicks.set(profileKey(user), id, chosenReferences.map(function (offer) { return offer.id; })); } catch (e) {}
+        try {
+          await referencePicks.set(profileKey(user), id, chosenReferences.map(function (offer) { return { id: offer.id, quote: offer.quote }; }));
+        } catch (e) {}
       }
       const profile = await loadProfile(user);
       const greetingName = (body.greetingName || "").trim();
@@ -2825,6 +2899,9 @@ module.exports.collectReferenceOffers = function (input) {
 };
 module.exports.anonymizeReferenceQuote = function (quote, ctx) {
   return referenceLib.anonymizeReferenceQuote(quote, ctx || {}, referenceDeps());
+};
+module.exports.guardEditedReference = function (quote, ctx) {
+  return referenceLib.guardEditedReference(quote, ctx || {}, referenceDeps());
 };
 module.exports.referenceLine = referenceLib.referenceLine;
 module.exports.REFERENCE_NOTES_SQL = REFERENCE_NOTES_SQL;

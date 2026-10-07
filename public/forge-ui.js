@@ -95,6 +95,8 @@ function renderForge() {
     + '.fg-ok{font-size:12px;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px;margin-top:10px}'
     + '.fg-ref{display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13px;line-height:1.45;color:#0f172a}'
     + '.fg-ref input{margin-top:3px}'
+    + '.fg-ref-body{flex:1;min-width:0}'
+    + '.fg-ref-quote{min-height:68px;margin-top:0}'
     + '@media(max-width:860px){.fg{grid-template-columns:1fr}.fg-q{max-height:320px}.fg-split{grid-template-columns:1fr}}'
     + '</style>';
   h += '<div style="font-size:14px;color:#475569;margin-bottom:12px;max-width:760px">Internally submitted candidates waiting on a client email. Forge drafts Why Me, an optional anonymous reference, availability, location, and bill rate. <b>You send it</b> from Outlook. Nothing is sent until you send the draft.</div>';
@@ -325,10 +327,11 @@ function forgePaintDraft() {
   _forge.referenceIds.forEach(function (id) { picked[id] = true; });
   if (refsOnFile.length) {
     h += '<label class="fg-lab">References <span style="font-weight:500;color:#94a3b8">optional · one or two</span></label>';
-    h += '<div class="fg-note" id="forge-ref-note">Nothing is included until you check one. Only the quote and the role are shown.</div>';
+    h += '<div class="fg-note" id="forge-ref-note">Nothing is included until you check one. Edit the quote if the wording needs a fix. The writer is not named.</div>';
     refsOnFile.forEach(function (ref) {
-      h += '<label class="fg-ref"><input type="checkbox" data-ref="' + forgeAttr(ref.id) + '"' + (picked[ref.id] ? " checked" : "") + ' onchange="forgeToggleRef(this)">';
-      h += '<span>Reference: "' + esc(ref.quote || "") + '" (' + esc(ref.role || "Former manager") + ")</span></label>";
+      h += '<div class="fg-ref"><input type="checkbox" data-ref="' + forgeAttr(ref.id) + '"' + (picked[ref.id] ? " checked" : "") + ' onchange="forgeToggleRef(this)">';
+      h += '<div class="fg-ref-body"><textarea class="fg-ta fg-ref-quote" id="' + forgeAttr(forgeRefBoxId(ref.id)) + '" data-ref="' + forgeAttr(ref.id) + '" oninput="forgeEditRef(this)">' + esc(ref.quote || "") + '</textarea>';
+      h += '<div class="fg-note">' + esc(ref.role || "Former manager") + '</div></div></div>';
     });
   }
   h += '<div class="fg-split">';
@@ -384,6 +387,10 @@ function forgePaintDraft() {
 
 function forgeVal(id) { var el = document.getElementById(id); return el ? el.value : ""; }
 
+function forgeRefBoxId(id) {
+  return "forge-ref-quote-" + String(id || "").replace(/[^A-Za-z0-9_-]/g, "-");
+}
+
 function forgeSelectedRefs() {
   var d = (_forge.view && _forge.view.draft) || {};
   var offers = d.references || [];
@@ -391,7 +398,10 @@ function forgeSelectedRefs() {
   (_forge.referenceIds || []).forEach(function (id) {
     var hit = null;
     offers.forEach(function (ref) { if (ref && ref.id === id) hit = ref; });
-    if (hit && out.length < 2) out.push(hit);
+    if (!hit || out.length >= 2) return;
+    var box = document.getElementById(forgeRefBoxId(id));
+    var quote = box && typeof box.value === "string" ? box.value : hit.quote;
+    out.push({ id: hit.id, quote: quote, role: hit.role });
   });
   return out;
 }
@@ -410,7 +420,7 @@ function forgeToggleRef(el) {
   } else ids.push(id);
   _forge.referenceIds = ids;
   var note = document.getElementById("forge-ref-note");
-  if (note) note.textContent = ids.length ? "Checked references are added after Why Me. The writer is not named." : "Nothing is included until you check one. Only the quote and the role are shown.";
+  if (note) note.textContent = ids.length ? "Checked references are added after Why Me. You can edit the quote. The writer is not named." : "Nothing is included until you check one. Edit the quote if the wording needs a fix. The writer is not named.";
   forgePreview();
   forgeSaveRefs();
 }
@@ -420,8 +430,34 @@ function forgeSaveRefs() {
   if (!_forge.selected) return;
   clearTimeout(_forgeRefTimer);
   _forgeRefTimer = setTimeout(function () {
-    forgeSend("forge/submissions/" + _forge.selected + "/references", { referenceIds: (_forge.referenceIds || []).slice(0, 2) }, "PUT").catch(function () {});
+    var quotes = {};
+    (_forge.referenceIds || []).slice(0, 2).forEach(function (id) {
+      var box = document.getElementById(forgeRefBoxId(id));
+      quotes[id] = box && typeof box.value === "string" ? box.value : "";
+    });
+    forgeSend("forge/submissions/" + _forge.selected + "/references", {
+      referenceIds: (_forge.referenceIds || []).slice(0, 2),
+      referenceQuotes: quotes,
+    }, "PUT").then(function (res) {
+      (res && res.references || []).forEach(function (ref) {
+        var box = document.getElementById(forgeRefBoxId(ref.id));
+        if (!box || !ref.quote || box.value.trim() === ref.quote) return;
+        box.value = ref.quote;
+        var offers = (_forge.view && _forge.view.draft && _forge.view.draft.references) || [];
+        offers.forEach(function (offer) { if (offer.id === ref.id) offer.quote = ref.quote; });
+      });
+      forgePreview();
+    }).catch(function (e) {
+      var note = document.getElementById("forge-ref-note");
+      if (note && e && e.body && e.body.code === "reference_not_anonymous") note.textContent = e.message || "That quote still names the writer.";
+    });
   }, 200);
+}
+
+function forgeEditRef(el) {
+  var id = el && el.getAttribute ? el.getAttribute("data-ref") : "";
+  if (id && (_forge.referenceIds || []).indexOf(id) >= 0) forgeSaveRefs();
+  forgePreview();
 }
 
 function forgeFields() {
@@ -461,10 +497,17 @@ function forgeFields() {
     signerTitle: forgeVal("forge-sign-title") || profile.title || "",
     signerPhone: forgeVal("forge-sign-phone") || profile.phone || "",
     referenceIds: (_forge.referenceIds || []).slice(0, 2),
+    referenceQuotes: forgeReferenceQuotes(),
     resumeFileId: _forge.resumeConfirmed ? (_forge.resumeFileId || forgeVal("forge-resume")) : "",
     confirmAnother: !!(d.existingDraft),
     confirmSameClient: !!_forge.confirmSameClient,
   };
+}
+
+function forgeReferenceQuotes() {
+  var quotes = {};
+  forgeSelectedRefs().forEach(function (ref) { quotes[ref.id] = ref.quote || ""; });
+  return quotes;
 }
 
 function forgeMissingNow(f) {
@@ -730,6 +773,7 @@ async function forgeCreate() {
       signerTitle: f.signerTitle,
       signerPhone: f.signerPhone,
       referenceIds: f.referenceIds || [],
+      referenceQuotes: f.referenceQuotes || {},
       resumeFileId: _forge.resumeFileId,
       confirmAnother: !!f.confirmAnother,
       confirmSameClient: !!f.confirmSameClient,
@@ -747,7 +791,9 @@ async function forgeCreate() {
     }
   } catch (e) {
     if (forgeSignIn(e)) return;
-    if (e.body && (e.body.snippet || e.body.code === "bill_rate_mismatch" || e.body.code === "internal_leak")) forgeShowBlock(result, e);
+    if (e.body && e.body.code === "reference_not_anonymous") {
+      if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.body.error || e.message) + '</div>';
+    } else if (e.body && (e.body.snippet || e.body.code === "bill_rate_mismatch" || e.body.code === "internal_leak")) forgeShowBlock(result, e);
     else if (e.body && e.body.code === "same_client_submitted") {
       if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.body.error || e.message) + '</div>';
     } else if (e.body && e.body.code === "duplicate_draft") {

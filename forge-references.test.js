@@ -131,20 +131,20 @@ test("the reference guard strips the writer, the hospital, and contact details",
     clientName: "Memorial Hermann",
     clients: [WRITER.org, "Memorial Hermann"],
   });
-  assert.equal(offers.length, 3);
+  assert.equal(offers.length, 2);
   const titled = offers.filter(function (offer) { return offer.role === WRITER.title; })[0];
   assert.ok(titled, "uses the explicit title");
   assert.equal(titled.id, "note:900");
-  assert.match(titled.quote, /strongest|rehire/i);
-  assert.match(titled.quote, /a health system/);
-  assert.doesNotMatch(titled.quote, new RegExp(WRITER.first + "|" + WRITER.last + "|" + CANDIDATE.name.split(" ")[0] + "|" + CANDIDATE.name.split(" ")[1] + "|" + WRITER.org, "i"));
+  assert.equal(titled.quote, "I would rehire him at a health system.");
+  assert.doesNotMatch(titled.quote, /has managed|Is one of the strongest/i);
+  assert.doesNotMatch(titled.quote, new RegExp(WRITER.first + "|" + WRITER.last + "|" + WRITER.org, "i"));
   assert.doesNotMatch(titled.quote, /@|linkedin|541|1099|the AM/i);
   const untitled = offers.filter(function (offer) { return offer.role === "Former manager"; });
-  assert.equal(untitled.length, 2);
-  untitled.forEach(function (offer) {
-    assert.notEqual(offer.role, WRITER.title);
-    assert.doesNotMatch(offer.quote, new RegExp(WRITER.org + "|Alex|Morgan|" + WRITER.first, "i"));
-  });
+  assert.equal(untitled.length, 1);
+  assert.equal(untitled[0].id, "record:77");
+  assert.match(untitled[0].quote, /\bJon\b/);
+  assert.doesNotMatch(untitled[0].quote, new RegExp(WRITER.org + "|Alex|Morgan|" + WRITER.first + "|would hire him again", "i"));
+  assert.ok(!offers.some(function (offer) { return offer.id === "file:44"; }));
   assert.ok(!offers.some(function (offer) { return /not rehire|poor performance|collecting/i.test(offer.quote); }));
   const line = forge.referenceLine(titled);
   assert.match(line, /^Reference: ".*" \(Revenue Cycle Director\)$/);
@@ -169,6 +169,35 @@ test("the reference guard strips the writer, the hospital, and contact details",
   assert.doesNotMatch(none.text, /Reference:/);
   const src = fs.readFileSync(__dirname + "/forge.js", "utf8") + fs.readFileSync(__dirname + "/forge-references.js", "utf8");
   assert.doesNotMatch(src, /Hawkins|PeaceHealth/);
+});
+
+test("the candidate name survives and a broken sentence is dropped", function () {
+  const ctx = {
+    candidateName: CANDIDATE.name,
+    writerName: WRITER.first + " " + WRITER.last,
+    organization: WRITER.org,
+    clientName: "Memorial Hermann",
+    clients: [WRITER.org, "Memorial Hermann"],
+  };
+  const broken = forge.anonymizeReferenceQuote(
+    CANDIDATE.name + " is one of the strongest HB analysts " + WRITER.first + " " + WRITER.last + " has managed. I would rehire him at " + WRITER.org + " hospital.",
+    ctx
+  );
+  assert.equal(broken, "I would rehire him at a health system.");
+  assert.doesNotMatch(broken, /has managed|Is one of the strongest|analysts has/i);
+  const kept = forge.anonymizeReferenceQuote(
+    CANDIDATE.name + " is one of the strongest HB analysts on the team. " + WRITER.first + " " + WRITER.last + " has managed him for years. I would rehire him at " + WRITER.org + " hospital.",
+    ctx
+  );
+  assert.match(kept, new RegExp(CANDIDATE.name));
+  assert.match(kept, /a health system/);
+  assert.doesNotMatch(kept, new RegExp(WRITER.first + "|" + WRITER.last + "|" + WRITER.org + "|has managed", "i"));
+  const stripped = forge.guardEditedReference(
+    CANDIDATE.name + " is excellent on every go-live. " + WRITER.first + " " + WRITER.last + " would rehire him at " + WRITER.org + ".",
+    ctx
+  );
+  assert.equal(stripped, CANDIDATE.name + " is excellent on every go-live.");
+  assert.equal(forge.guardEditedReference(WRITER.first + " " + WRITER.last + " would rehire him at " + WRITER.org + " tomorrow.", ctx), "");
 });
 
 test("a reference is offered and left out until it is picked", async function () {
@@ -266,8 +295,36 @@ test("a reference is offered and left out until it is picked", async function ()
     const sent = graphBodies[1].body.content;
     assert.match(sent, /<b>Why Me<\/b>/);
     assert.ok(sent.indexOf("<b>Why Me</b>") < sent.indexOf("<b>Reference:</b>"));
+    assert.match(sent, /I would rehire him at a health system\./);
+    assert.doesNotMatch(sent, /has managed/);
     assert.match(sent, new RegExp("\\(" + WRITER.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\)"));
     assert.doesNotMatch(sent, new RegExp(WRITER.first + "|" + WRITER.last + "|" + WRITER.org + "|@" + "|linkedin|1099", "i"));
+    const rewritten = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      whyMe: "He kept the HB go-live calm.",
+      availability: "2 weeks",
+      location: "Houston, TX",
+      billRate: "$185/hr",
+      resumeFileId: "9",
+      referenceIds: [found.id],
+      referenceQuotes: { "note:900": CANDIDATE.name + " is excellent on every go-live. " + WRITER.first + " " + WRITER.last + " would rehire him at " + WRITER.org + "." },
+      confirmAnother: true,
+    });
+    assert.equal(rewritten.status, 200, rewritten.text);
+    const rewrittenBody = graphBodies[graphBodies.length - 1].body.content;
+    assert.match(rewrittenBody, new RegExp(CANDIDATE.name + " is excellent on every go-live"));
+    assert.doesNotMatch(rewrittenBody, new RegExp(WRITER.first + "|" + WRITER.last + "|" + WRITER.org, "i"));
+    const rejected = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      whyMe: "He kept the HB go-live calm.",
+      availability: "2 weeks",
+      location: "Houston, TX",
+      billRate: "$185/hr",
+      resumeFileId: "9",
+      referenceIds: [found.id],
+      referenceQuotes: { "note:900": WRITER.first + " " + WRITER.last + " would rehire him at " + WRITER.org + " tomorrow." },
+      confirmAnother: true,
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.json.code, "reference_not_anonymous");
     const tooMany = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
       whyMe: "He kept the HB go-live calm.",
       availability: "2 weeks",
@@ -320,6 +377,19 @@ test("reference picks use the session database", async function () {
   });
   await store.set("bh:5", 42, ["note:900", "file:44", "record:77"]);
   assert.deepEqual(await again.get("bh:5", 42), ["note:900", "file:44"]);
+  await store.set("bh:5", 42, [{ id: "note:900", quote: "Jon Hawkins is excellent on every go-live." }]);
+  assert.deepEqual(await store.getEntries("bh:5", 42), [{ id: "note:900", quote: "Jon Hawkins is excellent on every go-live." }]);
+  const reread = picks.createReferencePicks({
+    env: { SESSION_DATABASE_URL: "postgresql://u:p@postgres.railway.internal:5432/railway" },
+    sessionQuery: async function (text, params) {
+      if (/SELECT reference_ids/.test(text)) {
+        const ids = saved[params[0] + ":" + params[1]] || [];
+        return { rows: ids.length ? [{ reference_ids: ids }] : [] };
+      }
+      return { rows: [] };
+    },
+  });
+  assert.deepEqual(await reread.getEntries("bh:5", 42), [{ id: "note:900", quote: "Jon Hawkins is excellent on every go-live." }]);
   assert.ok(queries.some(function (sql) { return /CREATE TABLE IF NOT EXISTS app\.forge_reference_picks/.test(sql); }));
   const src = fs.readFileSync(__dirname + "/forge-reference-picks.js", "utf8");
   assert.match(src, /SESSION_DATABASE_URL/);
@@ -398,13 +468,27 @@ test("the forge card shows a reference only after it is checked", function () {
   ctx.forgePaintQueue();
   assert.match(queueBox.innerHTML, /1 positive reference on file/);
   assert.doesNotMatch(queueBox.innerHTML, new RegExp(WRITER.org));
+  const quoteBox = { value: "I would rehire him at a health system." };
   ctx.forgePaintDraft();
   assert.match(main.innerHTML, /Revenue Cycle Director/);
+  assert.match(main.innerHTML, /<textarea/);
   assert.match(main.innerHTML, /I would rehire him at a health system/);
   assert.doesNotMatch(main.innerHTML, /type="checkbox"[^>]*checked/);
   assert.doesNotMatch(preview.textContent, /Reference:/);
+  ctx.document.getElementById = function (id) {
+    if (id === "forge-main") return main;
+    if (id === "forge-queue") return queueBox;
+    if (id === "forge-preview") return preview;
+    if (id === "forge-ref-note") return { textContent: "" };
+    if (id === "forge-ref-quote-note-900") return quoteBox;
+    if (id === "forge-to") return { value: "", selectedIndex: -1, options: [] };
+    return { value: id === "forge-why" ? "He kept the HB go-live calm." : "", style: {}, getAttribute: function () { return ""; } };
+  };
   ctx._forge.referenceIds = ["note:900"];
   ctx.forgePreview();
   assert.match(preview.textContent, /Reference: "I would rehire him at a health system\." \(Revenue Cycle Director\)/);
   assert.ok(preview.textContent.indexOf("Why Me") < preview.textContent.indexOf("Reference:"));
+  quoteBox.value = CANDIDATE.name + " is excellent on every go-live.";
+  ctx.forgePreview();
+  assert.match(preview.textContent, new RegExp("Reference: \"" + CANDIDATE.name + " is excellent on every go-live\\.\" \\(Revenue Cycle Director\\)"));
 });

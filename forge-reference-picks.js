@@ -20,15 +20,21 @@ function safeMessage(err) {
   return String(err && err.message || err).replace(/postgres(?:ql)?:\/\/\S+/gi, "postgres://[redacted]");
 }
 
-function normalizeIds(value) {
+function normalizePicks(value) {
   const raw = Array.isArray(value) ? value : [];
   const out = [];
-  raw.forEach(function (id) {
+  raw.forEach(function (item) {
+    const id = item && typeof item === "object" ? item.id : item;
     const s = String(id == null ? "" : id).trim();
-    if (!s || out.indexOf(s) >= 0) return;
-    out.push(s);
+    if (!s || out.some(function (pick) { return pick.id === s; })) return;
+    const quote = item && typeof item === "object" ? String(item.quote || "").replace(/\s+/g, " ").trim() : "";
+    out.push({ id: s, quote: quote });
   });
   return out.slice(0, MAX_PICKS);
+}
+
+function normalizeIds(value) {
+  return normalizePicks(value).map(function (pick) { return pick.id; });
 }
 
 function createReferencePicks(options) {
@@ -81,7 +87,7 @@ function createReferencePicks(options) {
 
   async function get(userKey, submissionId) {
     const key = memKey(userKey, submissionId);
-    if (memory.has(key)) return memory.get(key).slice();
+    if (memory.has(key)) return memory.get(key).map(function (pick) { return pick.id; });
     if (!enabled() || !userKey || !submissionId) return [];
     try {
       await ensure();
@@ -90,20 +96,28 @@ function createReferencePicks(options) {
         [String(userKey), Number(submissionId)]
       );
       const row = res && res.rows && res.rows[0];
-      const ids = normalizeIds(row && row.reference_ids);
-      memory.set(key, ids);
-      return ids.slice();
+      const picks = normalizePicks(row && row.reference_ids);
+      memory.set(key, picks);
+      return picks.map(function (pick) { return pick.id; });
     } catch (err) {
       console.error("[Forge references] read failed:", safeMessage(err));
       return [];
     }
   }
 
+  async function getEntries(userKey, submissionId) {
+    const key = memKey(userKey, submissionId);
+    if (memory.has(key)) return memory.get(key).map(function (pick) { return { id: pick.id, quote: pick.quote || "" }; });
+    await get(userKey, submissionId);
+    const picks = memory.get(key) || [];
+    return picks.map(function (pick) { return { id: pick.id, quote: pick.quote || "" }; });
+  }
+
   async function set(userKey, submissionId, ids) {
-    const picked = normalizeIds(ids);
+    const picked = normalizePicks(ids);
     const key = memKey(userKey, submissionId);
     memory.set(key, picked);
-    if (!enabled() || !userKey || !submissionId) return picked.slice();
+    if (!enabled() || !userKey || !submissionId) return picked.map(function (pick) { return pick.id; });
     try {
       await ensure();
       await query(
@@ -114,15 +128,16 @@ function createReferencePicks(options) {
     } catch (err) {
       console.error("[Forge references] save failed:", safeMessage(err));
     }
-    return picked.slice();
+    return picked.map(function (pick) { return pick.id; });
   }
 
-  return { get: get, set: set, enabled: enabled };
+  return { get: get, getEntries: getEntries, set: set, enabled: enabled };
 }
 
 module.exports = {
   SCHEMA_FILE: SCHEMA_FILE,
   MAX_PICKS: MAX_PICKS,
   normalizeIds: normalizeIds,
+  normalizePicks: normalizePicks,
   createReferencePicks: createReferencePicks,
 };

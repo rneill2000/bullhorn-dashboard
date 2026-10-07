@@ -66,6 +66,9 @@ Axes: owner (mine / other) · status (internal / client-submitted / closed) · c
 | F27 | No explicit title on the reference | A guessed job title | test: a missing title stays Former manager |
 | F28 | Negative reference, or a note that is only "collecting references" | A bad quote or recruiter logistics in the email | test: negative and logistics notes are not offered |
 | F29 | Recruiter picks are saved | Selection written to the Neon mirror | test: reference picks use the session database |
+| F30 | Quote names the candidate and the writer in different sentences | Candidate name removed | test: the candidate name survives and a broken sentence is dropped |
+| F31 | Writer's name sits in the middle of a sentence | Broken English in the client draft | test: the candidate name survives and a broken sentence is dropped |
+| F32 | Recruiter edits the quote and types the writer's name | Writer name returns in the draft | test: the candidate name survives and a broken sentence is dropped |
 | M2 | Manual smoke: create draft with PDF, open in Outlook, confirm PDF name and that nothing was sent | Real Graph/attachment behavior |
 | M5 | Manual: Forge → Owner All → Chris Frary / Memorial Hermann SBO Analyst. Why Me from notes must not include the University Hospitals recruiter note. Then click Jake Given (Cook Children's) as soon as Frary's draft is up; the panel must not keep Frary's draft while Jake is selected. | Stale note or stale preview | Record date + result in the PR |
 | M4 | Manual: open Forge on Internally Submitted Frary 886 and Jake Given 856. Blank bill rate / Why Me should show the note value labeled "from notes". A filled field stays. Digest JSON for those rows should not list them under missing. | Real note text differs from the fixtures | Record date + result in the PR |
