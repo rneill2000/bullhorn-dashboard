@@ -92,3 +92,33 @@ test("no 'most recent contact' fallback left anywhere in capture code", () => {
   assert.ok(!/most recent contact|most recently modified contact/i.test(src));
   assert.ok(!/orderBy: "-dateLastModified", count: 1/.test(src));
 });
+
+test("internal to-do about a colleague is an unlinked personal task", async () => {
+  fresh();
+  const h = harness([{ kind: "task", subject: "Send Peter the updated HB rate sheet", dueDate: "2026-10-07", taskType: "Send Email", person: { firstName: "Peter", lastName: "" }, personType: "contact", company: null }]);
+  const r = await call(h.routes["POST /api/capture/parse"], { text: "Need to send Peter the updated HB rate sheet" });
+  const it = r.body.items[0];
+  assert.strictEqual(it.person, null);
+  assert.ok(it.internal);
+  assert.ok(!it.suggested.personId);
+  assert.strictEqual(it.matches.contacts.length, 0);
+  assert.ok(!it.questions.some((q) => q.id === "who" || q.id === "whomissing"));
+  // and committing it writes a task with no client or candidate link
+  const c = await call(h.routes["POST /api/capture/commit"], { items: [{ kind: "task", subject: it.subject, dueDate: it.dueDate, taskType: "Send Email", personType: null }] });
+  const w = h.writes.find((x) => /entity\/Task/.test(x.path));
+  assert.ok(c.body.results[0].ok && w);
+  assert.strictEqual(w.body.clientContact, undefined);
+  assert.strictEqual(w.body.candidate, undefined);
+});
+
+test("colleague full name is internal even with no company; a client contact who shares a first name is not", async () => {
+  fresh();
+  const h = harness([
+    { kind: "task", subject: "Ask Ben Gray for the Lahey resumes", person: { firstName: "Ben", lastName: "Gray" }, company: null, dueDate: "2026-10-08" },
+    { kind: "task", subject: "Call Peter at Skagit about the Cadence req", person: { firstName: "Peter", lastName: "" }, personType: "contact", company: "Skagit Regional Health", dueDate: "2026-10-08" },
+  ]);
+  const r = await call(h.routes["POST /api/capture/parse"], { text: "two tasks here" });
+  assert.ok(r.body.items[0].internal);
+  assert.ok(!r.body.items[1].internal, "Peter at a client stays a client task");
+  assert.strictEqual(r.body.items[1].company, "Skagit Regional Health");
+});

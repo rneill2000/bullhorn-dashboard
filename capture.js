@@ -17,6 +17,17 @@ module.exports = function registerCapture(app, deps) {
   const PREFERRED_ROLES = ["Analyst", "PM", "Trainer", "Manager", "Director (Rev Cycle)", "Director (Ancillary Apps)", "Director (Clinical)", "Director (Patient Access)"];
   const YEARS_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7];
   const OPP_STATUSES = ["Identified", "Qualifying", "Negotiating", "Legal Review"];
+  // Anura's own team. A task about one of them is an internal reminder, never a client/candidate link.
+  const TEAM = ["Rachel Neill", "Peter Oppermann", "Ben Oppermann", "Ben Gray", "Dan Neill", "Suzie Hall", "Melissa Alfiero", "Jennifer Hemming", "Jen Hemming"];
+  function isColleague(person, company) {
+    const f = String((person && person.firstName) || "").trim().toLowerCase(), l = String((person && person.lastName) || "").trim().toLowerCase();
+    if (!f && !l) return false;
+    return TEAM.some(function (n) {
+      const parts = n.toLowerCase().split(" "), tf = parts[0], tl = parts.slice(1).join(" ");
+      if (l) return f === tf && l === tl;          // full name must match exactly
+      return f === tf && !company;                 // first name only: colleague unless a client company is named
+    });
+  }
 
   // ── Claude extraction ────────────────────────────────────────────────
   async function aiParse(text, today, clarifications) {
@@ -92,7 +103,7 @@ module.exports = function registerCapture(app, deps) {
       "",
       "QUESTIONS: for facts you had to guess, add a short question aimed at the author (max one per item, only when truly unclear): a rate that could be bill or pay, a date with no year, a next step with no owner, text that could belong to two people, or a role that could be contract or perm. Never ask who a person is, for a last name, whether someone is a contact or candidate, for an email address, or for a start date or years of experience — those are handled separately. Do not ask about things the notes make clear, and never ask about the JSON schema, field options, or your own output — pick the closest valid value and move on.",
       "",
-      "Rules: personType is 'contact' for anyone who works at a client/prospect/hospital/vendor, 'candidate' for consultants/job seekers. Anura Connect's own team (Rachel Neill, Peter Oppermann, Ben Oppermann, Ben Gray, Dan, Suzie Hall, Melissa Alfiero) are colleagues — never make them the person; a conversation with a colleague about a client becomes a note on that client (person null unless a client contact is named). If only a first name is given, leave lastName empty. Never merge two people into one item. If the text mentions no person at all for a fact, attach it as a note to the company with person null.",
+      "Rules: personType is 'contact' for anyone who works at a client/prospect/hospital/vendor, 'candidate' for consultants/job seekers. Anura Connect's own team (" + TEAM.join(", ") + ", and Dan) are colleagues — never make them the person; a conversation with a colleague about a client becomes a note on that client (person null unless a client contact is named). If only a first name is given, leave lastName empty. Never merge two people into one item. If the text mentions no person at all for a fact, attach it as a note to the company with person null.",
       "",
       "NOTES:\n" + text + (clarifications ? "\n\nCLARIFICATIONS FROM THE AUTHOR (these override anything ambiguous above):\n" + clarifications : ""),
     ].join("\n");
@@ -187,6 +198,9 @@ module.exports = function registerCapture(app, deps) {
   }
 
   async function enrichItem(it) {
+    // A to-do about an Anura colleague ("send Peter the rate sheet") is the author's own reminder:
+    // never let it match a client contact or candidate who happens to share the name.
+    if (it.kind === "task" && it.person && isColleague(it.person, it.company)) { it.person = null; it.personType = null; it.company = null; it.internal = true; }
     if ((it.kind === "job" || it.kind === "opportunity" || it.kind === "job_update") && it.personType !== "candidate") it.personType = "contact"; // the person on a deal is the hiring contact
     if (it.kind === "contact" && !it.personType) it.personType = "contact";
     if (it.kind === "task" && !it.personType) it.personType = "unknown";
