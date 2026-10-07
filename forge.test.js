@@ -59,7 +59,9 @@ test("withholds pay rate from the client draft", function () {
   });
   assert.equal(email.subject, "HB Consultant Resume");
   assert.doesNotMatch(email.text, /Candidate Name:/);
-  assert.doesNotMatch(email.text, /Why Me:/);
+  assert.ok(email.text.indexOf("Why Me") < email.text.indexOf("Jack led the HB implementation"));
+  assert.match(email.text, /Why Me\n\nJack led the HB implementation/);
+  assert.ok(email.html.indexOf("<b>Why Me</b>") < email.html.indexOf("Jack led the HB implementation"));
   assert.match(email.text, /Availability: 2 weeks/);
   assert.match(email.text, /Location: Houston, TX/);
   assert.match(email.text, /Bill rate:\s*$/m);
@@ -68,6 +70,9 @@ test("withholds pay rate from the client draft", function () {
   assert.match(email.text, /^Hi,/);
   assert.match(email.text, /Rachel$/);
   assert.match(email.text, /Jack led the HB implementation/);
+  const blank = forge.composeEmail({ candidateName: "Jack Corbell", whyMe: "  ", signerName: "Rachel" });
+  assert.doesNotMatch(blank.text, /Why Me/);
+  assert.doesNotMatch(blank.html, /Why Me/);
 });
 
 test("prefers the job bill rate when comments repeat pay", function () {
@@ -306,7 +311,7 @@ test("forge page renders a draft button and sits after Submittal Tracker", funct
   assert.match(preview.textContent, /Subject: HB Consultant Resume/);
   assert.match(preview.textContent, /Hi Dana,/);
   assert.match(preview.textContent, /Led the HB build/);
-  assert.doesNotMatch(preview.textContent, /Why Me:/);
+  assert.match(preview.textContent, /Why Me\n\nLed the HB build/);
   assert.doesNotMatch(preview.textContent, /Candidate Name:/);
   assert.match(preview.textContent, /Bill rate: \$185\/hr/);
   assert.match(preview.textContent, /Epic HB Analyst/);
@@ -457,6 +462,7 @@ test("draft route posts to Graph and never sends", async function () {
     const sent = JSON.parse(calls[0].body);
     assert.match(sent.body.content, /Bill rate/);
     assert.match(sent.body.content, /Hi Dana/);
+    assert.ok(sent.body.content.indexOf("<b>Why Me</b>") < sent.body.content.indexOf("Jack led the HB implementation"));
     assert.doesNotMatch(sent.body.content, /\$95/);
     assert.doesNotMatch(sent.body.content, /Candidate Name/);
     assert.match(calls[1].endpoint, /\/attachments/);
@@ -508,6 +514,7 @@ test("scope refusal returns the email instead of sending", async function () {
     assert.equal(draft.json.reason, "graph_scope");
     assert.match(draft.json.instructions, /Mail\.ReadWrite/);
     assert.match(draft.json.bodyText, /Sharing Jack Corbell/);
+    assert.match(draft.json.bodyText, /Why Me\n\nJack led the HB implementation/);
     assert.doesNotMatch(draft.json.bodyText, /Candidate Name:/);
     assert.match(draft.json.bodyText, /\$185\/hr/);
   } finally {

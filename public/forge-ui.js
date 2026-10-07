@@ -397,7 +397,7 @@ function forgeEmailText(f) {
   var greeting = greet ? "Hi " + greet + "," : "Hi,";
   var intro = f.candidateName ? "Sharing " + f.candidateName + (f.jobTitle ? " for the " + f.jobTitle + " role" : "") + (f.clientName ? " at " + f.clientName : "") + "." : "Sharing a consultant for your review.";
   var lines = [greeting, "", intro, ""];
-  if ((f.whyMe || "").trim()) lines.push(f.whyMe, "");
+  if ((f.whyMe || "").trim()) lines.push("Why Me", "", f.whyMe.trim(), "");
   lines.push("Availability: " + (f.availability || ""), "Location: " + (f.location || ""), "Bill rate: " + (f.billRate || ""), "");
   var sig = [f.signerName, f.signerTitle, f.signerPhone].filter(function (x) { return x && String(x).trim(); });
   lines.push(sig.length ? sig.join("\n") : "Anura Connect");
