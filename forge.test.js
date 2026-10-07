@@ -1525,7 +1525,7 @@ const SYNCED_CLIENTS = [
   "Cook Children's",
 ];
 
-test("Why Me drops every other synced client and keeps this client", function () {
+test("Frary Why Me keeps experience and drops the other-client note", function () {
   const when = Date.parse("2026-10-01T15:00:00Z");
   assert.deepEqual(forge.clientAliases("Lahey"), ["lahey"]);
   assert.ok(forge.clientAliases("Lahey Hospital").indexOf("lahey") >= 0);
@@ -1538,10 +1538,14 @@ test("Why Me drops every other synced client and keeps this client", function ()
   assert.equal(forge.clientAliases("Cook Children's").indexOf("children") < 0, true);
   assert.ok(forge.clientAliases("Cook Children's").indexOf("cook children") >= 0);
 
+  const experience = "Former Epic AM for University Hospitals. Worked at Lahey, supported SSM, implemented at CHRISTUS, and ran a go-live at University Hospitals. Ex-Epic for Lahey.";
+  const pitch = "Led the SBO analyst work and kept the last go-live on track.";
   const mixed = [
-    "Why Me: Led the SBO analyst work and kept the last go-live on track.",
-    "Lahey: strong Epic analyst, would return.",
+    "Why Me: " + experience,
+    pitch,
     "He is calm with physicians and clear with analysts.",
+    FRARY_GOSSIP,
+    "Lahey: strong Epic analyst, would return.",
     "SSM ran a clean Waves go-live.",
     "Memorial Hermann: kept the last HB go-live on track.",
     "The hospital team liked the build.",
@@ -1551,6 +1555,7 @@ test("Why Me drops every other synced client and keeps this client", function ()
     "Hermann Medical: did a short contract.",
     "Lahey's team would bring him back.",
     "SSM's Waves cutover was already staffed.",
+    "For the other Lahey submission he was internally submitted.",
     "Bill Rate: $185/hr",
   ].join("\n");
   const row = {
@@ -1568,11 +1573,15 @@ test("Why Me drops every other synced client and keeps this client", function ()
     noteRow(mixed, { date_added: when, job_order_id: 9 }),
   ], SYNCED_CLIENTS);
   assert.equal(facts.why.source, "from notes");
-  assert.match(facts.why.text, /Led the SBO analyst work/);
-  assert.match(facts.why.text, /calm with physicians/);
-  assert.match(facts.why.text, /Memorial Hermann: kept the last HB go-live on track/);
-  assert.match(facts.why.text, /The hospital team liked the build/);
-  assert.doesNotMatch(facts.why.text, /\bLahey\b|\bSSM\b|\bCHRISTUS\b|University Hospitals|Cook Children|Hermann Medical/);
+  assert.equal(facts.why.text, [
+    experience,
+    pitch,
+    "He is calm with physicians and clear with analysts.",
+    "SSM ran a clean Waves go-live.",
+    "Memorial Hermann: kept the last HB go-live on track.",
+    "The hospital team liked the build.",
+  ].join("\n"));
+  assert.doesNotMatch(facts.why.text, /weird stuff|the AM|one FTE|happy to go back|would return|bring him back|already staffed|on site for the last build|did a short contract|he is a strong analyst|other Lahey submission/i);
   assert.equal(facts.bill.billRate, "$185/hr");
   const email = forge.composeEmail({
     candidateName: "Christopher Frary",
@@ -1585,7 +1594,13 @@ test("Why Me drops every other synced client and keeps this client", function ()
     subject: forge.subjectFor("SBO Analyst", "", "Christopher Frary"),
     signerName: "Rachel",
   });
-  assert.doesNotMatch(email.subject + "\n" + email.text + "\n" + email.html, /\bLahey\b|\bSSM\b|\bCHRISTUS\b|University Hospitals|Cook Children|Hermann Medical/);
+  assert.match(email.text, /Former Epic AM for University Hospitals/);
+  assert.match(email.text, /Worked at Lahey/);
+  assert.match(email.text, /supported SSM/);
+  assert.match(email.text, /implemented at CHRISTUS/);
+  assert.match(email.text, /go-live at University Hospitals/);
+  assert.match(email.text, /Ex-Epic for Lahey/);
+  assert.doesNotMatch(email.subject + "\n" + email.text + "\n" + email.html, /weird stuff|the AM|one FTE|happy to go back/);
 
   function whyFor(clientName) {
     return forge.submissionFacts(Object.assign({}, row, { client_name: clientName }), [
@@ -1593,19 +1608,32 @@ test("Why Me drops every other synced client and keeps this client", function ()
     ], SYNCED_CLIENTS).why.text;
   }
   const asLahey = whyFor("Lahey");
-  assert.match(asLahey, /\bLahey\b/);
-  assert.match(asLahey, /Lahey's team would bring him back/);
-  assert.doesNotMatch(asLahey, /Memorial Hermann|\bSSM\b|\bCHRISTUS\b|University Hospitals|Cook Children|Hermann Medical/);
+  assert.match(asLahey, /Worked at Lahey/);
+  assert.match(asLahey, /Lahey: strong Epic analyst, would return/);
+  assert.match(asLahey, /supported SSM/);
+  assert.match(asLahey, /implemented at CHRISTUS/);
+  assert.doesNotMatch(asLahey, /weird stuff|bring him back|already staffed|Memorial Hermann: kept/);
   const asSsm = whyFor("SSM");
-  assert.match(asSsm, /\bSSM\b/);
-  assert.match(asSsm, /SSM's Waves cutover was already staffed/);
-  assert.doesNotMatch(asSsm, /\bLahey\b|\bCHRISTUS\b|Memorial Hermann|University Hospitals/);
+  assert.match(asSsm, /supported SSM/);
+  assert.match(asSsm, /SSM ran a clean Waves go-live/);
+  assert.match(asSsm, /Worked at Lahey/);
+  assert.doesNotMatch(asSsm, /weird stuff|Lahey: strong Epic|already staffed|Memorial Hermann: kept/);
   const asChristus = whyFor("CHRISTUS");
-  assert.match(asChristus, /\bCHRISTUS\b/);
-  assert.doesNotMatch(asChristus, /\bLahey\b|\bSSM\b|Memorial Hermann|University Hospitals/);
+  assert.match(asChristus, /implemented at CHRISTUS/);
+  assert.match(asChristus, /CHRISTUS: kept the last HB cutover on track/);
+  assert.match(asChristus, /Former Epic AM for University Hospitals/);
+  assert.doesNotMatch(asChristus, /weird stuff|Lahey: strong Epic/);
+  const asUh = whyFor("University Hospitals");
+  assert.match(asUh, /Former Epic AM for University Hospitals/);
+  assert.match(asUh, /Worked at Lahey/);
+  assert.match(asUh, /supported SSM/);
+  assert.match(asUh, /implemented at CHRISTUS/);
+  assert.match(asUh, /University Hospitals: he is a strong analyst/);
+  assert.doesNotMatch(asUh, /weird stuff|the AM|one FTE|happy to go back|Lahey: strong Epic/);
   const asLaheyHospital = whyFor("Lahey Hospital");
-  assert.match(asLaheyHospital, /\bLahey\b/);
-  assert.doesNotMatch(asLaheyHospital, /\bSSM\b|\bCHRISTUS\b|Memorial Hermann/);
+  assert.match(asLaheyHospital, /Worked at Lahey/);
+  assert.match(asLaheyHospital, /Lahey: strong Epic analyst/);
+  assert.doesNotMatch(asLaheyHospital, /weird stuff/);
 
   const guessed = forge.submissionFacts(row, [
     noteRow("Why Me: Lahey: strong Epic analyst.\nSSM ran a clean Waves go-live.\nCHRISTUS: kept the cutover.\nThe hospital team liked the build.", { date_added: when, job_order_id: 9 }),
@@ -1623,12 +1651,19 @@ test("Why Me drops every other synced client and keeps this client", function ()
   });
   assert.equal(loc.text, "Houston, TX");
   const avail = forge.pickAvailability({
-    commentAvail: "Immediately\nSSM can start next month",
+    commentAvail: "Immediately\nSSM: can start next month",
     clientName: "Memorial Hermann",
     jobTitle: "SBO Analyst",
     clients: SYNCED_CLIENTS,
   });
   assert.equal(avail.text, "Immediately");
+  const experienceAvail = forge.pickAvailability({
+    commentAvail: "Two weeks after the Lahey go-live",
+    clientName: "Memorial Hermann",
+    jobTitle: "SBO Analyst",
+    clients: SYNCED_CLIENTS,
+  });
+  assert.equal(experienceAvail.text, "Two weeks after the Lahey go-live");
 
   const blocked = forge.findInternalLeak(
     ["Lahey: strong Epic analyst, would return."],
@@ -1648,6 +1683,20 @@ test("Why Me drops every other synced client and keeps this client", function ()
     [],
     { clientName: "Lahey", jobTitle: "SBO Analyst", clients: SYNCED_CLIENTS }
   ), null);
+  assert.equal(forge.findInternalLeak(
+    [experience],
+    [],
+    { clientName: "Memorial Hermann", jobTitle: "SBO Analyst", clients: SYNCED_CLIENTS }
+  ), null);
+  const onlyGossip = forge.submissionFacts(row, [
+    noteRow("Why Me:\n" + FRARY_GOSSIP + "\nBill Rate: $185/hr", { date_added: when, job_order_id: 9 }),
+  ], SYNCED_CLIENTS);
+  assert.equal(onlyGossip.why.text, "");
+  assert.equal(onlyGossip.bill.billRate, "$185/hr");
+  assert.ok(onlyGossip.flags.some(function (f) {
+    return f.code === "why_me_withheld" && /left blank/.test(f.message);
+  }));
+  assert.equal(onlyGossip.flags.some(function (f) { return f.code === "why_me_missing"; }), false);
 
   const ambiguous = forge.submissionFacts({
     comments: "",
@@ -1749,7 +1798,7 @@ test("preview email drops a trailing internal note from the Why Me note", async 
   }
 });
 
-test("preview drops short client names from the synced clients table", async function () {
+test("preview keeps Frary's experience and drops the University Hospitals recruiter note", async function () {
   const when = Date.parse("2026-10-01T15:00:00Z");
   const row = fixtureRow();
   row.candidate_name = "Christopher Frary";
@@ -1762,10 +1811,13 @@ test("preview drops short client names from the synced clients table", async fun
   row.job_title_live = "SBO Analyst";
   row.client_name = "Memorial Hermann";
   row.job_skills = "";
+  const experience = "Former Epic AM for University Hospitals. Worked at Lahey, supported SSM, implemented at CHRISTUS, and ran a go-live at University Hospitals. Ex-Epic for Lahey.";
   const note = noteRow([
-    "Why Me: Led the SBO analyst work and kept the last go-live on track.",
+    "Why Me: " + experience,
+    "Led the SBO analyst work and kept the last go-live on track.",
     "Memorial Hermann: kept the last HB go-live on track.",
     "The hospital team liked the build.",
+    FRARY_GOSSIP,
     "Lahey: strong Epic analyst, would return.",
     "SSM ran a clean Waves go-live.",
     "CHRISTUS: kept the last HB cutover on track.",
@@ -1799,14 +1851,22 @@ test("preview drops short client names from the synced clients table", async fun
     const preview = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
     assert.equal(preview.status, 200, preview.text);
     assert.equal(preview.json.draft.whyMeSource, "from notes");
-    assert.match(preview.json.draft.whyMe, /go-live/);
-    assert.match(preview.json.draft.whyMe, /Memorial Hermann/);
+    assert.match(preview.json.draft.whyMe, /Former Epic AM for University Hospitals/);
+    assert.match(preview.json.draft.whyMe, /Worked at Lahey/);
+    assert.match(preview.json.draft.whyMe, /supported SSM/);
+    assert.match(preview.json.draft.whyMe, /implemented at CHRISTUS/);
+    assert.match(preview.json.draft.whyMe, /go-live at University Hospitals/);
+    assert.match(preview.json.draft.whyMe, /Ex-Epic for Lahey/);
+    assert.match(preview.json.draft.whyMe, /Led the SBO analyst work/);
+    assert.match(preview.json.draft.whyMe, /Memorial Hermann: kept the last HB go-live/);
     assert.match(preview.json.draft.whyMe, /hospital team/);
-    assert.doesNotMatch(preview.json.draft.whyMe, /\bLahey\b|\bSSM\b|\bCHRISTUS\b/);
+    assert.match(preview.json.draft.whyMe, /SSM ran a clean Waves go-live/);
+    assert.doesNotMatch(preview.json.draft.whyMe, /weird stuff|the AM|one FTE|happy to go back|would return|kept the last HB cutover/);
     const emailBlob = preview.json.email.subject + "\n" + preview.json.email.text + "\n" + preview.json.email.html;
-    assert.doesNotMatch(emailBlob, /\bLahey\b|\bSSM\b|\bCHRISTUS\b/);
+    assert.match(emailBlob, /Worked at Lahey/);
+    assert.doesNotMatch(emailBlob, /weird stuff|the AM|one FTE|happy to go back/);
     const blocked = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
-      whyMe: "Lahey: strong Epic analyst, would return.",
+      whyMe: FRARY_GOSSIP,
       availability: "Immediately",
       location: "Houston, TX",
       billRate: "$185/hr",
@@ -1814,23 +1874,25 @@ test("preview drops short client names from the synced clients table", async fun
     });
     assert.equal(blocked.status, 400);
     assert.equal(blocked.json.code, "internal_leak");
-    assert.equal(blocked.json.rule, "other client");
-    assert.match(blocked.json.snippet, /Lahey/);
-
-    row.client_name = "SSM";
-    const ssm = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
-    assert.equal(ssm.status, 200, ssm.text);
-    assert.match(ssm.json.draft.whyMe, /\bSSM\b/);
-    assert.doesNotMatch(ssm.json.draft.whyMe, /\bLahey\b|\bCHRISTUS\b|Memorial Hermann/);
-    const kept = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
-      whyMe: "SSM ran a clean Waves go-live.",
+    assert.match(blocked.json.snippet, /University Hospitals|the AM|weird stuff/);
+    const experienceDraft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      whyMe: experience,
       availability: "Immediately",
       location: "Houston, TX",
       billRate: "$185/hr",
       to: "dana@mh.example",
     });
-    assert.equal(kept.json.code, "resume_required");
-    assert.notEqual(kept.json.code, "internal_leak");
+    assert.equal(experienceDraft.json.code, "resume_required");
+    assert.notEqual(experienceDraft.json.code, "internal_leak");
+
+    row.client_name = "University Hospitals";
+    const uh = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
+    assert.equal(uh.status, 200, uh.text);
+    assert.match(uh.json.draft.whyMe, /Former Epic AM for University Hospitals/);
+    assert.match(uh.json.draft.whyMe, /Worked at Lahey/);
+    assert.match(uh.json.draft.whyMe, /supported SSM/);
+    assert.match(uh.json.draft.whyMe, /implemented at CHRISTUS/);
+    assert.doesNotMatch(uh.json.draft.whyMe, /weird stuff|the AM|one FTE|Lahey: strong Epic/);
   } finally {
     server.close();
   }

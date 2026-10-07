@@ -8,8 +8,10 @@
  * Résumés come from Bullhorn Candidate file attachments (PDFs). The client
  * email may only use Why Me, Availability, Location, and Bill Rate.
  * Blank bill rate and Why Me fall back to Bullhorn notes. A filled field is kept.
- * A client draft only keeps Why Me for this job. A line that names any other
- * client from the synced clients table is left out, as is recruiter commentary.
+ * A client draft keeps career experience, including other health systems
+ * ("former Epic AM for University Hospitals"). It leaves out a note that uses
+ * another synced client as a label, and recruiter commentary about another
+ * submission. If that is the only Why Me, the field stays blank with a warning.
  * Rate checks use Dan's W-2 / 1099 split and never invent a rate.
  */
 "use strict";
@@ -695,6 +697,8 @@ function internalCommentaryIndex(line) {
     /\bhappy to go back\b/i,
     /\bweird stuff\b/i,
     /\bonly had one FTE\b/i,
+    /\bbring\s+(?:him|her|them)\s+back\b/i,
+    /\balready staffed\b/i,
   ];
   let at = -1;
   patterns.forEach(function (re) {
@@ -705,34 +709,89 @@ function internalCommentaryIndex(line) {
 }
 
 /**
+ * Career history. Naming University Hospitals, Lahey, SSM, or CHRISTUS here
+ * is the candidate's experience, not a note about another submission.
+ */
+function careerExperience(line) {
+  const s = String(line || "");
+  return /\b(?:worked|working)\b/i.test(s)
+    || /\bsupported\b/i.test(s)
+    || /\bformer(?:ly)?\b/i.test(s)
+    || /\bex[-\s]+epic\b/i.test(s)
+    || /\bimplement(?:ed|ation|ing)\b/i.test(s)
+    || /\bgo[-\s]?live\s+at\b/i.test(s)
+    || /\bpreviously\s+(?:at|with|for)\b/i.test(s)
+    || /\bwhile\s+(?:at|with)\b/i.test(s)
+    || /\bexperience\s+(?:at|with|from)\b/i.test(s);
+}
+
+/** Another synced client used as a line label ("University Hospitals:"), or a line that is only that name. */
+function otherClientLabel(line, ctx) {
+  const index = clientMatchIndex(ctx);
+  if (!index.others.length) return "";
+  const raw = String(line || "").replace(/^\s*(?:[-*•]\s*)+/, "").trim();
+  if (!raw) return "";
+  const whole = normalizeClientName(raw);
+  if (index.others.indexOf(whole) >= 0 && !index.mine[whole]) return whole;
+  const sep = raw.match(/^(.{2,80}?)\s*[:|]\s+\S/) || raw.match(/^(.{2,80}?)\s+[—–]\s+\S/) || raw.match(/^(.{2,80}?)\s+-\s+\S/);
+  if (!sep) return "";
+  const left = normalizeClientName(sep[1]);
+  if (!left || index.mine[left]) return "";
+  if (index.others.indexOf(left) >= 0) return left;
+  return "";
+}
+
+/** A sentence about a different submission, not the candidate's work history. */
+function otherSubmissionMention(line, ctx) {
+  if (!otherClientMention(line, ctx)) return false;
+  return /\b(?:another|other|different)\s+(?:submission|submittal|job|req|opening)\b/i.test(line)
+    || /\binternally\s+submitted\b/i.test(line)
+    || /\bclient\s+submitted\b/i.test(line);
+}
+
+/**
  * Index where client-facing text must stop, or -1 to keep the line.
- * A line that names any synced client other than this submission is dropped.
  * Recruiter commentary is cut at the sentence that starts it.
+ * A line that merely names another health system is kept when it is experience.
+ * A line that labels another client, or talks about another submission, is dropped.
  */
 function findCut(line, ctx) {
   const text = String(line || "");
-  if (otherClientMention(text, ctx)) return 0;
   const internalAt = internalCommentaryIndex(text);
-  if (internalAt < 0) return -1;
-  if (internalAt === 0) return 0;
-  const prev = text.slice(0, internalAt);
-  const boundary = Math.max(prev.lastIndexOf(". "), prev.lastIndexOf("! "), prev.lastIndexOf("? "), prev.lastIndexOf("\n"));
-  if (boundary >= 0) return boundary + 1;
-  return 0;
+  if (internalAt >= 0) {
+    if (internalAt === 0) return 0;
+    const prev = text.slice(0, internalAt);
+    const boundary = Math.max(prev.lastIndexOf(". "), prev.lastIndexOf("! "), prev.lastIndexOf("? "), prev.lastIndexOf("\n"));
+    if (boundary >= 0) return boundary + 1;
+    return 0;
+  }
+  if (careerExperience(text)) return -1;
+  if (otherClientLabel(text, ctx)) return 0;
+  if (otherSubmissionMention(text, ctx)) return 0;
+  return -1;
 }
 
-/** Drop lines that name another synced client, and internal commentary. Keep this client's lines. */
+function keptPortion(line, ctx) {
+  const text = String(line || "").trim();
+  if (!text) return "";
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  if (sentences.length > 1) {
+    return sentences.map(function (sentence) { return keptPortion(sentence, ctx); }).filter(Boolean).join(" ");
+  }
+  const cut = findCut(text, ctx);
+  if (cut < 0) return text;
+  if (cut === 0) return "";
+  const head = text.slice(0, cut).trim();
+  if (!head || findCut(head, ctx) === 0) return "";
+  return head;
+}
+
+/** Drop other-client labels and internal commentary. Keep experience that names another health system. */
 function clientFacingText(text, ctx) {
   const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
   const kept = [];
   for (let i = 0; i < lines.length; i++) {
-    const cut = findCut(lines[i], ctx || {});
-    if (cut < 0) {
-      kept.push(lines[i]);
-      continue;
-    }
-    if (cut === 0) continue;
-    const head = lines[i].slice(0, cut).trim();
+    const head = keptPortion(lines[i], ctx || {});
     if (head) kept.push(head);
   }
   return kept.join("\n").trim();
@@ -741,26 +800,31 @@ function clientFacingText(text, ctx) {
 function findClientNoteLeak(blob, ctx) {
   const lines = String(blob || "").split("\n");
   for (let i = 0; i < lines.length; i++) {
-    const other = otherClientMention(lines[i], ctx);
-    if (other) {
-      const re = new RegExp("\\b" + escapeRegExp(other.split(" ")[0]) + "\\b", "i");
-      const m = lines[i].match(re);
-      const at = m ? m.index : 0;
-      return { rule: "other client", snippet: snippetAround(lines[i], at, m ? m[0].length : other.length) };
+    const sentences = String(lines[i] || "").split(/(?<=[.!?])\s+/);
+    for (let s = 0; s < sentences.length; s++) {
+      const sentence = sentences[s];
+      const cut = findCut(sentence, ctx || {});
+      if (cut < 0) continue;
+      const label = otherClientLabel(sentence, ctx || {});
+      if (cut === 0 && label && !careerExperience(sentence)) {
+        const re = new RegExp("\\b" + escapeRegExp(label.split(" ")[0]) + "\\b", "i");
+        const m = sentence.match(re);
+        const at = m ? m.index : 0;
+        return { rule: "other client", snippet: snippetAround(sentence, at, m ? m[0].length : label.length) };
+      }
+      const from = sentence.slice(cut).trim() || sentence.trim();
+      return { rule: "internal note", snippet: snippetAround(sentence, cut, Math.max(from.length, 1)) };
     }
-    const cut = findCut(lines[i], ctx || {});
-    if (cut < 0) continue;
-    const from = lines[i].slice(cut).trim() || lines[i].trim();
-    return { rule: "internal note", snippet: snippetAround(lines[i], cut, Math.max(from.length, 1)) };
   }
   return null;
 }
 
-/** Why Me is the labeled section only. No preamble, no other client's note, no recruiter aside. */
+/** Why Me is the labeled section only. Experience stays. Another client's note does not. */
 function templateWhyMe(parts) {
+  const raw = String(parts.commentWhy || "").trim();
   const comment = clientFacingText(parts.commentWhy, parts);
-  if (comment) return { text: comment, source: "comments" };
-  return { text: "", source: "missing" };
+  if (comment) return { text: comment, source: "comments", withheld: false };
+  return { text: "", source: "missing", withheld: !!raw };
 }
 
 const DAY_MS = 86400000;
@@ -945,6 +1009,13 @@ function chooseNoteField(notes, ctx, read) {
   return { value: best.value, ambiguous: false, row: best };
 }
 
+function notesContainUnsafeWhy(notes, ctx) {
+  return (notes || []).some(function (note) {
+    const raw = String(parseSubmissionComments(plainNote(note)).whyMe || "").trim();
+    return !!raw && !clientFacingText(raw, ctx);
+  });
+}
+
 /**
  * Fill a blank bill rate or Why Me from notes. A value already chosen from a
  * field, the submission comments, or the job is left as it is.
@@ -995,10 +1066,14 @@ function applyNoteFallback(bill, why, notes, ctx) {
       nextWhy.text = "";
       nextWhy.source = "missing";
       nextWhy.ambiguous = true;
+      nextWhy.withheld = false;
     } else if (chosen.value) {
       nextWhy.text = chosen.value;
       nextWhy.source = "from notes";
       nextWhy.ambiguous = false;
+      nextWhy.withheld = false;
+    } else if (nextWhy.withheld || notesContainUnsafeWhy(notes, ctx)) {
+      nextWhy.withheld = true;
     }
   }
   return { bill: nextBill, why: nextWhy, siteLead: siteLead, payFromNote: payFromNote, employment: employment, noteText: noteText };
@@ -1067,7 +1142,11 @@ function submissionFacts(row, notes, clients) {
     flags.push({ level: "warn", code: "why_me_ambiguous", message: "More than one note has a Why Me and none is tied to this job. None was used." });
   }
   if (!filled.why.text) {
-    flags.push({ level: "alert", code: "why_me_missing", message: "No Why Me in the submission comments or notes. Write one." });
+    if (filled.why.withheld) {
+      flags.push({ level: "warn", code: "why_me_withheld", message: "Why Me in the notes was internal or about another submission, so it was left blank." });
+    } else {
+      flags.push({ level: "alert", code: "why_me_missing", message: "No Why Me in the submission comments or notes. Write one." });
+    }
   }
   if (rateCheck.status === "off") {
     flags.push({ level: "warn", code: "rate_split", message: rateCheck.message });
