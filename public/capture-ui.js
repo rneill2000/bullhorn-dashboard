@@ -67,6 +67,7 @@ async function captureParse(){
         newPerson: { firstName:p.firstName||"", lastName:p.lastName||"", title:p.title||"", department:p.department||"", email:p.email||"", phone:p.phone||"", mobile:p.mobile||"", preferredRole:p.preferredRole||"", availableDate:p.availableDate||"", payRate:p.payRate||"", candidateStatus:p.candidateStatus||"" },
         subject: it.subject||"", dueDate: it.dueDate||"", taskType: it.taskType||"Other", billRate: it.billRate||"",
         jobId: s.jobId||null, jobLabel: s.jobId?_capJobLabel(it,s.jobId):"", jobHint: it.jobHint||"", appendNotes: it.appendNotes||"", changes: it.changes||{},
+        jobIds: (s.jobIds||[]).slice(), noteJobs: (it.matches&&it.matches.noteJobs)||[],
         hasPerson: !!(p.firstName||p.lastName),
         clientId: s.clientId||null,
         clientLabel: s.clientId ? _capClientLabel(it, s.clientId) : "",
@@ -143,6 +144,8 @@ function _capAnswer(i,qi,oi){
   if(o.yearsRequired!=null){ it.yearsRequired=o.yearsRequired; }
   if(o.pursuitSource){ it.pursuitSource=o.pursuitSource; }
   if(o.jobId){ it.jobId=o.jobId; it.jobLabel=o.label; }
+  if(o.jobIds){ it.jobIds=o.jobIds.slice(); }
+  if(o.nojob){ it.jobIds=[]; }
   if(o.nolink){ it.personId=null; it.newPerson.firstName=""; it.newPerson.lastName=""; }
   if(o.dueDays!=null){ var dd=new Date(); dd.setDate(dd.getDate()+o.dueDays); it.dueDate=dd.toISOString().slice(0,10); }
   // the same answer applies to every entry about this person
@@ -264,10 +267,22 @@ function _capCard(it,i){
     h+='<div class="cap-row"><label>Type</label><select class="cap-sel" onchange="_capSet('+i+',\'action\',this.value)">'+["Appointment","Outbound Call","Inbound Call","Email","Text Conversation","Left Message","Reached Out","LinkedIn InMail","Prescreen","Reference"].map(function(s){return '<option'+(it.action===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
     h+='<div class="cap-row"><label>Note</label><textarea class="cap-in cap-ta2" oninput="_capSet('+i+',\'comments\',this.value)">'+esc(it.comments)+'</textarea></div>';
     h+='<div class="cap-row"><label>Next step</label><input class="cap-in" value="'+esc(it.followUp)+'" placeholder="Optional \u2014 appended to the note" oninput="_capSet('+i+',\'followUp\',this.value)"></div>';
+    h+=_capNoteJobsRow(it,i);
   }
   h+='</div>';
   return h;
 }
+function _capNoteJobLabel(it,id){ var m=(it.noteJobs||[]).filter(function(x){return x.id===id;})[0]; return m ? m.name+(m.sub?' \u2014 '+m.sub:'') : 'Job #'+id; }
+function _capNoteJobsRow(it,i){
+  var ids=it.jobIds||[], opts=(it.noteJobs||[]).filter(function(m){ return ids.indexOf(m.id)<0; });
+  if(!ids.length && !opts.length) return '';
+  var h='<div class="cap-row"><label>Also on job</label><div>';
+  if(ids.length) h+=ids.map(function(id){ return '<div class="cap-match" style="margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:#166534">&#10003; '+esc(_capNoteJobLabel(it,id))+'</span><button class="btn-outline" style="padding:2px 8px;font-size:12px" title="Don\'t add to this job" onclick="_capNoteJob('+i+','+id+',false)">&times;</button></div>'; }).join('');
+  else h+='<div style="font-size:12px;color:#64748b;margin-bottom:4px">Person only \u2014 not added to a job.</div>';
+  if(opts.length) h+='<select class="cap-sel" style="width:auto" onchange="if(this.value)_capNoteJob('+i+',parseInt(this.value),true)"><option value="">+ Add to another job\u2026</option>'+opts.map(function(m){ return '<option value="'+m.id+'">'+esc(m.name+(m.sub?' \u2014 '+m.sub:''))+'</option>'; }).join('')+'</select>';
+  return h+'</div></div>';
+}
+function _capNoteJob(i,id,add){ var it=_cap.items[i]; it.jobIds=(it.jobIds||[]).filter(function(x){return x!==id;}); if(add) it.jobIds.push(id); _capRefresh(i); }
 function _capSet(i,k,v){ _cap.items[i][k]=v; }
 function _capRefresh(i){ var el=document.getElementById("cap-card-"+i); if(el) el.outerHTML=_capCard(_cap.items[i],i); }
 function _capPick(i,id,label,clientId,clientName){ var it=_cap.items[i]; it.personId=id; it.personLabel=label; if(clientId&&!it.clientId){ it.clientId=clientId; it.clientLabel=clientName; } _capRefresh(i); }
@@ -321,7 +336,7 @@ async function captureCommit(){
       kind:it.kind, skip: it.skip||!!done,
       personType:it.personType, personId:it.personId, newPerson: (it.personId&&it.kind!=="contact"&&it.kind!=="job_update")?null:it.newPerson,
       clientId:it.clientId, newClient: it.clientId?null:it.newClient, forceCreate: !!it.forceCreate, forceCreateClient: !!it.forceCreateClient,
-      action:it.action, comments:it.comments, followUp:it.followUp,
+      action:it.action, comments:it.comments, followUp:it.followUp, jobIds:(it.kind==="note"?(it.jobIds||[]):[]),
       title:it.title, status:it.status, type:it.type, description:it.description, nextStep:it.nextStep, estimatedStart:it.estimatedStart, dealValue:it.dealValue,
       employmentType:it.employmentType, numOpenings:it.numOpenings, startDate:it.startDate, endDate:it.endDate, yearsRequired:it.yearsRequired, pursuitSource:it.pursuitSource,
       jobId:it.jobId, appendNotes:it.appendNotes, changes:it.changes, subject:it.subject, dueDate:it.dueDate, taskType:it.taskType, billRate:it.billRate

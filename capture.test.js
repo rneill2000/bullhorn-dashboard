@@ -4,13 +4,15 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 
-function harness(aiItems) {
+function harness(aiItems, opts) {
+  opts = opts || {};
   const routes = {};
   const app = { get: (p, f) => (routes["GET " + p] = f), post: (p, f) => (routes["POST " + p] = f) };
   const writes = [], fetchAllCalls = [];
   const db = {
     ready: true,
-    getAll: async (sql) => {
+    getAll: async (sql, vals) => {
+      if (opts.getAll) { const r = await opts.getAll(sql, vals); if (r) return r; }
       if (/FROM client_contacts WHERE client_id=\$1/.test(sql)) return [{ id: 11, first_name: "Dana", last_name: "Lee", occupation: "Director of IT", client_id: 284, client_name: "Skagit Regional Health" }];
       if (/FROM clients/.test(sql)) return [{ id: 284, name: "Skagit Regional Health", status: "Active Account" }];
       return [];
@@ -22,7 +24,7 @@ function harness(aiItems) {
     db,
     bhWrite: async (path, body, method) => { writes.push({ path, body, method }); return { changedEntityId: 999 }; },
     bhFetchAll: async (path, q) => { fetchAllCalls.push({ path, q }); return { data: [{ id: 77, firstName: "Random", lastName: "Person" }] }; },
-    bhFetch: async () => ({ data: { id: 999, comments: "x", status: "Accepting Candidates", clientCorporation: { id: 284 } } }),
+    bhFetch: opts.bhFetch || (async () => ({ data: { id: 999, comments: "x", status: "Accepting Candidates", clientCorporation: { id: 284 } } })),
     getUser: () => ({ id: 5, name: "Rachel Neill" }),
   };
   process.env.ANTHROPIC_API_KEY = "test";
@@ -121,4 +123,66 @@ test("colleague full name is internal even with no company; a client contact who
   assert.ok(r.body.items[0].internal);
   assert.ok(!r.body.items[1].internal, "Peter at a client stays a client task");
   assert.strictEqual(r.body.items[1].company, "Skagit Regional Health");
+});
+
+// Real shapes from the live queue (10/6): Bryce #810 -> job 336; Jonathan #880 -> HB 338, #885 -> SBO Analyst 357
+function subsDb(sql, vals) {
+  if (/FROM candidates/.test(sql)) {
+    const first = String((vals || []).join(" ")).toLowerCase();
+    if (/bryce|plemons/.test(first)) return [{ id: 5968, first_name: "Bryce", last_name: "Plemons", occupation: "Cadence/Prelude/Referrals Architect", status: "Active" }];
+    if (/jonathan|hawkins/.test(first)) return [{ id: 5486, first_name: "Jonathan", last_name: "Hawkins", occupation: "HB Consultant", status: "Active" }];
+  }
+  if (/FROM submissions s/.test(sql)) {
+    if (vals[0] === 5968) return [{ id: 810, job_id: 336, status: "Internally Submitted", title: "Access Analyst (MyChart/Cadence/Referrals)", client_name: "Skagit Regional Health" }];
+    if (vals[0] === 5486) return [{ id: 885, job_id: 357, status: "Internally Submitted", title: "SBO Analyst", client_name: "" }, { id: 880, job_id: 338, status: "Internally Submitted", title: "HB", client_name: "" }];
+  }
+  return null;
+}
+
+test("candidate note is matched to the submission it talks about (Bryce -> Skagit Access Analyst, Jonathan -> SBO)", async () => {
+  fresh();
+  const h = harness([
+    { kind: "note", person: { firstName: "Bryce", lastName: "Plemons" }, personType: "candidate", comments: "Still very interested", jobHint: "Skagit access analyst role" },
+    { kind: "note", person: { firstName: "Jonathan", lastName: "Hawkins" }, personType: "candidate", comments: "Has an offer elsewhere", jobHint: "the SBO role" },
+  ], { getAll: subsDb });
+  const r = await call(h.routes["POST /api/capture/parse"], { text: "Bryce and Jonathan updates" });
+  assert.deepStrictEqual(r.body.items[0].suggested.jobIds, [336]);
+  assert.deepStrictEqual(r.body.items[1].suggested.jobIds, [357], "SBO, not the HB submission");
+  assert.ok(!r.body.items[1].questions.some((q) => q.id === "notejob"));
+});
+
+test("vague job hint asks which job, with a person-only option", async () => {
+  fresh();
+  const h = harness([{ kind: "note", person: { firstName: "Jonathan", lastName: "Hawkins" }, personType: "candidate", comments: "Checked in", jobHint: "his analyst role" }], { getAll: subsDb });
+  const r = await call(h.routes["POST /api/capture/parse"], { text: "Jonathan check-in note" });
+  const q = r.body.items[0].questions.find((x) => x.id === "notejob");
+  assert.ok(q, "asks which job");
+  assert.ok(q.options.some((o) => o.jobIds && o.jobIds[0] === 357) && q.options.some((o) => o.jobIds && o.jobIds[0] === 338));
+  assert.ok(q.options.some((o) => o.nojob));
+});
+
+test("note with no job hint stays on the person only", async () => {
+  fresh();
+  const h = harness([{ kind: "note", person: { firstName: "Bryce", lastName: "Plemons" }, personType: "candidate", comments: "General catch-up", jobHint: null }], { getAll: subsDb });
+  const r = await call(h.routes["POST /api/capture/parse"], { text: "Bryce general catch-up" });
+  assert.deepStrictEqual(r.body.items[0].suggested.jobIds, []);
+});
+
+test("commit writes the note on the person AND the job, and verifies the job link by reading it back", async () => {
+  fresh();
+  const h = harness([], { bhFetch: async (path) => ({ data: /Note\/999/.test(path) ? { id: 999, comments: "x", personReference: { id: 5968 }, jobOrders: { total: 1, data: [{ id: 336 }] } } : { id: 999 } }) });
+  const r = await call(h.routes["POST /api/capture/commit"], { items: [{ kind: "note", personType: "candidate", personId: 5968, comments: "Still interested", action: "Outbound Call", jobIds: [336] }] });
+  const note = h.writes.find((w) => w.path === "entity/Note");
+  assert.strictEqual(note.body.personReference.id, 5968);
+  assert.ok(h.writes.some((w) => w.path === "entity/Note/999/jobOrders/336"));
+  assert.strictEqual(r.body.results[0].ok, true);
+  assert.ok(r.body.results[0].created.some((c) => c.type === "note on job" && c.verified === true));
+});
+
+test("commit flags the entry if Bullhorn does not show the job link on read-back", async () => {
+  fresh();
+  const h = harness([], { bhFetch: async () => ({ data: { id: 999, comments: "x", personReference: { id: 5968 }, jobOrders: { total: 0, data: [] } } }) });
+  const r = await call(h.routes["POST /api/capture/commit"], { items: [{ kind: "note", personType: "candidate", personId: 5968, comments: "Still interested", jobIds: [336] }] });
+  assert.strictEqual(r.body.results[0].ok, false);
+  assert.match(r.body.results[0].error, /not linked to 336/);
 });

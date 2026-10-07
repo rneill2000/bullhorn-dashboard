@@ -57,6 +57,7 @@ module.exports = function registerCapture(app, deps) {
       "  \"company\":\"organization name or null\",",
       "  \"action\":one of " + JSON.stringify(NOTE_ACTIONS) + " (in-person or video meeting = Appointment; a call the author made = Outbound Call; they called the author = Inbound Call),",
       "  \"comments\":\"the note text\",",
+      "  \"jobHint\":\"words naming the specific job/role/req this note is about (e.g. 'Skagit access analyst role', 'the SBO role'), or null if it is not about a specific job\",",
       "  \"followUp\":\"next step, or null\"},",
       " {\"kind\":\"task\",",
       "  \"subject\":\"short imperative, e.g. Follow up with Dana Ruiz re resumes\",",
@@ -197,6 +198,30 @@ module.exports = function registerCapture(app, deps) {
     }).sort(function (a, b) { return b.score - a.score; });
   }
 
+  // A candidate's submissions, newest first — the jobs a candidate note is most likely about.
+  async function candidateSubmissions(candidateId) {
+    if (!db.ready || !candidateId) return [];
+    const rows = await db.getAll("SELECT s.id, s.job_id, s.status, COALESCE(j.title, s.job_title) AS title, COALESCE(NULLIF(s.client_name,''), j.client_name) AS client_name, j.status AS job_status FROM submissions s LEFT JOIN jobs j ON j.id = s.job_id WHERE s.candidate_id=$1 AND s.job_id IS NOT NULL ORDER BY s.date_added DESC NULLS LAST LIMIT 15", [candidateId]).catch(function () { return []; });
+    const seen = {};
+    return rows.filter(function (r) { if (seen[r.job_id]) return false; seen[r.job_id] = 1; return true; })
+      .map(function (r) { return { kind: "job", id: r.job_id, submissionId: r.id, name: r.title || ("Job #" + r.job_id), clientName: r.client_name || "", sub: [r.client_name, "submission #" + r.id + " · " + (r.status || "")].filter(Boolean).join(" · ") }; });
+  }
+  // Pick the one job the hint clearly points to (title + client words); null if unclear.
+  function pickJob(list, hint) {
+    // Generic words never decide which job a note belongs to — only distinctive ones (client, module, SBO, Cadence…)
+    const GENERIC = ["role", "job", "req", "position", "the", "opening", "openings", "his", "her", "their", "new", "current", "that", "this", "analyst", "consultant", "epic", "contract", "remote", "lead", "senior", "sr"];
+    const ht = tokens(hint).filter(function (t) { return !GENERIC.includes(t); });
+    if (!ht.length || !list.length) return null;
+    const scored = list.map(function (j) {
+      const hay = norm((j.name || "") + " " + (j.clientName || ""));
+      const hit = ht.filter(function (t) { return hay.split(" ").some(function (w) { return w === t || (t.length > 3 && w.startsWith(t)); }); }).length;
+      return { j: j, s: Math.round(100 * hit / ht.length) };
+    }).sort(function (a, b) { return b.s - a.s; });
+    if (scored[0].s < 50) return null;
+    if (scored[1] && scored[1].s === scored[0].s) return null; // tie: ask
+    return scored[0].j;
+  }
+
   async function enrichItem(it) {
     // A to-do about an Anura colleague ("send Peter the rate sheet") is the author's own reminder:
     // never let it match a client contact or candidate who happens to share the name.
@@ -226,6 +251,20 @@ module.exports = function registerCapture(app, deps) {
       out.matches.jobs = await findJobs(out.suggested.clientId, it.jobHint);
       const bj = out.matches.jobs[0];
       if (bj && bj.score >= 60 && !(out.matches.jobs[1] && out.matches.jobs[1].score >= bj.score)) out.suggested.jobId = bj.id;
+    }
+    // Which job(s) is a note about? Candidate: their submissions. Contact: that client's jobs.
+    let noteJobQ = null;
+    if (it.kind === "note") {
+      let jl = [];
+      if (out.suggested.personType === "candidate" && out.suggested.personId) jl = await candidateSubmissions(out.suggested.personId);
+      else if (out.suggested.clientId) jl = (await findJobs(out.suggested.clientId, it.jobHint || "")).filter(function (j) { return j.open; });
+      out.matches.noteJobs = jl.slice(0, 8);
+      out.suggested.jobIds = [];
+      if (it.jobHint) {
+        const best = pickJob(out.matches.noteJobs, it.jobHint);
+        if (best) out.suggested.jobIds = [best.id];
+        else if (out.matches.noteJobs.length) noteJobQ = { id: "notejob", text: "Which job is this note about (\"" + it.jobHint + "\")? It will be added to that job too.", options: out.matches.noteJobs.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), jobIds: [m.id] }; }).concat([{ label: "Not a specific job — person only", nojob: true }]) };
+      }
     }
     // Questions the tool needs answered before it will write anything
     const qs = [];
@@ -279,6 +318,7 @@ module.exports = function registerCapture(app, deps) {
           ? "Who is the hiring contact for the " + (it.title || "new job") + (coName ? " at " + coName : "") + "? Bullhorn needs one on every job." + (opts.length ? " Pick one, or type their name and title." : " Type their name and title.")
           : "Who was this with" + (coName ? " at " + coName : "") + "?" + (opts.length ? " Pick one, or type their name and title." : " Type their name and title.") });
     }
+    if (noteJobQ) qs.push(noteJobQ);
     if (it.kind === "opportunity" && !it.pursuitSource) qs.push({ id: "pursuit", text: "How did the " + (it.company || "") + " opportunity come about?", options: PURSUIT_SOURCES.map(function (r) { return { label: r, pursuitSource: r }; }) });
     (it.aiQuestions || []).forEach(function (t, n) {
       if (/start date|email|last name|years of experience|client contact or|a contact or a candidate/i.test(t)) return; // already asked by the rules above
@@ -505,6 +545,27 @@ module.exports = function registerCapture(app, deps) {
           catch (e) { if (body.commentingPerson) { delete body.commentingPerson; result = await bhWrite("entity/Note", body, "PUT"); } else throw e; }
           const noteId = ok(result, "Note");
           r.created.push({ type: "note", id: noteId, personId: personId });
+          // Also put the note on each job it's about, so anyone looking at the job sees it.
+          const jobIds = (Array.isArray(it.jobIds) ? it.jobIds : []).map(function (x) { return parseInt(x); }).filter(Boolean);
+          if (jobIds.length) {
+            const linked = [], failed = [];
+            for (const jid of jobIds) {
+              try { await bhWrite("entity/Note/" + noteId + "/jobOrders/" + jid, {}, "PUT"); }
+              catch (e1) {
+                try { await bhWrite("entity/NoteEntity", { note: { id: noteId }, targetEntityName: "JobOrder", targetEntityID: jid }, "PUT"); }
+                catch (e2) { failed.push(jid + " (" + e2.message + ")"); continue; }
+              }
+              linked.push(jid);
+            }
+            // Read back: only report a job as linked if Bullhorn shows it on the note
+            try {
+              const back = (await bhFetch("entity/Note/" + noteId, { fields: "id,jobOrders(id)" })).data || {};
+              const have = ((back.jobOrders && back.jobOrders.data) || []).map(function (j) { return j.id; });
+              linked.filter(function (j) { return have.indexOf(j) < 0; }).forEach(function (j) { failed.push(j + " (not on the note when read back)"); });
+              const ok2 = linked.filter(function (j) { return have.indexOf(j) >= 0; });
+              r.created.push({ type: "note on job", id: noteId, title: ok2.map(function (j) { return "job #" + j; }).join(", ") || "none", verified: failed.length === 0, verifyError: failed.length ? "not linked to " + failed.join(", ") : undefined });
+            } catch (e3) { r.created.push({ type: "note on job", id: noteId, verified: false, verifyError: "read-back failed: " + e3.message }); }
+          }
           if (db.ready) { try { await db.query("INSERT INTO notes (id, person_id, action, comments_text, date_added, commenting_person_id, commenting_person_name, is_deleted, synced_at) VALUES ($1,$2,$3,$4,$5,$6,$7,false,NOW()) ON CONFLICT (id) DO NOTHING", [noteId, personId, body.action, comments, Date.now(), user ? user.id : null, user ? user.name : null]); } catch (e) { console.log("[Capture] local note insert failed:", e.message); } }
         }
         // 4. job order
