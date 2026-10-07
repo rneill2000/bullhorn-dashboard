@@ -553,7 +553,7 @@ module.exports = function registerCapture(app, deps) {
           const noteId = ok(result, "Note");
           r.created.push({ type: "note", id: noteId, personId: personId });
           // Also put the note on each job it's about, so anyone looking at the job sees it.
-          const jobIds = (Array.isArray(it.jobIds) ? it.jobIds : []).map(function (x) { return parseInt(x); }).filter(Boolean);
+          const jobIds = (Array.isArray(it.jobIds) ? it.jobIds : []).map(function (x) { return parseInt(x); }).filter(function (x, k, a) { return x && a.indexOf(x) === k; });
           if (jobIds.length) {
             const linked = [], failed = [];
             for (const jid of jobIds) {

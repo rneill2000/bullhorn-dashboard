@@ -197,3 +197,73 @@ test("picking a person by hand loads their jobs and pre-selects the one the note
   assert.deepStrictEqual(r.data.map((j) => j.id), [357, 338]);
   assert.deepStrictEqual(r.suggested, [357]);
 });
+
+// ── Matrix rows Q9, Q11, Q12, Q15, Q16, Q17 (docs/TEST-MATRIX.md) ──
+test("Q9 tied job hint asks instead of guessing", async () => {
+  fresh();
+  const h = harness([{ kind: "note", person: { firstName: "Bryce", lastName: "Plemons" }, personType: "candidate", comments: "Interested", jobHint: "the Skagit role" }], {
+    getAll: (sql, vals) => /FROM submissions s/.test(sql) ? [{ id: 810, job_id: 336, status: "Internally Submitted", title: "Access Analyst", client_name: "Skagit Regional Health" }, { id: 811, job_id: 337, status: "Internally Submitted", title: "Cadence Analyst", client_name: "Skagit Regional Health" }] : subsDb(sql, vals),
+  });
+  const r = await call(h.routes["POST /api/capture/parse"], { text: "Bryce on the Skagit role" });
+  assert.deepStrictEqual(r.body.items[0].suggested.jobIds, []);
+  assert.ok(r.body.items[0].questions.some((q) => q.id === "notejob"));
+});
+
+test("Q11 candidate with no submissions stays person-only, no empty question", async () => {
+  fresh();
+  const h = harness([{ kind: "note", person: { firstName: "Bryce", lastName: "Plemons" }, personType: "candidate", comments: "Interested", jobHint: "Skagit access analyst" }], {
+    getAll: (sql, vals) => /FROM submissions s/.test(sql) ? [] : subsDb(sql, vals),
+  });
+  const r = await call(h.routes["POST /api/capture/parse"], { text: "Bryce on the Skagit role" });
+  assert.deepStrictEqual(r.body.items[0].suggested.jobIds, []);
+  assert.ok(!r.body.items[0].questions.some((q) => q.id === "notejob"));
+});
+
+test("Q12 contact note links to the client's open job; closed jobs are never offered", async () => {
+  fresh();
+  const h = harness([{ kind: "note", person: { firstName: "Dana", lastName: "Lee" }, personType: "contact", company: "Skagit Regional Health", comments: "Talked about the Cadence req", jobHint: "the Cadence analyst req" }], {
+    getAll: (sql) => {
+      if (/FROM client_contacts WHERE is_deleted/.test(sql)) return [{ id: 11, first_name: "Dana", last_name: "Lee", occupation: "Director of IT", client_id: 284, client_name: "Skagit Regional Health" }];
+      if (/FROM jobs WHERE client_id/.test(sql)) return [{ id: 400, title: "Epic Cadence Analyst", status: "Accepting Candidates" }, { id: 401, title: "Epic Cadence Trainer", status: "Closed" }];
+      return null;
+    },
+  });
+  const r = await call(h.routes["POST /api/capture/parse"], { text: "Dana Lee on the Cadence req" });
+  const it = r.body.items[0];
+  assert.strictEqual(it.suggested.personId, 11);
+  assert.deepStrictEqual(it.suggested.jobIds, [400]);
+  assert.ok(!it.matches.noteJobs.some((j) => j.id === 401), "closed job not offered");
+});
+
+test("Q15 falls back to NoteEntity when the jobOrders association fails, and still verifies", async () => {
+  fresh();
+  const writes = [];
+  const routes = {};
+  const app = { get: (p, f) => (routes["GET " + p] = f), post: (p, f) => (routes["POST " + p] = f) };
+  require("./capture")(app, {
+    db: { ready: false, getAll: async () => [], getOne: async () => null, query: async () => ({}) },
+    bhWrite: async (path) => { writes.push(path); if (/jobOrders/.test(path)) throw new Error("404"); return { changedEntityId: 999 }; },
+    bhFetchAll: async () => ({ data: [] }),
+    bhFetch: async () => ({ data: { id: 999, comments: "x", jobOrders: { total: 1, data: [{ id: 336 }] } } }),
+    getUser: () => null,
+  });
+  const r = await call(routes["POST /api/capture/commit"], { items: [{ kind: "note", personType: "candidate", personId: 5968, comments: "x", jobIds: [336] }] });
+  assert.ok(writes.includes("entity/NoteEntity"));
+  assert.strictEqual(r.body.results[0].ok, true);
+});
+
+test("Q16 duplicate job ids link once", async () => {
+  fresh();
+  const h = harness([], { bhFetch: async () => ({ data: { id: 999, comments: "x", jobOrders: { total: 1, data: [{ id: 336 }] } } }) });
+  await call(h.routes["POST /api/capture/commit"], { items: [{ kind: "note", personType: "candidate", personId: 5968, comments: "x", jobIds: [336, "336", 336] }] });
+  assert.strictEqual(h.writes.filter((w) => /jobOrders\/336/.test(w.path)).length, 1);
+});
+
+test("Q17 empty note is refused and nothing is written", async () => {
+  fresh();
+  const h = harness([]);
+  const r = await call(h.routes["POST /api/capture/commit"], { items: [{ kind: "note", personType: "candidate", personId: 5968, comments: "   ", jobIds: [336] }] });
+  assert.strictEqual(r.body.results[0].ok, false);
+  assert.match(r.body.results[0].error, /no text/i);
+  assert.strictEqual(h.writes.length, 0);
+});
