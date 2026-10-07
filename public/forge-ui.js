@@ -93,9 +93,11 @@ function renderForge() {
     + '.fg-suggest button:hover{background:#f8fafc}'
     + '.fg-miss{font-size:12px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 10px;margin-top:10px}'
     + '.fg-ok{font-size:12px;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px;margin-top:10px}'
+    + '.fg-ref{display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13px;line-height:1.45;color:#0f172a}'
+    + '.fg-ref input{margin-top:3px}'
     + '@media(max-width:860px){.fg{grid-template-columns:1fr}.fg-q{max-height:320px}.fg-split{grid-template-columns:1fr}}'
     + '</style>';
-  h += '<div style="font-size:14px;color:#475569;margin-bottom:12px;max-width:760px">Internally submitted candidates waiting on a client email. Forge drafts Why Me, availability, location, and bill rate. <b>You send it</b> from Outlook. Nothing is sent until you send the draft.</div>';
+  h += '<div style="font-size:14px;color:#475569;margin-bottom:12px;max-width:760px">Internally submitted candidates waiting on a client email. Forge drafts Why Me, an optional anonymous reference, availability, location, and bill rate. <b>You send it</b> from Outlook. Nothing is sent until you send the draft.</div>';
   h += '<div class="fg"><div class="fg-card fg-q" id="forge-queue"><div style="padding:20px;color:#64748b">Loading the ready-to-submit queue…</div></div><div id="forge-main"><div class="fg-card" style="color:#64748b">Pick a submission to preview the client draft.</div></div></div>';
   return h;
 }
@@ -197,6 +199,10 @@ function forgePaintQueue() {
     h += '<div class="sub">Owner: ' + esc(row.jobOwnerFirst || "—") + ' · Submitted by: ' + esc(row.submittedByFirst || "—") + '</div>';
     var rateLabel = row.billRate ? esc(row.billRate) + (row.billRateSource === "from notes" ? " (from notes)" : "") : "bill rate missing";
     h += '<div class="sub">' + rateLabel + (missing.length ? " · missing " + esc(missing.join(", ")) : "") + '</div>';
+    if (row.referenceCount) {
+      var refCount = Number(row.referenceCount) || 0;
+      h += '<div class="sub">' + refCount + " positive reference" + (refCount === 1 ? "" : "s") + " on file</div>";
+    }
     if (row.existingDraft && row.existingDraft.label) h += '<div class="sub">' + esc(row.existingDraft.label) + '</div>';
     (row.flags || []).forEach(function (f) {
       h += '<div class="sub">' + esc(f.message) + '</div>';
@@ -311,6 +317,20 @@ function forgePaintDraft() {
   var whyNote = d.whyMeSource === "anthropic" ? " · polished" : d.whyMeSource === "comments" ? " · from Bullhorn comments" : d.whyMeSource === "from notes" ? " · from notes" : "";
   h += '<label class="fg-lab">Why Me' + whyNote + '</label>';
   h += '<textarea class="fg-ta" id="forge-why" oninput="forgePreview()">' + esc(d.whyMe || "") + '</textarea>';
+  var refsOnFile = d.references || [];
+  _forge.referenceIds = (d.selectedReferenceIds || []).filter(function (id) {
+    return refsOnFile.some(function (ref) { return ref.id === id; });
+  }).slice(0, 2);
+  var picked = {};
+  _forge.referenceIds.forEach(function (id) { picked[id] = true; });
+  if (refsOnFile.length) {
+    h += '<label class="fg-lab">References <span style="font-weight:500;color:#94a3b8">optional · one or two</span></label>';
+    h += '<div class="fg-note" id="forge-ref-note">Nothing is included until you check one. Only the quote and the role are shown.</div>';
+    refsOnFile.forEach(function (ref) {
+      h += '<label class="fg-ref"><input type="checkbox" data-ref="' + forgeAttr(ref.id) + '"' + (picked[ref.id] ? " checked" : "") + ' onchange="forgeToggleRef(this)">';
+      h += '<span>Reference: "' + esc(ref.quote || "") + '" (' + esc(ref.role || "Former manager") + ")</span></label>";
+    });
+  }
   h += '<div class="fg-split">';
   h += '<div><label class="fg-lab">Availability</label><input class="fg-in" id="forge-avail" value="' + forgeAttr(d.availability || "") + '" oninput="forgePreview()"></div>';
   h += '<div><label class="fg-lab">Location</label><input class="fg-in" id="forge-loc" value="' + forgeAttr(d.location || "") + '" oninput="forgePreview()"></div>';
@@ -364,6 +384,46 @@ function forgePaintDraft() {
 
 function forgeVal(id) { var el = document.getElementById(id); return el ? el.value : ""; }
 
+function forgeSelectedRefs() {
+  var d = (_forge.view && _forge.view.draft) || {};
+  var offers = d.references || [];
+  var out = [];
+  (_forge.referenceIds || []).forEach(function (id) {
+    var hit = null;
+    offers.forEach(function (ref) { if (ref && ref.id === id) hit = ref; });
+    if (hit && out.length < 2) out.push(hit);
+  });
+  return out;
+}
+
+function forgeToggleRef(el) {
+  var id = el && el.getAttribute ? el.getAttribute("data-ref") : "";
+  if (!id) return;
+  var ids = (_forge.referenceIds || []).slice();
+  var at = ids.indexOf(id);
+  if (at >= 0) ids.splice(at, 1);
+  else if (ids.length >= 2) {
+    if (el) el.checked = false;
+    var full = document.getElementById("forge-ref-note");
+    if (full) full.textContent = "Pick at most two references.";
+    return;
+  } else ids.push(id);
+  _forge.referenceIds = ids;
+  var note = document.getElementById("forge-ref-note");
+  if (note) note.textContent = ids.length ? "Checked references are added after Why Me. The writer is not named." : "Nothing is included until you check one. Only the quote and the role are shown.";
+  forgePreview();
+  forgeSaveRefs();
+}
+
+var _forgeRefTimer = null;
+function forgeSaveRefs() {
+  if (!_forge.selected) return;
+  clearTimeout(_forgeRefTimer);
+  _forgeRefTimer = setTimeout(function () {
+    forgeSend("forge/submissions/" + _forge.selected + "/references", { referenceIds: (_forge.referenceIds || []).slice(0, 2) }, "PUT").catch(function () {});
+  }, 200);
+}
+
 function forgeFields() {
   var sel = document.getElementById("forge-to");
   var to = "";
@@ -400,6 +460,7 @@ function forgeFields() {
     signerName: forgeVal("forge-sign-name") || v.signerName || profile.name || "Anura Connect",
     signerTitle: forgeVal("forge-sign-title") || profile.title || "",
     signerPhone: forgeVal("forge-sign-phone") || profile.phone || "",
+    referenceIds: (_forge.referenceIds || []).slice(0, 2),
     resumeFileId: _forge.resumeConfirmed ? (_forge.resumeFileId || forgeVal("forge-resume")) : "",
     confirmAnother: !!(d.existingDraft),
     confirmSameClient: !!_forge.confirmSameClient,
@@ -423,6 +484,11 @@ function forgeEmailText(f) {
   var intro = f.candidateName ? "Sharing " + f.candidateName + (f.jobTitle ? " for the " + f.jobTitle + " role" : "") + (f.clientName ? " at " + f.clientName : "") + "." : "Sharing a consultant for your review.";
   var lines = [greeting, "", intro, ""];
   if ((f.whyMe || "").trim()) lines.push("Why Me", "", f.whyMe.trim(), "");
+  forgeSelectedRefs().forEach(function (ref) {
+    var quote = String(ref.quote || "").replace(/"/g, "'").replace(/\s+/g, " ").trim();
+    var role = ref.role || "Former manager";
+    if (quote) lines.push('Reference: "' + quote + '" (' + role + ')', "");
+  });
   lines.push("Availability: " + (f.availability || ""), "Location: " + (f.location || ""), "Bill rate: " + (f.billRate || ""), "");
   var sig = [f.signerName, f.signerTitle, f.signerPhone].filter(function (x) { return x && String(x).trim(); });
   lines.push(sig.length ? sig.join("\n") : "Anura Connect");
@@ -663,6 +729,7 @@ async function forgeCreate() {
       signerName: f.signerName,
       signerTitle: f.signerTitle,
       signerPhone: f.signerPhone,
+      referenceIds: f.referenceIds || [],
       resumeFileId: _forge.resumeFileId,
       confirmAnother: !!f.confirmAnother,
       confirmSameClient: !!f.confirmSameClient,

@@ -6,7 +6,7 @@
  * Creates an Outlook *draft* via Microsoft Graph. Never calls sendMail.
  *
  * Résumés come from Bullhorn Candidate file attachments (PDFs). The client
- * email may only use Why Me, Availability, Location, and Bill Rate.
+ * email may use Why Me, an optional anonymous Reference, Availability, Location, and Bill Rate.
  * Blank bill rate and Why Me fall back to Bullhorn notes. A filled field is kept.
  * A client draft keeps career experience, including other health systems
  * ("former Epic AM for University Hospitals"). It leaves out a note that uses
@@ -17,6 +17,8 @@
 "use strict";
 
 const { isAnuraTeammate } = require("./team");
+const referenceLib = require("./forge-references");
+const { createReferencePicks } = require("./forge-reference-picks");
 
 const MODULES = [
   ["SBO", /\bSBO\b/i],
@@ -195,6 +197,66 @@ const NOTES_FOR_CANDIDATES_SQL =
   "ROW_NUMBER() OVER (PARTITION BY person_id ORDER BY date_added DESC NULLS LAST) AS rn " +
   "FROM notes WHERE person_id = ANY($1::int[]) AND is_deleted IS NOT TRUE" +
   ") ranked WHERE rn <= 30";
+
+/** Reference notes can be older than the 30 newest notes used for Why Me. Read-only. */
+const REFERENCE_NOTES_SQL =
+  "SELECT id, person_id, job_order_id, action, comments_text, date_added, raw_json FROM notes " +
+  "WHERE person_id = ANY($1::int[]) AND is_deleted IS NOT TRUE AND (" +
+  "LOWER(BTRIM(COALESCE(action, ''))) = 'reference' " +
+  "OR comments_text ILIKE '%would you rehire%' " +
+  "OR comments_text ILIKE '%reference title%' " +
+  "OR comments_text ILIKE '%reference name%' " +
+  "OR comments_text ILIKE '%reference check%' " +
+  "OR comments_text ILIKE '%reference details%')";
+
+function referenceDeps() {
+  return { htmlToPlain: htmlToPlain, clientFacingText: clientFacingText, findInternalLeak: findInternalLeak };
+}
+
+function mergeNoteRows(a, b) {
+  const out = [];
+  const seen = {};
+  (a || []).concat(b || []).forEach(function (note) {
+    if (!note) return;
+    const key = note.id != null ? "id:" + note.id : "t:" + String(note.date_added || "") + ":" + String(note.comments_text || note.comments || "").slice(0, 80);
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(note);
+  });
+  return out;
+}
+
+function offersFromNotes(notes, ctx) {
+  return referenceLib.collectReferenceOffers({
+    notes: notes || [],
+    candidateName: ctx && ctx.candidateName || "",
+    clientName: ctx && ctx.clientName || "",
+    jobTitle: ctx && ctx.jobTitle || "",
+    clients: ctx && ctx.clients || [],
+  }, referenceDeps());
+}
+
+async function referenceFileText(file, downloaded, buf) {
+  const name = String((downloaded && downloaded.name) || (file && file.name) || "");
+  const ext = String((file && file.fileExtension) || "").replace(/^\./, "").toLowerCase() || String(name.split(".").pop() || "").toLowerCase();
+  const ct = String((downloaded && downloaded.contentType) || (file && file.contentType) || "").toLowerCase();
+  if (ext === "pdf" || ct.indexOf("pdf") >= 0) {
+    try {
+      const parsed = await require("pdf-parse")(buf);
+      return parsed && parsed.text ? parsed.text : "";
+    } catch (e) { return ""; }
+  }
+  if (ext === "docx" || ct.indexOf("wordprocessingml") >= 0) {
+    try {
+      const result = await require("mammoth").extractRawText({ buffer: buf });
+      return result && result.value ? result.value : "";
+    } catch (e) { return ""; }
+  }
+  if (ext === "txt" || ext === "html" || ext === "htm" || ct.indexOf("text") >= 0 || ct.indexOf("html") >= 0) {
+    return buf.toString("utf8");
+  }
+  return "";
+}
 
 /** Synced Bullhorn client corporations. This is the list a Why Me line is checked against. */
 const CLIENT_NAMES_SQL = "SELECT name FROM clients WHERE COALESCE(name, '') <> ''";
@@ -1232,19 +1294,26 @@ function composeEmail(fields) {
   const availability = (fields.availability || "").trim();
   const location = (fields.location || "").trim();
   const bill = (fields.billRate || "").trim();
+  const refLines = (Array.isArray(fields.references) ? fields.references : []).map(referenceLib.referenceLine).filter(Boolean).slice(0, 2);
   const sig = signatureLines(fields);
   const lines = [greeting, "", intro, ""];
   if (why) lines.push("Why Me", "", why, "");
+  refLines.forEach(function (line) { lines.push(line, ""); });
   lines.push("Availability: " + availability, "Location: " + location, "Bill rate: " + bill, "", sig);
   const text = lines.join("\n");
   const whyHtml = why
     ? "<p style=\"margin:0 0 6px\"><b>Why Me</b></p>" + why.split(/\n{2,}/).map(function (p) { return "<p style=\"margin:0 0 10px\">" + esc(p).replace(/\n/g, "<br>") + "</p>"; }).join("")
     : "";
+  const refHtml = refLines.map(function (line) {
+    const body = line.replace(/^Reference:\s*/, "");
+    return "<p style=\"margin:0 0 10px\"><b>Reference:</b> " + esc(body) + "</p>";
+  }).join("");
   const html = [
     "<div style=\"font-family:Calibri,'Segoe UI',sans-serif;font-size:14px;color:#1a1a1a;line-height:1.45\">",
     "<p style=\"margin:0 0 12px\">" + esc(greeting) + "</p>",
     "<p style=\"margin:0 0 12px\">" + esc(intro) + "</p>",
     whyHtml,
+    refHtml,
     "<p style=\"margin:0 0 6px\"><b>Availability:</b> " + esc(availability) + "</p>",
     "<p style=\"margin:0 0 6px\"><b>Location:</b> " + esc(location) + "</p>",
     "<p style=\"margin:0 0 12px\"><b>Bill rate:</b> " + esc(bill) + "</p>",
@@ -1269,9 +1338,21 @@ function escapeRegExp(s) {
  * Block client copy that leaks pay, employment type, references, or a greeting to an internal user.
  * Returns { snippet, rule } or null.
  */
+/** The labeled Reference block is client copy. "collecting references" in Why Me is not. */
+function withoutReferenceSection(blob) {
+  return String(blob || "")
+    .replace(/<p[^>]*>\s*<b>\s*Reference:\s*<\/b>[\s\S]*?<\/p>/gi, "")
+    .split("\n")
+    .filter(function (line) { return !/^\s*Reference:\s+"/.test(line); })
+    .join("\n");
+}
+
 function findInternalLeak(parts, internalFirstNames, ctx) {
   const blob = (parts || []).map(function (p) { return p == null ? "" : String(p); }).join("\n");
   if (!blob.trim()) return null;
+  const referenceBlob = withoutReferenceSection(blob);
+  const referenceHit = referenceBlob.match(/\breferences?\b/i);
+  if (referenceHit) return { rule: "references", snippet: snippetAround(referenceBlob, referenceHit.index, referenceHit[0].length) };
   const rules = [
     { rule: "pay rate", re: /pay\s*rate/i },
     { rule: "pay:", re: /\bpay\s*:/i },
@@ -1280,7 +1361,6 @@ function findInternalLeak(parts, internalFirstNames, ctx) {
     { rule: "c2c", re: /\bc2c\b/i },
     { rule: "corp to corp", re: /corp(?:orate)?\s*to\s*corp/i },
     { rule: "margin", re: /\bmargin\b/i },
-    { rule: "references", re: /\breferences?\b/i },
     { rule: "contract-to-hire", re: /contract[\s-]*to[\s-]*hire/i },
   ];
   for (let i = 0; i < rules.length; i++) {
@@ -1397,6 +1477,7 @@ function registerForge(app, deps) {
   const getUser = deps.getUser || function () { return null; };
   const bhFetch = deps.bhFetch;
   const bhWrite = deps.bhWrite;
+  const referencePicks = deps.referencePicks || createReferencePicks();
   let tableReady = null;
 
   function ensureTable() {
@@ -1485,6 +1566,105 @@ function registerForge(app, deps) {
       const rows = await db.getAll(NOTES_FOR_CANDIDATES_SQL, [clean]);
       return groupNotes(rows);
     } catch (e) { return {}; }
+  }
+
+  async function loadReferenceNotes(ids) {
+    const clean = [];
+    const seen = {};
+    (ids || []).forEach(function (id) {
+      if (id == null || id === "" || seen[id]) return;
+      seen[id] = true;
+      clean.push(id);
+    });
+    if (!clean.length || !db || !db.ready) return {};
+    try {
+      const rows = await db.getAll(REFERENCE_NOTES_SQL, [clean]);
+      return groupNotes(rows);
+    } catch (e) { return {}; }
+  }
+
+  async function loadCandidateReferenceRecords(candidateId) {
+    if (!bhFetch || !candidateId) return [];
+    try {
+      const data = await bhFetch("entity/Candidate/" + candidateId + "/references", {
+        fields: "id,referenceFirstName,referenceLastName,referenceTitle,referencePhone,referenceEmail,companyName,customTextBlock1,dateAdded,status",
+        count: 50,
+        orderBy: "-dateAdded",
+      });
+      if (Array.isArray(data)) return data;
+      if (data && Array.isArray(data.data)) return data.data;
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function loadReferenceFileTexts(candidateId) {
+    if (!bhFetch || !candidateId) return [];
+    let files = [];
+    try {
+      const data = await bhFetch("entity/Candidate/" + candidateId + "/fileAttachments", {
+        fields: "id,name,type,dateAdded,contentType,fileExtension,fileSize",
+        count: 100,
+      });
+      files = unwrapFiles(data);
+    } catch (e) {
+      return [];
+    }
+    const picked = files.filter(function (file) {
+      if (!file) return false;
+      return /reference/i.test(String(file.name || "") + " " + String(file.type || ""));
+    }).slice(0, 5);
+    const out = [];
+    for (let i = 0; i < picked.length; i++) {
+      const file = picked[i];
+      if (Number(file.fileSize) > 1024 * 1024) continue;
+      try {
+        const downloaded = await downloadCandidateFile(candidateId, file.id);
+        const buf = downloaded && downloaded.buffer ? downloaded.buffer : Buffer.alloc(0);
+        if (!buf.length || buf.length > 1024 * 1024) continue;
+        const text = await referenceFileText(file, downloaded, buf);
+        if (text) out.push({ id: file.id, name: file.name || (downloaded && downloaded.name) || "", type: file.type || "", dateAdded: file.dateAdded || 0, text: text });
+      } catch (e) { /* a résumé download is separate; a reference file that fails is skipped */ }
+    }
+    return out;
+  }
+
+  async function buildReferenceOffers(candidateId, notes, ctx) {
+    const extra = await loadReferenceNotes([candidateId]);
+    const merged = mergeNoteRows(notes, extra[String(candidateId)] || []);
+    const records = await loadCandidateReferenceRecords(candidateId);
+    const files = await loadReferenceFileTexts(candidateId);
+    return referenceLib.collectReferenceOffers({
+      notes: merged,
+      records: records,
+      files: files,
+      candidateName: ctx && ctx.candidateName || "",
+      clientName: ctx && ctx.clientName || "",
+      jobTitle: ctx && ctx.jobTitle || "",
+      clients: ctx && ctx.clients || [],
+    }, referenceDeps());
+  }
+
+  function referenceContext(row, clients) {
+    const client = resolveClient(row || {});
+    return {
+      candidateName: (row && row.candidate_name) || "",
+      clientName: client.clientName,
+      jobTitle: (row && (row.job_title_live || row.job_title)) || "",
+      clients: clients || [],
+    };
+  }
+
+  function requestedReferenceIds(body) {
+    if (!body || body.referenceIds == null) return [];
+    const raw = Array.isArray(body.referenceIds) ? body.referenceIds : [];
+    const out = [];
+    raw.forEach(function (id) {
+      const s = String(id == null ? "" : id).trim();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    });
+    return out;
   }
 
   async function loadContacts(clientId) {
@@ -1987,6 +2167,7 @@ function registerForge(app, deps) {
       const internals = await loadInternalUsers();
       const drafts = await loadDraftMap(visible.map(function (r) { return r.id; }));
       const notesBy = await loadNotesForCandidates(visible.map(function (r) { return r.candidate_id; }));
+      const refNotesBy = await loadReferenceNotes(visible.map(function (r) { return r.candidate_id; }));
       const clientNames = await loadClientNames();
       const siblings = await siblingPack(visible.map(function (r) { return r.candidate_id; }), now, clientNames);
       const all = visible.map(function (row) {
@@ -2032,6 +2213,12 @@ function registerForge(app, deps) {
           }).concat(sib.flags),
           needsSameClientConfirm: sib.needsConfirm,
           flagCount: p.flags.length + sib.flags.length,
+          referenceCount: offersFromNotes(mergeNoteRows(notesBy[String(row.candidate_id)] || [], refNotesBy[String(row.candidate_id)] || []), {
+            candidateName: p.candidate.name,
+            clientName: p.job.clientName,
+            jobTitle: p.job.title,
+            clients: clientNames,
+          }).length,
         };
       });
       const owners = internals.filter(isAnuraTeammate).map(function (u) {
@@ -2182,8 +2369,29 @@ function registerForge(app, deps) {
       draft.otherJobCount = sib.otherJobCount;
       draft.needsSameClientConfirm = sib.needsConfirm;
       draft.flags = draft.flags.concat(sib.flags);
-      draft.notes = (notes || []).map(function (n) { return { action: n.action || "", text: clip(htmlToPlain(n.comments_text), 400) }; });
       const user = getUser(req);
+      const referenceOffers = await buildReferenceOffers(draft.candidate.id, notes, {
+        candidateName: draft.candidate.name,
+        clientName: draft.job.clientName,
+        jobTitle: draft.job.title,
+        clients: clientNames,
+      });
+      draft.references = referenceOffers;
+      const quoteByNote = {};
+      referenceOffers.forEach(function (offer) {
+        if (String(offer.id).indexOf("note:") === 0) quoteByNote[offer.id] = offer.quote;
+      });
+      draft.notes = (notes || []).map(function (n) {
+        const action = n.action || "";
+        const noteId = n.id != null ? "note:" + n.id : "";
+        if (String(action).trim().toLowerCase() === "reference" || quoteByNote[noteId]) {
+          return { action: action || "Reference", text: quoteByNote[noteId] || "" };
+        }
+        return { action: action, text: clip(htmlToPlain(n.comments_text), 400) };
+      });
+      let savedReferenceIds = [];
+      try { savedReferenceIds = await referencePicks.get(profileKey(user), id); } catch (e) { savedReferenceIds = []; }
+      draft.selectedReferenceIds = referenceLib.selectReferenceOffers(referenceOffers, savedReferenceIds).offers.map(function (offer) { return offer.id; });
       const profile = await loadProfile(user);
       const boxes = await mailboxes();
       let files = [];
@@ -2198,6 +2406,7 @@ function registerForge(app, deps) {
         location: draft.location,
         billRate: draft.billRate,
         subject: draft.subject,
+        references: referenceLib.selectReferenceOffers(referenceOffers, draft.selectedReferenceIds).offers,
         signerName: profile.name || (user && (user.firstName || personName(user))) || "Anura Connect",
         signerTitle: profile.title,
         signerPhone: profile.phone,
@@ -2230,6 +2439,28 @@ function registerForge(app, deps) {
     }
   });
 
+  app.put("/api/forge/submissions/:id/references", async function (req, res) {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!id) return res.status(400).json({ error: "Submission id is required" });
+      const requestedIds = requestedReferenceIds(req.body || {});
+      if (requestedIds.length > 2) {
+        return res.status(400).json({ error: "Pick at most two references.", code: "too_many_references" });
+      }
+      const row = await loadBundle(id);
+      const clientNames = await loadClientNames();
+      const noteMap = await loadNotesForCandidates([row.candidate_id]);
+      const offers = await buildReferenceOffers(row.candidate_id, noteMap[String(row.candidate_id)] || [], referenceContext(row, clientNames));
+      const chosen = referenceLib.selectReferenceOffers(offers, requestedIds).offers;
+      const user = getUser(req);
+      if (!profileKey(user)) return res.status(401).json({ error: "Sign in required" });
+      await referencePicks.set(profileKey(user), id, chosen.map(function (offer) { return offer.id; }));
+      res.json({ referenceIds: chosen.map(function (offer) { return offer.id; }) });
+    } catch (e) {
+      res.status(e.status || 500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/forge/submissions/:id/draft", async function (req, res) {
     try {
       const id = parseInt(req.params.id, 10);
@@ -2253,7 +2484,21 @@ function registerForge(app, deps) {
       const cc = (body.cc || "").trim();
       if (to && !isEmail(to)) return res.status(400).json({ error: "That recipient address does not look like an email." });
       if (cc && !isEmail(cc)) return res.status(400).json({ error: "That CC address does not look like an email." });
+      const requestedIds = requestedReferenceIds(body);
+      if (requestedIds.length > 2) {
+        return res.status(400).json({ error: "Pick at most two references.", code: "too_many_references" });
+      }
       const user = getUser(req);
+      const referenceOffers = await buildReferenceOffers(base.candidate.id, noteMap[String(row.candidate_id)] || [], {
+        candidateName: candidateName || base.candidate.name,
+        clientName: body.clientName || base.job.clientName,
+        jobTitle: body.jobTitle || base.job.title,
+        clients: clientNames,
+      });
+      const chosenReferences = referenceLib.selectReferenceOffers(referenceOffers, requestedIds).offers;
+      if (profileKey(user)) {
+        try { await referencePicks.set(profileKey(user), id, chosenReferences.map(function (offer) { return offer.id; })); } catch (e) {}
+      }
       const profile = await loadProfile(user);
       const greetingName = (body.greetingName || "").trim();
       const signerName = (body.signerName || profile.name || (user && (user.firstName || personName(user))) || "Anura Connect").trim();
@@ -2268,6 +2513,7 @@ function registerForge(app, deps) {
         location: location,
         billRate: billRate,
         subject: subject,
+        references: chosenReferences,
         greetingName: greetingName,
         signerName: signerName,
         signerTitle: signerTitle,
@@ -2573,3 +2819,12 @@ module.exports.groupNotes = groupNotes;
 module.exports.NOTES_FOR_CANDIDATES_SQL = NOTES_FOR_CANDIDATES_SQL;
 module.exports.CLIENT_NAMES_SQL = CLIENT_NAMES_SQL;
 module.exports.clientAliases = clientAliases;
+module.exports.clientFacingText = clientFacingText;
+module.exports.collectReferenceOffers = function (input) {
+  return referenceLib.collectReferenceOffers(input || {}, referenceDeps());
+};
+module.exports.anonymizeReferenceQuote = function (quote, ctx) {
+  return referenceLib.anonymizeReferenceQuote(quote, ctx || {}, referenceDeps());
+};
+module.exports.referenceLine = referenceLib.referenceLine;
+module.exports.REFERENCE_NOTES_SQL = REFERENCE_NOTES_SQL;
