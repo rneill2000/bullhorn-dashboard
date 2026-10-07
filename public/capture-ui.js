@@ -180,7 +180,7 @@ function _capCard(it,i){
     else h+='<div class="cap-err">Failed: '+esc(res.error)+(res.created&&res.created.length?'<div style="margin-top:4px;font-size:12px">Created before the failure: '+res.created.map(function(c){return esc(c.type)+' #'+c.id+(c.verified===false?' (unverified)':'');}).join(', ')+'</div>':'')+'</div>';
   }
   // person
-  if(!isOpp || isCt || it.hasPerson || it.personId){
+  if(!isOpp || isCt || isJob || it.hasPerson || it.personId){
     h+='<div class="cap-row"><label>Person</label><div>';
     h+='<div class="cap-match"><select class="cap-sel" style="width:auto" onchange="_capSet('+i+',\'personType\',this.value);_capSet('+i+',\'personId\',null);_capSet('+i+',\'personLabel\',\'\');_capRefresh('+i+')"><option value="contact"'+(it.personType==="contact"?' selected':'')+'>Client contact</option><option value="candidate"'+(it.personType==="candidate"?' selected':'')+'>Candidate</option></select>';
     if(it.personId) h+='<span style="font-size:13px;font-weight:600;color:#166534">&#10003; '+esc(it.personLabel)+'</span><button class="btn-outline" style="padding:4px 8px;font-size:12px" onclick="_capSet('+i+',\'personId\',null);_capRefresh('+i+')">change</button>';
@@ -192,7 +192,11 @@ function _capCard(it,i){
       h+='<div class="cap-lookup" style="margin-top:6px"><input class="cap-in" placeholder="Search Bullhorn by name\u2026" oninput="_capLookup(this,'+i+',\'person\')"><div class="cap-dd" id="cap-dd-p-'+i+'" style="display:none"></div></div>';
       h+='<div style="margin-top:8px;font-size:12px;color:#64748b">Or create new '+(it.personType==="candidate"?'candidate':'contact')+':</div>';
       h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px"><input class="cap-in" placeholder="First name" value="'+esc(it.newPerson.firstName)+'" oninput="_cap.items['+i+'].newPerson.firstName=this.value"><input class="cap-in" placeholder="Last name" value="'+esc(it.newPerson.lastName)+'" oninput="_cap.items['+i+'].newPerson.lastName=this.value"><input class="cap-in" placeholder="Title" value="'+esc(it.newPerson.title)+'" oninput="_cap.items['+i+'].newPerson.title=this.value"><input class="cap-in" placeholder="Email" value="'+esc(it.newPerson.email)+'" oninput="_cap.items['+i+'].newPerson.email=this.value"><input class="cap-in" placeholder="Phone" value="'+esc(it.newPerson.phone)+'" oninput="_cap.items['+i+'].newPerson.phone=this.value"><input class="cap-in" placeholder="Department" value="'+esc(it.newPerson.department)+'" oninput="_cap.items['+i+'].newPerson.department=this.value"></div>';
-      if(!it.newPerson.firstName&&!it.newPerson.lastName&&!isOpp) h+='<div class="cap-warn">No person \u2014 this note will attach to the company\'s most recent contact.</div>';
+      if(!it.newPerson.firstName&&!it.newPerson.lastName){
+        if(isTask) h+='<div class="cap-warn">No link \u2014 this is a reminder on your own task list.</div>';
+        else if(isJob) h+='<div class="cap-err">Who is the hiring contact? Pick someone above or add their name. This job won\'t be written until you do.</div>';
+        else if(!isOpp && !isCt) h+='<div class="cap-err">Who was this with? Pick someone above or add their name. This note won\'t be written until you do.</div>';
+      }
     }
     if(isCt && it.personId){
       var f=[["Title","title"],["Department","department"],["Email","email"],["Phone","phone"],["Mobile","mobile"],["Available (date)","availableDate"],["Pay rate $/hr","payRate"],["Status","candidateStatus"]].filter(function(x){return it.newPerson[x[1]];});
@@ -246,7 +250,7 @@ function _capCard(it,i){
     h+='<div class="cap-row"><label>Min. years</label><select class="cap-sel" style="width:auto" onchange="_capSet('+i+',\'yearsRequired\',this.value)">'+[0,1,2,3,4,5,6,7].map(function(y){return '<option value="'+y+'"'+(String(it.yearsRequired)===String(y)?' selected':'')+'>'+(y===0?'Not specified':y)+'</option>';}).join('')+'</select></div>';
     h+='<div class="cap-row"><label>Description</label><textarea class="cap-in cap-ta2" oninput="_capSet('+i+',\'description\',this.value)">'+esc(it.description)+'</textarea></div>';
     h+='<div class="cap-row"><label>Next step</label><input class="cap-in" value="'+esc(it.nextStep)+'" oninput="_capSet('+i+',\'nextStep\',this.value)"></div>';
-    h+='<div class="cap-warn" style="margin-top:10px">Created as Accepting Candidates. Bullhorn needs a contact on every job \u2014 if none is picked, the company\'s most recent contact is used.</div>';
+    h+='<div class="cap-warn" style="margin-top:10px">Created as Accepting Candidates, with the hiring contact you pick above.</div>';
   } else if(isOpp){
     h+='<div class="cap-row"><label>Title</label><input class="cap-in" value="'+esc(it.title)+'" oninput="_capSet('+i+',\'title\',this.value)"></div>';
     h+='<div class="cap-row"><label>Stage</label><div style="display:flex;gap:6px"><select class="cap-sel" onchange="_capSet('+i+',\'status\',this.value)">'+["Identified","Qualifying","Negotiating","Legal Review"].map(function(s){return '<option'+(it.status===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select><select class="cap-sel" onchange="_capSet('+i+',\'type\',this.value)"><option'+(it.type==="New"?' selected':'')+'>New</option><option'+(it.type==="Renewal"?' selected':'')+'>Renewal</option><option'+(it.type==="Amendment"?' selected':'')+'>Amendment</option></select></div></div>';
@@ -304,7 +308,8 @@ async function captureCommit(){
     if(it.kind==="job_update" && !it.jobId) problems.push("Entry "+(i+1)+": pick which job to update");
     if(it.kind==="task" && !(it.subject||"").trim()) problems.push("Entry "+(i+1)+": task needs a subject");
     if(it.kind==="contact" && !it.personId && !(it.newPerson.firstName&&it.newPerson.lastName)) problems.push("Entry "+(i+1)+": contact needs a first and last name");
-    if(it.kind==="note" && !it.personId && !(it.newPerson.firstName||it.newPerson.lastName) && !hasCo) problems.push("Entry "+(i+1)+": note needs a person or company");
+    if(it.kind==="note" && !it.personId && !(it.newPerson.firstName||it.newPerson.lastName)) problems.push("Entry "+(i+1)+": who was this with? Pick a person or add their name");
+    if(it.kind==="job" && !it.personId && !(it.newPerson.firstName&&it.newPerson.lastName)) problems.push("Entry "+(i+1)+": pick the hiring contact for this job, or add their first and last name");
     if(it.kind==="note" && !it.personId && (it.newPerson.firstName||it.newPerson.lastName) && it.personType==="contact" && !hasCo) problems.push("Entry "+(i+1)+": a new contact needs a company");
   });
   if(problems.length){ alert(problems.join("\n")); return; }

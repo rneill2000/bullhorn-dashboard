@@ -34,6 +34,9 @@ module.exports = function registerCapture(app, deps) {
       "If the notes describe a CONCRETE ROLE the client wants filled (a job title or Epic module/role, number of people, start date, rate, contract/perm), produce a JOB item for it — one job item per distinct role.",
       "If the notes describe an agreement-level deal (an MSA, a vendor/VMO process, a renewal, or a general 'wants to work with us' with no concrete role yet), produce an OPPORTUNITY item — at most ONE per company per dump, titled '<Company> MSA <year>' for MSA/agreement deals. A concrete role that ALSO needs an MSA gets both a job item and an opportunity item.",
       "Keep the author's own wording and facts in `comments` — clean up typos and fragments into readable sentences, but do not invent details, do not summarize away specifics (names, dates, modules, numbers, rates).",
+      "Dates: only fill a date field when the notes give a specific day (\"Oct 20\", \"Friday\", \"next Tuesday\", \"end of month\"). Vague timing (\"Q1\", \"early next year\", \"spring\", \"soon\") leaves the date null and stays in the description/comments in the author's words.",
+      "Deadlines: when someone needs something by a date (\"needs an answer by Thursday\", \"wants resumes by end of month\", \"offer expires Friday\"), ALSO produce a task item for the author due that day, subject starting with the action (e.g. \"Get Jonathan Hawkins an answer on the SBO role\"), linked to that person.",
+      "Internal to-dos: a task to send/ask/remind an Anura colleague (\"send Peter the rate sheet\", \"remind Ben to\") is a task with person null and company null — it is the author's own reminder; name the colleague in the subject.",
       "",
       "Return ONLY valid JSON, no prose, no markdown fences:",
       "{\"items\":[",
@@ -140,6 +143,13 @@ module.exports = function registerCapture(app, deps) {
     }).sort(function (a, b) { return b.score - a.score; });
   }
 
+  // Contacts at one client, most recently touched first — used to ask "who was this with?"
+  async function contactsAtClient(clientId) {
+    if (!db.ready || !clientId) return [];
+    const rows = await db.getAll("SELECT id, first_name, last_name, occupation, client_id, client_name FROM client_contacts WHERE client_id=$1 AND is_deleted IS NOT TRUE ORDER BY date_last_modified DESC NULLS LAST LIMIT 8", [clientId]).catch(function () { return []; });
+    return rows.map(function (r) { return { kind: "contact", id: r.id, name: ((r.first_name || "") + " " + (r.last_name || "")).trim(), sub: [r.occupation, r.client_name].filter(Boolean).join(" · "), clientId: r.client_id, clientName: r.client_name }; });
+  }
+
   async function findCandidates(first, last) {
     if (!db.ready) return [];
     const parts = [], vals = [];
@@ -240,11 +250,26 @@ module.exports = function registerCapture(app, deps) {
     if (willCreatePerson && it.personType === "candidate" && !(p && p.preferredRole)) qs.push({ id: "prefrole", text: "Preferred role for " + personName + "?", options: PREFERRED_ROLES.map(function (r) { return { label: r, preferredRole: r }; }) });
     if (it.kind === "job") {
       if (!it.startDate) qs.push({ id: "start", text: "Start date for the " + (it.title || "role") + "?", free: true, options: [{ label: "ASAP (use today)", startToday: true }] });
-      if (it.yearsRequired == null) qs.push({ id: "years", text: "Minimum years of experience for the " + (it.title || "role") + "?", options: YEARS_OPTIONS.map(function (y) { return { label: y === 0 ? "Not specified (0)" : String(y), yearsRequired: y }; }) });
+    }
+    // No named person on a note or a new job: never guess. Ask, and hold the entry until answered.
+    const noPerson = !personName && !out.suggested.personId && (
+      (it.kind === "note" && it.personType !== "candidate") || it.kind === "job");
+    if (noPerson) {
+      const coName = it.company || "";
+      const at = await contactsAtClient(out.suggested.clientId);
+      const opts = at.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), personType: "contact", personId: m.id, clientId: m.clientId || null }; });
+      if (it.kind === "note") opts.push({ label: "Skip this entry", skip: true });
+      out.missingPerson = true;
+      qs.push({ id: "whomissing", required: true, free: true, options: opts,
+        text: it.kind === "job"
+          ? "Who is the hiring contact for the " + (it.title || "new job") + (coName ? " at " + coName : "") + "? Bullhorn needs one on every job." + (opts.length ? " Pick one, or type their name and title." : " Type their name and title.")
+          : "Who was this with" + (coName ? " at " + coName : "") + "?" + (opts.length ? " Pick one, or type their name and title." : " Type their name and title.") });
     }
     if (it.kind === "opportunity" && !it.pursuitSource) qs.push({ id: "pursuit", text: "How did the " + (it.company || "") + " opportunity come about?", options: PURSUIT_SOURCES.map(function (r) { return { label: r, pursuitSource: r }; }) });
     (it.aiQuestions || []).forEach(function (t, n) {
       if (/start date|email|last name|years of experience|client contact or|a contact or a candidate/i.test(t)) return; // already asked by the rules above
+      if (it.kind === "task" && !it.dueDate && /\b(due|deadline|when)\b/i.test(t)) return; // the due-date question already covers this
+      if (noPerson && /\b(name|who|contact)\b/i.test(t)) return; // the "who was this with" question already covers this
       qs.push({ id: "ai" + n, text: t, free: true });
     });
     out.questions = qs;
@@ -458,13 +483,7 @@ module.exports = function registerCapture(app, deps) {
         if (it.kind === "note") {
           const comments = (it.comments || "").trim() + (it.followUp ? "\n\nNext step: " + it.followUp.trim() : "");
           if (!comments) throw new Error("Note has no text");
-          if (!personId && !clientId) throw new Error("Note needs a person or a company to attach to");
-          if (!personId) {
-            // company-only note: attach to the client's most recently modified contact
-            const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id,firstName,lastName", orderBy: "-dateLastModified", count: 1 });
-            if (!c.data || !c.data.length) throw new Error("That company has no contacts yet — add a person so the note has somewhere to live");
-            personId = c.data[0].id; r.attachedTo = (c.data[0].firstName || "") + " " + (c.data[0].lastName || "");
-          }
+          if (!personId) throw new Error("Pick who this was with, or add their name — notes are never attached to a guessed contact");
           const body = { personReference: { id: personId }, action: NOTE_ACTIONS.includes(it.action) ? it.action : "General Note", comments: comments, dateAdded: Date.now() };
           if (user) body.commentingPerson = { id: user.id };
           let result;
@@ -478,13 +497,9 @@ module.exports = function registerCapture(app, deps) {
         if (it.kind === "job") {
           if (!clientId) throw new Error("Job needs a client — pick an existing one or enter a new company name");
           const title = clip((it.title || "").trim(), MAX.title); if (!title) throw new Error("Job needs a title");
-          let contactId = (personId && personType === "contact") ? personId : null;
-          if (!contactId) {
-            const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id,firstName,lastName", orderBy: "-dateLastModified", count: 1 });
-            if (c.data && c.data.length) { contactId = c.data[0].id; r.attachedTo = ((c.data[0].firstName || "") + " " + (c.data[0].lastName || "")).trim(); }
-          }
-          if (!contactId) throw new Error("Bullhorn requires a client contact on every job — add a person for this company");
-          const body = { title: title, clientCorporation: { id: clientId }, clientContact: { id: contactId }, status: "Accepting Candidates", employmentType: ["Contract", "Contract to Hire", "Direct Hire", "Extension"].includes(it.employmentType) ? it.employmentType : "Contract", numOpenings: parseInt(it.numOpenings) || 1, type: 2, yearsRequired: YEARS_OPTIONS.includes(parseInt(it.yearsRequired)) ? parseInt(it.yearsRequired) : 3, isDeleted: false, isOpen: true };
+          const contactId = (personId && personType === "contact") ? personId : null;
+          if (!contactId) throw new Error("Pick the hiring contact for this job, or add their name — Bullhorn needs one and we never guess");
+          const body = { title: title, clientCorporation: { id: clientId }, clientContact: { id: contactId }, status: "Accepting Candidates", employmentType: ["Contract", "Contract to Hire", "Direct Hire", "Extension"].includes(it.employmentType) ? it.employmentType : "Contract", numOpenings: parseInt(it.numOpenings) || 1, type: 2, yearsRequired: YEARS_OPTIONS.includes(parseInt(it.yearsRequired)) ? parseInt(it.yearsRequired) : 0, isDeleted: false, isOpen: true };
           body.description = (it.description || title) + (it.nextStep ? "\n\nNext step: " + it.nextStep : "");
           const st = it.startDate ? Date.parse(it.startDate) : NaN; body.startDate = isNaN(st) ? Date.now() : st;
           if (it.endDate) { const te = Date.parse(it.endDate); if (!isNaN(te)) body.dateEnd = te; }
@@ -499,10 +514,7 @@ module.exports = function registerCapture(app, deps) {
           const title = clip((it.title || "").trim(), MAX.title); if (!title) throw new Error("Opportunity needs a title");
           const body = { title: title, status: OPP_STATUSES.includes(it.status) ? it.status : "Identified", type: ["New", "Renewal", "Amendment"].includes(it.type) ? it.type : "New", clientCorporation: { id: clientId }, dealValue: Number(it.dealValue) || 0, branchCode: PURSUIT_SOURCES.includes(it.pursuitSource) ? it.pursuitSource : "Outbound", isDeleted: false };
           if (it.description) body.description = it.description;
-          if (!personId || personType !== "contact") {
-            const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id", orderBy: "-dateLastModified", count: 1 });
-            if (c.data && c.data.length) body.clientContact = { id: c.data[0].id };
-          }
+          // No named contact: leave clientContact empty rather than guessing one.
           if (it.nextStep) { body.customText1 = clip(it.nextStep, MAX.nextStep); if (body.customText1 !== it.nextStep.trim()) body.description = (body.description || "") + "\n\nNext step: " + it.nextStep.trim(); }
           if (it.dealValue) body.dealValue = Number(it.dealValue) || 0;
           if (it.estimatedStart) { const t = Date.parse(it.estimatedStart); if (!isNaN(t)) body.estimatedStartDate = t; }
