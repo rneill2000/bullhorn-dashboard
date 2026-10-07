@@ -67,6 +67,7 @@ async function captureParse(){
         newPerson: { firstName:p.firstName||"", lastName:p.lastName||"", title:p.title||"", department:p.department||"", email:p.email||"", phone:p.phone||"", mobile:p.mobile||"", preferredRole:p.preferredRole||"", availableDate:p.availableDate||"", payRate:p.payRate||"", candidateStatus:p.candidateStatus||"" },
         subject: it.subject||"", dueDate: it.dueDate||"", taskType: it.taskType||"Other", billRate: it.billRate||"",
         jobId: s.jobId||null, jobLabel: s.jobId?_capJobLabel(it,s.jobId):"", jobHint: it.jobHint||"", appendNotes: it.appendNotes||"", changes: it.changes||{},
+        jobIds: (s.jobIds||[]).slice(), noteJobs: (it.matches&&it.matches.noteJobs)||[],
         hasPerson: !!(p.firstName||p.lastName),
         clientId: s.clientId||null,
         clientLabel: s.clientId ? _capClientLabel(it, s.clientId) : "",
@@ -143,6 +144,8 @@ function _capAnswer(i,qi,oi){
   if(o.yearsRequired!=null){ it.yearsRequired=o.yearsRequired; }
   if(o.pursuitSource){ it.pursuitSource=o.pursuitSource; }
   if(o.jobId){ it.jobId=o.jobId; it.jobLabel=o.label; }
+  if(o.jobIds){ it.jobIds=o.jobIds.slice(); }
+  if(o.nojob){ it.jobIds=[]; }
   if(o.nolink){ it.personId=null; it.newPerson.firstName=""; it.newPerson.lastName=""; }
   if(o.dueDays!=null){ var dd=new Date(); dd.setDate(dd.getDate()+o.dueDays); it.dueDate=dd.toISOString().slice(0,10); }
   // the same answer applies to every entry about this person
@@ -151,6 +154,7 @@ function _capAnswer(i,qi,oi){
   // a company chosen for one entry applies to the other entries with the same company name
   if(o.clientId){ var nm=(it.newClient.name||"").toLowerCase(); _cap.items.forEach(function(x){ if(x!==it && !x.clientId && (x.newClient.name||"").toLowerCase()===nm && nm){ x.clientId=o.clientId; x.clientLabel=it.clientLabel; (x.questions||[]).forEach(function(qq){ if(qq.id==="company") qq.answered=true; }); } }); }
   _capRenderItems();
+  if(o.personId){ _cap.items.forEach(function(x,j){ if(x.kind==="note" && x.personId===o.personId) _capLoadNoteJobs(j); }); }
 }
 function _capAnswerFree(i,qi,val){
   var it=_cap.items[i], q=it.questions[qi]; val=(val||"").trim(); var key=i+":"+qi;
@@ -180,7 +184,7 @@ function _capCard(it,i){
     else h+='<div class="cap-err">Failed: '+esc(res.error)+(res.created&&res.created.length?'<div style="margin-top:4px;font-size:12px">Created before the failure: '+res.created.map(function(c){return esc(c.type)+' #'+c.id+(c.verified===false?' (unverified)':'');}).join(', ')+'</div>':'')+'</div>';
   }
   // person
-  if(!isOpp || isCt || it.hasPerson || it.personId){
+  if(!isOpp || isCt || isJob || it.hasPerson || it.personId){
     h+='<div class="cap-row"><label>Person</label><div>';
     h+='<div class="cap-match"><select class="cap-sel" style="width:auto" onchange="_capSet('+i+',\'personType\',this.value);_capSet('+i+',\'personId\',null);_capSet('+i+',\'personLabel\',\'\');_capRefresh('+i+')"><option value="contact"'+(it.personType==="contact"?' selected':'')+'>Client contact</option><option value="candidate"'+(it.personType==="candidate"?' selected':'')+'>Candidate</option></select>';
     if(it.personId) h+='<span style="font-size:13px;font-weight:600;color:#166534">&#10003; '+esc(it.personLabel)+'</span><button class="btn-outline" style="padding:4px 8px;font-size:12px" onclick="_capSet('+i+',\'personId\',null);_capRefresh('+i+')">change</button>';
@@ -192,7 +196,11 @@ function _capCard(it,i){
       h+='<div class="cap-lookup" style="margin-top:6px"><input class="cap-in" placeholder="Search Bullhorn by name\u2026" oninput="_capLookup(this,'+i+',\'person\')"><div class="cap-dd" id="cap-dd-p-'+i+'" style="display:none"></div></div>';
       h+='<div style="margin-top:8px;font-size:12px;color:#64748b">Or create new '+(it.personType==="candidate"?'candidate':'contact')+':</div>';
       h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px"><input class="cap-in" placeholder="First name" value="'+esc(it.newPerson.firstName)+'" oninput="_cap.items['+i+'].newPerson.firstName=this.value"><input class="cap-in" placeholder="Last name" value="'+esc(it.newPerson.lastName)+'" oninput="_cap.items['+i+'].newPerson.lastName=this.value"><input class="cap-in" placeholder="Title" value="'+esc(it.newPerson.title)+'" oninput="_cap.items['+i+'].newPerson.title=this.value"><input class="cap-in" placeholder="Email" value="'+esc(it.newPerson.email)+'" oninput="_cap.items['+i+'].newPerson.email=this.value"><input class="cap-in" placeholder="Phone" value="'+esc(it.newPerson.phone)+'" oninput="_cap.items['+i+'].newPerson.phone=this.value"><input class="cap-in" placeholder="Department" value="'+esc(it.newPerson.department)+'" oninput="_cap.items['+i+'].newPerson.department=this.value"></div>';
-      if(!it.newPerson.firstName&&!it.newPerson.lastName&&!isOpp) h+='<div class="cap-warn">No person \u2014 this note will attach to the company\'s most recent contact.</div>';
+      if(!it.newPerson.firstName&&!it.newPerson.lastName){
+        if(isTask) h+='<div class="cap-warn">No link \u2014 this is a reminder on your own task list.</div>';
+        else if(isJob) h+='<div class="cap-err">Who is the hiring contact? Pick someone above or add their name. This job won\'t be written until you do.</div>';
+        else if(!isOpp && !isCt) h+='<div class="cap-err">Who was this with? Pick someone above or add their name. This note won\'t be written until you do.</div>';
+      }
     }
     if(isCt && it.personId){
       var f=[["Title","title"],["Department","department"],["Email","email"],["Phone","phone"],["Mobile","mobile"],["Available (date)","availableDate"],["Pay rate $/hr","payRate"],["Status","candidateStatus"]].filter(function(x){return it.newPerson[x[1]];});
@@ -246,7 +254,7 @@ function _capCard(it,i){
     h+='<div class="cap-row"><label>Min. years</label><select class="cap-sel" style="width:auto" onchange="_capSet('+i+',\'yearsRequired\',this.value)">'+[0,1,2,3,4,5,6,7].map(function(y){return '<option value="'+y+'"'+(String(it.yearsRequired)===String(y)?' selected':'')+'>'+(y===0?'Not specified':y)+'</option>';}).join('')+'</select></div>';
     h+='<div class="cap-row"><label>Description</label><textarea class="cap-in cap-ta2" oninput="_capSet('+i+',\'description\',this.value)">'+esc(it.description)+'</textarea></div>';
     h+='<div class="cap-row"><label>Next step</label><input class="cap-in" value="'+esc(it.nextStep)+'" oninput="_capSet('+i+',\'nextStep\',this.value)"></div>';
-    h+='<div class="cap-warn" style="margin-top:10px">Created as Accepting Candidates. Bullhorn needs a contact on every job \u2014 if none is picked, the company\'s most recent contact is used.</div>';
+    h+='<div class="cap-warn" style="margin-top:10px">Created as Accepting Candidates, with the hiring contact you pick above.</div>';
   } else if(isOpp){
     h+='<div class="cap-row"><label>Title</label><input class="cap-in" value="'+esc(it.title)+'" oninput="_capSet('+i+',\'title\',this.value)"></div>';
     h+='<div class="cap-row"><label>Stage</label><div style="display:flex;gap:6px"><select class="cap-sel" onchange="_capSet('+i+',\'status\',this.value)">'+["Identified","Qualifying","Negotiating","Legal Review"].map(function(s){return '<option'+(it.status===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select><select class="cap-sel" onchange="_capSet('+i+',\'type\',this.value)"><option'+(it.type==="New"?' selected':'')+'>New</option><option'+(it.type==="Renewal"?' selected':'')+'>Renewal</option><option'+(it.type==="Amendment"?' selected':'')+'>Amendment</option></select></div></div>';
@@ -260,13 +268,36 @@ function _capCard(it,i){
     h+='<div class="cap-row"><label>Type</label><select class="cap-sel" onchange="_capSet('+i+',\'action\',this.value)">'+["Appointment","Outbound Call","Inbound Call","Email","Text Conversation","Left Message","Reached Out","LinkedIn InMail","Prescreen","Reference"].map(function(s){return '<option'+(it.action===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
     h+='<div class="cap-row"><label>Note</label><textarea class="cap-in cap-ta2" oninput="_capSet('+i+',\'comments\',this.value)">'+esc(it.comments)+'</textarea></div>';
     h+='<div class="cap-row"><label>Next step</label><input class="cap-in" value="'+esc(it.followUp)+'" placeholder="Optional \u2014 appended to the note" oninput="_capSet('+i+',\'followUp\',this.value)"></div>';
+    h+=_capNoteJobsRow(it,i);
   }
   h+='</div>';
   return h;
 }
+function _capNoteJobLabel(it,id){ var m=(it.noteJobs||[]).filter(function(x){return x.id===id;})[0]; return m ? m.name+(m.sub?' \u2014 '+m.sub:'') : 'Job #'+id; }
+function _capNoteJobsRow(it,i){
+  var ids=it.jobIds||[], opts=(it.noteJobs||[]).filter(function(m){ return ids.indexOf(m.id)<0; });
+  if(!ids.length && !opts.length) return '';
+  var h='<div class="cap-row"><label>Also on job</label><div>';
+  if(ids.length) h+=ids.map(function(id){ return '<div class="cap-match" style="margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:#166534">&#10003; '+esc(_capNoteJobLabel(it,id))+'</span><button class="btn-outline" style="padding:2px 8px;font-size:12px" title="Don\'t add to this job" onclick="_capNoteJob('+i+','+id+',false)">&times;</button></div>'; }).join('');
+  else h+='<div style="font-size:12px;color:#64748b;margin-bottom:4px">Person only \u2014 not added to a job.</div>';
+  if(opts.length) h+='<select class="cap-sel" style="width:auto" onchange="if(this.value)_capNoteJob('+i+',parseInt(this.value),true)"><option value="">+ Add to another job\u2026</option>'+opts.map(function(m){ return '<option value="'+m.id+'">'+esc(m.name+(m.sub?' \u2014 '+m.sub:''))+'</option>'; }).join('')+'</select>';
+  return h+'</div></div>';
+}
+function _capNoteJob(i,id,add){ var it=_cap.items[i]; it.jobIds=(it.jobIds||[]).filter(function(x){return x!==id;}); if(add) it.jobIds.push(id); _capRefresh(i); }
 function _capSet(i,k,v){ _cap.items[i][k]=v; }
 function _capRefresh(i){ var el=document.getElementById("cap-card-"+i); if(el) el.outerHTML=_capCard(_cap.items[i],i); }
-function _capPick(i,id,label,clientId,clientName){ var it=_cap.items[i]; it.personId=id; it.personLabel=label; if(clientId&&!it.clientId){ it.clientId=clientId; it.clientLabel=clientName; } _capRefresh(i); }
+function _capPick(i,id,label,clientId,clientName){ var it=_cap.items[i]; it.personId=id; it.personLabel=label; if(clientId&&!it.clientId){ it.clientId=clientId; it.clientLabel=clientName; } _capRefresh(i); _capLoadNoteJobs(i); }
+// Once a person is picked by hand on a note, load the jobs it could belong to (candidate: submissions; contact: client's open jobs)
+async function _capLoadNoteJobs(i){
+  var it=_cap.items[i]; if(!it || it.kind!=="note" || !it.personId) return;
+  try{
+    var r=await apiFetch("capture/lookup",{kind:"notejobs",personType:it.personType,personId:it.personId,clientId:it.clientId||"",hint:it.jobHint||""});
+    it.noteJobs=r.data||[];
+    var keep=(it.jobIds||[]).filter(function(id){ return it.noteJobs.some(function(m){return m.id===id;}); });
+    it.jobIds=keep.length?keep:(r.suggested||[]);
+    _capRefresh(i);
+  }catch(e){}
+}
 function _capPickJob(i,id,label){ _cap.items[i].jobId=id; _cap.items[i].jobLabel=label; (_cap.items[i].questions||[]).forEach(function(q){ if(q.id==="job") q.answered=true; }); _capRenderItems(); }
 function _capPickClient(i,id,name){ _cap.items[i].clientId=id; _cap.items[i].clientLabel=name; _capRefresh(i); _capLoadJobs(i); }
 async function _capLoadJobs(i){ var it=_cap.items[i]; if(it.kind!=="job_update"||!it.clientId) return; try{ var r=await apiFetch("capture/lookup",{kind:"job",q:it.jobHint||"",clientId:it.clientId}); it.matches.jobs=r.data||[]; if(it.matches.jobs.length===1){ it.jobId=it.matches.jobs[0].id; it.jobLabel=it.matches.jobs[0].name+" — "+it.matches.jobs[0].sub; } _capRefresh(i); }catch(e){} }
@@ -304,7 +335,8 @@ async function captureCommit(){
     if(it.kind==="job_update" && !it.jobId) problems.push("Entry "+(i+1)+": pick which job to update");
     if(it.kind==="task" && !(it.subject||"").trim()) problems.push("Entry "+(i+1)+": task needs a subject");
     if(it.kind==="contact" && !it.personId && !(it.newPerson.firstName&&it.newPerson.lastName)) problems.push("Entry "+(i+1)+": contact needs a first and last name");
-    if(it.kind==="note" && !it.personId && !(it.newPerson.firstName||it.newPerson.lastName) && !hasCo) problems.push("Entry "+(i+1)+": note needs a person or company");
+    if(it.kind==="note" && !it.personId && !(it.newPerson.firstName||it.newPerson.lastName)) problems.push("Entry "+(i+1)+": who was this with? Pick a person or add their name");
+    if(it.kind==="job" && !it.personId && !(it.newPerson.firstName&&it.newPerson.lastName)) problems.push("Entry "+(i+1)+": pick the hiring contact for this job, or add their first and last name");
     if(it.kind==="note" && !it.personId && (it.newPerson.firstName||it.newPerson.lastName) && it.personType==="contact" && !hasCo) problems.push("Entry "+(i+1)+": a new contact needs a company");
   });
   if(problems.length){ alert(problems.join("\n")); return; }
@@ -316,7 +348,7 @@ async function captureCommit(){
       kind:it.kind, skip: it.skip||!!done,
       personType:it.personType, personId:it.personId, newPerson: (it.personId&&it.kind!=="contact"&&it.kind!=="job_update")?null:it.newPerson,
       clientId:it.clientId, newClient: it.clientId?null:it.newClient, forceCreate: !!it.forceCreate, forceCreateClient: !!it.forceCreateClient,
-      action:it.action, comments:it.comments, followUp:it.followUp,
+      action:it.action, comments:it.comments, followUp:it.followUp, jobIds:(it.kind==="note"?(it.jobIds||[]):[]),
       title:it.title, status:it.status, type:it.type, description:it.description, nextStep:it.nextStep, estimatedStart:it.estimatedStart, dealValue:it.dealValue,
       employmentType:it.employmentType, numOpenings:it.numOpenings, startDate:it.startDate, endDate:it.endDate, yearsRequired:it.yearsRequired, pursuitSource:it.pursuitSource,
       jobId:it.jobId, appendNotes:it.appendNotes, changes:it.changes, subject:it.subject, dueDate:it.dueDate, taskType:it.taskType, billRate:it.billRate

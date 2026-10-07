@@ -17,6 +17,17 @@ module.exports = function registerCapture(app, deps) {
   const PREFERRED_ROLES = ["Analyst", "PM", "Trainer", "Manager", "Director (Rev Cycle)", "Director (Ancillary Apps)", "Director (Clinical)", "Director (Patient Access)"];
   const YEARS_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7];
   const OPP_STATUSES = ["Identified", "Qualifying", "Negotiating", "Legal Review"];
+  // Anura's own team. A task about one of them is an internal reminder, never a client/candidate link.
+  const TEAM = ["Rachel Neill", "Peter Oppermann", "Ben Oppermann", "Ben Gray", "Dan Neill", "Suzie Hall", "Melissa Alfiero", "Jennifer Hemming", "Jen Hemming"];
+  function isColleague(person, company) {
+    const f = String((person && person.firstName) || "").trim().toLowerCase(), l = String((person && person.lastName) || "").trim().toLowerCase();
+    if (!f && !l) return false;
+    return TEAM.some(function (n) {
+      const parts = n.toLowerCase().split(" "), tf = parts[0], tl = parts.slice(1).join(" ");
+      if (l) return f === tf && l === tl;          // full name must match exactly
+      return f === tf && !company;                 // first name only: colleague unless a client company is named
+    });
+  }
 
   // ── Claude extraction ────────────────────────────────────────────────
   async function aiParse(text, today, clarifications) {
@@ -34,6 +45,9 @@ module.exports = function registerCapture(app, deps) {
       "If the notes describe a CONCRETE ROLE the client wants filled (a job title or Epic module/role, number of people, start date, rate, contract/perm), produce a JOB item for it — one job item per distinct role.",
       "If the notes describe an agreement-level deal (an MSA, a vendor/VMO process, a renewal, or a general 'wants to work with us' with no concrete role yet), produce an OPPORTUNITY item — at most ONE per company per dump, titled '<Company> MSA <year>' for MSA/agreement deals. A concrete role that ALSO needs an MSA gets both a job item and an opportunity item.",
       "Keep the author's own wording and facts in `comments` — clean up typos and fragments into readable sentences, but do not invent details, do not summarize away specifics (names, dates, modules, numbers, rates).",
+      "Dates: only fill a date field when the notes give a specific day (\"Oct 20\", \"Friday\", \"next Tuesday\", \"end of month\"). Vague timing (\"Q1\", \"early next year\", \"spring\", \"soon\") leaves the date null and stays in the description/comments in the author's words.",
+      "Deadlines: when someone needs something by a date (\"needs an answer by Thursday\", \"wants resumes by end of month\", \"offer expires Friday\"), ALSO produce a task item for the author due that day, subject starting with the action (e.g. \"Get Jonathan Hawkins an answer on the SBO role\"), linked to that person.",
+      "Internal to-dos: a task to send/ask/remind an Anura colleague (\"send Peter the rate sheet\", \"remind Ben to\") is a task with person null and company null — it is the author's own reminder; name the colleague in the subject.",
       "",
       "Return ONLY valid JSON, no prose, no markdown fences:",
       "{\"items\":[",
@@ -43,6 +57,7 @@ module.exports = function registerCapture(app, deps) {
       "  \"company\":\"organization name or null\",",
       "  \"action\":one of " + JSON.stringify(NOTE_ACTIONS) + " (in-person or video meeting = Appointment; a call the author made = Outbound Call; they called the author = Inbound Call),",
       "  \"comments\":\"the note text\",",
+      "  \"jobHint\":\"words naming the specific job/role/req this note is about (e.g. 'Skagit access analyst role', 'the SBO role'), or null if it is not about a specific job\",",
       "  \"followUp\":\"next step, or null\"},",
       " {\"kind\":\"task\",",
       "  \"subject\":\"short imperative, e.g. Follow up with Dana Ruiz re resumes\",",
@@ -89,7 +104,7 @@ module.exports = function registerCapture(app, deps) {
       "",
       "QUESTIONS: for facts you had to guess, add a short question aimed at the author (max one per item, only when truly unclear): a rate that could be bill or pay, a date with no year, a next step with no owner, text that could belong to two people, or a role that could be contract or perm. Never ask who a person is, for a last name, whether someone is a contact or candidate, for an email address, or for a start date or years of experience — those are handled separately. Do not ask about things the notes make clear, and never ask about the JSON schema, field options, or your own output — pick the closest valid value and move on.",
       "",
-      "Rules: personType is 'contact' for anyone who works at a client/prospect/hospital/vendor, 'candidate' for consultants/job seekers. Anura Connect's own team (Rachel Neill, Peter Oppermann, Ben Oppermann, Ben Gray, Dan, Suzie Hall, Melissa Alfiero) are colleagues — never make them the person; a conversation with a colleague about a client becomes a note on that client (person null unless a client contact is named). If only a first name is given, leave lastName empty. Never merge two people into one item. If the text mentions no person at all for a fact, attach it as a note to the company with person null.",
+      "Rules: personType is 'contact' for anyone who works at a client/prospect/hospital/vendor, 'candidate' for consultants/job seekers. Anura Connect's own team (" + TEAM.join(", ") + ", and Dan) are colleagues — never make them the person; a conversation with a colleague about a client becomes a note on that client (person null unless a client contact is named). If only a first name is given, leave lastName empty. Never merge two people into one item. If the text mentions no person at all for a fact, attach it as a note to the company with person null.",
       "",
       "NOTES:\n" + text + (clarifications ? "\n\nCLARIFICATIONS FROM THE AUTHOR (these override anything ambiguous above):\n" + clarifications : ""),
     ].join("\n");
@@ -140,6 +155,13 @@ module.exports = function registerCapture(app, deps) {
     }).sort(function (a, b) { return b.score - a.score; });
   }
 
+  // Contacts at one client, most recently touched first — used to ask "who was this with?"
+  async function contactsAtClient(clientId) {
+    if (!db.ready || !clientId) return [];
+    const rows = await db.getAll("SELECT id, first_name, last_name, occupation, client_id, client_name FROM client_contacts WHERE client_id=$1 AND is_deleted IS NOT TRUE ORDER BY date_last_modified DESC NULLS LAST LIMIT 8", [clientId]).catch(function () { return []; });
+    return rows.map(function (r) { return { kind: "contact", id: r.id, name: ((r.first_name || "") + " " + (r.last_name || "")).trim(), sub: [r.occupation, r.client_name].filter(Boolean).join(" · "), clientId: r.client_id, clientName: r.client_name }; });
+  }
+
   async function findCandidates(first, last) {
     if (!db.ready) return [];
     const parts = [], vals = [];
@@ -176,7 +198,34 @@ module.exports = function registerCapture(app, deps) {
     }).sort(function (a, b) { return b.score - a.score; });
   }
 
+  // A candidate's submissions, newest first — the jobs a candidate note is most likely about.
+  async function candidateSubmissions(candidateId) {
+    if (!db.ready || !candidateId) return [];
+    const rows = await db.getAll("SELECT s.id, s.job_id, s.status, COALESCE(j.title, s.job_title) AS title, COALESCE(NULLIF(s.client_name,''), j.client_name) AS client_name, j.status AS job_status FROM submissions s LEFT JOIN jobs j ON j.id = s.job_id WHERE s.candidate_id=$1 AND s.job_id IS NOT NULL ORDER BY s.date_added DESC NULLS LAST LIMIT 15", [candidateId]).catch(function () { return []; });
+    const seen = {};
+    return rows.filter(function (r) { if (seen[r.job_id]) return false; seen[r.job_id] = 1; return true; })
+      .map(function (r) { return { kind: "job", id: r.job_id, submissionId: r.id, name: r.title || ("Job #" + r.job_id), clientName: r.client_name || "", sub: [r.client_name, "submission #" + r.id + " · " + (r.status || "")].filter(Boolean).join(" · ") }; });
+  }
+  // Pick the one job the hint clearly points to (title + client words); null if unclear.
+  function pickJob(list, hint) {
+    // Generic words never decide which job a note belongs to — only distinctive ones (client, module, SBO, Cadence…)
+    const GENERIC = ["role", "job", "req", "position", "the", "opening", "openings", "his", "her", "their", "new", "current", "that", "this", "analyst", "consultant", "epic", "contract", "remote", "lead", "senior", "sr"];
+    const ht = tokens(hint).filter(function (t) { return !GENERIC.includes(t); });
+    if (!ht.length || !list.length) return null;
+    const scored = list.map(function (j) {
+      const hay = norm((j.name || "") + " " + (j.clientName || ""));
+      const hit = ht.filter(function (t) { return hay.split(" ").some(function (w) { return w === t || (t.length > 3 && w.startsWith(t)); }); }).length;
+      return { j: j, s: Math.round(100 * hit / ht.length) };
+    }).sort(function (a, b) { return b.s - a.s; });
+    if (scored[0].s < 50) return null;
+    if (scored[1] && scored[1].s === scored[0].s) return null; // tie: ask
+    return scored[0].j;
+  }
+
   async function enrichItem(it) {
+    // A to-do about an Anura colleague ("send Peter the rate sheet") is the author's own reminder:
+    // never let it match a client contact or candidate who happens to share the name.
+    if (it.kind === "task" && it.person && isColleague(it.person, it.company)) { it.person = null; it.personType = null; it.company = null; it.internal = true; }
     if ((it.kind === "job" || it.kind === "opportunity" || it.kind === "job_update") && it.personType !== "candidate") it.personType = "contact"; // the person on a deal is the hiring contact
     if (it.kind === "contact" && !it.personType) it.personType = "contact";
     if (it.kind === "task" && !it.personType) it.personType = "unknown";
@@ -202,6 +251,20 @@ module.exports = function registerCapture(app, deps) {
       out.matches.jobs = await findJobs(out.suggested.clientId, it.jobHint);
       const bj = out.matches.jobs[0];
       if (bj && bj.score >= 60 && !(out.matches.jobs[1] && out.matches.jobs[1].score >= bj.score)) out.suggested.jobId = bj.id;
+    }
+    // Which job(s) is a note about? Candidate: their submissions. Contact: that client's jobs.
+    let noteJobQ = null;
+    if (it.kind === "note") {
+      let jl = [];
+      if (out.suggested.personType === "candidate" && out.suggested.personId) jl = await candidateSubmissions(out.suggested.personId);
+      else if (out.suggested.clientId) jl = (await findJobs(out.suggested.clientId, it.jobHint || "")).filter(function (j) { return j.open; });
+      out.matches.noteJobs = jl.slice(0, 8);
+      out.suggested.jobIds = [];
+      if (it.jobHint) {
+        const best = pickJob(out.matches.noteJobs, it.jobHint);
+        if (best) out.suggested.jobIds = [best.id];
+        else if (out.matches.noteJobs.length) noteJobQ = { id: "notejob", text: "Which job is this note about (\"" + it.jobHint + "\")? It will be added to that job too.", options: out.matches.noteJobs.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), jobIds: [m.id] }; }).concat([{ label: "Not a specific job — person only", nojob: true }]) };
+      }
     }
     // Questions the tool needs answered before it will write anything
     const qs = [];
@@ -240,11 +303,27 @@ module.exports = function registerCapture(app, deps) {
     if (willCreatePerson && it.personType === "candidate" && !(p && p.preferredRole)) qs.push({ id: "prefrole", text: "Preferred role for " + personName + "?", options: PREFERRED_ROLES.map(function (r) { return { label: r, preferredRole: r }; }) });
     if (it.kind === "job") {
       if (!it.startDate) qs.push({ id: "start", text: "Start date for the " + (it.title || "role") + "?", free: true, options: [{ label: "ASAP (use today)", startToday: true }] });
-      if (it.yearsRequired == null) qs.push({ id: "years", text: "Minimum years of experience for the " + (it.title || "role") + "?", options: YEARS_OPTIONS.map(function (y) { return { label: y === 0 ? "Not specified (0)" : String(y), yearsRequired: y }; }) });
     }
+    // No named person on a note or a new job: never guess. Ask, and hold the entry until answered.
+    const noPerson = !personName && !out.suggested.personId && (
+      (it.kind === "note" && it.personType !== "candidate") || it.kind === "job");
+    if (noPerson) {
+      const coName = it.company || "";
+      const at = await contactsAtClient(out.suggested.clientId);
+      const opts = at.map(function (m) { return { label: m.name + (m.sub ? " — " + m.sub : ""), personType: "contact", personId: m.id, clientId: m.clientId || null }; });
+      if (it.kind === "note") opts.push({ label: "Skip this entry", skip: true });
+      out.missingPerson = true;
+      qs.push({ id: "whomissing", required: true, free: true, options: opts,
+        text: it.kind === "job"
+          ? "Who is the hiring contact for the " + (it.title || "new job") + (coName ? " at " + coName : "") + "? Bullhorn needs one on every job." + (opts.length ? " Pick one, or type their name and title." : " Type their name and title.")
+          : "Who was this with" + (coName ? " at " + coName : "") + "?" + (opts.length ? " Pick one, or type their name and title." : " Type their name and title.") });
+    }
+    if (noteJobQ) qs.push(noteJobQ);
     if (it.kind === "opportunity" && !it.pursuitSource) qs.push({ id: "pursuit", text: "How did the " + (it.company || "") + " opportunity come about?", options: PURSUIT_SOURCES.map(function (r) { return { label: r, pursuitSource: r }; }) });
     (it.aiQuestions || []).forEach(function (t, n) {
       if (/start date|email|last name|years of experience|client contact or|a contact or a candidate/i.test(t)) return; // already asked by the rules above
+      if (it.kind === "task" && !it.dueDate && /\b(due|deadline|when)\b/i.test(t)) return; // the due-date question already covers this
+      if (noPerson && /\b(name|who|contact)\b/i.test(t)) return; // the "who was this with" question already covers this
       qs.push({ id: "ai" + n, text: t, free: true });
     });
     out.questions = qs;
@@ -269,12 +348,19 @@ module.exports = function registerCapture(app, deps) {
   app.get("/api/capture/lookup", async function (req, res) {
     try {
       const q = (req.query.q || "").trim(), kind = req.query.kind || "contact";
-      if (!q && kind !== "job") return res.json({ data: [] });
+      if (!q && kind !== "job" && kind !== "notejobs") return res.json({ data: [] });
       const bits = q.split(/\s+/); const first = bits[0], last = bits.slice(1).join(" ");
       let data = [];
       if (kind === "contact") data = last ? await findContacts(first, last, "") : (await findContacts("", first, "")).concat(await findContacts(first, "", ""));
       else if (kind === "candidate") data = last ? await findCandidates(first, last) : (await findCandidates("", first)).concat(await findCandidates(first, ""));
       else if (kind === "job") data = await findJobs(parseInt(req.query.clientId), q);
+      else if (kind === "notejobs") {
+        // Jobs a note could belong to once the person is picked by hand: candidate -> their submissions, contact -> client's open jobs
+        const pid = parseInt(req.query.personId), cid = parseInt(req.query.clientId), hint = req.query.hint || "";
+        const list = req.query.personType === "candidate" ? await candidateSubmissions(pid) : (await findJobs(cid, hint)).filter(function (j) { return j.open; });
+        const best = hint ? pickJob(list, hint) : null;
+        return res.json({ data: list.slice(0, 8), suggested: best ? [best.id] : [] });
+      }
       else data = await findClients(q);
       const seen = {}; data = data.filter(function (d) { if (seen[d.id]) return false; seen[d.id] = 1; return true; });
       res.json({ data: data.slice(0, 10) });
@@ -458,13 +544,7 @@ module.exports = function registerCapture(app, deps) {
         if (it.kind === "note") {
           const comments = (it.comments || "").trim() + (it.followUp ? "\n\nNext step: " + it.followUp.trim() : "");
           if (!comments) throw new Error("Note has no text");
-          if (!personId && !clientId) throw new Error("Note needs a person or a company to attach to");
-          if (!personId) {
-            // company-only note: attach to the client's most recently modified contact
-            const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id,firstName,lastName", orderBy: "-dateLastModified", count: 1 });
-            if (!c.data || !c.data.length) throw new Error("That company has no contacts yet — add a person so the note has somewhere to live");
-            personId = c.data[0].id; r.attachedTo = (c.data[0].firstName || "") + " " + (c.data[0].lastName || "");
-          }
+          if (!personId) throw new Error("Pick who this was with, or add their name — notes are never attached to a guessed contact");
           const body = { personReference: { id: personId }, action: NOTE_ACTIONS.includes(it.action) ? it.action : "General Note", comments: comments, dateAdded: Date.now() };
           if (user) body.commentingPerson = { id: user.id };
           let result;
@@ -472,19 +552,36 @@ module.exports = function registerCapture(app, deps) {
           catch (e) { if (body.commentingPerson) { delete body.commentingPerson; result = await bhWrite("entity/Note", body, "PUT"); } else throw e; }
           const noteId = ok(result, "Note");
           r.created.push({ type: "note", id: noteId, personId: personId });
+          // Also put the note on each job it's about, so anyone looking at the job sees it.
+          const jobIds = (Array.isArray(it.jobIds) ? it.jobIds : []).map(function (x) { return parseInt(x); }).filter(function (x, k, a) { return x && a.indexOf(x) === k; });
+          if (jobIds.length) {
+            const linked = [], failed = [];
+            for (const jid of jobIds) {
+              try { await bhWrite("entity/Note/" + noteId + "/jobOrders/" + jid, {}, "PUT"); }
+              catch (e1) {
+                try { await bhWrite("entity/NoteEntity", { note: { id: noteId }, targetEntityName: "JobOrder", targetEntityID: jid }, "PUT"); }
+                catch (e2) { failed.push(jid + " (" + e2.message + ")"); continue; }
+              }
+              linked.push(jid);
+            }
+            // Read back: only report a job as linked if Bullhorn shows it on the note
+            try {
+              const back = (await bhFetch("entity/Note/" + noteId, { fields: "id,jobOrders(id)" })).data || {};
+              const have = ((back.jobOrders && back.jobOrders.data) || []).map(function (j) { return j.id; });
+              linked.filter(function (j) { return have.indexOf(j) < 0; }).forEach(function (j) { failed.push(j + " (not on the note when read back)"); });
+              const ok2 = linked.filter(function (j) { return have.indexOf(j) >= 0; });
+              r.created.push({ type: "note on job", id: noteId, title: ok2.map(function (j) { return "job #" + j; }).join(", ") || "none", verified: failed.length === 0, verifyError: failed.length ? "not linked to " + failed.join(", ") : undefined });
+            } catch (e3) { r.created.push({ type: "note on job", id: noteId, verified: false, verifyError: "read-back failed: " + e3.message }); }
+          }
           if (db.ready) { try { await db.query("INSERT INTO notes (id, person_id, action, comments_text, date_added, commenting_person_id, commenting_person_name, is_deleted, synced_at) VALUES ($1,$2,$3,$4,$5,$6,$7,false,NOW()) ON CONFLICT (id) DO NOTHING", [noteId, personId, body.action, comments, Date.now(), user ? user.id : null, user ? user.name : null]); } catch (e) { console.log("[Capture] local note insert failed:", e.message); } }
         }
         // 4. job order
         if (it.kind === "job") {
           if (!clientId) throw new Error("Job needs a client — pick an existing one or enter a new company name");
           const title = clip((it.title || "").trim(), MAX.title); if (!title) throw new Error("Job needs a title");
-          let contactId = (personId && personType === "contact") ? personId : null;
-          if (!contactId) {
-            const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id,firstName,lastName", orderBy: "-dateLastModified", count: 1 });
-            if (c.data && c.data.length) { contactId = c.data[0].id; r.attachedTo = ((c.data[0].firstName || "") + " " + (c.data[0].lastName || "")).trim(); }
-          }
-          if (!contactId) throw new Error("Bullhorn requires a client contact on every job — add a person for this company");
-          const body = { title: title, clientCorporation: { id: clientId }, clientContact: { id: contactId }, status: "Accepting Candidates", employmentType: ["Contract", "Contract to Hire", "Direct Hire", "Extension"].includes(it.employmentType) ? it.employmentType : "Contract", numOpenings: parseInt(it.numOpenings) || 1, type: 2, yearsRequired: YEARS_OPTIONS.includes(parseInt(it.yearsRequired)) ? parseInt(it.yearsRequired) : 3, isDeleted: false, isOpen: true };
+          const contactId = (personId && personType === "contact") ? personId : null;
+          if (!contactId) throw new Error("Pick the hiring contact for this job, or add their name — Bullhorn needs one and we never guess");
+          const body = { title: title, clientCorporation: { id: clientId }, clientContact: { id: contactId }, status: "Accepting Candidates", employmentType: ["Contract", "Contract to Hire", "Direct Hire", "Extension"].includes(it.employmentType) ? it.employmentType : "Contract", numOpenings: parseInt(it.numOpenings) || 1, type: 2, yearsRequired: YEARS_OPTIONS.includes(parseInt(it.yearsRequired)) ? parseInt(it.yearsRequired) : 0, isDeleted: false, isOpen: true };
           body.description = (it.description || title) + (it.nextStep ? "\n\nNext step: " + it.nextStep : "");
           const st = it.startDate ? Date.parse(it.startDate) : NaN; body.startDate = isNaN(st) ? Date.now() : st;
           if (it.endDate) { const te = Date.parse(it.endDate); if (!isNaN(te)) body.dateEnd = te; }
@@ -499,10 +596,7 @@ module.exports = function registerCapture(app, deps) {
           const title = clip((it.title || "").trim(), MAX.title); if (!title) throw new Error("Opportunity needs a title");
           const body = { title: title, status: OPP_STATUSES.includes(it.status) ? it.status : "Identified", type: ["New", "Renewal", "Amendment"].includes(it.type) ? it.type : "New", clientCorporation: { id: clientId }, dealValue: Number(it.dealValue) || 0, branchCode: PURSUIT_SOURCES.includes(it.pursuitSource) ? it.pursuitSource : "Outbound", isDeleted: false };
           if (it.description) body.description = it.description;
-          if (!personId || personType !== "contact") {
-            const c = await bhFetchAll("query/ClientContact", { where: "clientCorporation.id=" + clientId + " AND isDeleted=false", fields: "id", orderBy: "-dateLastModified", count: 1 });
-            if (c.data && c.data.length) body.clientContact = { id: c.data[0].id };
-          }
+          // No named contact: leave clientContact empty rather than guessing one.
           if (it.nextStep) { body.customText1 = clip(it.nextStep, MAX.nextStep); if (body.customText1 !== it.nextStep.trim()) body.description = (body.description || "") + "\n\nNext step: " + it.nextStep.trim(); }
           if (it.dealValue) body.dealValue = Number(it.dealValue) || 0;
           if (it.estimatedStart) { const t = Date.parse(it.estimatedStart); if (!isNaN(t)) body.estimatedStartDate = t; }
