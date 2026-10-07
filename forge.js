@@ -7,6 +7,8 @@
  *
  * Résumés come from Bullhorn Candidate file attachments (PDFs). The client
  * email may only use Why Me, Availability, Location, and Bill Rate.
+ * Blank bill rate and Why Me fall back to Bullhorn notes. A filled field is kept.
+ * Rate checks use Dan's W-2 / 1099 split and never invent a rate.
  */
 "use strict";
 
@@ -179,8 +181,16 @@ const BUNDLE_SELECT = `
          cd.custom_text8 AS cand_city_custom, cd.custom_text9 AS cand_state_custom,
          cd.address_city AS cand_city, cd.address_state AS cand_state,
          cd.date_available, cd.date_last_modified AS cand_modified,
-         LEFT(cd.description, 2000) AS cand_description, cd.will_relocate
+         LEFT(cd.description, 2000) AS cand_description, cd.will_relocate,
+         cd.raw_json->>'employeeType' AS cand_employee_type
 ` + BUNDLE_FROM;
+
+const NOTES_FOR_CANDIDATES_SQL =
+  "SELECT id, person_id, job_order_id, action, comments_text, date_added, raw_json FROM (" +
+  "SELECT id, person_id, job_order_id, action, comments_text, date_added, raw_json, " +
+  "ROW_NUMBER() OVER (PARTITION BY person_id ORDER BY date_added DESC NULLS LAST) AS rn " +
+  "FROM notes WHERE person_id = ANY($1::int[]) AND is_deleted IS NOT TRUE" +
+  ") ranked WHERE rn <= 30";
 
 const MAX_RESUME_BYTES = 3 * 1024 * 1024;
 
@@ -381,10 +391,15 @@ function parseSubmissionComments(text) {
   });
   push();
   const joined = {};
+  let payRate = "";
   sections.forEach(function (s) {
     const t = s.lines.join("\n").trim();
     if (!t) return;
-    if (s.key === "payRate" || s.key === "margin") return;
+    if (s.key === "payRate") {
+      payRate = payRate ? payRate + "\n" + t : t;
+      return;
+    }
+    if (s.key === "margin") return;
     joined[s.key] = joined[s.key] ? joined[s.key] + "\n" + t : t;
   });
   if (!joined.name && joined.preamble) {
@@ -399,6 +414,7 @@ function parseSubmissionComments(text) {
     availability: joined.availability || "",
     location: joined.location || "",
     billRate: joined.billRate || "",
+    payRate: payRate,
   };
 }
 
@@ -421,13 +437,21 @@ function pickBillRate(parts) {
       flags.push({ level: "warn", code: "rate_scale", message: "This figure is over $1,000. Confirm it is an hourly bill rate before sending." });
     }
   }
+  if (submission) {
+    if (comment && pay && sameMoney(comment, pay)) {
+      flags.push({ level: "warn", code: "pay_vs_bill", message: "The rate in the submission comments matches the pay rate. The draft uses the bill rate on the submission instead." });
+    } else if (comment && !sameMoney(comment, submission.billRate)) {
+      flags.push({ level: "warn", code: "bill_rate_field_kept", message: "The note says " + comment + ". The bill rate field " + submission.billRate + " was kept." });
+    }
+    annualFlag(submission.billRate);
+    return submission;
+  }
   if (comment) {
     const commentIsPay = pay && sameMoney(comment, pay);
-    if (commentIsPay && (submission || job)) {
-      const known = submission || job;
-      flags.push({ level: "warn", code: "pay_vs_bill", message: "The rate in the submission comments matches the pay rate. The draft uses the bill rate on the " + (known.source === "from job" ? "job" : "submission") + " instead." });
-      annualFlag(known.billRate);
-      return known;
+    if (commentIsPay && job) {
+      flags.push({ level: "warn", code: "pay_vs_bill", message: "The rate in the submission comments matches the pay rate. The draft uses the bill rate on the job instead." });
+      annualFlag(job.billRate);
+      return job;
     }
     if (commentIsPay) {
       flags.push({ level: "alert", code: "pay_vs_bill", message: "Only a pay rate is on file (" + formatRate(pay) + "). It was left out of the draft so it is not sent to the client." });
@@ -436,16 +460,12 @@ function pickBillRate(parts) {
     annualFlag(comment);
     return { billRate: comment, flags: flags, source: "from comments" };
   }
-  if (submission) {
-    annualFlag(submission.billRate);
-    return submission;
-  }
   if (job) {
     annualFlag(job.billRate);
     return job;
   }
   if (pay && moneyNumber(pay)) {
-    flags.push({ level: "alert", code: "bill_rate_missing", message: "No bill rate on the submission or job. Pay rate is " + formatRate(pay) + " and was not put in the draft." });
+    flags.push({ level: "alert", code: "bill_rate_missing", message: "No bill rate on the submission, job, or notes. Pay rate is " + formatRate(pay) + " and was not put in the draft." });
   } else {
     flags.push({ level: "alert", code: "bill_rate_missing", message: "Bill rate is missing." });
   }
@@ -537,6 +557,311 @@ function templateWhyMe(parts) {
   const comment = (parts.commentWhy || "").trim();
   if (comment) return { text: comment, source: "comments" };
   return { text: "", source: "missing" };
+}
+
+const DAY_MS = 86400000;
+const VMS_RULES = [
+  { pct: 0.025, label: "Lahey/HWL", re: /\blahey\b|\bhwl\b/i },
+  { pct: 0.0475, label: "CHRISTUS/WTC", re: /\bchristus\b|\bwtc\b/i },
+  { pct: 0.025, label: "Abbott/TAPFIN", re: /\babbott\b|\btapfin\b/i },
+  { pct: 0.05, label: "CHOP/RightSourcing", re: /\bchop\b|right\s*-?\s*sourcing/i },
+];
+
+function roundCents(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+}
+
+/** W-2 or 1099 only. Both, or neither, stays blank so a check does not guess. */
+function classifyEmployment(text) {
+  const s = String(text || "");
+  function read(scope) {
+    const has1099 = /\b1099\b/i.test(scope);
+    const hasW2 = /\bW-?2\b/i.test(scope);
+    if (has1099 && hasW2) return "";
+    if (has1099) return "1099";
+    if (hasW2) return "W2";
+    return "";
+  }
+  const payLine = s.split("\n").filter(function (line) { return /pay\s*rate/i.test(line); }).join("\n");
+  if (payLine) {
+    const fromPay = read(payLine);
+    if (fromPay) return fromPay;
+  }
+  return read(s);
+}
+
+function matchVms(clientName, noteText) {
+  const client = String(clientName || "");
+  const fromClient = VMS_RULES.filter(function (rule) { return rule.re.test(client); })[0];
+  if (fromClient) return fromClient;
+  const note = String(noteText || "");
+  return VMS_RULES.filter(function (rule) { return rule.re.test(note); })[0] || null;
+}
+
+/**
+ * Dan's split, for a check only. W-2 is 2/3 consultant and 1/3 Anura.
+ * 1099 is 3/4 and 1/4. VMS comes off the bill first, and only for W-2.
+ * Site lead $5/hr is never billed and is not added or removed here.
+ * A missing bill or pay stays missing. This does not return a bill rate.
+ */
+function checkRateSplit(input) {
+  const src = input || {};
+  const bill = positiveMoney(src.bill);
+  const pay = positiveMoney(src.pay);
+  const employment = classifyEmployment(src.employmentText || "");
+  const result = {
+    status: "unchecked",
+    employment: employment,
+    vmsPercent: null,
+    vmsName: "",
+    remit: null,
+    expectedPay: null,
+    consultantShare: null,
+    anuraShare: null,
+    siteLeadHourly: src.siteLead ? 5 : 0,
+    siteLeadBilled: false,
+    message: "",
+  };
+  if (!employment) {
+    result.message = "Rate split was not checked. The note does not say W-2 or 1099.";
+    return result;
+  }
+  if (bill == null || pay == null) {
+    result.message = "Rate split was not checked. " + (bill == null ? "Bill rate" : "Pay rate") + " is blank, and a rate was not calculated.";
+    return result;
+  }
+  const vms = employment === "W2" ? matchVms(src.clientName, src.noteText) : null;
+  const pct = vms ? vms.pct : 0;
+  const remit = roundCents(bill * (1 - pct));
+  const consultantShare = employment === "1099" ? 0.75 : (2 / 3);
+  const anuraShare = employment === "1099" ? 0.25 : (1 / 3);
+  const expectedPay = roundCents(remit * consultantShare);
+  result.vmsPercent = pct;
+  result.vmsName = vms ? vms.label : "";
+  result.remit = remit;
+  result.expectedPay = expectedPay;
+  result.consultantShare = consultantShare;
+  result.anuraShare = anuraShare;
+  const vmsBit = vms ? " after " + vms.label + " " + (pct * 100) + "% VMS" : "";
+  const siteBit = src.siteLead ? " Site lead $5/hr is not billed and was not added or removed." : "";
+  if (Math.abs(expectedPay - pay) < 0.02) {
+    result.status = "ok";
+    result.message = "Pay matches the " + (employment === "1099" ? "1099 3/4" : "W-2 2/3") + " split of remit" + vmsBit + "." + siteBit;
+    return result;
+  }
+  result.status = "off";
+  result.message = "Pay $" + pay + "/hr does not match the " + (employment === "1099" ? "1099 3/4" : "W-2 2/3") + " split. Remit is $" + remit + "/hr" + vmsBit + "; consultant share would be $" + expectedPay + "/hr. The bill rate was not changed." + siteBit;
+  return result;
+}
+
+function groupNotes(rows) {
+  const map = {};
+  (rows || []).forEach(function (note) {
+    if (!note || note.person_id == null) return;
+    const key = String(note.person_id);
+    if (!map[key]) map[key] = [];
+    map[key].push(note);
+  });
+  return map;
+}
+
+function noteJobIds(note) {
+  const ids = [];
+  if (note && note.job_order_id) ids.push(Number(note.job_order_id));
+  let raw = note && note.raw_json;
+  if (typeof raw === "string") {
+    try { raw = JSON.parse(raw); } catch (e) { raw = null; }
+  }
+  const jo = raw && raw.jobOrders;
+  const list = jo ? (Array.isArray(jo) ? jo : (jo.data || (jo.id ? [jo] : []))) : [];
+  list.forEach(function (item) {
+    const id = item && typeof item === "object" ? item.id : item;
+    if (id) ids.push(Number(id));
+  });
+  const out = [];
+  ids.forEach(function (id) {
+    if (id && out.indexOf(id) < 0) out.push(id);
+  });
+  return out;
+}
+
+function plainNote(note) {
+  return htmlToPlain(note && (note.comments_text || note.comments || note.text) || "");
+}
+
+function scoreNote(note, ctx) {
+  const text = plainNote(note).toLowerCase();
+  const jobs = noteJobIds(note);
+  let score = 0;
+  const jobId = ctx && ctx.jobId;
+  if (jobId && jobs.some(function (id) { return Number(id) === Number(jobId); })) score += 100;
+  const title = String((ctx && ctx.jobTitle) || "").trim().toLowerCase();
+  if (title.length >= 6 && text.indexOf(title) >= 0) score += 40;
+  const client = String((ctx && ctx.clientName) || "").trim().toLowerCase();
+  if (client.length >= 4 && text.indexOf(client) >= 0) score += 30;
+  const submitted = ctx && ctx.submittedAt ? Number(ctx.submittedAt) : 0;
+  const added = note && note.date_added ? Number(note.date_added) : 0;
+  if (submitted && added) {
+    const delta = Math.abs(added - submitted);
+    if (delta <= 14 * DAY_MS) score += 20;
+    else if (delta <= 45 * DAY_MS) score += 8;
+    else score -= 25;
+  } else {
+    score -= 5;
+  }
+  return score;
+}
+
+function sameFieldValue(a, b) {
+  const na = moneyNumber(a);
+  const nb = moneyNumber(b);
+  if (na != null && nb != null) return Math.abs(na - nb) < 0.01;
+  return String(a || "").trim() === String(b || "").trim();
+}
+
+function chooseNoteField(notes, ctx, read) {
+  const ranked = (notes || []).map(function (note) {
+    const text = plainNote(note);
+    const parsed = parseSubmissionComments(text);
+    return { note: note, text: text, parsed: parsed, value: read(parsed, text), score: scoreNote(note, ctx) };
+  }).filter(function (row) { return row.value; });
+  if (!ranked.length) return { value: "", ambiguous: false, row: null };
+  ranked.sort(function (a, b) {
+    if (b.score !== a.score) return b.score - a.score;
+    return (Number(b.note.date_added) || 0) - (Number(a.note.date_added) || 0);
+  });
+  const best = ranked[0];
+  if (best.score < 8) return { value: "", ambiguous: false, row: null };
+  const conflict = ranked.slice(1).some(function (row) {
+    if (sameFieldValue(row.value, best.value)) return false;
+    if (best.score >= 100 && row.score < 100) return false;
+    return best.score - row.score < 15;
+  });
+  if (conflict) return { value: "", ambiguous: true, row: null };
+  return { value: best.value, ambiguous: false, row: best };
+}
+
+/**
+ * Fill a blank bill rate or Why Me from notes. A value already chosen from a
+ * field, the submission comments, or the job is left as it is.
+ */
+function applyNoteFallback(bill, why, notes, ctx) {
+  const nextBill = Object.assign({ flags: [] }, bill);
+  nextBill.flags = (bill && bill.flags) ? bill.flags.slice() : [];
+  const nextWhy = Object.assign({}, why);
+  let siteLead = false;
+  let payFromNote = "";
+  let employment = "";
+  let noteText = "";
+  (notes || []).forEach(function (note) {
+    if (scoreNote(note, ctx) < 8) return;
+    const text = plainNote(note);
+    noteText += (noteText ? "\n" : "") + text;
+    if (/site\s*lead/i.test(text)) siteLead = true;
+    const parsed = parseSubmissionComments(text);
+    if (!payFromNote && parsed.payRate) payFromNote = parsed.payRate;
+    if (!employment) employment = classifyEmployment(text);
+  });
+  if (!nextBill.billRate) {
+    const chosen = chooseNoteField(notes, ctx, function (parsed) { return cleanBill(parsed.billRate); });
+    if (chosen.ambiguous) {
+      nextBill.flags.push({ level: "warn", code: "bill_rate_ambiguous", message: "More than one note has a bill rate and none is clearly this job. No rate was filled in." });
+    } else if (chosen.value) {
+      const pay = ctx && ctx.pay;
+      const amount = positiveMoney(chosen.value);
+      if (amount != null && !(pay && sameMoney(chosen.value, pay))) {
+        nextBill.billRate = formatRate(chosen.value);
+        nextBill.amount = amount;
+        nextBill.source = "from notes";
+        nextBill.flags = nextBill.flags.filter(function (flag) { return flag.code !== "bill_rate_missing"; });
+        if (amount >= 1000) {
+          nextBill.flags.push({ level: "warn", code: "rate_scale", message: "This figure is over $1,000. Confirm it is an hourly bill rate before sending." });
+        }
+        if (chosen.row && /site\s*lead/i.test(chosen.row.text)) siteLead = true;
+        if (chosen.row) {
+          const fromBillNote = classifyEmployment(chosen.row.text);
+          if (fromBillNote) employment = fromBillNote;
+        }
+      }
+    }
+  }
+  if (!(nextWhy.text || "").trim()) {
+    const chosen = chooseNoteField(notes, ctx, function (parsed) { return (parsed.whyMe || "").trim(); });
+    if (chosen.ambiguous) {
+      nextWhy.text = "";
+      nextWhy.source = "missing";
+      nextWhy.ambiguous = true;
+    } else if (chosen.value) {
+      nextWhy.text = chosen.value;
+      nextWhy.source = "from notes";
+      nextWhy.ambiguous = false;
+    }
+  }
+  return { bill: nextBill, why: nextWhy, siteLead: siteLead, payFromNote: payFromNote, employment: employment, noteText: noteText };
+}
+
+function submissionFacts(row, notes) {
+  const src = row || {};
+  const parsed = parseSubmissionComments(src.comments);
+  const client = resolveClient(src);
+  const payField = src.pay_rate || src.sub_custom_pay || "";
+  const bill = pickBillRate({
+    commentRate: parsed.billRate,
+    customText10: src.sub_custom_bill,
+    payRate: payField,
+    jobPay: src.job_pay_rate,
+  });
+  const why = templateWhyMe({ commentWhy: parsed.whyMe });
+  const ctx = {
+    jobId: src.job_id,
+    jobTitle: src.job_title_live || src.job_title || "",
+    clientName: client.clientName,
+    submittedAt: src.date_added,
+    pay: payField || parsed.payRate,
+  };
+  const filled = applyNoteFallback(bill, why, notes || [], ctx);
+  if (!filled.bill.billRate) {
+    const job = pickBillRate({
+      commentRate: "",
+      customText10: "",
+      jobBill: src.job_bill_rate,
+      rateNotes: src.job_rate_notes,
+      payRate: payField,
+      jobPay: src.job_pay_rate,
+    });
+    if (job.billRate) {
+      const kept = (filled.bill.flags || []).filter(function (flag) {
+        return flag.code === "bill_rate_ambiguous" || flag.code === "bill_rate_field_kept";
+      });
+      if (parsed.billRate && payField && sameMoney(parsed.billRate, payField)) {
+        kept.push({ level: "warn", code: "pay_vs_bill", message: "The rate in the submission comments matches the pay rate. The draft uses the bill rate on the job instead." });
+      }
+      job.flags = kept.concat(job.flags || []);
+      filled.bill = job;
+    }
+  }
+  const payStated = positiveMoney(src.sub_custom_pay);
+  const payNumeric = positiveMoney(src.pay_rate);
+  const payForCheck = payStated != null ? payStated : (payNumeric != null ? payNumeric : positiveMoney(filled.payFromNote));
+  const rateCheck = checkRateSplit({
+    bill: filled.bill.amount,
+    pay: payForCheck,
+    employmentText: [filled.employment, parsed.payRate, src.cand_employee_type].filter(Boolean).join("\n"),
+    clientName: client.clientName,
+    noteText: String(src.comments || "") + "\n" + filled.noteText,
+    siteLead: filled.siteLead || /site\s*lead/i.test(String(src.comments || "")),
+  });
+  const flags = filled.bill.flags.slice();
+  if (filled.why.ambiguous) {
+    flags.push({ level: "warn", code: "why_me_ambiguous", message: "More than one note has a Why Me and none is tied to this job. None was used." });
+  }
+  if (!filled.why.text) {
+    flags.push({ level: "alert", code: "why_me_missing", message: "No Why Me in the submission comments or notes. Write one." });
+  }
+  if (rateCheck.status === "off") {
+    flags.push({ level: "warn", code: "rate_split", message: rateCheck.message });
+  }
+  return { parsed: parsed, client: client, bill: filled.bill, why: filled.why, rateCheck: rateCheck, flags: flags };
 }
 
 function detectModule(text) {
@@ -855,14 +1180,19 @@ function registerForge(app, deps) {
     return row;
   }
 
-  async function loadNotes(candidateId) {
-    if (!candidateId || !db || !db.ready) return [];
+  async function loadNotesForCandidates(ids) {
+    const clean = [];
+    const seen = {};
+    (ids || []).forEach(function (id) {
+      if (id == null || id === "" || seen[id]) return;
+      seen[id] = true;
+      clean.push(id);
+    });
+    if (!clean.length || !db || !db.ready) return {};
     try {
-      return await db.getAll(
-        "SELECT action, comments_text, date_added FROM notes WHERE person_id = $1 AND is_deleted IS NOT TRUE ORDER BY date_added DESC NULLS LAST LIMIT 3",
-        [candidateId]
-      );
-    } catch (e) { return []; }
+      const rows = await db.getAll(NOTES_FOR_CANDIDATES_SQL, [clean]);
+      return groupNotes(rows);
+    } catch (e) { return {}; }
   }
 
   async function loadContacts(clientId) {
@@ -994,8 +1324,8 @@ function registerForge(app, deps) {
     } catch (e) { return null; }
   }
 
-  function siblingSnapshot(row, now, drafts) {
-    const p = project(row, now);
+  function siblingSnapshot(row, now, drafts, notes) {
+    const p = project(row, now, notes);
     const draft = drafts[p.submissionId] || null;
     const status = row.status || "";
     return {
@@ -1042,29 +1372,25 @@ function registerForge(app, deps) {
   async function siblingPack(candidateIds, now) {
     const rows = await loadSiblingRows(candidateIds);
     const drafts = await loadDraftMap(rows.map(function (row) { return row.id; }));
+    const notesBy = await loadNotesForCandidates(candidateIds);
     const byCand = {};
     rows.forEach(function (row) {
       const key = String(row.candidate_id);
       if (!byCand[key]) byCand[key] = [];
-      byCand[key].push(siblingSnapshot(row, now, drafts));
+      byCand[key].push(siblingSnapshot(row, now, drafts, notesBy[key] || []));
     });
     return byCand;
   }
 
-  function project(row, now) {
-    const parsed = parseSubmissionComments(row.comments);
-    const client = resolveClient(row);
+  function project(row, now, notes) {
+    const facts = submissionFacts(row, notes || []);
+    const parsed = facts.parsed;
+    const client = facts.client;
     const name = (row.candidate_name || parsed.name || "").trim();
     const jobTitle = row.job_title_live || row.job_title || "";
     const clientName = client.clientName;
-    const bill = pickBillRate({
-      commentRate: parsed.billRate,
-      customText10: row.sub_custom_bill,
-      jobBill: row.job_bill_rate,
-      rateNotes: row.job_rate_notes,
-      payRate: row.pay_rate || row.sub_custom_pay,
-      jobPay: row.job_pay_rate,
-    });
+    const bill = facts.bill;
+    const why = facts.why;
     const location = pickLocation({
       commentLocation: parsed.location,
       candCity: row.cand_city,
@@ -1083,9 +1409,7 @@ function registerForge(app, deps) {
       customDate2: row.sub_custom_date2,
       dateAvailable: row.date_available,
     }, now);
-    const why = templateWhyMe({ commentWhy: parsed.whyMe });
-    const flags = bill.flags.concat(location.flags);
-    if (!why.text) flags.push({ level: "alert", code: "why_me_missing", message: "No Why Me in Bullhorn comments. Write one." });
+    const flags = facts.flags.concat(location.flags);
     if (avail.passed) flags.push({ level: "warn", code: "availability_passed", message: "Availability date has passed. Confirm." });
     if (!avail.text) flags.push({ level: "warn", code: "availability", message: "Availability is blank." });
     if (!location.text) flags.push({ level: "warn", code: "location", message: "Location is blank." });
@@ -1135,6 +1459,7 @@ function registerForge(app, deps) {
       location: location.text,
       billRate: bill.billRate,
       billRateSource: bill.source === "withheld_pay" || bill.source === "missing" ? "" : bill.source,
+      rateCheck: facts.rateCheck,
       subject: subject,
       flags: flags,
       missing: missing,
@@ -1153,18 +1478,15 @@ function registerForge(app, deps) {
     }
   }
 
-  async function liveBill(submissionId, jobId) {
+  async function liveBill(submissionId, jobId, ctx) {
     if (!bhFetch) return null;
     let subWrap;
     try {
-      subWrap = await bhFetch("entity/JobSubmission/" + submissionId, { fields: "id,billRate,payRate,customText10" });
+      subWrap = await bhFetch("entity/JobSubmission/" + submissionId, { fields: "id,billRate,payRate,customText10,comments" });
     } catch (e) {
       throw Object.assign(new Error("Could not re-read the bill rate from Bullhorn. " + e.message), { status: 502 });
     }
     const sub = (subWrap && (subWrap.data || subWrap)) || {};
-    const subAmount = positiveMoney(sub.customText10);
-    const subBill = subAmount != null ? subAmount : positiveMoney(sub.billRate);
-    if (subBill != null) return { amount: subBill, source: "from submission" };
     let jobWrap;
     try {
       jobWrap = await bhFetch("entity/JobOrder/" + jobId, { fields: "id,clientBillRate" });
@@ -1172,8 +1494,38 @@ function registerForge(app, deps) {
       throw Object.assign(new Error("Could not re-read the job bill rate from Bullhorn. " + e.message), { status: 502 });
     }
     const job = (jobWrap && (jobWrap.data || jobWrap)) || {};
-    const jobBill = positiveMoney(job.clientBillRate);
-    if (jobBill != null) return { amount: jobBill, source: "from job" };
+    const context = ctx || {};
+    const field = positiveMoney(sub.customText10) != null ? sub.customText10 : (positiveMoney(sub.billRate) != null ? sub.billRate : "");
+    const parsed = parseSubmissionComments(sub.comments);
+    const picked = pickBillRate({
+      commentRate: parsed.billRate,
+      customText10: field,
+      payRate: sub.payRate || context.pay,
+    });
+    let notes = [];
+    if (context.candidateId) {
+      const grouped = await loadNotesForCandidates([context.candidateId]);
+      notes = grouped[String(context.candidateId)] || [];
+    }
+    const filled = applyNoteFallback(picked, { text: "", source: "missing" }, notes, {
+      jobId: jobId,
+      jobTitle: context.jobTitle || "",
+      clientName: context.clientName || "",
+      submittedAt: context.submittedAt,
+      pay: sub.payRate || context.pay,
+    });
+    if (filled.bill.billRate && filled.bill.source !== "withheld_pay" && filled.bill.source !== "missing") {
+      return { amount: filled.bill.amount, source: filled.bill.source };
+    }
+    const jobOnly = pickBillRate({
+      commentRate: "",
+      customText10: "",
+      jobBill: job.clientBillRate,
+      payRate: sub.payRate || context.pay,
+    });
+    if (jobOnly.billRate && jobOnly.source !== "withheld_pay") {
+      return { amount: jobOnly.amount, source: jobOnly.source };
+    }
     return { amount: null, source: "missing" };
   }
 
@@ -1326,9 +1678,10 @@ function registerForge(app, deps) {
       const user = getUser(req);
       const internals = await loadInternalUsers();
       const drafts = await loadDraftMap(visible.map(function (r) { return r.id; }));
+      const notesBy = await loadNotesForCandidates(visible.map(function (r) { return r.candidate_id; }));
       const siblings = await siblingPack(visible.map(function (r) { return r.candidate_id; }), now);
       const all = visible.map(function (row) {
-        const p = project(row, now);
+        const p = project(row, now, notesBy[String(row.candidate_id)] || []);
         const sib = buildSiblingView({
           submissionId: p.submissionId,
           candidateName: p.candidate.name,
@@ -1358,12 +1711,16 @@ function registerForge(app, deps) {
           missing: p.missing,
           billRate: p.billRate,
           billRateSource: p.billRateSource,
+          whyMeSource: p.whyMeSource,
+          rateCheck: p.rateCheck,
           subject: p.subject,
           existingDraft: drafts[p.submissionId] || null,
           otherJobsLabel: sib.otherJobsLabel,
           otherJobCount: sib.otherJobCount,
           otherSubmissions: sib.otherSubmissions,
-          flags: sib.flags,
+          flags: (p.flags || []).filter(function (flag) {
+            return flag.code === "rate_split" || flag.code === "bill_rate_ambiguous" || flag.code === "bill_rate_field_kept" || flag.code === "why_me_ambiguous";
+          }).concat(sib.flags),
           needsSameClientConfirm: sib.needsConfirm,
           flagCount: p.flags.length + sib.flags.length,
         };
@@ -1465,9 +1822,10 @@ function registerForge(app, deps) {
       const id = parseInt(req.params.id, 10);
       if (!id) return res.status(400).json({ error: "Submission id is required" });
       const row = await loadBundle(id);
-      const notes = await loadNotes(row.candidate_id);
+      const notesBy = await loadNotesForCandidates([row.candidate_id]);
+      const notes = notesBy[String(row.candidate_id)] || [];
       const now = Date.now();
-      const draft = project(row, now);
+      const draft = project(row, now, notes);
       const live = await liveJob(draft.job.id);
       if (live) {
         if (!draft.job.clientName && live.clientCorporation && live.clientCorporation.name) {
@@ -1568,7 +1926,8 @@ function registerForge(app, deps) {
       if (!id) return res.status(400).json({ error: "Submission id is required" });
       const row = await loadBundle(id);
       const now = Date.now();
-      const base = project(row, now);
+      const noteMap = await loadNotesForCandidates([row.candidate_id]);
+      const base = project(row, now, noteMap[String(row.candidate_id)] || []);
       if (!base.job || !base.job.clientId) {
         return res.status(400).json({ error: "This submission's client could not be resolved from the job. Fix the job's client in Bullhorn and re-sync before drafting.", code: "client_unresolved" });
       }
@@ -1617,7 +1976,13 @@ function registerForge(app, deps) {
       }
 
       if (bhFetch) {
-        const live = await liveBill(id, base.job.id);
+        const live = await liveBill(id, base.job.id, {
+          candidateId: base.candidate.id,
+          jobTitle: base.job.title,
+          clientName: base.job.clientName,
+          submittedAt: row.date_added,
+          pay: row.pay_rate || row.sub_custom_pay,
+        });
         if (live && ratesDiffer(billRate, live.amount)) {
           const liveShown = live.amount == null ? "(blank)" : formatRate(live.amount);
           const displayed = billRate || "(blank)";
@@ -1888,3 +2253,10 @@ module.exports.buildSiblingView = buildSiblingView;
 module.exports.isClientSubmittedStatus = isClientSubmittedStatus;
 module.exports.buildJobSubmissionCreate = buildJobSubmissionCreate;
 module.exports.matchMailbox = matchMailbox;
+module.exports.checkRateSplit = checkRateSplit;
+module.exports.classifyEmployment = classifyEmployment;
+module.exports.matchVms = matchVms;
+module.exports.applyNoteFallback = applyNoteFallback;
+module.exports.submissionFacts = submissionFacts;
+module.exports.groupNotes = groupNotes;
+module.exports.NOTES_FOR_CANDIDATES_SQL = NOTES_FOR_CANDIDATES_SQL;

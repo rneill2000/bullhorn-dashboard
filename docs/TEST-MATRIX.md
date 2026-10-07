@@ -52,7 +52,14 @@ Axes: owner (mine / other) · status (internal / client-submitted / closed) · c
 | F13 | date_available 2026-10-01T00:00:00Z | Off-by-one date |
 | F14 | Availability in the past | Stale date to client |
 | F15 | Draft already exists | Duplicate drafts |
+| F16 | Bill rate and Why Me fields blank, labeled note has both | False "missing" / Forge rate check blocked | test: blank bill rate and Why Me come from a labeled note |
+| F17 | Bill rate field and Why Me already filled | Note overwrites a real value | test: a filled bill rate field and a filled Why Me are not replaced |
+| F18 | Note is prose, or Why Me label is empty | Invented Why Me or a calculated rate | test: prose and an empty Why Me label do not invent text |
+| F19 | Two notes disagree; one note is linked to the job | Wrong job's rate or Why Me | test: disagreeing notes are not guessed |
+| F20 | W-2 2/3, 1099 3/4, VMS only on W-2, site lead $5 | Wrong split, or a rate invented to make it match | test: Dan's split checks |
+| F21 | Live Bullhorn bill field blank, note has the rate | Draft blocked as a mismatch | test: a blank Bullhorn bill field does not block |
 | M2 | Manual smoke: create draft with PDF, open in Outlook, confirm PDF name and that nothing was sent | Real Graph/attachment behavior |
+| M4 | Manual: open Forge on Internally Submitted Frary 886 and Jake Given 856. Blank bill rate / Why Me should show the note value labeled "from notes". A filled field stays. Digest JSON for those rows should not list them under missing. | Real note text differs from the fixtures | Record date + result in the PR |
 
 ## LinkedIn warm graph
 

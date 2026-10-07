@@ -88,9 +88,13 @@ test("bill rate ignores submissions.client_bill_rate", function () {
   const ignored = forge.pickBillRate({ submissionBill: 999 });
   assert.equal(ignored.billRate, "");
   assert.equal(ignored.source, "missing");
-  const comments = forge.pickBillRate({ commentRate: "$185/hr", customText10: "160", submissionBill: 999 });
-  assert.equal(comments.billRate, "$185/hr");
-  assert.equal(comments.source, "from comments");
+  const kept = forge.pickBillRate({ commentRate: "$185/hr", customText10: "160", submissionBill: 999 });
+  assert.equal(kept.billRate, "$160/hr");
+  assert.equal(kept.source, "from submission");
+  assert.ok(kept.flags.some(function (f) { return f.code === "bill_rate_field_kept"; }));
+  const fromNoteTemplate = forge.pickBillRate({ commentRate: "$185/hr", customText10: "", submissionBill: 999 });
+  assert.equal(fromNoteTemplate.billRate, "$185/hr");
+  assert.equal(fromNoteTemplate.source, "from comments");
 });
 
 test("submit template keeps pay and margin out of the client fields", function () {
@@ -590,7 +594,7 @@ test("internal note does not become Why Me and blocks a pasted draft", async fun
     const preview = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
     assert.equal(preview.status, 200, preview.text);
     assert.equal(preview.json.draft.whyMe, "");
-    assert.ok(preview.json.draft.flags.some(function (f) { return /No Why Me in Bullhorn comments/.test(f.message); }));
+    assert.ok(preview.json.draft.flags.some(function (f) { return /No Why Me in the submission comments or notes/.test(f.message); }));
     assert.equal(preview.json.draft.job.clientName, "Skagit Regional Health");
     assert.equal(preview.json.draft.job.clientId, 284);
     const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
@@ -1198,4 +1202,198 @@ test("page waits for forge-ui.js before rendering Forge (script load race)", fun
   const ui = fs.readFileSync(__dirname + "/public/index.html", "utf8");
   assert.match(ui, /case "forge":\s*\n\s*if\(typeof renderForge!=="function"\) await _waitForScript\("renderForge"\);/);
   assert.match(ui, /function _waitForScript\(/);
+});
+
+function noteRow(text, extra) {
+  return Object.assign({
+    person_id: 7,
+    date_added: Date.parse("2026-10-01T15:00:00Z"),
+    comments_text: text,
+    job_order_id: null,
+  }, extra || {});
+}
+
+test("blank bill rate and Why Me come from a labeled note and are marked from notes", function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  const facts = forge.submissionFacts({
+    comments: "",
+    sub_custom_bill: "",
+    job_bill_rate: 200,
+    pay_rate: 120,
+    job_id: 9,
+    job_title: "Epic Web and Service Server Engineer",
+    client_name: "Skagit Regional Health",
+    date_added: when,
+  }, [noteRow("Candidate Name: Christopher Frary\nWhy Me: Led the web and service server cutover.\nBill Rate: $160/hr\nPay Rate: 120 at 1099\n", { date_added: when })]);
+  assert.equal(facts.bill.billRate, "$160/hr");
+  assert.equal(facts.bill.source, "from notes");
+  assert.equal(facts.bill.amount, 160);
+  assert.match(facts.why.text, /web and service server/);
+  assert.equal(facts.why.source, "from notes");
+  assert.equal(facts.rateCheck.status, "ok");
+  assert.equal(facts.rateCheck.employment, "1099");
+  assert.equal(Object.prototype.hasOwnProperty.call(facts.rateCheck, "billRate"), false);
+  assert.ok(!facts.flags.some(function (f) { return f.code === "bill_rate_missing" || f.code === "why_me_missing"; }));
+});
+
+test("a filled bill rate field and a filled Why Me are not replaced by notes", function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  const facts = forge.submissionFacts({
+    comments: "Why Me: Already written in the submission.\nBill Rate: $150/hr",
+    sub_custom_bill: "170",
+    pay_rate: 100,
+    job_id: 9,
+    client_name: "Skagit Regional Health",
+    date_added: when,
+  }, [noteRow("Why Me: Different story from the note.\nBill Rate: $160/hr", { date_added: when })]);
+  assert.equal(facts.bill.billRate, "$170/hr");
+  assert.equal(facts.bill.source, "from submission");
+  assert.match(facts.why.text, /Already written/);
+  assert.equal(facts.why.source, "comments");
+  assert.doesNotMatch(facts.why.text, /Different story/);
+});
+
+test("prose and an empty Why Me label do not invent text or a rate", function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  const facts = forge.submissionFacts({
+    comments: "Jack is great with physicians.",
+    pay_rate: "",
+    job_id: 9,
+    client_name: "Skagit Regional Health",
+    date_added: when,
+  }, [
+    noteRow("Jack would be a strong fit for this team.", { date_added: when }),
+    noteRow("Why Me:\nPay Rate: $120/hr W-2\nAvailability: ASAP", { date_added: when }),
+  ]);
+  assert.equal(facts.why.text, "");
+  assert.equal(facts.bill.billRate, "");
+  assert.equal(facts.rateCheck.status, "unchecked");
+  assert.equal(facts.rateCheck.expectedPay, null);
+  assert.ok(facts.flags.some(function (f) { return f.code === "why_me_missing"; }));
+  assert.ok(facts.flags.some(function (f) { return f.code === "bill_rate_missing"; }));
+});
+
+test("disagreeing notes are not guessed, and a job-linked note wins", function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  const ambiguous = forge.submissionFacts({
+    comments: "",
+    job_id: 9,
+    client_name: "Skagit Regional Health",
+    date_added: when,
+  }, [
+    noteRow("Why Me: First version.\nBill Rate: $150/hr", { date_added: when }),
+    noteRow("Why Me: Second version.\nBill Rate: $180/hr", { date_added: when + 1000 }),
+  ]);
+  assert.equal(ambiguous.bill.billRate, "");
+  assert.equal(ambiguous.why.text, "");
+  assert.ok(ambiguous.flags.some(function (f) { return f.code === "bill_rate_ambiguous"; }));
+  assert.ok(ambiguous.flags.some(function (f) { return f.code === "why_me_ambiguous"; }));
+  const linked = forge.submissionFacts({
+    comments: "",
+    job_id: 9,
+    client_name: "Skagit Regional Health",
+    date_added: when,
+  }, [
+    noteRow("Why Me: Other job.\nBill Rate: $150/hr", { date_added: when, job_order_id: 3 }),
+    noteRow("Why Me: This job.\nBill Rate: $180/hr", { date_added: when, job_order_id: 9 }),
+  ]);
+  assert.equal(linked.bill.billRate, "$180/hr");
+  assert.equal(linked.bill.source, "from notes");
+  assert.match(linked.why.text, /This job/);
+});
+
+test("Dan's split checks W-2, 1099, and VMS without inventing a bill rate", function () {
+  const w2 = forge.checkRateSplit({ bill: 180, pay: 120, employmentText: "W-2", clientName: "Memorial Hermann" });
+  assert.equal(w2.status, "ok");
+  assert.equal(w2.consultantShare, 2 / 3);
+  assert.equal(w2.anuraShare, 1 / 3);
+  assert.equal(w2.vmsPercent, 0);
+  const off = forge.checkRateSplit({ bill: 180, pay: 100, employmentText: "W2", siteLead: true });
+  assert.equal(off.status, "off");
+  assert.equal(off.expectedPay, 120);
+  assert.match(off.message, /not changed/);
+  assert.match(off.message, /Site lead \$5\/hr is not billed/);
+  assert.equal(off.siteLeadBilled, false);
+  const lahey = forge.checkRateSplit({ bill: 200, pay: 130, employmentText: "W-2", clientName: "Lahey Hospital" });
+  assert.equal(lahey.status, "ok");
+  assert.equal(lahey.vmsName, "Lahey/HWL");
+  assert.equal(lahey.remit, 195);
+  const christus = forge.checkRateSplit({ bill: 200, pay: 127, employmentText: "W-2", noteText: "VMS WTC" });
+  assert.equal(christus.status, "ok");
+  assert.equal(christus.vmsPercent, 0.0475);
+  const abbott = forge.checkRateSplit({ bill: 200, pay: 130, employmentText: "W-2", noteText: "TAPFIN" });
+  assert.equal(abbott.status, "ok");
+  assert.equal(abbott.vmsName, "Abbott/TAPFIN");
+  const chop = forge.checkRateSplit({ bill: 200, pay: 126.67, employmentText: "W-2", clientName: "CHOP" });
+  assert.equal(chop.status, "ok");
+  assert.equal(chop.vmsPercent, 0.05);
+  const contractor = forge.checkRateSplit({ bill: 160, pay: 120, employmentText: "120 at 1099", clientName: "Lahey Hospital" });
+  assert.equal(contractor.status, "ok");
+  assert.equal(contractor.employment, "1099");
+  assert.equal(contractor.vmsPercent, 0);
+  assert.equal(contractor.consultantShare, 0.75);
+  const blank = forge.checkRateSplit({ bill: null, pay: 120, employmentText: "W-2" });
+  assert.equal(blank.status, "unchecked");
+  assert.equal(blank.expectedPay, null);
+  assert.match(blank.message, /not calculated/);
+});
+
+test("a blank Bullhorn bill field does not block a rate that is in the note", async function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  const row = fixtureRow();
+  row.comments = "";
+  row.sub_custom_bill = "";
+  row.job_bill_rate = null;
+  row.pay_rate = 120;
+  row.date_added = when;
+  row.client_name = "Skagit Regional Health";
+  const note = noteRow("Why Me: Led the web and service server cutover.\nBill Rate: $160/hr\nPay Rate: 120 at 1099", { date_added: when });
+  const app = express();
+  app.use(express.json());
+  forge(app, {
+    db: {
+      ready: true,
+      query: async function () { return { rows: [] }; },
+      getOne: async function () { return row; },
+      getAll: async function (sql) {
+        if (/FROM notes/.test(sql)) return [note];
+        return [];
+      },
+    },
+    graphFetch: async function () { throw new Error("should not draft"); },
+    bhFetch: async function (endpoint) {
+      if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: { id: 42, customText10: "", billRate: null, comments: "", payRate: 120 } };
+      if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { id: 9, clientBillRate: null } };
+      return { data: [] };
+    },
+    outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
+    getUser: function () { return { firstName: "Rachel", email: "rachel@anuraconnect.com" }; },
+  });
+  const server = await listen(app);
+  try {
+    const preview = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
+    assert.equal(preview.status, 200, preview.text);
+    assert.equal(preview.json.draft.billRate, "$160/hr");
+    assert.equal(preview.json.draft.billRateSource, "from notes");
+    assert.equal(preview.json.draft.whyMeSource, "from notes");
+    assert.match(preview.json.draft.whyMe, /cutover/);
+    assert.ok(preview.json.draft.missing.indexOf("bill rate") < 0);
+    assert.ok(preview.json.draft.missing.indexOf("Why Me") < 0);
+    const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      whyMe: preview.json.draft.whyMe,
+      billRate: preview.json.draft.billRate,
+      availability: "ASAP",
+      location: "Houston, TX",
+    });
+    assert.equal(draft.json.code, "resume_required");
+    assert.notEqual(draft.json.code, "bill_rate_mismatch");
+  } finally {
+    server.close();
+  }
+});
+
+test("Internally Submitted queue labels a note bill rate", function () {
+  const ui = fs.readFileSync(__dirname + "/public/forge-ui.js", "utf8");
+  assert.match(ui, /from notes/);
+  assert.match(ui, /whyMeSource === "from notes"/);
 });

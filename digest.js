@@ -6,6 +6,8 @@
  *   GET  /api/digest/ready-to-submit/preview  → the email as HTML
  *   POST /api/digest/ready-to-submit/send     → send it now
  */
+const forgeApi = require("./forge");
+
 module.exports = function registerDigest(app, deps) {
   const { db, graphFetch, outlookUsers, getUser, bhFetchAll } = deps;
   const TO = (process.env.DIGEST_READY_TO || "rachel@anuraconnect.com").split(",").map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
@@ -40,9 +42,11 @@ module.exports = function registerDigest(app, deps) {
   async function build() {
     if (!db.ready) throw new Error("Database not ready");
     const rows = await db.getAll(
-      "SELECT s.id, s.candidate_id, s.candidate_name, s.job_id, s.date_added, s.sending_user, s.comments, " +
-      "       j.title AS job_title, j.status AS job_status, j.client_id, j.client_name, j.owner_name AS job_owner, j.num_openings, " +
-      "       c.status AS client_status, cd.occupation AS cand_title, cd.custom_text1 AS cand_cert " +
+      "SELECT s.id, s.candidate_id, s.candidate_name, s.job_id, s.date_added, s.sending_user, s.comments, s.pay_rate, " +
+      "       s.raw_json->>'customText10' AS sub_custom_bill, s.raw_json->>'customText11' AS sub_custom_pay, " +
+      "       j.title AS job_title, j.title AS job_title_live, j.status AS job_status, j.client_id, j.client_name, j.client_id AS job_client_id, j.client_name AS job_client_name, " +
+      "       j.owner_name AS job_owner, j.num_openings, j.client_bill_rate AS job_bill_rate, j.pay_rate AS job_pay_rate, j.custom_text1 AS job_rate_notes, " +
+      "       c.status AS client_status, cd.occupation AS cand_title, cd.custom_text1 AS cand_cert, cd.raw_json->>'employeeType' AS cand_employee_type " +
       "FROM submissions s " +
       "JOIN jobs j ON j.id = s.job_id " +
       "LEFT JOIN clients c ON c.id = j.client_id " +
@@ -51,12 +55,46 @@ module.exports = function registerDigest(app, deps) {
       "  AND j.status IN ('Accepting Candidates','Open') " +
       "ORDER BY j.client_name, j.title, s.date_added", []);
     const now = Date.now();
+    const ids = [];
+    const seen = {};
+    rows.forEach(function (r) {
+      if (r.candidate_id == null || seen[r.candidate_id]) return;
+      seen[r.candidate_id] = true;
+      ids.push(r.candidate_id);
+    });
+    let notesBy = {};
+    if (ids.length) {
+      try {
+        notesBy = forgeApi.groupNotes(await db.getAll(forgeApi.NOTES_FOR_CANDIDATES_SQL, [ids]));
+      } catch (e) { notesBy = {}; }
+    }
     const clients = {};
     rows.forEach(function (r) {
       const ck = r.client_id || r.client_name || "?";
       const cl = clients[ck] = clients[ck] || { clientId: r.client_id, clientName: r.client_name || "(no client)", clientStatus: r.client_status, jobs: {} };
       const jb = cl.jobs[r.job_id] = cl.jobs[r.job_id] || { jobId: r.job_id, title: r.job_title, owner: r.job_owner, openings: r.num_openings, candidates: [] };
-      jb.candidates.push({ submissionId: r.id, candidateId: r.candidate_id, name: r.candidate_name, title: r.cand_title, cert: r.cand_cert, submittedBy: r.sending_user, date: r.date_added ? new Date(Number(r.date_added)) : null, daysWaiting: r.date_added ? Math.floor((now - Number(r.date_added)) / 86400000) : null, comments: r.comments });
+      const facts = forgeApi.submissionFacts(r, notesBy[String(r.candidate_id)] || []);
+      const missing = [];
+      if (!facts.why.text) missing.push("Why Me");
+      if (!facts.bill.billRate) missing.push("bill rate");
+      jb.candidates.push({
+        submissionId: r.id,
+        candidateId: r.candidate_id,
+        name: r.candidate_name,
+        title: r.cand_title,
+        cert: r.cand_cert,
+        submittedBy: r.sending_user,
+        date: r.date_added ? new Date(Number(r.date_added)) : null,
+        daysWaiting: r.date_added ? Math.floor((now - Number(r.date_added)) / 86400000) : null,
+        comments: r.comments,
+        billRate: facts.bill.billRate || "",
+        billRateSource: facts.bill.source === "withheld_pay" || facts.bill.source === "missing" ? "" : facts.bill.source,
+        whyMe: facts.why.text || "",
+        whyMeSource: facts.why.text ? facts.why.source : "",
+        hasWhyMe: !!facts.why.text,
+        missing: missing,
+        rateCheck: facts.rateCheck,
+      });
     });
     const out = Object.values(clients).map(function (c) { c.jobs = Object.values(c.jobs); c.count = c.jobs.reduce(function (n, j) { return n + j.candidates.length; }, 0); c.oldest = Math.max.apply(null, c.jobs.map(function (j) { return Math.max.apply(null, j.candidates.map(function (x) { return x.daysWaiting || 0; })); })); return c; })
       .sort(function (a, b) { return b.oldest - a.oldest || b.count - a.count; });
@@ -103,8 +141,12 @@ module.exports = function registerDigest(app, deps) {
                 ? " <a href=\"" + esc(x.linkedin.linkedinUrl) + "\" style=\"color:#0a66c2;text-decoration:none;font-size:12px\">\u00b7 " + liLabel + "</a>"
                 : " <span style=\"color:#0a66c2;font-size:12px\">\u00b7 " + liLabel + "</span>";
             }
-            h += "<tr><td style=\"padding:5px 0;border-bottom:1px solid #f1f5f9\"><a href=\"" + bhLink("Candidate", x.candidateId) + "\" style=\"color:#0f172a;text-decoration:none;font-weight:600\">" + esc(x.name) + "</a>" + (x.cert || x.title ? " <span style=\"" + sty.muted + "\">" + esc(x.cert || x.title) + "</span>" : "") + li + "</td>"
-              + "<td style=\"padding:5px 0;border-bottom:1px solid #f1f5f9;text-align:right;white-space:nowrap;" + sty.muted + "\">" + (x.submittedBy ? esc(x.submittedBy) + " \u00b7 " : "") + "<span style=\"color:" + ageColor + ";font-weight:600\">" + age + "</span></td></tr>";
+            const rateBit = x.billRate ? esc(x.billRate) + (x.billRateSource === "from notes" ? " (from notes)" : "") : "missing bill rate";
+            const whyBit = x.hasWhyMe ? (x.whyMeSource === "from notes" ? "Why Me from notes" : "Why Me on file") : "missing Why Me";
+            const splitBit = x.rateCheck && x.rateCheck.status === "off" ? " \u00b7 " + esc(x.rateCheck.message) : "";
+            h += "<tr><td style=\"padding:5px 0 1px;border-bottom:0\"><a href=\"" + bhLink("Candidate", x.candidateId) + "\" style=\"color:#0f172a;text-decoration:none;font-weight:600\">" + esc(x.name) + "</a>" + (x.cert || x.title ? " <span style=\"" + sty.muted + "\">" + esc(x.cert || x.title) + "</span>" : "") + li + "</td>"
+              + "<td style=\"padding:5px 0 1px;border-bottom:0;text-align:right;white-space:nowrap;" + sty.muted + "\">" + (x.submittedBy ? esc(x.submittedBy) + " \u00b7 " : "") + "<span style=\"color:" + ageColor + ";font-weight:600\">" + age + "</span></td></tr>";
+            h += "<tr><td colspan=\"2\" style=\"padding:0 0 6px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#64748b\">" + rateBit + " \u00b7 " + whyBit + splitBit + "</td></tr>";
           });
           h += "</table>";
         });
@@ -154,7 +196,12 @@ module.exports = function registerDigest(app, deps) {
       await send("scheduled");
     } catch (e) { console.error("[Digest] scheduled send failed:", e.message); }
   }
-  setTimeout(function () { tick(); setInterval(tick, 5 * 60 * 1000); }, 90 * 1000);
+  const starter = setTimeout(function () {
+    tick();
+    const interval = setInterval(tick, 5 * 60 * 1000);
+    if (interval.unref) interval.unref();
+  }, 90 * 1000);
+  if (starter.unref) starter.unref();
 
   app.get("/api/digest/ready-to-submit", async function (req, res) { try { res.json(await build()); } catch (e) { res.status(500).json({ error: e.message }); } });
   app.get("/api/digest/ready-to-submit/preview", async function (req, res) { try { let d = await build(); if (req.query.as) { const nm = (await userNameByEmail())[String(req.query.as).toLowerCase()]; if (nm) d = filterForOwner(d, nm); } res.type("html").send(render(d)); } catch (e) { res.status(500).send(e.message); } });

@@ -921,7 +921,7 @@ var CANDIDATE_FIELDS = [
   "phone","phone2","phone3","mobile","pager","fax",
   "status","source","occupation","companyName","educationDegree",
   "salary","salaryLow","dayRate","dayRateLow","hourlyRate","hourlyRateLow",
-  "employmentPreference","willRelocate","ethnicity","gender","veteran","disability",
+  "employmentPreference","employeeType","willRelocate","ethnicity","gender","veteran","disability",
   "customText1","customText2","customText3","customText4","customText5",
   "customText6","customText7","customText8","customText9","customText10",
   "customText11","customText12","customText13","customText14","customText15",
@@ -1010,7 +1010,7 @@ var NOTE_FIELDS = [
   "id","personReference",
   "action","comments","dateAdded","dateLastModified",
   "commentingPerson","isDeleted",
-  "minutesSpent"
+  "minutesSpent","jobOrders"
 ].join(",");
 
 var OPPORTUNITY_FIELDS = [
@@ -1458,11 +1458,14 @@ var SYNC_ENTITIES = {
     transform: function (r) {
       var pr = r.personReference || {};
       var cp = r.commentingPerson || {};
+      var jo = r.jobOrders;
+      var joList = jo ? (Array.isArray(jo) ? jo : (jo.data || (jo.id ? [jo] : []))) : [];
+      var firstJob = joList.length ? (joList[0] && joList[0].id ? joList[0].id : (typeof joList[0] === "number" ? joList[0] : null)) : null;
       return {
         id: r.id,
         person_id: pr.id || null,
         client_id: null,
-        job_order_id: null,
+        job_order_id: firstJob || null,
         placement_id: null,
         action: safeStr(r.action),
         comments_text: safeStr(r.comments),

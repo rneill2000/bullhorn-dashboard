@@ -195,7 +195,8 @@ function forgePaintQueue() {
     h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span class="nm">' + esc(row.candidateName || "Candidate") + " " + forgeWarmBits(row) + '</span><span class="fg-sla ' + esc(row.sla || "unknown") + '">' + esc(forgeSlaLabel(row.daysWaiting, row.sla)) + '</span></div>';
     h += '<div class="sub">' + esc(row.clientName || "Client") + ' · ' + esc(row.jobTitle || "Role") + '</div>';
     h += '<div class="sub">Owner: ' + esc(row.jobOwnerFirst || "—") + ' · Submitted by: ' + esc(row.submittedByFirst || "—") + '</div>';
-    h += '<div class="sub">' + (row.billRate ? esc(row.billRate) : "bill rate missing") + (missing.length ? " · missing " + esc(missing.join(", ")) : "") + '</div>';
+    var rateLabel = row.billRate ? esc(row.billRate) + (row.billRateSource === "from notes" ? " (from notes)" : "") : "bill rate missing";
+    h += '<div class="sub">' + rateLabel + (missing.length ? " · missing " + esc(missing.join(", ")) : "") + '</div>';
     if (row.existingDraft && row.existingDraft.label) h += '<div class="sub">' + esc(row.existingDraft.label) + '</div>';
     (row.flags || []).forEach(function (f) {
       h += '<div class="sub">' + esc(f.message) + '</div>';
@@ -302,7 +303,7 @@ function forgePaintDraft() {
   h += '</select>';
   h += '<label class="fg-lab">Subject</label><input class="fg-in" id="forge-subject" value="' + forgeAttr(d.subject || "") + '" oninput="forgePreview()">';
   h += '<label class="fg-lab">Candidate name</label><input class="fg-in" id="forge-name" value="' + forgeAttr(c.name || "") + '" oninput="forgePreview()">';
-  var whyNote = d.whyMeSource === "anthropic" ? " · polished" : d.whyMeSource === "comments" ? " · from Bullhorn comments" : "";
+  var whyNote = d.whyMeSource === "anthropic" ? " · polished" : d.whyMeSource === "comments" ? " · from Bullhorn comments" : d.whyMeSource === "from notes" ? " · from notes" : "";
   h += '<label class="fg-lab">Why Me' + whyNote + '</label>';
   h += '<textarea class="fg-ta" id="forge-why" oninput="forgePreview()">' + esc(d.whyMe || "") + '</textarea>';
   h += '<div class="fg-split">';
