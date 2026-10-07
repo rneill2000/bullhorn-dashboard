@@ -8,6 +8,8 @@
  * Résumés come from Bullhorn Candidate file attachments (PDFs). The client
  * email may only use Why Me, Availability, Location, and Bill Rate.
  * Blank bill rate and Why Me fall back to Bullhorn notes. A filled field is kept.
+ * A client draft only keeps Why Me for this job. Another client's note and
+ * internal recruiter commentary are left out of the email.
  * Rate checks use Dan's W-2 / 1099 split and never invent a rate.
  */
 "use strict";
@@ -478,7 +480,8 @@ function jobIsRemote(parts) {
 function pickLocation(parts) {
   const flags = [];
   let loc = "";
-  if (parts.commentLocation && String(parts.commentLocation).trim()) loc = String(parts.commentLocation).trim();
+  const comment = clientFacingText(parts.commentLocation, parts);
+  if (comment) loc = comment;
   else {
     const city = parts.candCity || parts.candCityCustom || "";
     const state = parts.candState || parts.candStateCustom || "";
@@ -511,7 +514,8 @@ function calendarAvailability(value, now) {
 
 /** Comments, then customText12, then customDate2, then the candidate date. Date fields use the UTC calendar day. */
 function pickAvailability(parts, now) {
-  if (parts.commentAvail && String(parts.commentAvail).trim()) return { text: String(parts.commentAvail).trim(), fromField: false, passed: false };
+  const comment = clientFacingText(parts.commentAvail, parts);
+  if (comment) return { text: comment, fromField: false, passed: false };
   if (parts.customAvail && String(parts.customAvail).trim()) {
     const text = String(parts.customAvail).trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{12,}$/.test(text)) {
@@ -552,9 +556,104 @@ function buildJobSubmissionCreate(input) {
   return body;
 }
 
-/** Why Me is the labeled section only. No preamble, no candidate description. */
+function orgLabel(label) {
+  const words = String(label || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return false;
+  if (!words.every(function (w) { return /^[A-Z][A-Za-z0-9.'’&/-]*$/.test(w); })) return false;
+  if (words.some(function (w) { return w.length < 2; })) return false;
+  if (words.length >= 2) return true;
+  return /hospital|health|medical|children|university|clinic|regional/i.test(label);
+}
+
+function aboutThisJob(label, ctx) {
+  const name = String(label || "").trim().toLowerCase();
+  const client = String((ctx && (ctx.clientName || ctx.client)) || "").trim().toLowerCase();
+  const title = String((ctx && (ctx.jobTitle || ctx.job)) || "").trim().toLowerCase();
+  if (name && client.length >= 4 && (name.indexOf(client) >= 0 || client.indexOf(name) >= 0)) return true;
+  if (name && title.length >= 6 && (name.indexOf(title) >= 0 || title.indexOf(name) >= 0)) return true;
+  return false;
+}
+
+/** Recruiter asides. These are never a client-facing Why Me, location, or availability. */
+function internalCommentaryIndex(line) {
+  const patterns = [
+    /\bthe\s+AM\b/i,
+    /\bAM\s+said\b/i,
+    /\baccount\s+manager\b/i,
+    /\bhappy to go back\b/i,
+    /\bweird stuff\b/i,
+    /\bonly had one FTE\b/i,
+  ];
+  let at = -1;
+  patterns.forEach(function (re) {
+    const m = String(line || "").match(re);
+    if (m && (at < 0 || m.index < at)) at = m.index;
+  });
+  return at;
+}
+
+/**
+ * Index where client-facing text must stop, or -1 to keep the line.
+ * A title-case "Other Client:" note is another submission. A line about this
+ * job's client stays unless it is recruiter commentary.
+ */
+function findCut(line, ctx) {
+  const text = String(line || "");
+  const re = /([A-Z][A-Za-z0-9.'’&/-]*(?:\s+[A-Z][A-Za-z0-9.'’&/-]*){0,5}):\s+\S/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const start = m.index;
+    const before = text.slice(0, start);
+    const atBoundary = !before.trim() || /[.!?]\s*$/.test(before);
+    const label = m[1];
+    if (labelKey(label)) continue;
+    if (!orgLabel(label)) continue;
+    const rest = text.slice(start);
+    const mine = aboutThisJob(label, ctx);
+    const internal = internalCommentaryIndex(rest) >= 0;
+    if (mine && !internal) continue;
+    if (!atBoundary && !internal) continue;
+    return start;
+  }
+  const internalAt = internalCommentaryIndex(text);
+  if (internalAt < 0) return -1;
+  const prev = text.slice(0, internalAt);
+  const boundary = Math.max(prev.lastIndexOf(". "), prev.lastIndexOf("! "), prev.lastIndexOf("? "), prev.lastIndexOf("\n"));
+  if (boundary >= 0) return boundary + 1;
+  return 0;
+}
+
+/** Drop other-client notes and internal commentary. Keep the Why Me that precedes them. */
+function clientFacingText(text, ctx) {
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+  const kept = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cut = findCut(lines[i], ctx || {});
+    if (cut < 0) {
+      kept.push(lines[i]);
+      continue;
+    }
+    const head = lines[i].slice(0, cut).trim();
+    if (head) kept.push(head);
+    break;
+  }
+  return kept.join("\n").trim();
+}
+
+function findClientNoteLeak(blob, ctx) {
+  const lines = String(blob || "").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const cut = findCut(lines[i], ctx || {});
+    if (cut < 0) continue;
+    const from = lines[i].slice(cut).trim() || lines[i].trim();
+    return { rule: "internal note", snippet: snippetAround(lines[i], cut, Math.max(from.length, 1)) };
+  }
+  return null;
+}
+
+/** Why Me is the labeled section only. No preamble, no other client's note, no recruiter aside. */
 function templateWhyMe(parts) {
-  const comment = (parts.commentWhy || "").trim();
+  const comment = clientFacingText(parts.commentWhy, parts);
   if (comment) return { text: comment, source: "comments" };
   return { text: "", source: "missing" };
 }
@@ -786,7 +885,7 @@ function applyNoteFallback(bill, why, notes, ctx) {
     }
   }
   if (!(nextWhy.text || "").trim()) {
-    const chosen = chooseNoteField(notes, ctx, function (parsed) { return (parsed.whyMe || "").trim(); });
+    const chosen = chooseNoteField(notes, ctx, function (parsed) { return clientFacingText(parsed.whyMe, ctx); });
     if (chosen.ambiguous) {
       nextWhy.text = "";
       nextWhy.source = "missing";
@@ -811,7 +910,11 @@ function submissionFacts(row, notes) {
     payRate: payField,
     jobPay: src.job_pay_rate,
   });
-  const why = templateWhyMe({ commentWhy: parsed.whyMe });
+  const why = templateWhyMe({
+    commentWhy: parsed.whyMe,
+    clientName: client.clientName,
+    jobTitle: src.job_title_live || src.job_title || "",
+  });
   const ctx = {
     jobId: src.job_id,
     jobTitle: src.job_title_live || src.job_title || "",
@@ -979,7 +1082,7 @@ function escapeRegExp(s) {
  * Block client copy that leaks pay, employment type, references, or a greeting to an internal user.
  * Returns { snippet, rule } or null.
  */
-function findInternalLeak(parts, internalFirstNames) {
+function findInternalLeak(parts, internalFirstNames, ctx) {
   const blob = (parts || []).map(function (p) { return p == null ? "" : String(p); }).join("\n");
   if (!blob.trim()) return null;
   const rules = [
@@ -1006,6 +1109,8 @@ function findInternalLeak(parts, internalFirstNames) {
       return { rule: "flexibility", snippet: snippetAround(blob, fm.index, fm[0].length) };
     }
   }
+  const noteLeak = findClientNoteLeak(blob, ctx);
+  if (noteLeak) return noteLeak;
   const names = internalFirstNames || [];
   for (let n = 0; n < names.length; n++) {
     const name = String(names[n] || "").trim();
@@ -1401,6 +1506,7 @@ function registerForge(app, deps) {
       jobState: row.job_state,
       onSite: row.on_site,
       jobTitle: jobTitle,
+      clientName: clientName,
       employmentType: row.employment_type,
     });
     const avail = pickAvailability({
@@ -1408,6 +1514,8 @@ function registerForge(app, deps) {
       customAvail: row.sub_custom_avail,
       customDate2: row.sub_custom_date2,
       dateAvailable: row.date_available,
+      clientName: clientName,
+      jobTitle: jobTitle,
     }, now);
     const flags = facts.flags.concat(location.flags);
     if (avail.passed) flags.push({ level: "warn", code: "availability_passed", message: "Availability date has passed. Confirm." });
@@ -1844,7 +1952,7 @@ function registerForge(app, deps) {
       if (polish && process.env.ANTHROPIC_API_KEY && draft.whyMe) {
         try {
           const polished = await polishWhyMe(draft.whyMe, { jobTitle: draft.job.title, clientName: draft.job.clientName });
-          const leak = polished ? findInternalLeak([polished], names) : null;
+          const leak = polished ? findInternalLeak([polished], names, { clientName: draft.job.clientName, jobTitle: draft.job.title }) : null;
           if (polished && !leak) {
             draft.whyMe = polished;
             draft.whyMeSource = "anthropic";
@@ -1965,7 +2073,7 @@ function registerForge(app, deps) {
       const names = internalFirstNames(await loadInternalUsers());
       const leak = findInternalLeak([
         email.subject, email.text, whyMe, availability, location, billRate, candidateName, greetingName, signerName, signerTitle,
-      ], names);
+      ], names, { clientName: body.clientName || base.job.clientName, jobTitle: body.jobTitle || base.job.title });
       if (leak) {
         return res.status(400).json({
           error: "This draft was blocked because it includes internal language. Edit it, then try again.",

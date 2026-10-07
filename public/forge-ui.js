@@ -225,8 +225,11 @@ function forgeOthersHtml(row) {
   return h;
 }
 
+var _forgeOpenToken = 0;
 async function forgeOpen(id) {
+  var token = ++_forgeOpenToken;
   _forge.selected = id;
+  _forge.view = null;
   _forge.resumeConfirmed = false;
   _forge.resumeFileId = "";
   _forge.confirmSameClient = false;
@@ -238,12 +241,14 @@ async function forgeOpen(id) {
   main.innerHTML = '<div class="fg-card" style="color:#64748b">Building the draft…</div>';
   try {
     var r = await apiFetch("forge/submissions/" + id + "?polish=0");
+    if (token !== _forgeOpenToken || String(_forge.selected) !== String(id)) return;
     _forge.view = r;
     var suggested = r.resume && r.resume.suggestedId;
     _forge.resumeFileId = suggested ? String(suggested) : "";
     _forge.resumeConfirmed = false;
     forgePaintDraft();
   } catch (e) {
+    if (token !== _forgeOpenToken || String(_forge.selected) !== String(id)) return;
     if (forgeSignIn(e)) return;
     main.innerHTML = '<div class="fg-card" style="color:#b91c1c">' + esc(e.message) + '</div>';
   }
@@ -612,6 +617,8 @@ function forgeShowBlock(result, err) {
 async function forgeCreate() {
   if (!_forge.selected || _forge.busy) return;
   if (!_forge.resumeConfirmed || !_forge.resumeFileId) return;
+  var shown = _forge.view && _forge.view.draft;
+  if (shown && shown.submissionId != null && String(shown.submissionId) !== String(_forge.selected)) return;
   var btn = document.getElementById("forge-create");
   var result = document.getElementById("forge-result");
   var f = forgeFields();

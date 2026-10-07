@@ -1397,3 +1397,283 @@ test("Internally Submitted queue labels a note bill rate", function () {
   assert.match(ui, /from notes/);
   assert.match(ui, /whyMeSource === "from notes"/);
 });
+
+const FRARY_GOSSIP = "University Hospitals: Was the AM said they did some weird stuff and only had one FTE he is happy to go back.";
+const FRARY_WHY = "Led the SBO analyst work and kept the last go-live on track.";
+
+test("Why Me from notes never includes an internal or other-client note", function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  const row = {
+    comments: "",
+    sub_custom_bill: "",
+    job_bill_rate: null,
+    pay_rate: 120,
+    job_id: 9,
+    job_title: "SBO Analyst",
+    client_name: "Memorial Hermann",
+    candidate_name: "Christopher Frary",
+    date_added: when,
+  };
+  const trailing = forge.submissionFacts(row, [
+    noteRow([
+      "Candidate Name: Christopher Frary",
+      "Why Me: " + FRARY_WHY,
+      FRARY_GOSSIP,
+      "Bill Rate: $185/hr",
+      "Pay Rate: 120 at 1099",
+    ].join("\n"), { date_added: when, job_order_id: 9 }),
+    noteRow(FRARY_GOSSIP, { date_added: when + 5000 }),
+  ]);
+  assert.equal(trailing.why.source, "from notes");
+  assert.match(trailing.why.text, /go-live/);
+  assert.doesNotMatch(trailing.why.text, /University Hospitals|weird stuff|the AM|FTE/);
+  assert.equal(trailing.bill.billRate, "$185/hr");
+  assert.equal(trailing.bill.source, "from notes");
+  const email = forge.composeEmail({
+    candidateName: "Christopher Frary",
+    jobTitle: "SBO Analyst",
+    clientName: "Memorial Hermann",
+    whyMe: trailing.why.text,
+    availability: "Immediately",
+    location: "Houston, TX",
+    billRate: trailing.bill.billRate,
+    subject: forge.subjectFor("SBO Analyst", "", "Christopher Frary"),
+    signerName: "Rachel",
+  });
+  const blob = email.subject + "\n" + email.text + "\n" + email.html;
+  assert.match(blob, /go-live/);
+  assert.doesNotMatch(blob, /University Hospitals|weird stuff|the AM|one FTE/);
+
+  const separate = forge.submissionFacts(row, [
+    noteRow("Why Me: " + FRARY_WHY + "\nBill Rate: $185/hr", { date_added: when, job_order_id: 9 }),
+    noteRow(FRARY_GOSSIP, { date_added: when + 60000 }),
+  ]);
+  assert.equal(separate.why.text, FRARY_WHY);
+  assert.doesNotMatch(separate.why.text, /University Hospitals/);
+
+  const htmlNote = forge.submissionFacts(row, [
+    noteRow("<div>Why Me: " + FRARY_WHY + "</div><div>" + FRARY_GOSSIP + "</div><div>Bill Rate: $185/hr</div>", { date_added: when, job_order_id: 9 }),
+  ]);
+  assert.match(htmlNote.why.text, /go-live/);
+  assert.doesNotMatch(htmlNote.why.text, /University Hospitals|weird stuff/);
+
+  const thisClient = forge.submissionFacts(row, [
+    noteRow("Why Me: Memorial Hermann: kept the last HB go-live on track.\n" + FRARY_GOSSIP, { date_added: when, job_order_id: 9 }),
+  ]);
+  assert.match(thisClient.why.text, /Memorial Hermann/);
+  assert.match(thisClient.why.text, /go-live/);
+  assert.doesNotMatch(thisClient.why.text, /University Hospitals/);
+
+  const onlyGossip = forge.submissionFacts(row, [
+    noteRow("Why Me:\n" + FRARY_GOSSIP, { date_added: when + 1000 }),
+    noteRow("Why Me: " + FRARY_WHY, { date_added: when, job_order_id: 9 }),
+  ]);
+  assert.equal(onlyGossip.why.text, FRARY_WHY);
+  assert.doesNotMatch(onlyGossip.why.text, /University Hospitals/);
+
+  const commented = forge.templateWhyMe({
+    commentWhy: FRARY_WHY + "\n" + FRARY_GOSSIP,
+    clientName: "Memorial Hermann",
+    jobTitle: "SBO Analyst",
+  });
+  assert.equal(commented.text, FRARY_WHY);
+  assert.equal(commented.source, "comments");
+
+  const placedAfter = forge.parseSubmissionComments([
+    "Why Me: " + FRARY_WHY,
+    "Availability: Immediately",
+    "Location: Houston, TX",
+    FRARY_GOSSIP,
+  ].join("\n"));
+  const loc = forge.pickLocation({ commentLocation: placedAfter.location, clientName: "Memorial Hermann", jobTitle: "SBO Analyst" });
+  const avail = forge.pickAvailability({ commentAvail: placedAfter.availability, clientName: "Memorial Hermann", jobTitle: "SBO Analyst" });
+  const why = forge.templateWhyMe({ commentWhy: placedAfter.whyMe, clientName: "Memorial Hermann", jobTitle: "SBO Analyst" });
+  assert.equal(why.text, FRARY_WHY);
+  assert.equal(avail.text, "Immediately");
+  assert.equal(loc.text, "Houston, TX");
+  const ridden = forge.composeEmail({
+    candidateName: "Christopher Frary",
+    jobTitle: "SBO Analyst",
+    clientName: "Memorial Hermann",
+    whyMe: why.text,
+    availability: avail.text,
+    location: loc.text,
+    billRate: "$185/hr",
+    subject: "SBO Consultant Resume",
+    signerName: "Rachel",
+  });
+  assert.doesNotMatch(ridden.text + ridden.html + ridden.subject, /University Hospitals|weird stuff|the AM|FTE/);
+
+  const blocked = forge.findInternalLeak([FRARY_GOSSIP], [], { clientName: "Memorial Hermann", jobTitle: "SBO Analyst" });
+  assert.ok(blocked);
+  assert.equal(blocked.rule, "internal note");
+  assert.match(blocked.snippet, /University Hospitals|the AM|weird stuff/);
+  assert.equal(forge.findInternalLeak([FRARY_WHY], [], { clientName: "Memorial Hermann", jobTitle: "SBO Analyst" }), null);
+  const sentence = forge.findInternalLeak(["Jack led the HB implementation at Memorial Hermann and knows the revenue-cycle side."], [], { clientName: "Memorial Hermann", jobTitle: "Epic HB Analyst" });
+  assert.equal(sentence, null);
+});
+
+test("an internal note does not loosen an ambiguous bill rate", function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  const facts = forge.submissionFacts({
+    comments: "",
+    job_id: 9,
+    job_title: "SBO Analyst",
+    client_name: "Memorial Hermann",
+    date_added: when,
+  }, [
+    noteRow("Why Me: First version.\nBill Rate: $150/hr", { date_added: when }),
+    noteRow("Why Me: Second version.\nBill Rate: $180/hr", { date_added: when + 1000 }),
+    noteRow(FRARY_GOSSIP, { date_added: when + 2000 }),
+  ]);
+  assert.equal(facts.bill.billRate, "");
+  assert.equal(facts.why.text, "");
+  assert.ok(facts.flags.some(function (f) {
+    return f.code === "bill_rate_ambiguous" && /More than one note has a bill rate and none is clearly this job/.test(f.message);
+  }));
+  assert.ok(facts.flags.some(function (f) { return f.code === "why_me_ambiguous"; }));
+});
+
+test("preview email drops a trailing internal note from the Why Me note", async function () {
+  const when = Date.parse("2026-10-01T15:00:00Z");
+  const row = fixtureRow();
+  row.candidate_name = "Christopher Frary";
+  row.comments = "";
+  row.sub_custom_bill = "";
+  row.job_bill_rate = null;
+  row.pay_rate = 120;
+  row.date_added = when;
+  row.job_title = "SBO Analyst";
+  row.job_title_live = "SBO Analyst";
+  row.client_name = "Memorial Hermann";
+  row.job_skills = "";
+  const whyNote = noteRow("<div>Why Me: " + FRARY_WHY + "</div><div>" + FRARY_GOSSIP + "</div><div>Bill Rate: $185/hr</div><div>Pay Rate: 120 at 1099</div>", { date_added: when, job_order_id: 9 });
+  const otherNote = noteRow(FRARY_GOSSIP, { date_added: when + 60000 });
+  const app = express();
+  app.use(express.json());
+  forge(app, {
+    db: {
+      ready: true,
+      query: async function () { return { rows: [] }; },
+      getOne: async function () { return row; },
+      getAll: async function (sql) {
+        if (/FROM notes/.test(sql)) return [whyNote, otherNote];
+        return [];
+      },
+    },
+    graphFetch: async function () { throw new Error("should not draft"); },
+    bhFetch: async function (endpoint) {
+      if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: { id: 42, customText10: "", billRate: null, comments: "", payRate: 120 } };
+      if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { id: 9, clientBillRate: null } };
+      return { data: [] };
+    },
+    outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
+    getUser: function () { return { firstName: "Rachel", email: "rachel@anuraconnect.com" }; },
+  });
+  const server = await listen(app);
+  try {
+    const preview = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
+    assert.equal(preview.status, 200, preview.text);
+    assert.equal(preview.json.draft.whyMeSource, "from notes");
+    assert.match(preview.json.draft.whyMe, /go-live/);
+    assert.doesNotMatch(preview.json.draft.whyMe, /University Hospitals|weird stuff|the AM|FTE/);
+    const emailBlob = preview.json.email.subject + "\n" + preview.json.email.text + "\n" + preview.json.email.html;
+    assert.match(emailBlob, /go-live/);
+    assert.doesNotMatch(emailBlob, /University Hospitals|weird stuff|the AM|one FTE/);
+    const blocked = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", {
+      whyMe: FRARY_GOSSIP,
+      availability: "Immediately",
+      location: "Houston, TX",
+      billRate: "$185/hr",
+      to: "dana@mh.example",
+    });
+    assert.equal(blocked.status, 400);
+    assert.equal(blocked.json.code, "internal_leak");
+    assert.match(blocked.json.snippet, /University Hospitals|the AM|weird stuff/);
+  } finally {
+    server.close();
+  }
+});
+
+test("preview race cannot show the previous candidate after selection changes", async function () {
+  const vm = require("vm");
+  const main = { innerHTML: "" };
+  const queueBox = { innerHTML: "" };
+  const els = {};
+  let releaseFrary;
+  let releaseJake;
+  const gateFrary = new Promise(function (resolve) { releaseFrary = resolve; });
+  const gateJake = new Promise(function (resolve) { releaseJake = resolve; });
+  function draftPayload(id, name, client, why) {
+    return {
+      draft: {
+        submissionId: id,
+        candidate: { name: name },
+        job: { title: "Analyst", clientName: client, clientId: id },
+        whyMe: why,
+        whyMeSource: "from notes",
+        availability: "Immediately",
+        location: "Houston, TX",
+        billRate: "$180/hr",
+        subject: "Analyst – " + name,
+        flags: [],
+        sla: "green",
+        daysWaiting: 0,
+      },
+      contacts: [],
+      outlook: { mailboxes: [], suggestedMailbox: "" },
+      resume: { files: [] },
+      profile: { name: "Rachel" },
+      signerName: "Rachel",
+    };
+  }
+  const ctx = {
+    console: console,
+    esc: function (s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); },
+    location: { hash: "" },
+    setTimeout: function (fn) { fn(); },
+    apiFetch: async function (endpoint) {
+      if (String(endpoint).indexOf("/41") >= 0) {
+        await gateFrary;
+        return draftPayload(41, "Chris Frary", "Memorial Hermann", "Frary kept the Memorial Hermann go-live on track.");
+      }
+      await gateJake;
+      return draftPayload(42, "Jake Given", "Cook Children's", "Jake covered the Cook Children's cutover.");
+    },
+    document: {
+      getElementById: function (id) {
+        if (id === "forge-main") return main;
+        if (id === "forge-queue") return queueBox;
+        if (!els[id]) els[id] = { value: "", style: {}, textContent: "", innerHTML: "", className: "", disabled: false };
+        return els[id];
+      },
+    },
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(__dirname + "/public/forge-ui.js", "utf8"), ctx);
+  ctx._forge.queue = [
+    { submissionId: 41, candidateName: "Chris Frary", clientName: "Memorial Hermann", jobTitle: "SBO Analyst", missing: [] },
+    { submissionId: 42, candidateName: "Jake Given", clientName: "Cook Children's", jobTitle: "Analyst", missing: [] },
+  ];
+  const openFrary = ctx.forgeOpen(41);
+  const openJake = ctx.forgeOpen(42);
+  assert.equal(ctx._forge.selected, 42);
+  assert.equal(ctx._forge.view, null);
+  assert.match(main.innerHTML, /Building the draft/);
+  assert.doesNotMatch(main.innerHTML, /Frary kept/);
+  releaseFrary();
+  await openFrary;
+  assert.equal(ctx._forge.selected, 42);
+  assert.equal(ctx._forge.view, null);
+  assert.doesNotMatch(main.innerHTML, /Chris Frary/);
+  assert.doesNotMatch(main.innerHTML, /Frary kept/);
+  assert.match(main.innerHTML, /Building the draft/);
+  releaseJake();
+  await openJake;
+  assert.equal(ctx._forge.selected, 42);
+  assert.equal(ctx._forge.view.draft.candidate.name, "Jake Given");
+  assert.match(main.innerHTML, /Jake Given/);
+  assert.match(main.innerHTML, /Jake covered the Cook Children's cutover/);
+  assert.doesNotMatch(main.innerHTML, /Chris Frary|Frary kept/);
+});

@@ -58,7 +58,10 @@ Axes: owner (mine / other) · status (internal / client-submitted / closed) · c
 | F19 | Two notes disagree; one note is linked to the job | Wrong job's rate or Why Me | test: disagreeing notes are not guessed |
 | F20 | W-2 2/3, 1099 3/4, VMS only on W-2, site lead $5 | Wrong split, or a rate invented to make it match | test: Dan's split checks |
 | F21 | Live Bullhorn bill field blank, note has the rate | Draft blocked as a mismatch | test: a blank Bullhorn bill field does not block |
+| F22 | Why Me note also contains another client's recruiter note, or that note is a separate Bullhorn note | Internal note in the client email | test: Why Me from notes never includes an internal or other-client note |
+| F23 | Open one Forge row, then another before the first preview returns | Previous candidate's draft stays on screen | test: preview race cannot show the previous candidate |
 | M2 | Manual smoke: create draft with PDF, open in Outlook, confirm PDF name and that nothing was sent | Real Graph/attachment behavior |
+| M5 | Manual: Forge → Owner All → Chris Frary / Memorial Hermann SBO Analyst. Why Me from notes must not include the University Hospitals recruiter note. Then click Jake Given (Cook Children's) as soon as Frary's draft is up; the panel must not keep Frary's draft while Jake is selected. | Stale note or stale preview | Record date + result in the PR |
 | M4 | Manual: open Forge on Internally Submitted Frary 886 and Jake Given 856. Blank bill rate / Why Me should show the note value labeled "from notes". A filled field stays. Digest JSON for those rows should not list them under missing. | Real note text differs from the fixtures | Record date + result in the PR |
 
 ## LinkedIn warm graph
