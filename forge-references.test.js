@@ -142,7 +142,7 @@ test("the reference guard strips the writer, the hospital, and contact details",
   const untitled = offers.filter(function (offer) { return offer.role === "Former manager"; });
   assert.equal(untitled.length, 1);
   assert.equal(untitled[0].id, "record:77");
-  assert.match(untitled[0].quote, /\bJon\b/);
+  assert.match(untitled[0].quote, /excellent|rehire/i);
   assert.doesNotMatch(untitled[0].quote, new RegExp(WRITER.org + "|Alex|Morgan|" + WRITER.first + "|would hire him again", "i"));
   assert.ok(!offers.some(function (offer) { return offer.id === "file:44"; }));
   assert.ok(!offers.some(function (offer) { return /not rehire|poor performance|collecting/i.test(offer.quote); }));
@@ -198,6 +198,110 @@ test("the candidate name survives and a broken sentence is dropped", function ()
   );
   assert.equal(stripped, CANDIDATE.name + " is excellent on every go-live.");
   assert.equal(forge.guardEditedReference(WRITER.first + " " + WRITER.last + " would rehire him at " + WRITER.org + " tomorrow.", ctx), "");
+});
+
+test("a reference web form keeps a short recommendation and the writer's title", function () {
+  const candidate = "Casey Nguyen";
+  const org = "Riverbend Health";
+  const title = "Epic Billing Applications IT Supervisor";
+  const clients = [org, "Memorial Hermann"];
+  const longRecommendation = [
+    candidate + " is one of the strongest billing analysts I have worked with.",
+    "Casey kept a difficult go-live calm and the team trusted Casey with the hardest claims.",
+    "I would rehire " + candidate + " for any " + org + " looking to hire an Epic billing lead.",
+    "Casey is excellent under pressure and I recommend Casey without hesitation.",
+    "Thank you for the opportunity to provide this reference.",
+    "Please feel free to call me if you need anything else.",
+  ].join(" ");
+  const formOne = [
+    "Hello,",
+    "",
+    "A new form has been submitted on your website.",
+    "",
+    "Details below.",
+    "",
+    "Your name: Riley Chen",
+    "Your email: riley.chen@riverbend.example",
+    "Your phone: (503) 555-0148",
+    "Your occupation: " + title,
+    "Candidate's name: " + candidate,
+    "Your relationship to the candidate: Former manager",
+    "Your feedback: " + longRecommendation,
+  ].join("\n");
+  const formTwo = [
+    "<p>Hello,</p>",
+    "<p>A new form has been submitted on your website.</p>",
+    "<p>Details below.</p>",
+    "<table>",
+    "<tr><td>ref_name</td><td>Jordan Blake</td></tr>",
+    "<tr><td>ref_email</td><td>jordan.blake@riverbend.example</td></tr>",
+    "<tr><td>ref_phone</td><td>(503) 555-0199</td></tr>",
+    "<tr><td>ref_occupation</td><td>" + title + "</td></tr>",
+    "<tr><td>candidate</td><td>" + candidate + "</td></tr>",
+    "<tr><td>relationship</td><td>Former manager</td></tr>",
+    "<tr><td>feedback</td><td>" + candidate + "'s upcoming departure is due to broad layoffs across the department. I am sorry to see Casey go. Casey was an excellent analyst and I would rehire Casey in a heartbeat.</td></tr>",
+    "</table>",
+    "<p>Thank you</p>",
+  ].join("");
+  const formLayoffOnly = [
+    "Hello,",
+    "A new form has been submitted on your website.",
+    "Details below.",
+    "Your occupation: " + title,
+    "Your relationship to the candidate: Former manager",
+    "Your feedback: I would recommend " + candidate + ", but the upcoming departure is due to broad layoffs.",
+  ].join("\n");
+  const offers = forge.collectReferenceOffers({
+    notes: [
+      { id: 1, action: "Reference", comments_text: formOne, date_added: 3 },
+      { id: 2, action: "Reference", comments_text: formTwo, date_added: 2 },
+      { id: 3, action: "Reference", comments_text: formLayoffOnly, date_added: 1 },
+    ],
+    candidateName: candidate,
+    clientName: "Memorial Hermann",
+    clients: clients,
+  });
+  assert.equal(offers.length, 2);
+  const first = offers.filter(function (offer) { return offer.id === "note:1"; })[0];
+  const second = offers.filter(function (offer) { return offer.id === "note:2"; })[0];
+  assert.ok(first && second);
+  assert.equal(first.role, title);
+  assert.equal(second.role, title);
+  assert.notEqual(first.role, "Former manager");
+  assert.doesNotMatch(first.quote, /Hello|new form has been submitted|Details below|Thank you|feel free|Riley|Chen|Riverbend|@|503|hardest claims/i);
+  assert.match(first.quote, /I would rehire Casey Nguyen for any health system looking to hire an Epic billing lead/);
+  assert.match(first.quote, /excellent under pressure/);
+  assert.doesNotMatch(first.quote, /any a health system/);
+  assert.ok(first.quote.length <= 320, first.quote);
+  assert.ok(first.quote.split(/(?<=[.!?])\s+/).length <= 2);
+  assert.ok(longRecommendation.length > 280);
+  assert.doesNotMatch(second.quote, /departure|layoff|sorry to see|Riverbend|Jordan|Blake|@/i);
+  assert.match(second.quote, /excellent analyst/);
+  assert.match(second.quote, /rehire/i);
+  const expanded = [
+    candidate + " is one of the strongest billing analysts I have worked with and the team trusted Casey with the hardest claims.",
+    "I would rehire " + candidate + " for any " + org + " looking to hire an Epic billing lead.",
+    "Casey is excellent under pressure and I recommend Casey without hesitation.",
+    "Casey kept every go-live calm, taught the new analysts, and left the workbooks in better shape than Casey found them.",
+  ].join(" ");
+  assert.ok(expanded.length > 280);
+  const edited = forge.guardEditedReference(expanded + " Riley Chen can be reached at riley.chen@riverbend.example.", {
+    candidateName: candidate,
+    writerName: "Riley Chen",
+    organization: org,
+    clientName: "Memorial Hermann",
+    clients: clients,
+  });
+  assert.ok(edited.length > 280, edited);
+  assert.match(edited, new RegExp(candidate));
+  assert.match(edited, /any health system looking to hire/);
+  assert.doesNotMatch(edited, /Riley|Chen|Riverbend|@|any a health system/i);
+  assert.equal(forge.guardEditedReference("I would rehire " + candidate + ". The upcoming departure is due to broad layoffs.", {
+    candidateName: candidate,
+    writerName: "Jordan Blake",
+    organization: org,
+    clients: clients,
+  }), "I would rehire " + candidate + ".");
 });
 
 test("a reference is offered and left out until it is picked", async function () {

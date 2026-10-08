@@ -69,6 +69,11 @@ Axes: owner (mine / other) · status (internal / client-submitted / closed) · c
 | F30 | Quote names the candidate and the writer in different sentences | Candidate name removed | test: the candidate name survives and a broken sentence is dropped |
 | F31 | Writer's name sits in the middle of a sentence | Broken English in the client draft | test: the candidate name survives and a broken sentence is dropped |
 | F32 | Recruiter edits the quote and types the writer's name | Writer name returns in the draft | test: the candidate name survives and a broken sentence is dropped |
+| F33 | Reference note is a web form with a hello preamble, labels, and a footer | Form boilerplate in the client email | test: a reference web form keeps a short recommendation and the writer's title |
+| F34 | Form has a job title such as Epic Billing Applications IT Supervisor | Role shown as Former manager | test: a reference web form keeps a short recommendation and the writer's title |
+| F35 | Org name sits after a determiner ("for any {hospital} looking to hire") | "any a health system" | test: a reference web form keeps a short recommendation and the writer's title |
+| F36 | Recommendation is a long paragraph with a thank-you close | Full paragraph in the draft | test: a reference web form keeps a short recommendation and the writer's title |
+| F37 | Quote says the candidate is leaving because of layoffs | Departure reason in the client email | test: a reference web form keeps a short recommendation and the writer's title |
 | M2 | Manual smoke: create draft with PDF, open in Outlook, confirm PDF name and that nothing was sent | Real Graph/attachment behavior |
 | M5 | Manual: Forge → Owner All → Chris Frary / Memorial Hermann SBO Analyst. Why Me from notes must not include the University Hospitals recruiter note. Then click Jake Given (Cook Children's) as soon as Frary's draft is up; the panel must not keep Frary's draft while Jake is selected. | Stale note or stale preview | Record date + result in the PR |
 | M4 | Manual: open Forge on Internally Submitted Frary 886 and Jake Given 856. Blank bill rate / Why Me should show the note value labeled "from notes". A filled field stays. Digest JSON for those rows should not list them under missing. | Real note text differs from the fixtures | Record date + result in the PR |

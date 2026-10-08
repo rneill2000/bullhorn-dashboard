@@ -8,14 +8,16 @@
  *                                       Bullhorn when a card is opened
  *   reference-named files               not in the Neon sync; text read live
  *
- * The quote that leaves this module keeps the candidate's own name.
- * It drops the writer's name, other person names, email, phone, URLs,
- * and the reference's organization or client names. A health-system name
- * becomes "a health system" only when that sentence still reads cleanly.
- * A sentence that would break if a name or detail were cut out of the
- * middle is dropped whole. If nothing readable is left, there is no offer.
- * The role is an explicit title, or "Former manager". It is never guessed
- * from the prose.
+ * A reference web form is parsed down to its recommendation. The
+ * preamble, field labels, and footer stay out of the quote. The role is
+ * the form's title, or "Former manager" when that field is empty.
+ * The quote keeps the candidate's own name. It drops the writer's name,
+ * other person names, email, phone, URLs, and the reference's organization
+ * or client names. A health-system name becomes "a health system", or
+ * "any health system" when a determiner is already there. A sentence that
+ * would break, or that talks about a layoff or departure, is dropped whole.
+ * The default quote is the one or two strongest sentences. If nothing
+ * readable is left, there is no offer.
  */
 "use strict";
 
@@ -42,6 +44,8 @@ const PAIR_KEEP = {
 };
 
 const ROLE_FALLBACK = "Former manager";
+const DEFAULT_QUOTE_MAX = 280;
+const DEPARTURE_RE = /\b(?:lay\s*-?\s*offs?|laid\s+off|let\s+go|terminat(?:e|ed|ion|ing)|resign(?:ed|ation|ing)?|depart(?:ure|ing|ed)|upcoming departure|leaving (?:us|the company|the organization|the team|his|her|their)|left (?:the company|the organization|us)|no longer (?:with|employed|at)|downsiz\w*|reduction in force|\brif\b|separat(?:ed|ion|ing)|last day|position (?:was |has been )?eliminat\w*|sorry to see\b|why (?:he|she|they)(?: is| are|'s)? leaving)\b/i;
 const LABEL_MAP = {
   "reference name": "name",
   "ref name": "name",
@@ -156,11 +160,23 @@ function replaceOrgs(text, orgs, clientNames) {
   let t = String(text || "");
   list.forEach(function (org) {
     const asHealth = clients[org.toLowerCase()] || looksLikeHealthOrg(org);
-    t = replacePhrase(t, org, asHealth ? "\u0000HS\u0000" : "");
+    const flex = flexName(org);
+    if (!flex || flex.length < 3) return;
+    const re = new RegExp("(^|[^A-Za-z0-9])(?:(a|an|any|the|our|that|this|their|my|your)\\s+)?(?:" + flex + ")(?=[^A-Za-z0-9]|$)", "gi");
+    t = t.replace(re, function (_m, pre, det) {
+      if (!asHealth) return pre || "";
+      if (!det || /^(?:a|an)$/i.test(det)) return (pre || "") + "\u0000HS\u0000";
+      return (pre || "") + det + " \u0000HSP\u0000";
+    });
   });
-  t = t.replace(/(?:\u0000HS\u0000)(?:\s*\u0000HS\u0000)+/g, "\u0000HS\u0000");
+  t = t.replace(/(?:\u0000(?:HS|HSP)\u0000)(?:\s*\u0000(?:HS|HSP)\u0000)+/g, "\u0000HS\u0000");
   t = t.replace(/\u0000HS\u0000/g, "a health system");
-  t = t.replace(/\ba health system(?:\s+(?:hospital|medical center|clinic|health system))+/gi, "a health system");
+  t = t.replace(/\u0000HSP\u0000/g, "health system");
+  t = t.replace(/\b((?:a|an|any|the|our|that|this|their|my|your)\s+)?health system(?:\s+(?:hospital|medical center|clinic|health system))+/gi, function (_m, det) {
+    return (det || "a ") + "health system";
+  });
+  t = t.replace(/\b(any|the|our|that|this|their|my|your)\s+a\s+health system\b/gi, "$1 health system");
+  t = t.replace(/\b(?:a|an)\s+a\s+health system\b/gi, "a health system");
   return t;
 }
 
@@ -174,15 +190,20 @@ function namePhrases(full) {
   return phrases;
 }
 
-function candidateOf(name) {
-  const parts = cleanSpace(name).split(/\s+/).filter(Boolean);
+function candidateOf(name, extra) {
   const tokens = {};
-  parts.forEach(function (part) {
-    if (part.length >= 2) tokens[part.toLowerCase()] = true;
-  });
-  const full = parts.join(" ");
-  if (full) tokens[full.toLowerCase()] = true;
-  return { full: full, tokens: tokens };
+  function add(value) {
+    const parts = cleanSpace(value).split(/\s+/).filter(Boolean);
+    parts.forEach(function (part) {
+      if (part.length >= 2) tokens[part.toLowerCase()] = true;
+    });
+    const full = parts.join(" ");
+    if (full) tokens[full.toLowerCase()] = true;
+  }
+  add(name);
+  (extra || []).forEach(add);
+  const parts = cleanSpace(name).split(/\s+/).filter(Boolean);
+  return { full: parts.join(" "), tokens: tokens };
 }
 
 function isCandidatePhrase(phrase, candidate) {
@@ -252,7 +273,7 @@ function readsCleanly(sentence) {
   s = s.replace(/^[\s,;:.-]+|[\s,;:-]+$/g, "");
   if (!s) return "";
   if (!/[.!?]$/.test(s)) s += ".";
-  if (/\b(?:a|an|the)\s+a health system\b/i.test(s)) return "";
+  if (/\b(?:a|an|any|the|our|that|this|their|my|your)\s+a\s+health system\b/i.test(s)) return "";
   if (/\b(?:at|with|for|from|by|to|of|and|or)\s*[.!?]$/i.test(s)) return "";
   if (/^(?:reach me|email me|call me|contact me|phone|email)\b/i.test(s)) return "";
   if (/^(?:has|have|had|is|are|was|were|would|will|could|should|said|says|managed|manages)\b/i.test(s)) return "";
@@ -300,9 +321,58 @@ function stripContacts(text) {
   return t;
 }
 
+function isDeparture(sentence) {
+  return DEPARTURE_RE.test(String(sentence || ""));
+}
+
+function isGreetingOrClosing(sentence) {
+  const s = cleanSpace(sentence);
+  return /^(?:hello|hi|hey|dear)\b/i.test(s)
+    || /a new form has been submitted/i.test(s)
+    || /^details below\b/i.test(s)
+    || /^(?:thank you|thanks|sincerely|regards|best regards|kind regards|warmly|respectfully)\b/i.test(s)
+    || /\bplease feel free\b/i.test(s)
+    || /\bdon'?t hesitate\b/i.test(s)
+    || /\bfeel free to (?:contact|call|reach)\b/i.test(s)
+    || /\blet me know if\b/i.test(s)
+    || /\bhappy to (?:discuss|provide|chat)\b/i.test(s);
+}
+
+function sentenceStrength(sentence) {
+  const s = String(sentence || "");
+  let score = 0;
+  if (/\bre-?hire/i.test(s)) score += 5;
+  if (/\brecommend/i.test(s)) score += 5;
+  if (/\b(?:excellent|outstanding|exceptional|strongest)\b/i.test(s)) score += 4;
+  if (/\b(?:superb|impressive|wonderful|trusted|trustworthy|asset|highly)\b/i.test(s)) score += 3;
+  if (/\b(?:great|reliable|pleasure)\b/i.test(s)) score += 2;
+  return score;
+}
+
+function shortenQuote(text) {
+  const sentences = splitSentences(text);
+  if (!sentences.length) return "";
+  const ranked = sentences.map(function (sentence, index) {
+    return { sentence: sentence, index: index, score: sentenceStrength(sentence) };
+  });
+  ranked.sort(function (a, b) { return b.score - a.score || a.index - b.index; });
+  const picked = [];
+  ranked.forEach(function (item) {
+    if (picked.length >= 2) return;
+    const trial = picked.concat([item]).sort(function (a, b) { return a.index - b.index; });
+    const joined = trial.map(function (row) { return row.sentence; }).join(" ");
+    if (joined.length <= DEFAULT_QUOTE_MAX) picked.push(item);
+    else if (!picked.length && item.sentence.length <= DEFAULT_QUOTE_MAX + 40) picked.push(item);
+  });
+  if (!picked.length) return "";
+  picked.sort(function (a, b) { return a.index - b.index; });
+  return picked.map(function (row) { return row.sentence; }).join(" ");
+}
+
 function cleanSentence(sentence, ctx, candidate) {
   let s = cleanSpace(sentence);
   if (!s) return "";
+  if (isDeparture(s) || isGreetingOrClosing(s)) return "";
   const drop = dropPhrases(ctx, candidate);
   for (let i = 0; i < drop.length; i++) {
     if (phraseIn(s, drop[i])) return "";
@@ -339,7 +409,7 @@ function anonymizeReferenceQuote(quote, ctx, deps) {
   let t = plain(deps, quote);
   t = facing(deps, t, view);
   if (!t) return "";
-  const candidate = candidateOf(src.candidateName);
+  const candidate = candidateOf(src.candidateName, src.candidateAliases);
   const kept = [];
   splitSentences(t).forEach(function (sentence) {
     const clean = cleanSentence(sentence, src, candidate);
@@ -356,7 +426,7 @@ function bannedRemainder(text, ctx) {
   if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(t)) return true;
   if (/(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]\d{4}/.test(t)) return true;
   if (/https?:\/\/|www\.|linkedin\.com/i.test(t)) return true;
-  const candidate = candidateOf(src.candidateName);
+  const candidate = candidateOf(src.candidateName, src.candidateAliases);
   const phrases = [];
   [src.writerName].concat(src.personNames || []).forEach(function (name) {
     namePhrases(name).forEach(function (phrase) {
@@ -394,27 +464,93 @@ function isPositive(text, status) {
   return POSITIVE_RE.test(body);
 }
 
+function labelSlot(label) {
+  let key = String(label || "").toLowerCase().replace(/['’]/g, "").replace(/[*_`"]+/g, " ").replace(/[^a-z0-9/&+\- ]/g, " ").replace(/\s+/g, " ").trim();
+  key = key.replace(/^(?:the|your|please)\s+/, "").replace(/[?]+$/, "").trim();
+  if (!key || key.length > 80) return "";
+  if (LABEL_MAP[key]) return LABEL_MAP[key];
+  if (/^candidates?$/.test(key) || /\bcandidates? name\b/.test(key)) return "candidate";
+  if (/\boccupation\b/.test(key)) return "role";
+  if (/\b(?:title|position)\b/.test(key) || /\brole\b/.test(key)) return "role";
+  if (/\brelationship\b/.test(key) || /how do you know/.test(key)) return "relationship";
+  if (/\be-?mail\b/.test(key)) return "email";
+  if (/\b(?:phone|mobile|telephone)\b/.test(key)) return "phone";
+  if (/\b(?:company|organi[sz]ation|employer|hospital|facility)\b/.test(key)) return "organization";
+  if (/\bname\b/.test(key)) return "name";
+  if (/\b(?:recommend\w*|comments?|feedback|thoughts|testimonial)\b/.test(key)) return "quote";
+  if (/^(?:message|reference|statement|response|answer)$/.test(key)) return "quote";
+  if (/\bre-?hire\b/.test(key)) return "rehire";
+  return "";
+}
+
 function knownLabel(label) {
-  const key = String(label || "").toLowerCase().replace(/\s+/g, " ").trim();
-  return LABEL_MAP[key] || "";
+  return labelSlot(label);
+}
+
+function isBoilerplateLine(line) {
+  const s = cleanSpace(line);
+  if (!s) return true;
+  if (/^(?:hello|hi|hey|dear)(?:\s+[a-z]+)?[,!]?$/i.test(s)) return true;
+  if (/a new form has been submitted/i.test(s)) return true;
+  if (/^details below\.?$/i.test(s)) return true;
+  if (/^(?:thank you|thanks)[!.]?$/i.test(s)) return true;
+  if (/^(?:sincerely|regards|best regards|kind regards)[,!]?$/i.test(s)) return true;
+  if (/^(?:submitted|ip address|page url|user agent)\b/i.test(s) && s.length < 90) return true;
+  if (/^https?:\/\//i.test(s)) return true;
+  return false;
+}
+
+function assignField(fields, slot, value) {
+  const text = String(value || "").trim();
+  if (!text) return;
+  if (!fields[slot]) fields[slot] = text;
+  else fields[slot] = fields[slot] + "\n" + text;
 }
 
 function parseLabeled(text) {
   const fields = {};
   let last = "";
-  String(text || "").split("\n").forEach(function (line) {
-    const match = String(line || "").match(/^\s*([^:\n]{2,40})\s*:\s*(.*)$/);
-    const slot = match ? knownLabel(match[1]) : "";
-    if (slot) {
-      last = slot;
-      const value = String(match[2] || "").trim();
-      if (!fields[slot]) fields[slot] = value;
-      else if (value) fields[slot] = fields[slot] + "\n" + value;
+  String(text || "").split("\n").forEach(function (raw) {
+    const line = String(raw || "").trim();
+    if (!line) return;
+    if (isBoilerplateLine(line)) return;
+    const colon = line.match(/^([^:]{2,80})\s*:\s*(.*)$/);
+    if (colon) {
+      const slot = labelSlot(colon[1]);
+      if (slot) {
+        last = slot;
+        assignField(fields, slot, colon[2]);
+        return;
+      }
+    }
+    const bare = labelSlot(line);
+    if (bare && line.length <= 60 && !/[.!?]$/.test(line)) {
+      last = bare;
       return;
     }
-    if (last && String(line || "").trim()) fields[last] = (fields[last] ? fields[last] + "\n" : "") + String(line).trim();
+    if (last) assignField(fields, last, line);
   });
+  if (fields.first || fields.last) {
+    fields.name = cleanSpace([fields.first, fields.last, fields.name].filter(Boolean).join(" "));
+  }
   return fields;
+}
+
+function stripLeadingBoilerplate(text) {
+  let t = String(text || "").trim();
+  let prev = "";
+  while (t && t !== prev) {
+    prev = t;
+    t = t.replace(/^(?:hello|hi|hey|dear)(?:\s+\w+)?[,!]?\s*/i, "");
+    t = t.replace(/^a new form has been submitted on your website\.?\s*/i, "");
+    t = t.replace(/^details below\.?\s*/i, "");
+    t = t.trim();
+  }
+  return t;
+}
+
+function looksLikeWebForm(text, fields) {
+  return /a new form has been submitted/i.test(String(text || "")) || formSignal(fields) >= 2;
 }
 
 function formSignal(fields) {
@@ -430,17 +566,25 @@ function looksLikeReferenceForm(fields) {
 }
 
 function pickQuote(plainText, fields) {
-  if (fields.quote && cleanSpace(fields.quote).length >= 20) return fields.quote;
+  if (fields.quote && cleanSpace(fields.quote).length >= 20) return stripLeadingBoilerplate(fields.quote);
   const quoted = String(plainText || "").match(/[“"]([^”"]{20,})[”"]/);
   if (quoted) return quoted[1];
-  if (formSignal(fields) >= 2) return "";
+  if (looksLikeWebForm(plainText, fields)) return "";
   return plainText;
+}
+
+function prepareReferenceText(raw, deps) {
+  let html = String(raw || "");
+  html = html.replace(/<\/t[dh]>\s*<t[dh][^>]*>/gi, ": ");
+  html = html.replace(/<br\s*\/?\s*>/gi, "\n");
+  html = html.replace(/<\/tr>/gi, "\n");
+  return plain(deps, html);
 }
 
 function fromNote(note, deps) {
   if (!note) return null;
   const action = String(note.action || "").trim().toLowerCase();
-  const body = plain(deps, note.comments_text || note.comments || note.text || "");
+  const body = prepareReferenceText(note.comments_text || note.comments || note.text || "", deps);
   const fields = parseLabeled(body);
   const referenceAction = action === "reference";
   if (!referenceAction && !looksLikeReferenceForm(fields)) return null;
@@ -450,6 +594,7 @@ function fromNote(note, deps) {
     id: id,
     at: Number(note.date_added || note.dateAdded) || 0,
     writerName: fields.name || "",
+    candidateName: fields.candidate || "",
     role: explicitRole(fields.role || ""),
     organization: fields.organization || "",
     quote: pickQuote(body, fields),
@@ -481,13 +626,14 @@ function fromFile(file, deps) {
   if (!file || file.id == null) return null;
   const name = String(file.name || "");
   if (!/reference/i.test(name) && !/reference/i.test(file.type || "")) return null;
-  const body = plain(deps, file.text || "");
+  const body = prepareReferenceText(file.text || "", deps);
   if (!body.trim()) return null;
   const fields = parseLabeled(body);
   return {
     id: "file:" + file.id,
     at: Number(file.dateAdded || file.date_added) || 0,
     writerName: fields.name || "",
+    candidateName: fields.candidate || "",
     role: explicitRole(fields.role || ""),
     organization: fields.organization || "",
     quote: pickQuote(body, fields) || body,
@@ -501,7 +647,8 @@ function toOffer(raw, input, deps) {
   if (!raw) return null;
   if (!isPositive(raw.positiveText || raw.quote, raw.status)) return null;
   const ctx = {
-    candidateName: input.candidateName || "",
+    candidateName: input.candidateName || raw.candidateName || "",
+    candidateAliases: [input.candidateName || "", raw.candidateName || ""].concat(input.candidateAliases || []),
     clientName: input.clientName || "",
     jobTitle: input.jobTitle || "",
     clients: input.clients || [],
@@ -510,11 +657,15 @@ function toOffer(raw, input, deps) {
     organization: raw.organization || "",
     organizations: [raw.organization || ""].concat(input.organizations || []),
   };
-  let quote = anonymizeReferenceQuote(raw.quote, ctx, deps);
+  let quote = shortenQuote(anonymizeReferenceQuote(raw.quote, ctx, deps));
   if (!quote || quote.length < 24) return null;
   const leak = leakOf(deps, quote, { clientName: ctx.clientName, jobTitle: ctx.jobTitle, clients: ctx.clients });
   if (leak && leak.rule !== "references") return null;
-  let role = explicitRole(anonymizeReferenceQuote(raw.role, ctx, deps) || raw.role);
+  let role = explicitRole(raw.role || "");
+  if (role) {
+    const cleanedRole = explicitRole(replaceOrgs(stripContacts(role), orgList(ctx), [ctx.clientName].concat(ctx.clients || [])));
+    role = cleanedRole || role;
+  }
   if (!role) role = ROLE_FALLBACK;
   quote = quote.replace(/"/g, "'").replace(/\s+/g, " ").trim();
   if (bannedRemainder(quote + " " + role, ctx)) return null;
