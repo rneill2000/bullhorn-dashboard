@@ -1059,6 +1059,16 @@ test("bare state location is flagged and remote is added", function () {
   const remote = forge.pickLocation({ commentLocation: "Houston, TX", onSite: "Remote" });
   assert.match(remote.text, /Houston, TX/);
   assert.match(remote.text, /Remote/);
+  assert.equal(forge.pickLocation({ commentLocation: "Houston, TX (hybrid)" }).text, "Houston, TX (hybrid)");
+});
+
+test("location does not keep a pay type stuck to the state", function () {
+  assert.equal(forge.pickLocation({ commentLocation: "Milliken, COHourly" }).text, "Milliken, CO");
+  assert.equal(forge.pickLocation({ commentLocation: "Milliken, CO\nHourly" }).text, "Milliken, CO");
+  assert.equal(forge.pickLocation({ commentLocation: "Milliken, CO Per Hour" }).text, "Milliken, CO");
+  assert.equal(forge.pickLocation({ candCity: "Milliken", candState: "COHourly" }).text, "Milliken, CO");
+  assert.equal(forge.pickLocation({ candCity: "Milliken", candState: "CO", employmentType: "Hourly" }).text, "Milliken, CO");
+  assert.equal(forge.pickLocation({ candCity: "Milliken, CO", candState: "Hourly" }).text, "Milliken, CO");
 });
 
 test("draft is refused when the client cannot be resolved from the job (F6)", async function () {

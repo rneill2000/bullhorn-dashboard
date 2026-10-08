@@ -74,6 +74,12 @@ Axes: owner (mine / other) · status (internal / client-submitted / closed) · c
 | F35 | Org name sits after a determiner ("for any {hospital} looking to hire") | "any a health system" | test: a reference web form keeps a short recommendation and the writer's title |
 | F36 | Recommendation is a long paragraph with a thank-you close | Full paragraph in the draft | test: a reference web form keeps a short recommendation and the writer's title |
 | F37 | Quote says the candidate is leaving because of layoffs | Departure reason in the client email | test: a reference web form keeps a short recommendation and the writer's title |
+| F38 | Role is "{hospital} Billing Applications IT Supervisor" | "a health system" left in the role | test: a redacted role drops the org, and praise survives a departure clause |
+| F39 | Occupation is a department such as Technical Services, or the title is under job_title | Role falls back to Former manager | test: a redacted role drops the org, and praise survives a departure clause |
+| F40 | Quote names the hospital twice, then praises the candidate | "a health system" twice, or the writer's job as the quote | test: a redacted role drops the org, and praise survives a departure clause |
+| F41 | "sorry to see him go, he was our best Cadence analyst" | Praise deleted with the departure clause | test: a redacted role drops the org, and praise survives a departure clause |
+| F42 | Layoff or RIF in the same sentence as praise | Layoff reason kept | test: a redacted role drops the org, and praise survives a departure clause |
+| F43 | Location is "Milliken, CO" with Hourly glued on or on the next line | "Milliken, COHourly" | test: location does not keep a pay type stuck to the state |
 | M2 | Manual smoke: create draft with PDF, open in Outlook, confirm PDF name and that nothing was sent | Real Graph/attachment behavior |
 | M5 | Manual: Forge → Owner All → Chris Frary / Memorial Hermann SBO Analyst. Why Me from notes must not include the University Hospitals recruiter note. Then click Jake Given (Cook Children's) as soon as Frary's draft is up; the panel must not keep Frary's draft while Jake is selected. | Stale note or stale preview | Record date + result in the PR |
 | M4 | Manual: open Forge on Internally Submitted Frary 886 and Jake Given 856. Blank bill rate / Why Me should show the note value labeled "from notes". A filled field stays. Digest JSON for those rows should not list them under missing. | Real note text differs from the fixtures | Record date + result in the PR |

@@ -544,15 +544,31 @@ function pickBillRate(parts) {
 function jobIsRemote(parts) {
   return /remote/i.test(parts.onSite || "") || /remote/i.test(parts.jobTitle || "") || /remote/i.test(parts.employmentType || "");
 }
+const PAY_TYPE_RE = "(?:hourly|per\\s*hour|per\\s*day|per\\s*year|salaried|salary|annually|annual|w-?2|1099|contract(?:\\s+to\\s+hire)?|corp(?:orate)?(?:-|\\s)?to(?:-|\\s)?corp|direct\\s+hire)";
+function payTypeOnly(value) {
+  return new RegExp("^" + PAY_TYPE_RE + "[.!?]?$", "i").test(String(value || "").trim());
+}
+/** City and state only. A pay type glued on ("COHourly") or sitting on the next line is not part of the location. */
+function tidyLocation(text) {
+  let lines = String(text || "").split(/\n+/).map(function (line) { return line.trim(); }).filter(Boolean);
+  const kept = lines.filter(function (line) { return !payTypeOnly(line); });
+  if (kept.length) lines = kept;
+  let s = lines.join(" ").replace(/\s+/g, " ").trim();
+  s = s.replace(new RegExp("\\b([A-Za-z]{2})" + PAY_TYPE_RE + "\\b", "gi"), "$1");
+  s = s.replace(new RegExp("\\b([A-Za-z]{2})\\s*,?\\s+" + PAY_TYPE_RE + "\\b[.!?]?$", "i"), "$1");
+  return s.replace(/[,\s]+$/, "").trim();
+}
 function pickLocation(parts) {
   const flags = [];
   let loc = "";
   const comment = clientFacingText(parts.commentLocation, parts);
-  if (comment) loc = comment;
+  if (comment) loc = tidyLocation(comment);
   else {
-    const city = parts.candCity || parts.candCityCustom || "";
-    const state = parts.candState || parts.candStateCustom || "";
-    loc = [city, state].filter(Boolean).join(", ");
+    let city = parts.candCity || parts.candCityCustom || "";
+    let state = parts.candState || parts.candStateCustom || "";
+    if (payTypeOnly(city)) city = "";
+    if (payTypeOnly(state)) state = "";
+    loc = [tidyLocation(city), tidyLocation(state)].filter(Boolean).join(", ");
   }
   const remote = jobIsRemote(parts);
   if (remote && loc && !/remote/i.test(loc)) loc = loc + " · Remote";

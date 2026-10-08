@@ -304,6 +304,110 @@ test("a reference web form keeps a short recommendation and the writer's title",
   }), "I would rehire " + candidate + ".");
 });
 
+test("a redacted role drops the org, and praise survives a departure clause", function () {
+  const candidate = "Casey Nguyen";
+  const org = "Riverbend Health";
+  const clients = [org, "Memorial Hermann"];
+  const prefixed = forge.collectReferenceOffers({
+    notes: [{
+      id: 11,
+      action: "Reference",
+      comments_text: [
+        "Your name: Riley Chen",
+        "Your occupation: " + org + " Billing Applications IT Supervisor",
+        "Your relationship to the candidate: Former manager",
+        "Your feedback: " + candidate + " is an excellent analyst and I would rehire " + candidate + ".",
+      ].join("\n"),
+    }],
+    candidateName: candidate,
+    clients: clients,
+  });
+  assert.equal(prefixed.length, 1);
+  assert.equal(prefixed[0].role, "Billing Applications IT Supervisor");
+  assert.doesNotMatch(prefixed[0].role, /health system|former manager|^a /i);
+
+  const already = forge.collectReferenceOffers({
+    notes: [{
+      id: 12,
+      action: "Reference",
+      comments_text: "Your occupation: a health system Billing Applications IT Supervisor\nYour feedback: " + candidate + " is an excellent analyst and I recommend " + candidate + ".",
+    }],
+    candidateName: candidate,
+    clients: clients,
+  });
+  assert.equal(already[0].role, "Billing Applications IT Supervisor");
+
+  const department = forge.collectReferenceOffers({
+    notes: [{
+      id: 13,
+      action: "Reference",
+      comments_text: [
+        "Your occupation: Technical Services (TS)",
+        "Your relationship to the candidate: Former manager",
+        "Your feedback: I'm with the Technical Services (TS) team here at " + org + ", and one of my long-term assignments has been to support the Hospital Billing team at " + org + ". " + candidate + " has been a solid member of that team for many years.",
+      ].join("\n"),
+    }],
+    candidateName: candidate,
+    clientName: "Memorial Hermann",
+    clients: clients,
+  });
+  assert.equal(department.length, 1);
+  assert.equal(department[0].role, "Technical Services (TS)");
+  assert.equal(department[0].quote, candidate + " has been a solid member of that team for many years.");
+  assert.doesNotMatch(department[0].quote, /Technical Services|health system|here at/i);
+
+  const collapsed = forge.anonymizeReferenceQuote(
+    "I'm with the Technical Services (TS) team here at " + org + ", and one of my long-term assignments has been to support the Hospital Billing team at " + org + ".",
+    { candidateName: candidate, organization: org, clients: clients }
+  );
+  assert.match(collapsed, /here at a health system/);
+  assert.match(collapsed, /Hospital Billing team here/);
+  assert.doesNotMatch(collapsed, /health system.*health system|Riverbend/i);
+
+  const otherKey = forge.collectReferenceOffers({
+    notes: [{
+      id: 14,
+      action: "Reference",
+      comments_text: '{"ref_name":"Riley Chen","job_title":"Cadence Analyst","relationship":"Former manager","feedback":"' + candidate + ' is a trustworthy analyst and I would rehire ' + candidate + '."}',
+    }],
+    candidateName: candidate,
+    clients: clients,
+  });
+  assert.equal(otherKey[0].role, "Cadence Analyst");
+
+  const fromRelationship = forge.collectReferenceOffers({
+    notes: [{
+      id: 15,
+      action: "Reference",
+      comments_text: "Your relationship to the candidate: Epic Resolute Manager\nYour feedback: " + candidate + " is an excellent analyst and I recommend " + candidate + ".",
+    }],
+    candidateName: candidate,
+    clients: clients,
+  });
+  assert.equal(fromRelationship[0].role, "Epic Resolute Manager");
+
+  const fallback = forge.collectReferenceOffers({
+    notes: [{
+      id: 16,
+      action: "Reference",
+      comments_text: "Your relationship to the candidate: Former manager\nYour feedback: " + candidate + " is an excellent analyst and I recommend " + candidate + ".",
+    }],
+    candidateName: candidate,
+    clients: clients,
+  });
+  assert.equal(fallback[0].role, "Former manager");
+
+  assert.equal(forge.anonymizeReferenceQuote("Sorry to see him go, he was our best Cadence analyst.", { candidateName: candidate }), "He was our best Cadence analyst.");
+  assert.equal(forge.anonymizeReferenceQuote("I am sorry to see her go but she was an excellent analyst.", { candidateName: candidate }), "She was an excellent analyst.");
+  assert.equal(forge.anonymizeReferenceQuote("His last day is Friday; he was a trustworthy analyst.", { candidateName: candidate }), "He was a trustworthy analyst.");
+  assert.equal(forge.anonymizeReferenceQuote("Sorry to see him go, he was our best, most trusted analyst.", { candidateName: candidate }), "He was our best, most trusted analyst.");
+  assert.equal(forge.anonymizeReferenceQuote("We had to let him go. He was our best analyst.", { candidateName: candidate }), "He was our best analyst.");
+  assert.equal(forge.anonymizeReferenceQuote("The upcoming departure is due to broad layoffs and he was excellent.", { candidateName: candidate }), "");
+  assert.equal(forge.anonymizeReferenceQuote("He was our best analyst before the reduction in force.", { candidateName: candidate }), "");
+  assert.equal(forge.anonymizeReferenceQuote("Sorry to see him go.", { candidateName: candidate }), "");
+  assert.equal(forge.guardEditedReference("Sorry to see him go, he was our best Cadence analyst.", { candidateName: candidate }), "He was our best Cadence analyst.");
+});
+
 test("a reference is offered and left out until it is picked", async function () {
   const row = candidateRow();
   const note = referenceNote();

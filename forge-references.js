@@ -10,19 +10,21 @@
  *
  * A reference web form is parsed down to its recommendation. The
  * preamble, field labels, and footer stay out of the quote. The role is
- * the form's title, or "Former manager" when that field is empty.
+ * the form's occupation, title, or position, with the employer removed.
+ * "Former manager" is only the fallback when no role field has a value.
  * The quote keeps the candidate's own name. It drops the writer's name,
  * other person names, email, phone, URLs, and the reference's organization
  * or client names. A health-system name becomes "a health system", or
- * "any health system" when a determiner is already there. A sentence that
- * would break, or that talks about a layoff or departure, is dropped whole.
- * The default quote is the one or two strongest sentences. If nothing
- * readable is left, there is no offer.
+ * "any health system" when a determiner is already there. A later mention
+ * in the same sentence becomes "here". A layoff or RIF sentence is dropped.
+ * Other departure wording is removed only when the praise clause can stand
+ * alone. The default quote is the one or two strongest praise sentences.
+ * If nothing readable is left, there is no offer.
  */
 "use strict";
 
 const TITLE_WORD = /\b(?:director|manager|supervisor|lead|leader|vp|vice president|chief|cio|cto|cfo|cmio|officer|administrator|coordinator|president|executive|controller|head)\b/i;
-const POSITIVE_RE = /\b(?:re-?hire\w*|recommend\w*|excellent|outstanding|exceptional|superb|impressive|wonderful|strong\w*|great|trusted|trustworthy|reliable|pleasure|asset|highly)\b/i;
+const POSITIVE_RE = /\b(?:re-?hire\w*|recommend\w*|excellent|outstanding|exceptional|superb|impressive|wonderful|strong\w*|great|solid|best|expert|trusted|trustworthy|reliable|pleasure|asset|highly)\b/i;
 const NEGATIVE_RE = /\b(?:would not|wouldn't|will not|won't|do not|don't)\s+(?:re-?hire|recommend|hire)\b|\bnot recommend\b|\bpoor performance\b|\bunreliable\b|\bdo not rehire\b/i;
 const NAME_SKIP = {
   will: 1, may: 1, june: 1, hope: 1, grace: 1, faith: 1, mark: 1, bill: 1, art: 1, joy: 1,
@@ -45,7 +47,8 @@ const PAIR_KEEP = {
 
 const ROLE_FALLBACK = "Former manager";
 const DEFAULT_QUOTE_MAX = 280;
-const DEPARTURE_RE = /\b(?:lay\s*-?\s*offs?|laid\s+off|let\s+go|terminat(?:e|ed|ion|ing)|resign(?:ed|ation|ing)?|depart(?:ure|ing|ed)|upcoming departure|leaving (?:us|the company|the organization|the team|his|her|their)|left (?:the company|the organization|us)|no longer (?:with|employed|at)|downsiz\w*|reduction in force|\brif\b|separat(?:ed|ion|ing)|last day|position (?:was |has been )?eliminat\w*|sorry to see\b|why (?:he|she|they)(?: is| are|'s)? leaving)\b/i;
+const LAYOFF_RE = /\b(?:lay\s*-?\s*offs?|laid\s+off|downsiz\w*|reduction in force|\brifs?\b)\b/i;
+const DEPARTURE_RE = /\b(?:let\s+go|let\s+(?:him|her|them|me|us)\s+go|terminat(?:e|ed|ion|ing)|resign(?:ed|ation|ing)?|depart(?:ure|ing|ed)|upcoming departure|leaving (?:us|the company|the organization|the team|his|her|their)|left (?:the company|the organization|us)|no longer (?:with|employed|at)|separat(?:ed|ion|ing)|last day|position (?:was |has been )?eliminat\w*|sorry to see\b|why (?:he|she|they)(?: is| are|'s)? leaving)\b/i;
 const LABEL_MAP = {
   "reference name": "name",
   "ref name": "name",
@@ -122,6 +125,44 @@ function explicitRole(raw) {
   if (words.length > 8) return "";
   if (!TITLE_WORD.test(s)) return "";
   return s;
+}
+
+/** A role field the writer filled in, even when it has no title word such as Supervisor. */
+function usableRole(raw) {
+  let s = cleanSpace(String(raw || "").replace(/[|]/g, " "));
+  s = s.replace(/^[\s,;:.-]+|[\s,;:.-]+$/g, "");
+  if (!s || s.length > 80 || s.length < 3) return "";
+  if (/@|https?:|www\.|\d{3}/.test(s)) return "";
+  if (/[.!?]/.test(s)) return "";
+  if (/^(?:n\/a|na|none|no|yes|same|see below|tbd|former manager)$/i.test(s)) return "";
+  const words = s.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 8) return "";
+  return words.join(" ");
+}
+
+function removeNamedOrgs(text, orgs) {
+  let t = String(text || "");
+  (orgs || []).forEach(function (org) {
+    t = replacePhrase(t, org, "");
+  });
+  return t;
+}
+
+function prepareRoleText(raw, ctx) {
+  let s = stripContacts(raw);
+  s = removeNamedOrgs(s, orgList(ctx));
+  s = s.replace(/\b(?:a|an|any|the|our|that|this|their|my|your)\s+health system\b/gi, " ");
+  s = s.replace(/\b(?:at|with|for|from|of)\s*$/i, "");
+  s = s.replace(/^(?:a|an|the|our|any|at|with|for|from|of)\s+/i, "");
+  return cleanSpace(s);
+}
+
+function displayRole(raw, relationship, ctx) {
+  const primary = usableRole(prepareRoleText(raw, ctx));
+  if (primary) return primary;
+  const related = explicitRole(prepareRoleText(relationship, ctx));
+  if (related && !/^former manager$/i.test(related)) return related;
+  return "";
 }
 
 function looksLikeHealthOrg(name) {
@@ -321,8 +362,57 @@ function stripContacts(text) {
   return t;
 }
 
+function isLayoff(sentence) {
+  return LAYOFF_RE.test(String(sentence || ""));
+}
+
 function isDeparture(sentence) {
   return DEPARTURE_RE.test(String(sentence || ""));
+}
+
+function hasFiniteVerb(sentence) {
+  return /\b(?:is|are|was|were|has|have|had|would|will|can|could|should|did|does|do|kept|keeps|remains|remained|proved|proves|delivered|delivers|excelled|performed|recommend\w*|re-?hire\w*)\b/i.test(String(sentence || ""));
+}
+
+function splitClauses(sentence) {
+  return String(sentence || "").split(/\s*(?:;|\s+but\s+|\s+although\s+|\s+though\s+|,\s*)\s*/i).map(function (part) {
+    return cleanSpace(part);
+  }).filter(Boolean);
+}
+
+/** Drop a layoff sentence. Keep praise when only a departure clause is in the way. */
+function withoutDeparture(sentence) {
+  const s = cleanSpace(sentence);
+  if (!s) return "";
+  if (isLayoff(s)) return "";
+  if (!isDeparture(s)) return s;
+  const parts = splitClauses(s).filter(function (part) {
+    return !isLayoff(part) && !isDeparture(part);
+  });
+  if (!parts.length) return "";
+  const allVerbs = parts.every(hasFiniteVerb);
+  const joined = parts.map(function (part, index) {
+    if (!allVerbs && index > 0) return part;
+    return part.replace(/^[a-z]/, function (ch) { return ch.toUpperCase(); });
+  }).join(allVerbs ? ". " : ", ");
+  if (isLayoff(joined) || isDeparture(joined)) return "";
+  if (!hasFiniteVerb(joined)) return "";
+  return joined;
+}
+
+function collapseHealthSystems(sentence) {
+  const re = /\b(?:a\s+)?health system\b/gi;
+  let count = 0;
+  let out = String(sentence || "").replace(re, function () {
+    count += 1;
+    if (count === 1) return arguments[0];
+    return "\u0000HS2\u0000";
+  });
+  if (count < 2) return sentence;
+  out = out.replace(/\b(?:at|with|for|from|to|in)\s+\u0000HS2\u0000/gi, "here");
+  out = out.replace(/\u0000HS2\u0000/g, "here");
+  out = out.replace(/\bhere\s+here\b/gi, "here");
+  return cleanSpace(out);
 }
 
 function isGreetingOrClosing(sentence) {
@@ -338,13 +428,21 @@ function isGreetingOrClosing(sentence) {
     || /\bhappy to (?:discuss|provide|chat)\b/i.test(s);
 }
 
+function isWriterContext(sentence) {
+  const s = String(sentence || "");
+  return /\bI(?:'m| am)\s+(?:with|on|a|the|currently|part)\b/i.test(s)
+    || /\b(?:my|one of my)\s+(?:long-term\s+|current\s+)?(?:assignment|role|team|position)\b/i.test(s)
+    || /\bI (?:work|worked|support|supported)\b/i.test(s)
+    || /\bhere at\b/i.test(s);
+}
+
 function sentenceStrength(sentence) {
   const s = String(sentence || "");
   let score = 0;
   if (/\bre-?hire/i.test(s)) score += 5;
   if (/\brecommend/i.test(s)) score += 5;
-  if (/\b(?:excellent|outstanding|exceptional|strongest)\b/i.test(s)) score += 4;
-  if (/\b(?:superb|impressive|wonderful|trusted|trustworthy|asset|highly)\b/i.test(s)) score += 3;
+  if (/\b(?:excellent|outstanding|exceptional|strongest|best|expert)\b/i.test(s)) score += 4;
+  if (/\b(?:superb|impressive|wonderful|trusted|trustworthy|asset|highly|solid|strong)\b/i.test(s)) score += 3;
   if (/\b(?:great|reliable|pleasure)\b/i.test(s)) score += 2;
   return score;
 }
@@ -356,9 +454,13 @@ function shortenQuote(text) {
     return { sentence: sentence, index: index, score: sentenceStrength(sentence) };
   });
   ranked.sort(function (a, b) { return b.score - a.score || a.index - b.index; });
+  const praise = ranked.filter(function (item) { return item.score > 0 && !isWriterContext(item.sentence); });
+  const pool = praise.length ? praise : ranked.filter(function (item) { return item.score > 0; });
+  const source = pool.length ? pool : ranked;
+  const limit = praise.length ? 2 : 1;
   const picked = [];
-  ranked.forEach(function (item) {
-    if (picked.length >= 2) return;
+  source.forEach(function (item) {
+    if (picked.length >= limit) return;
     const trial = picked.concat([item]).sort(function (a, b) { return a.index - b.index; });
     const joined = trial.map(function (row) { return row.sentence; }).join(" ");
     if (joined.length <= DEFAULT_QUOTE_MAX) picked.push(item);
@@ -370,9 +472,9 @@ function shortenQuote(text) {
 }
 
 function cleanSentence(sentence, ctx, candidate) {
-  let s = cleanSpace(sentence);
+  let s = withoutDeparture(sentence);
   if (!s) return "";
-  if (isDeparture(s) || isGreetingOrClosing(s)) return "";
+  if (isGreetingOrClosing(s)) return "";
   const drop = dropPhrases(ctx, candidate);
   for (let i = 0; i < drop.length; i++) {
     if (phraseIn(s, drop[i])) return "";
@@ -389,10 +491,10 @@ function cleanSentence(sentence, ctx, candidate) {
     for (let i = 0; i < present.length; i++) {
       if (!(clients[present[i].toLowerCase()] || looksLikeHealthOrg(present[i]))) return "";
     }
-    s = readsCleanly(replaceOrgs(s, present, [ctx.clientName].concat(ctx.clients || [])));
+    s = readsCleanly(collapseHealthSystems(replaceOrgs(s, present, [ctx.clientName].concat(ctx.clients || []))));
     if (!s) return "";
   } else {
-    s = readsCleanly(s);
+    s = readsCleanly(collapseHealthSystems(s));
     if (!s) return "";
   }
   if (bannedRemainder(s, ctx)) return "";
@@ -514,7 +616,7 @@ function parseLabeled(text) {
     const line = String(raw || "").trim();
     if (!line) return;
     if (isBoilerplateLine(line)) return;
-    const colon = line.match(/^([^:]{2,80})\s*:\s*(.*)$/);
+    const colon = /^\s*\{/.test(line) ? null : line.match(/^([^:]{2,80})\s*:\s*(.*)$/);
     if (colon) {
       const slot = labelSlot(colon[1]);
       if (slot) {
@@ -533,7 +635,24 @@ function parseLabeled(text) {
   if (fields.first || fields.last) {
     fields.name = cleanSpace([fields.first, fields.last, fields.name].filter(Boolean).join(" "));
   }
+  absorbJsonFields(fields, text);
   return fields;
+}
+
+function absorbJsonFields(fields, text) {
+  const re = /\{[^{}]{10,}\}/g;
+  let match;
+  while ((match = re.exec(String(text || "")))) {
+    let obj = null;
+    try { obj = JSON.parse(match[0]); } catch (e) { obj = null; }
+    if (!obj || typeof obj !== "object") continue;
+    Object.keys(obj).forEach(function (key) {
+      const slot = labelSlot(key);
+      const value = obj[key];
+      if (!slot || fields[slot] || value == null || typeof value === "object") return;
+      assignField(fields, slot, String(value));
+    });
+  }
 }
 
 function stripLeadingBoilerplate(text) {
@@ -595,7 +714,8 @@ function fromNote(note, deps) {
     at: Number(note.date_added || note.dateAdded) || 0,
     writerName: fields.name || "",
     candidateName: fields.candidate || "",
-    role: explicitRole(fields.role || ""),
+    role: fields.role || "",
+    relationship: fields.relationship || "",
     organization: fields.organization || "",
     quote: pickQuote(body, fields),
     status: fields.status || "",
@@ -613,7 +733,8 @@ function fromRecord(record) {
     id: "record:" + record.id,
     at: Number(record.dateAdded || record.date_added) || 0,
     writerName: writer,
-    role: explicitRole(record.referenceTitle || ""),
+    role: record.referenceTitle || "",
+    relationship: "",
     organization: record.companyName || "",
     quote: record.customTextBlock1 || record.comments || "",
     status: status,
@@ -634,7 +755,8 @@ function fromFile(file, deps) {
     at: Number(file.dateAdded || file.date_added) || 0,
     writerName: fields.name || "",
     candidateName: fields.candidate || "",
-    role: explicitRole(fields.role || ""),
+    role: fields.role || "",
+    relationship: fields.relationship || "",
     organization: fields.organization || "",
     quote: pickQuote(body, fields) || body,
     status: fields.status || "",
@@ -661,11 +783,7 @@ function toOffer(raw, input, deps) {
   if (!quote || quote.length < 24) return null;
   const leak = leakOf(deps, quote, { clientName: ctx.clientName, jobTitle: ctx.jobTitle, clients: ctx.clients });
   if (leak && leak.rule !== "references") return null;
-  let role = explicitRole(raw.role || "");
-  if (role) {
-    const cleanedRole = explicitRole(replaceOrgs(stripContacts(role), orgList(ctx), [ctx.clientName].concat(ctx.clients || [])));
-    role = cleanedRole || role;
-  }
+  let role = displayRole(raw.role || "", raw.relationship || "", ctx);
   if (!role) role = ROLE_FALLBACK;
   quote = quote.replace(/"/g, "'").replace(/\s+/g, " ").trim();
   if (bannedRemainder(quote + " " + role, ctx)) return null;
@@ -734,7 +852,7 @@ function collectReferenceOffers(input, deps) {
 function referenceLine(offer) {
   const quote = String(offer && offer.quote || "").replace(/"/g, "'").replace(/\s+/g, " ").trim();
   if (!quote) return "";
-  const role = explicitRole(offer && offer.role) || ROLE_FALLBACK;
+  const role = cleanSpace(offer && offer.role) || ROLE_FALLBACK;
   return 'Reference: "' + quote + '" (' + role + ')';
 }
 
