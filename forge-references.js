@@ -468,7 +468,26 @@ function shortenQuote(text) {
   });
   if (!picked.length) return "";
   picked.sort(function (a, b) { return a.index - b.index; });
-  return picked.map(function (row) { return row.sentence; }).join(" ");
+  const keptIndexes = picked.map(function (row) { return row.index; });
+  return picked.map(function (row) {
+    const previousKept = row.index === 0 || keptIndexes.indexOf(row.index - 1) >= 0;
+    return previousKept ? row.sentence : untetherReference(row.sentence);
+  }).join(" ");
+}
+
+/**
+ * A kept sentence can open with "that team" or "this role" whose antecedent
+ * sentence was dropped by the picker. With nothing to point at, "that"/"this"
+ * reads as a gap, so it becomes "the". Only the leading reference is touched,
+ * and only when the sentence before it was not kept.
+ */
+const DANGLING_REF_RE = /\b(that|this|those|these)\s+(team|group|role|position|project|department|unit|organization|org|company|engagement|go-live|implementation|work|effort)\b/i;
+function untetherReference(sentence) {
+  const s = String(sentence || "");
+  const head = s.slice(0, 160);
+  const m = DANGLING_REF_RE.exec(head);
+  if (!m) return s;
+  return s.slice(0, m.index) + "the " + m[2] + s.slice(m.index + m[0].length);
 }
 
 function cleanSentence(sentence, ctx, candidate) {
@@ -881,4 +900,6 @@ module.exports = {
   collectReferenceBundle: collectReferenceBundle,
   referenceLine: referenceLine,
   selectReferenceOffers: selectReferenceOffers,
+  shortenQuote: shortenQuote,
+  untetherReference: untetherReference,
 };

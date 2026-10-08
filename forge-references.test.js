@@ -353,7 +353,7 @@ test("a redacted role drops the org, and praise survives a departure clause", fu
   });
   assert.equal(department.length, 1);
   assert.equal(department[0].role, "Technical Services (TS)");
-  assert.equal(department[0].quote, candidate + " has been a solid member of that team for many years.");
+  assert.equal(department[0].quote, candidate + " has been a solid member of the team for many years.");
   assert.doesNotMatch(department[0].quote, /Technical Services|health system|here at/i);
 
   const collapsed = forge.anonymizeReferenceQuote(
@@ -699,4 +699,19 @@ test("the forge card shows a reference only after it is checked", function () {
   quoteBox.value = CANDIDATE.name + " is excellent on every go-live.";
   ctx.forgePreview();
   assert.match(preview.textContent, new RegExp("Reference: \"" + CANDIDATE.name + " is excellent on every go-live\\.\" \\(Revenue Cycle Director\\)"));
+});
+
+test("a kept sentence loses its dangling 'that team' when the sentence before it was dropped", function () {
+  const lib = require("./forge-references");
+  // Hawkins Ref 2 shape: the first sentence names the org and gets cut; the second refers back to it.
+  const quote = "I managed the revenue cycle group at a large health system. Jon Hawkins has been a solid member of that team for many years. I would gladly rehire him.";
+  const out = lib.shortenQuote(quote);
+  assert.match(out, /Jon Hawkins has been a solid member of the team for many years\./);
+  assert.doesNotMatch(out, /\bthat team\b/);
+  // Only a leading reference whose antecedent was dropped is rewritten.
+  assert.equal(lib.untetherReference("She led this role from day one."), "She led the role from day one.");
+  assert.equal(lib.untetherReference("He said that nothing changed."), "He said that nothing changed.");
+  // When both sentences survive, the reference keeps its antecedent.
+  const both = lib.shortenQuote("He is the strongest analyst on our team. That team would rehire him.");
+  assert.match(both, /That team would rehire him/);
 });
