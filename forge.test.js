@@ -1990,3 +1990,56 @@ test("preview race cannot show the previous candidate after selection changes", 
   assert.match(main.innerHTML, /Jake covered the Cook Children's cutover/);
   assert.doesNotMatch(main.innerHTML, /Chris Frary|Frary kept/);
 });
+
+test("reference checkbox changes never enable Create before the résumé is confirmed (F25)", function () {
+  const vm = require("vm");
+  const button = { disabled: true, textContent: "Create Outlook draft" };
+  const els = {};
+  function el(id) {
+    if (id === "forge-create") return button;
+    if (!els[id]) els[id] = { value: "", textContent: "", innerHTML: "", style: {}, selectedIndex: -1, options: [] };
+    return els[id];
+  }
+  const ctx = {
+    console: console,
+    esc: function (s) { return String(s == null ? "" : s); },
+    NAV_GROUPS: [{ section: "Candidates", items: [{ key: "subtracker", label: "Submittal Tracker" }] }],
+    currentPage: "forge", location: { hash: "#forge" },
+    setTimeout: function (fn) { fn(); }, clearTimeout: function () {},
+    showToast: function () {},
+    apiFetch: async function () { return {}; },
+    fetch: async function () { return { ok: true, status: 200, json: async function () { return { references: [] }; } }; },
+    document: { getElementById: el },
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(__dirname + "/public/forge-ui.js", "utf8"), ctx);
+  ctx._forge.selected = 880;
+  ctx._forge.resumeConfirmed = false;
+  ctx._forge.resumeFileId = "12345"; // a suggested PDF is pre-selected but NOT confirmed
+  ctx._forge.view = { signerName: "Rachel", draft: { submissionId: 880, job: {}, references: [{ id: "r1", quote: "Solid analyst.", role: "Manager" }, { id: "r2", quote: "Would rehire.", role: "Director" }] } };
+  ctx._forge.referenceIds = [];
+  ctx.forgeSyncCreate();
+  assert.equal(button.disabled, true, "starts disabled");
+  const box = { checked: true, getAttribute: function () { return "r1"; } };
+  ctx.forgeToggleRef(box);              // tick
+  assert.equal(button.disabled, true, "tick must not enable Create");
+  ctx.forgeToggleRef(box);              // untick
+  assert.equal(button.disabled, true, "untick must not enable Create");
+  ctx.forgeEditRef(box);                // editing a quote
+  assert.equal(button.disabled, true, "quote edit must not enable Create");
+  // Confirm is the only thing that enables it.
+  el("forge-resume").value = "12345";
+  ctx.forgeConfirmResume();
+  assert.equal(button.disabled, false, "Confirm enables Create");
+  // Changing the résumé again re-locks it, even with references ticked.
+  ctx.forgeResumeChanged();
+  ctx.forgeToggleRef(box);
+  assert.equal(button.disabled, true, "re-locks after the selection changes");
+});
+
+test("a disabled primary button is visibly locked, not just inert", function () {
+  const ui = fs.readFileSync(__dirname + "/public/index.html", "utf8");
+  assert.match(ui, /\.btn-primary:disabled[^{]*\{[^}]*cursor:not-allowed/);
+  assert.match(ui, /\.btn-primary:disabled[^{]*\{[^}]*background:#cbd5e1/);
+});
