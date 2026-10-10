@@ -10497,6 +10497,26 @@ app.get("/api/smart-lists", async (req, res) => {
   }
 });
 
+const askSql = require("./ask-sql").makeAskSql({ db: db });
+/** One or two capitalized-ish words with no verb — somebody typed a name, not a question. */
+function isNameOnly(q) {
+  const words = (q || "").trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 2) return false;
+  return !/\b(how|what|which|who|show|list|find|give|count|many|percent|average|median|total|revenue|margin|open|active|expir|placement|job|client|candidate|submission|note|days|month|year|week)\b/i.test(q);
+}
+
+/** Direct Neon-only endpoint (phone "Ask" tab). Same engine as the /api/ask fallback, no regex layer. */
+app.get("/api/ask/neon", async (req, res) => {
+  try {
+    if (!db.isEnabled()) return res.status(503).json({ error: "Neon mirror is not configured" });
+    const out = await askSql.ask(String(req.query.q || ""));
+    res.json(out);
+  } catch (e) {
+    console.error("[Ask/neon]", e.message);
+    res.status(400).json({ error: e.message, answer: "I couldn't answer that: " + e.message, data: [] });
+  }
+});
+
 app.get("/api/ask", async (req, res) => {
   try {
     const question = (req.query.q || "").toLowerCase().trim();
@@ -10893,6 +10913,15 @@ app.get("/api/ask", async (req, res) => {
           });
       }
 
+    } else if (!req.query.legacy && db.isEnabled() && process.env.ANTHROPIC_API_KEY && !isNameOnly(question)) {
+      // No hand-written pattern matched: let Claude write a read-only query against the Neon mirror.
+      try {
+        const out = await askSql.ask(req.query.q);
+        return res.json({ answer: out.answer, data: out.data, sql: out.sql, note: out.note, source: "neon" });
+      } catch (e) {
+        console.warn("[Ask] neon fallback failed:", e.message);
+        answer = "I couldn't turn that into a query (" + e.message + "). Try rephrasing — name the thing you want (candidates, jobs, placements, clients) and the filter.";
+      }
     } else {
       // Fallback: try a general candidate search
       const r = await bhFetchAll("search/Candidate", {

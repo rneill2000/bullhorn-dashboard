@@ -261,6 +261,9 @@ a.li-badge:hover{text-decoration:underline}
 .ask-data-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
 .ask-data-table th{text-align:left;padding:8px 10px;background:#f8fafc;color:#64748b;font-weight:600;font-size:11px;border-bottom:2px solid #e2e8f0}
 .ask-data-table td{padding:8px 10px;border-bottom:1px solid #f1f5f9}
+.ask-sql{margin-top:10px;font-size:12px;color:#64748b}
+.ask-sql summary{cursor:pointer;user-select:none}
+.ask-sql pre{margin:6px 0 0;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;white-space:pre-wrap;word-break:break-word;font-size:11px;color:#334155}
 /* Touch report */
 .touch-tabs{display:flex;gap:4px;margin-bottom:20px}
 .touch-tab{padding:10px 20px;border-radius:10px 10px 0 0;border:1px solid #e2e8f0;border-bottom:none;background:#f8fafc;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;color:#64748b}
@@ -8077,7 +8080,9 @@ function renderAsk() {
     "Hot jobs",
     "How many open jobs?",
     "What % of closed jobs had at least one client submission?",
-    "Median client submissions per closed job"
+    "Which placements end in the next 90 days?",
+    "Clients with no notes in 60 days",
+    "Average margin per hour on active placements by client"
   ];
   suggestions.forEach(function(s) {
     html += '<button class="ask-sug" onclick="askQuestion(\'' + s.replace(/'/g, "\\'") + '\')">' + s + '</button>';
@@ -8086,7 +8091,7 @@ function renderAsk() {
 
   html += '<div class="ask-messages" id="ask-messages">';
   if (_askHistory.length === 0) {
-    html += '<div class="ask-msg bot">\uD83D\uDC4B Hi Rachel! Ask me anything about your Bullhorn data \u2014 candidates, jobs, placements, certifications, availability, margins, and more.</div>';
+    html += '<div class="ask-msg bot">\uD83D\uDC4B Ask anything about candidates, jobs, placements, clients, submissions or notes. Anything I don\u2019t have a canned answer for, I query live from the Neon mirror and show you the query.</div>';
   } else {
     _askHistory.forEach(function(m) {
       html += '<div class="ask-msg ' + m.role + '">' + m.html + '</div>';
@@ -8149,6 +8154,9 @@ async function askQuestion(presetQ) {
       }
       // Store data for CSV export
       window['_askExport_'+askId] = {keys:keys, data:r.data};
+    }
+    if (r.sql) {
+      responseHtml += '<details class="ask-sql"><summary>How I got this · Neon mirror' + (r.note ? ' · ' + esc(r.note) : '') + '</summary><pre>' + esc(r.sql) + '</pre></details>';
     }
 
     _askHistory.push({ role: "bot", html: responseHtml });
