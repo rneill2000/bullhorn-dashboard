@@ -35,12 +35,14 @@ function validateSql(sql) {
   if (FORBIDDEN_RE.test(s)) throw new Error("Query contains a disallowed keyword");
   if (SCHEMA_RE.test(s)) throw new Error("System catalogs are not queryable here");
   // Every table referenced after FROM/JOIN must be whitelisted (CTE names are allowed).
+  // extract(epoch FROM x), substring(x FROM n), trim(both FROM x) use FROM as a keyword, not a table ref.
+  const scan = s.replace(/\b(extract|substring|trim|overlay|position)\s*\(([^()]*?)\bfrom\b/gi, "$1($2 ");
   const cteNames = [];
   const cteRe = /\b([a-z_][a-z0-9_]*)\s+as\s*\(/gi;
   let m;
-  while ((m = cteRe.exec(s))) cteNames.push(m[1].toLowerCase());
-  const refRe = /\b(?:from|join)\s+(?:only\s+)?("?)([a-z_][a-z0-9_]*)\1(?:\s*\.\s*("?)([a-z_][a-z0-9_]*)\3)?/gi;
-  while ((m = refRe.exec(s))) {
+  while ((m = cteRe.exec(scan))) cteNames.push(m[1].toLowerCase());
+  const refRe = /\b(?:from|join)\s+(?:only\s+)?("?)([a-z_][a-z0-9_]*)\1(?:\s*\.\s*("?)([a-z_][a-z0-9_]*)\3)?(?!\s*\()/gi;
+  while ((m = refRe.exec(scan))) {
     let schema = null, table = m[2].toLowerCase();
     if (m[4]) { schema = table; table = m[4].toLowerCase(); }
     if (schema && schema !== "public") throw new Error("Table " + schema + "." + table + " is not available");
@@ -105,7 +107,8 @@ function makeAskSql(opts) {
       "- Candidate name = first_name || ' ' || last_name. Prefer human-readable columns (names, titles, client names, statuses, dates as YYYY-MM-DD via to_char) over raw ids, but include the entity id as the first column named id when listing candidates, jobs, placements or clients so the UI can link to it.",
       "- Text matching: use ILIKE with % wildcards.",
       "- Field glossary (Bullhorn custom fields): candidates.custom_text1 = primary Epic certification, custom_text2 = secondary certification(s), custom_text3 = role level (PM, Manager, Director, Executive), custom_text5 = Epic role (Analyst, Trainer, PM, etc.), custom_text6 = grade (A/B/C). jobs.custom_text1 = required Epic certification(s), comma-separated. placements.custom_text1 = certification. placements.client_bill_rate and pay_rate are hourly; margin per hour = client_bill_rate - pay_rate. jobs.is_open / placements.is_deleted / jobs.is_deleted are booleans — exclude deleted rows.",
-      "- 'Active' placements: status ILIKE 'Approved' or 'Active' with date_end in the future or null. 'Open' jobs: is_open = true or status in ('Accepting Candidates','Open').",
+      "- Placements: do NOT filter by status unless the question names one. A current/active contract = (is_deleted is null or false) and (date_end is null or date_end >= now in ms). 'Ending/expiring in N days' = date_end between now and now+N days, not deleted, and employment_type not ILIKE any of '%direct%', '%permanent%', '%full%time%' (those are perm hires, not contracts). Open jobs: is_open = true or status in ('Accepting Candidates','Open'), not deleted.",
+      "- Grade is an exact letter: custom_text6 = 'A' (not ILIKE '%A%'). Candidate 'active/available' statuses are Active, Available, Active-Reviewed — use status IN (...) from the vocabulary below, never a wildcard that could match 'Inactive'.",
       "- Aggregate questions (how many, percent, average) should return a small summary table, not raw rows.",
       "- Add LIMIT " + MAX_ROWS + " or less. Order sensibly (most recent first, or by the metric asked about).",
       "",

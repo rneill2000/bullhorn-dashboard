@@ -23,6 +23,13 @@ test("validateSql rejects writes, multiple statements, catalogs and unknown tabl
   assert.throws(function () { validateSql("/* sneaky */ update candidates set status='x'"); }, /SELECT/);
 });
 
+test("validateSql understands FROM as a keyword inside extract/substring/trim", function () {
+  assert.ok(validateSql("select count(*) from placements p where p.date_end >= extract(epoch from now())*1000"));
+  assert.ok(validateSql("select substring(name from 1 for 3) from clients"));
+  assert.ok(validateSql("select extract(epoch from p.date_end) from placements p"));
+  assert.throws(function () { validateSql("select extract(epoch from now()) from secrets"); }, /not available/);
+});
+
 test("ensureLimit adds a cap only when missing", function () {
   assert.strictEqual(ensureLimit("select 1 from jobs"), "select 1 from jobs LIMIT " + MAX_ROWS);
   assert.strictEqual(ensureLimit("select 1 from jobs limit 5"), "select 1 from jobs limit 5");
