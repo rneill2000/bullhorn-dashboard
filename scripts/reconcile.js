@@ -56,7 +56,8 @@ async function searchTotal(entity, query) {
 async function queryCount(entity, where) {
   let start = 0, n = 0, newest = 0;
   for (let guard = 0; guard < 400; guard++) {
-    const r = await bh("query/" + entity, { where, fields: "id,dateLastModified", count: 500, start, orderBy: "id" });
+    const fields = entity === "Sendout" ? "id" : "id,dateLastModified";
+    const r = await bh("query/" + entity, { where, fields, count: 500, start, orderBy: "id" });
     const d = r.data || [];
     n += d.length;
     d.forEach(function (x) { if (x.dateLastModified > newest) newest = x.dateLastModified; });
@@ -94,8 +95,8 @@ const NULL_CHECKS = {
   jobs:            ["status", "client_id", "client_name", "owner_name", "date_added"],
   placements:      ["candidate_id", "job_id", "client_id", "status", "date_begin", "pay_rate", "client_bill_rate"],
   submissions:     ["candidate_id", "job_id", "status", "date_added"],
-  notes:           ["action", "comments", "date_added", "commenting_person_name"],
-  clients:         ["name", "status", "owner_name"],
+  notes:           ["action", "comments_text", "date_added", "commenting_person_name"],
+  clients:         ["name", "status"],
   client_contacts: ["client_id", "status", "email", "name"],
 };
 

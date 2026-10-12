@@ -2157,6 +2157,7 @@ async function startSyncLoop(intervalMs) {
 
   // Schedule incremental syncs
   syncInterval = setInterval(async function () {
+    if (_fullInFlight) return; // the nightly full pass is already touching every table
     try {
       await incrementalSync();
     } catch (err) {
@@ -2165,7 +2166,39 @@ async function startSyncLoop(intervalMs) {
     }
   }, intervalMs);
 
-  console.log("[Sync] Sync loop started — incremental every " + (intervalMs / 1000) + "s");
+  // Nightly FULL sync. Incremental syncs only fetch records whose dateLastModified
+  // moved, so they can never see a deletion (the record stops matching the query)
+  // and they miss entities whose timestamps don't update. Without a recurring full
+  // pass, Neon drifted: +39 submissions and +4 candidates that Bullhorn had deleted,
+  // -145 appointments and -10 corporate users it never picked up (2026-10-12 audit).
+  scheduleNightlyFullSync();
+
+  console.log("[Sync] Sync loop started — incremental every " + (intervalMs / 1000) + "s, full nightly at " + FULL_SYNC_UTC_HOUR + ":00 UTC");
+}
+
+var FULL_SYNC_UTC_HOUR = Number(process.env.FULL_SYNC_UTC_HOUR || 8); // 3 AM Central
+var _fullTimer = null;
+var _fullInFlight = false;
+
+/** Milliseconds from `now` until the next occurrence of `hour`:00 UTC. */
+function msUntilNextUtcHour(hour, now) {
+  var n = now == null ? Date.now() : now;
+  var d = new Date(n);
+  var next = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour, 0, 0, 0);
+  if (next <= n) next += 24 * 3600 * 1000;
+  return next - n;
+}
+
+function scheduleNightlyFullSync() {
+  if (_fullTimer) clearTimeout(_fullTimer);
+  var wait = msUntilNextUtcHour(FULL_SYNC_UTC_HOUR);
+  _fullTimer = setTimeout(async function () {
+    _fullInFlight = true;
+    try { await fullSync(); }
+    catch (err) { console.error("[Sync] Nightly full sync error:", err.message); }
+    finally { _fullInFlight = false; scheduleNightlyFullSync(); }
+  }, wait);
+  if (_fullTimer.unref) _fullTimer.unref();
 }
 
 function stopSyncLoop() {
@@ -2173,6 +2206,7 @@ function stopSyncLoop() {
     clearInterval(syncInterval);
     syncInterval = null;
   }
+  if (_fullTimer) { clearTimeout(_fullTimer); _fullTimer = null; }
 }
 
 /* ═══ STATUS ═══ */
@@ -3380,6 +3414,7 @@ module.exports = {
   fullSync: fullSync,
   incrementalSync: incrementalSync,
   startSyncLoop: startSyncLoop,
+  msUntilNextUtcHour: msUntilNextUtcHour,
   stopSyncLoop: stopSyncLoop,
   getSyncStatus: getSyncStatus,
   getSyncDetails: getSyncDetails,
