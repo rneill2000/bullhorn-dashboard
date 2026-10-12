@@ -122,7 +122,8 @@ async function fetchPage(entity, fields, where, state) {
     const f = fields.filter(x => !state.dropped.has(x));
     try {
       if (SEARCH_ONLY.has(entity)) {
-        return await bh.get("search/" + entity, { query: where.query, fields: f.join(","), count: PAGE, start: where.start, sort: "id" });
+        // Note's search index has no sortable id; dateAdded is stable enough for offset paging.
+        return await bh.get("search/" + entity, { query: where.query, fields: f.join(","), count: PAGE, start: where.start, sort: entity === "Note" ? "dateAdded" : "id" });
       }
       return await bh.get("query/" + entity, { where: where.where, fields: f.join(","), count: PAGE, start: 0, orderBy: "id" });
     } catch (e) {
