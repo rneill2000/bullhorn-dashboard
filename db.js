@@ -2151,8 +2151,18 @@ async function startSyncLoop(intervalMs) {
     }
     await incrementalSync();
   } else {
-    console.log("[Sync] All entities have a full sync on record — running incremental");
-    await incrementalSync();
+    // Stale full sync (nightly missed — deploy outage, crash, or the pre-2026-10-12
+    // build that never scheduled one): do the full pass now rather than waiting.
+    var stale = await getOne("SELECT MIN(last_full_sync) AS oldest FROM sync_state");
+    var oldest = stale && stale.oldest ? new Date(stale.oldest).getTime() : 0;
+    if (Date.now() - oldest > STALE_FULL_SYNC_MS) {
+      console.log("[Sync] Oldest full sync is " + Math.round((Date.now() - oldest) / 3600000) + "h old — running full sync now");
+      _fullInFlight = true;
+      try { await fullSync(); } finally { _fullInFlight = false; }
+    } else {
+      console.log("[Sync] All entities have a recent full sync — running incremental");
+      await incrementalSync();
+    }
   }
 
   // Schedule incremental syncs
@@ -2177,6 +2187,7 @@ async function startSyncLoop(intervalMs) {
 }
 
 var FULL_SYNC_UTC_HOUR = Number(process.env.FULL_SYNC_UTC_HOUR || 8); // 3 AM Central
+var STALE_FULL_SYNC_MS = 36 * 3600 * 1000;
 var _fullTimer = null;
 var _fullInFlight = false;
 
