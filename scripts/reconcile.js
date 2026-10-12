@@ -124,8 +124,12 @@ async function main() {
     const cols = new Set((await q("select column_name from information_schema.columns where table_schema='public' and table_name=$1", [e.table])).map(r => r.column_name));
     const c = (await q(`select count(*)::int n, ${cols.has("is_deleted") ? "count(*) filter (where is_deleted is true)::int" : "0"} del, ${cols.has("date_last_modified") ? "max(date_last_modified)::bigint" : "null"} newest from "${e.table}"`))[0];
     row.neon_rows = c.n; row.neon_deleted = c.del; row.neon_live = c.n - c.del; row.neon_newest = c.newest ? Number(c.newest) : null;
+    // query/ entities pulled with "id IS NOT NULL" include Bullhorn's deleted rows, and so does
+    // Neon (flagged is_deleted) — compare total rows there, live rows everywhere else.
+    const includesDeleted = e.q && !e.liveQ && /id IS NOT NULL/.test(e.q[1]);
     if (row.bh_live != null) {
-      row.drift = row.neon_live - row.bh_live;
+      row.drift = (includesDeleted ? row.neon_rows : row.neon_live) - row.bh_live;
+      if (includesDeleted) row.notes.push("BH count includes deleted; Neon flags " + row.neon_deleted);
       const pct = row.bh_live ? Math.abs(row.drift) / row.bh_live : (row.neon_live ? 1 : 0);
       if (row.status === "ok") row.status = row.drift === 0 ? "ok" : pct <= 0.02 ? "ok" : pct <= 0.1 ? "warn" : "error";
     }
