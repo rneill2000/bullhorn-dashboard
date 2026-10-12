@@ -268,6 +268,13 @@ async function status() {
   console.table(r.rows);
 }
 
+async function dropFks() {
+  const r = await q("SELECT * FROM crm.dropped_fks");
+  let n = 0;
+  for (const fk of r.rows) { try { await q(`ALTER TABLE crm."${fk.table_name}" DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`); n++; } catch (e) { console.error(fk.constraint_name, e.message.slice(0, 120)); } }
+  console.log("fks parked:", n);
+}
+
 async function restoreFks() {
   const r = await q("SELECT * FROM crm.dropped_fks");
   let ok = 0, bad = 0;
@@ -288,6 +295,7 @@ if (require.main === module) (async () => {
   else if (cmd === "links") await links(rest);
   else if (cmd === "status") await status();
   else if (cmd === "restore-fks") await restoreFks();
+  else if (cmd === "drop-fks") await dropFks();
   else console.log("usage: load.js migrate | load [Entity...] | links [Entity...] | status | restore-fks");
   if (pool) await pool.end();
 })().catch(e => { console.error(e.message); process.exit(1); });
