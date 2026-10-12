@@ -176,7 +176,7 @@ async function loadEntity(entity) {
   let total = null;
   try {
     for (;;) {
-      const where = SEARCH_ONLY.has(entity) ? { query: "id:[1 TO *]", start: state.next } : { where: "id>" + state.next };
+      const where = SEARCH_ONLY.has(entity) ? { query: entity === "Note" ? "isDeleted:false OR isDeleted:true" : "id:[1 TO *]", start: state.next } : { where: "id>" + state.next };
       const r = await fetchPage(entity, p.req, where, state);
       const data = r.data || [];
       if (typeof r.total === "number") total = r.total;
