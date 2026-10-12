@@ -5,6 +5,7 @@
  *
  *   railway run node crm/scripts/load.js migrate          # apply crm/db/migrations/*.sql (idempotent)
  *   railway run node crm/scripts/load.js load [Entity...] # load all entities, or the named ones; resumable
+ *   railway run node crm/scripts/load.js links [Entity...]# phase 2: to-many join tables
  *   railway run node crm/scripts/load.js status           # per-entity progress
  *   railway run node crm/scripts/load.js restore-fks      # re-add parked foreign keys as NOT VALID
  *
@@ -203,6 +204,65 @@ async function load(names) {
   for (const e of list) { if (!MODEL[e]) { console.error("unknown entity", e); continue; } await loadEntity(e); }
 }
 
+/* ───────────── links (phase 2: to-many join tables) ─────────────
+ * Bullhorn returns a to-many field as {total, data:[{id}]} with only the first few ids;
+ * when total exceeds what came back we fetch the rest from entity/{E}/{id}/{assoc}. */
+async function loadLinks(entity) {
+  const m = MODEL[entity];
+  const links = m.fields.filter(f => f.joinTable);
+  if (!links.length) return;
+  const key = entity + ":links";
+  const st = (await q("SELECT * FROM crm.load_state WHERE entity=$1", [key])).rows[0];
+  if (st && st.phase === "done") { console.log(`${entity} links: done (${st.loaded} rows)`); return; }
+  const state = { dropped: new Set((st && st.dropped_fields) || []), next: st ? st.next_start : 0, loaded: st ? st.loaded : 0 };
+  await q(`INSERT INTO crm.load_state (entity, phase, started_at) VALUES ($1,'running',now())
+           ON CONFLICT (entity) DO UPDATE SET phase='running', last_error=NULL`, [key]);
+  const fields = ["id"].concat(links.map(l => l.name + "(id)"));
+  const t0 = Date.now(); let extra = 0;
+  try {
+    for (;;) {
+      const where = SEARCH_ONLY.has(entity) ? { query: entity === "Note" ? "isDeleted:false OR isDeleted:true" : "id:[1 TO *]", start: state.next } : { where: "id>" + state.next };
+      const r = await fetchPage(entity, fields, where, state);
+      const data = r.data || [];
+      if (!data.length) break;
+      for (const rec of data) {
+        for (const l of links) {
+          if (state.dropped.has(l.name + "(id)") || state.dropped.has(l.name)) continue;
+          let v = rec[l.name];
+          let ids = v && Array.isArray(v.data) ? v.data.map(x => x.id) : (Array.isArray(v) ? v.map(x => x.id) : []);
+          if (v && typeof v.total === "number" && v.total > ids.length) {
+            try {
+              const full = await bh.get(`entity/${entity}/${rec.id}/${l.name}`, { fields: "id", count: 500 });
+              ids = (full.data || []).map(x => x.id); extra++;
+            } catch (e) { /* keep the partial list */ }
+          }
+          if (!ids.length) continue;
+          const vals = ids.map((id, i) => `($1,$${i + 2})`).join(",");
+          try {
+            await q(`INSERT INTO crm."${l.joinTable}" ("${m.table}_id","${l.joinColumn}") VALUES ${vals} ON CONFLICT DO NOTHING`, [rec.id].concat(ids));
+            state.loaded += ids.length;
+          } catch (e) { console.error(`  ${l.joinTable} #${rec.id}: ${e.message.slice(0, 120)}`); }
+        }
+      }
+      state.next = SEARCH_ONLY.has(entity) ? state.next + data.length : Math.max.apply(null, data.map(d => d.id));
+      await q("UPDATE crm.load_state SET next_start=$2, loaded=$3, dropped_fields=$4 WHERE entity=$1", [key, state.next, state.loaded, Array.from(state.dropped)]);
+      process.stdout.write(`\r${entity} links: ${state.loaded} rows, ${extra} deep fetches, ${((Date.now() - t0) / 1000).toFixed(0)}s   `);
+      if (data.length < PAGE && !SEARCH_ONLY.has(entity)) break;
+      if (SEARCH_ONLY.has(entity) && typeof r.total === "number" && state.next >= r.total) break;
+    }
+    await q("UPDATE crm.load_state SET phase='done', finished_at=now() WHERE entity=$1", [key]);
+    console.log(`\n${entity} links: done — ${state.loaded} rows${state.dropped.size ? ", dropped " + Array.from(state.dropped).join(",") : ""}`);
+  } catch (e) {
+    await q("UPDATE crm.load_state SET phase='error', last_error=$2 WHERE entity=$1", [key, e.message.slice(0, 500)]);
+    console.error(`\n${entity} links: ERROR ${e.message.slice(0, 300)}`);
+  }
+}
+
+async function links(names) {
+  const list = names.length ? names : Object.keys(MODEL);
+  for (const e of list) { if (!MODEL[e]) { console.error("unknown entity", e); continue; } await loadLinks(e); }
+}
+
 async function status() {
   const r = await q("SELECT entity, phase, loaded, failed, bh_total, array_length(dropped_fields,1) dropped, left(last_error,80) err, finished_at FROM crm.load_state ORDER BY entity");
   console.table(r.rows);
@@ -225,8 +285,9 @@ if (require.main === module) (async () => {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL not set — run with `railway run`");
   if (cmd === "migrate") await migrate();
   else if (cmd === "load") await load(rest);
+  else if (cmd === "links") await links(rest);
   else if (cmd === "status") await status();
   else if (cmd === "restore-fks") await restoreFks();
-  else console.log("usage: load.js migrate | load [Entity...] | status | restore-fks");
+  else console.log("usage: load.js migrate | load [Entity...] | links [Entity...] | status | restore-fks");
   if (pool) await pool.end();
 })().catch(e => { console.error(e.message); process.exit(1); });
