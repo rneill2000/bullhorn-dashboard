@@ -721,8 +721,8 @@ function forgeShowBlock(result, err) {
   if (body.code === "bill_rate_mismatch") {
     html += '<div style="margin-top:4px">Bullhorn has ' + esc(body.live || "") + (body.liveSource ? " (" + esc(body.liveSource) + ")" : "") + '. This draft shows ' + esc(body.displayed || "") + '.</div>';
     if (body.displayed && body.displayed !== "(blank)") {
-      html += '<div style="margin-top:8px">If ' + esc(body.displayed) + ' is right (for example it lives in a note), use it and Bullhorn will be updated to match.</div>' +
-        '<button type="button" class="btn-primary" style="margin-top:8px" onclick="forgeOverrideBillRate()">Use ' + esc(body.displayed) + ' and update Bullhorn</button>';
+      html += '<div style="margin-top:8px">If ' + esc(body.displayed) + ' is the right rate (for example it lives in a note), fix Bullhorn and the draft will be re-checked.</div>' +
+        '<button type="button" class="btn-primary" style="margin-top:8px" onclick="forgeFixBillRate(' + forgeAttr(JSON.stringify(body.displayed)) + ')">Fix Bullhorn to ' + esc(body.displayed) + ' and create draft</button>';
     } else {
       html += '<div style="margin-top:4px">Enter the bill rate above, then try again.</div>';
     }
@@ -734,11 +734,20 @@ function forgeShowBlock(result, err) {
   if (result) result.innerHTML = html;
 }
 
-function forgeOverrideBillRate() {
-  var ok = typeof confirm === "function" ? confirm("Use the bill rate shown in this draft and write it to the Bullhorn submission?") : true;
+async function forgeFixBillRate(rate) {
+  if (!_forge.selected || _forge.busy) return;
+  var ok = typeof confirm === "function" ? confirm("Write " + rate + " to this submission's bill rate in Bullhorn, then create the draft?") : true;
   if (!ok) return;
-  _forge.billRateOverride = true;
-  forgeCreate();
+  var result = document.getElementById("forge-result");
+  try {
+    var r = await forgeSend("forge/submissions/" + _forge.selected + "/bill-rate", { billRate: rate, confirm: true });
+    if (typeof showToast === "function") showToast("Bullhorn bill rate set to " + r.billRate + " (was " + r.previous + ")");
+  } catch (e) {
+    if (forgeSignIn(e)) return;
+    if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.message) + '</div>';
+    return;
+  }
+  forgeCreate(); // the live check runs again and now agrees with Bullhorn
 }
 
 async function forgeCreate() {
@@ -795,11 +804,8 @@ async function forgeCreate() {
       resumeFileId: _forge.resumeFileId,
       confirmAnother: !!f.confirmAnother,
       confirmSameClient: !!f.confirmSameClient,
-      billRateOverride: _forge.billRateOverride === true,
     });
-    _forge.billRateOverride = false;
     if (r.created) {
-      if (r.billRateOverridden && typeof showToast === "function") showToast("Bill rate " + r.billRateOverridden.to + " written to Bullhorn (was " + r.billRateOverridden.from + ")");
       var link = r.webLink ? '<div style="margin-top:8px"><a href="' + forgeAttr(r.webLink) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:700">Open draft in Outlook</a></div>' : "";
       if (result) result.innerHTML = '<div class="fg-flag" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">' + esc(r.instructions || "Draft saved.") + (r.attachNote ? " " + esc(r.attachNote) : "") + link + '</div>';
       if (_forge.view && _forge.view.draft) {
@@ -811,7 +817,6 @@ async function forgeCreate() {
       if (result) result.innerHTML = '<div class="fg-flag warn"><b>Draft was not saved in Outlook.</b><div style="margin-top:4px">' + esc(r.instructions || "Copy the email into Outlook.") + '</div></div>';
     }
   } catch (e) {
-    _forge.billRateOverride = false;
     if (forgeSignIn(e)) return;
     if (e.body && e.body.code === "reference_not_anonymous") {
       if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.body.error || e.message) + '</div>';

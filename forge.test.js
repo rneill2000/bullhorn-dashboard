@@ -2144,52 +2144,53 @@ test("F45: Why Me?: (question mark) is parsed as the Why Me section, not the can
   assert.equal(forge.parseSubmissionComments("Why me? He is great.\nBill Rate: $10").whyMe, "");
 });
 
-/* ── F46: explicit bill-rate override writes Bullhorn and lets the draft through ── */
-test("F46: billRateOverride writes customText10 to the Bullhorn submission and proceeds; without it the block stands", async function () {
+/* ── F46: one-click bill-rate fix writes Bullhorn; the draft guard itself is unchanged ── */
+test("F46: /bill-rate writes customText10 to the Bullhorn submission; the draft route still blocks until Bullhorn agrees", async function () {
   const writes = [];
-  function build(liveField) {
-    const app = express();
-    app.use(express.json());
-    forge(app, {
-      db: { ready: true, query: async function () { return { rows: [] }; }, getOne: async function () { return fixtureRow(); }, getAll: async function () { return []; } },
-      graphFetch: async function (email, endpoint) { if (endpoint.indexOf("/attachments") >= 0) return {}; return { id: "M1", webLink: "https://outlook.office.com/x" }; },
-      bhFetch: async function (endpoint) {
-        if (String(endpoint).indexOf("fileAttachments") >= 0) return { data: [{ id: 9, name: "Jack.pdf", contentType: "application/pdf", fileExtension: "pdf" }] };
-        if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: liveField }; // Bullhorn is blank
-        if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { clientBillRate: null } };
-        return { data: [] };
-      },
-      bhWrite: async function (endpoint, body, method) { writes.push({ endpoint, body, method }); return { changedEntityId: 42 }; },
-      downloadCandidateFile: async function () { return { name: "Jack.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4 x") }; },
-      outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
-      getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
-    });
-    return app;
-  }
+  let liveField = { customText10: null, billRate: null, comments: "" }; // Bullhorn is blank
+  const app = express();
+  app.use(express.json());
+  forge(app, {
+    db: { ready: true, query: async function () { return { rows: [] }; }, getOne: async function () { return fixtureRow(); }, getAll: async function () { return []; } },
+    graphFetch: async function (email, endpoint) { if (endpoint.indexOf("/attachments") >= 0) return {}; return { id: "M1", webLink: "https://outlook.office.com/x" }; },
+    bhFetch: async function (endpoint) {
+      if (String(endpoint).indexOf("fileAttachments") >= 0) return { data: [{ id: 9, name: "Jack.pdf", contentType: "application/pdf", fileExtension: "pdf" }] };
+      if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: liveField };
+      if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { clientBillRate: null } };
+      return { data: [] };
+    },
+    bhWrite: async function (endpoint, body, method) { writes.push({ endpoint, body, method }); if (body.customText10) liveField = { customText10: body.customText10, billRate: null, comments: "" }; return { changedEntityId: 42 }; },
+    downloadCandidateFile: async function () { return { name: "Jack.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4 x") }; },
+    outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
+    getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+  });
   const body = { whyMe: "Led the HB implementation.", availability: "2 weeks", location: "Houston, TX", billRate: "$142.50", resumeFileId: 9 };
-  let server = await listen(build({ customText10: null, billRate: null, comments: "" }));
+  const server = await listen(app);
   try {
     const blocked = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", body);
     assert.equal(blocked.status, 400);
     assert.equal(blocked.json.code, "bill_rate_mismatch");
     assert.equal(blocked.json.live, "(blank)");
-    assert.equal(writes.length, 0, "no write without the override flag");
+    assert.equal(writes.length, 0);
 
-    const ok = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", Object.assign({ billRateOverride: true }, body));
-    assert.equal(ok.status, 200, JSON.stringify(ok.json));
-    assert.equal(ok.json.created, true);
-    assert.deepEqual(ok.json.billRateOverridden, { from: "(blank)", to: "$142.50/hr", source: "missing" });
+    const noConfirm = await req(server.address().port, "POST", "/api/forge/submissions/42/bill-rate", { billRate: "$142.50" });
+    assert.equal(noConfirm.status, 400);
+    assert.equal(noConfirm.json.code, "confirm_required");
+    const blank = await req(server.address().port, "POST", "/api/forge/submissions/42/bill-rate", { billRate: "", confirm: true });
+    assert.equal(blank.json.code, "bill_rate_required");
+    assert.equal(writes.length, 0);
+
+    const fixed = await req(server.address().port, "POST", "/api/forge/submissions/42/bill-rate", { billRate: "$142.50", confirm: true });
+    assert.equal(fixed.status, 200, JSON.stringify(fixed.json));
+    assert.equal(fixed.json.billRate, "$142.50/hr");
+    assert.equal(fixed.json.previous, "(blank)");
     assert.equal(writes.length, 1);
     assert.equal(writes[0].endpoint, "entity/JobSubmission/42");
-    assert.equal(writes[0].method, "POST");
     assert.equal(writes[0].body.customText10, "142.5");
-  } finally { server.close(); }
 
-  // override with a blank typed rate is still a block — there is nothing to write
-  server = await listen(build({ customText10: "160", billRate: 160, comments: "" }));
-  try {
-    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", Object.assign({ billRateOverride: true }, body, { billRate: "" }));
-    assert.equal(r.status, 400);
-    assert.equal(r.json.code, "bill_rate_mismatch");
+    // Same create request, no flags: the guard re-reads Bullhorn and now agrees.
+    const ok = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", body);
+    assert.equal(ok.status, 200, JSON.stringify(ok.json));
+    assert.equal(ok.json.created, true);
   } finally { server.close(); }
 });

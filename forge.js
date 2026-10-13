@@ -2671,7 +2671,6 @@ function registerForge(app, deps) {
         });
       }
 
-      let billRateOverridden = null;
       if (bhFetch) {
         const live = await liveBill(id, base.job.id, {
           candidateId: base.candidate.id,
@@ -2683,20 +2682,7 @@ function registerForge(app, deps) {
         if (live && ratesDiffer(billRate, live.amount)) {
           const liveShown = live.amount == null ? "(blank)" : formatRate(live.amount);
           const displayed = billRate || "(blank)";
-          // Explicit override: the recruiter confirms the typed rate is right (it lives in a note,
-          // or Bullhorn is blank/stale). We write it back to the submission so Bullhorn stops
-          // disagreeing, and record the override on the draft.
-          if (body.billRateOverride === true && positiveMoney(billRate) != null) {
-            if (typeof bhWrite !== "function") return res.status(503).json({ error: "Bullhorn writes are not configured; cannot record the bill rate override.", code: "bill_rate_override_unavailable" });
-            try {
-              await bhWrite("entity/JobSubmission/" + id, { customText10: String(positiveMoney(billRate)) }, "POST");
-              try { await db.query("UPDATE submissions SET raw_json = COALESCE(raw_json, '{}'::jsonb) || jsonb_build_object('customText10', $1::text), date_last_modified = $2 WHERE id = $3", [String(positiveMoney(billRate)), Date.now(), id]); } catch (e) { /* mirror catches up on sync */ }
-              console.log("[Forge] bill rate override on submission " + id + ": " + liveShown + " → " + formatRate(billRate) + " by " + (personName(getUser(req)) || "unknown"));
-              billRateOverridden = { from: liveShown, to: formatRate(billRate), source: live.source };
-            } catch (e) {
-              return res.status(502).json({ error: "Could not write the bill rate to Bullhorn: " + e.message, code: "bill_rate_override_failed" });
-            }
-          } else return res.status(400).json({
+          return res.status(400).json({
             error: "Bill rate does not match Bullhorn. This draft shows " + displayed + " and Bullhorn has " + liveShown + " (" + live.source + ").",
             code: "bill_rate_mismatch",
             snippet: displayed + " vs " + liveShown,
@@ -2857,12 +2843,39 @@ function registerForge(app, deps) {
         subject: email.subject,
         resume: { attached: !tooLarge && !!buf.length && !attachNote, status: resumeStatus, filename: attachName, bytes: buf.length },
         attachNote: attachNote,
-        billRateOverridden: billRateOverridden,
         instructions: "Draft saved in " + mailbox + ". Open it in Outlook, confirm the résumé, and send it yourself.",
       });
     } catch (e) {
       console.error("[Forge] draft", e.message);
       res.status(e.status || 500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * One-click fix for a bill-rate mismatch: write the rate the recruiter confirmed to the
+   * Bullhorn submission (customText10, the editable bill-rate field). The draft route's live
+   * check is untouched — the UI simply re-runs Create afterwards and the guard re-reads Bullhorn.
+   */
+  app.post("/api/forge/submissions/:id/bill-rate", async function (req, res) {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!id) return res.status(400).json({ error: "Submission id is required" });
+      const body = req.body || {};
+      const amount = positiveMoney(body.billRate);
+      if (amount == null) return res.status(400).json({ error: "Enter a bill rate first.", code: "bill_rate_required" });
+      if (!body.confirm) return res.status(400).json({ error: "Confirm before writing the bill rate to Bullhorn.", code: "confirm_required" });
+      if (typeof bhWrite !== "function") return res.status(503).json({ error: "Bullhorn writes are not configured" });
+      const row = await loadBundle(id);
+      const before = row.sub_custom_bill || row.client_bill_rate || "";
+      await bhWrite("entity/JobSubmission/" + id, { customText10: String(amount) }, "POST");
+      try {
+        await db.query("UPDATE submissions SET raw_json = COALESCE(raw_json, '{}'::jsonb) || jsonb_build_object('customText10', $1::text), date_last_modified = $2 WHERE id = $3", [String(amount), Date.now(), id]);
+      } catch (e) { /* the mirror catches up on the next sync */ }
+      console.log("[Forge] bill rate fixed on submission " + id + ": " + (before ? formatRate(before) : "(blank)") + " → " + formatRate(amount) + " by " + (personName(getUser(req)) || "unknown"));
+      res.json({ ok: true, submissionId: id, billRate: formatRate(amount), previous: before ? formatRate(before) : "(blank)" });
+    } catch (e) {
+      console.error("[Forge] bill-rate fix", e.message);
+      res.status(e.status || 502).json({ error: "Could not write the bill rate to Bullhorn: " + e.message, code: "bill_rate_fix_failed" });
     }
   });
 
