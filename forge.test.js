@@ -1321,19 +1321,27 @@ test("Dan's split checks W-2, 1099, and VMS without inventing a bill rate", func
   const off = forge.checkRateSplit({ bill: 180, pay: 100, employmentText: "W2", siteLead: true });
   assert.equal(off.status, "off");
   assert.equal(off.expectedPay, 120);
-  assert.match(off.message, /not changed/);
+  assert.match(off.message, /Nothing was changed/);
+  assert.match(off.message, /Heads-up/);
   assert.match(off.message, /Site lead \$5\/hr is not billed/);
   assert.equal(off.siteLeadBilled, false);
   const lahey = forge.checkRateSplit({ bill: 200, pay: 130, employmentText: "W-2", clientName: "Lahey Hospital" });
   assert.equal(lahey.status, "ok");
   assert.equal(lahey.vmsName, "Lahey/HWL");
   assert.equal(lahey.remit, 195);
-  const christus = forge.checkRateSplit({ bill: 200, pay: 127, employmentText: "W-2", noteText: "VMS WTC" });
+  const christus = forge.checkRateSplit({ bill: 200, pay: 127, employmentText: "W-2", clientName: "CHRISTUS Health" });
   assert.equal(christus.status, "ok");
   assert.equal(christus.vmsPercent, 0.0475);
-  const abbott = forge.checkRateSplit({ bill: 200, pay: 130, employmentText: "W-2", noteText: "TAPFIN" });
+  const abbott = forge.checkRateSplit({ bill: 200, pay: 130, employmentText: "W-2", clientName: "Abbott" });
   assert.equal(abbott.status, "ok");
   assert.equal(abbott.vmsName, "Abbott/TAPFIN");
+  // F47: a VMS is never inferred from candidate notes — notes mention other roles.
+  const mh = forge.checkRateSplit({ bill: 135, pay: 90, employmentText: "W-2", clientName: "Memorial Hermann Health System", noteText: "I will have an update on the Lahey/BILH opportunity tomorrow. VMS WTC TAPFIN" });
+  assert.equal(mh.vmsPercent, 0);
+  assert.equal(mh.vmsName, "");
+  assert.equal(mh.status, "ok", mh.message); // 135 × 2/3 = 90 exactly
+  const unknownClient = forge.checkRateSplit({ bill: 200, pay: 130, employmentText: "W-2", clientName: "", noteText: "Lahey" });
+  assert.equal(unknownClient.vmsPercent, 0);
   const chop = forge.checkRateSplit({ bill: 200, pay: 126.67, employmentText: "W-2", clientName: "CHOP" });
   assert.equal(chop.status, "ok");
   assert.equal(chop.vmsPercent, 0.05);

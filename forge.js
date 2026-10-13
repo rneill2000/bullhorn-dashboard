@@ -938,12 +938,14 @@ function classifyEmployment(text) {
   return read(s);
 }
 
-function matchVms(clientName, noteText) {
+/**
+ * The VMS fee belongs to the job's client and nothing else. Candidate notes routinely
+ * mention other roles ("update on the Lahey/BILH opportunity"), and inferring a fee from
+ * them charged Lahey's 2.5% against a Memorial Hermann submission (2026-10-13).
+ */
+function matchVms(clientName) {
   const client = String(clientName || "");
-  const fromClient = VMS_RULES.filter(function (rule) { return rule.re.test(client); })[0];
-  if (fromClient) return fromClient;
-  const note = String(noteText || "");
-  return VMS_RULES.filter(function (rule) { return rule.re.test(note); })[0] || null;
+  return VMS_RULES.filter(function (rule) { return rule.re.test(client); })[0] || null;
 }
 
 /**
@@ -978,7 +980,7 @@ function checkRateSplit(input) {
     result.message = "Rate split was not checked. " + (bill == null ? "Bill rate" : "Pay rate") + " is blank, and a rate was not calculated.";
     return result;
   }
-  const vms = employment === "W2" ? matchVms(src.clientName, src.noteText) : null;
+  const vms = employment === "W2" ? matchVms(src.clientName) : null;
   const pct = vms ? vms.pct : 0;
   const remit = roundCents(bill * (1 - pct));
   const consultantShare = employment === "1099" ? 0.75 : (2 / 3);
@@ -998,7 +1000,8 @@ function checkRateSplit(input) {
     return result;
   }
   result.status = "off";
-  result.message = "Pay $" + pay + "/hr does not match the " + (employment === "1099" ? "1099 3/4" : "W-2 2/3") + " split. Remit is $" + remit + "/hr" + vmsBit + "; consultant share would be $" + expectedPay + "/hr. The bill rate was not changed." + siteBit;
+  const diff = roundCents(pay - expectedPay);
+  result.message = "Heads-up: pay $" + pay + "/hr is $" + Math.abs(diff) + "/hr " + (diff > 0 ? "above" : "below") + " the " + (employment === "1099" ? "1099 3/4" : "W-2 2/3") + " split ($" + expectedPay + "/hr on $" + remit + "/hr remit" + vmsBit + "). Fine if that pay was negotiated; otherwise fix the pay or bill rate in Bullhorn. Nothing was changed." + siteBit;
   return result;
 }
 
