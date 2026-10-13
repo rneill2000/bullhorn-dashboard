@@ -2044,7 +2044,7 @@ test("a disabled primary button is visibly locked, not just inert", function () 
   assert.match(ui, /\.btn-primary:disabled[^{]*\{[^}]*background:#cbd5e1/);
 });
 
-/* ── F26: Mark client submitted alerts the candidate's relationship owner ── */
+/* ── F44: Mark client submitted alerts the candidate's relationship owner ── */
 function ownerAlertApp(opts) {
   const sent = [];
   const writes = [];
@@ -2076,7 +2076,7 @@ function ownerAlertApp(opts) {
   return { app, sent, writes };
 }
 
-test("F26: client-submitted emails the candidate owner with job, client and who submitted", async function () {
+test("F44: client-submitted emails the candidate owner with job, client and who submitted", async function () {
   const h = ownerAlertApp({});
   const server = await listen(h.app);
   try {
@@ -2096,7 +2096,7 @@ test("F26: client-submitted emails the candidate owner with job, client and who 
   } finally { server.close(); }
 });
 
-test("F26: no alert when the owner is the one submitting", async function () {
+test("F44: no alert when the owner is the one submitting", async function () {
   const h = ownerAlertApp({ ownerEmail: "Rachel@AnuraConnect.com" });
   const server = await listen(h.app);
   try {
@@ -2107,7 +2107,7 @@ test("F26: no alert when the owner is the one submitting", async function () {
   } finally { server.close(); }
 });
 
-test("F26: a failed or missing alert never fails the submission, and the UI is told", async function () {
+test("F44: a failed or missing alert never fails the submission, and the UI is told", async function () {
   const a = ownerAlertApp({ sendFails: true });
   let server = await listen(a.app);
   try {
