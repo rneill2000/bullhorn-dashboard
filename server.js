@@ -11794,7 +11794,8 @@ require("./events")(app, { db: db, bhFetch: bhFetch, bhWrite: bhWriteAsService }
 linkedinGraph.register(app, { db: db, getUser: getUser });
 require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetchAll: bhFetchAll });
 require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
-require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate });
+const notifier = require("./notify").makeNotifier({ graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; } });
+require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate, notifier: notifier, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; } });
 
 app.use(function (err, req, res, next) {
   console.error("[Express] Unhandled route error:", err.message);

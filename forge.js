@@ -1494,7 +1494,54 @@ function registerForge(app, deps) {
   const bhFetch = deps.bhFetch;
   const bhWrite = deps.bhWrite;
   const referencePicks = deps.referencePicks || createReferencePicks();
+  const notifier = deps.notifier || null; // { send, card } from notify.js
+  const publicOrigin = deps.publicOrigin || function () { return process.env.PUBLIC_ORIGIN || "https://dashboard.anuraconnect.com"; };
   let tableReady = null;
+
+  /** Who owns the candidate relationship: Neon mirror first (candidates.owner_id → corporate_users), Bullhorn as fallback. */
+  async function candidateOwner(candidateId) {
+    if (!candidateId) return null;
+    try {
+      const r = await db.getOne(
+        "SELECT c.owner_id, c.owner_name, cu.email FROM candidates c LEFT JOIN corporate_users cu ON cu.id = c.owner_id WHERE c.id = $1", [candidateId]);
+      if (r && r.owner_id && r.email) return { id: r.owner_id, name: r.owner_name || "", email: r.email };
+    } catch (e) { /* fall through to Bullhorn */ }
+    if (typeof bhFetch !== "function") return null;
+    try {
+      const c = await bhFetch("entity/Candidate/" + candidateId, { fields: "owner(id,firstName,lastName,email)" });
+      const o = c && c.data && c.data.owner;
+      if (o && o.email) return { id: o.id, name: ((o.firstName || "") + " " + (o.lastName || "")).trim(), email: o.email };
+    } catch (e) { /* no owner */ }
+    return null;
+  }
+
+  /**
+   * Alert the candidate's owner that their candidate just went to a client. Skipped when the
+   * owner is the person who did it. Never throws — a failed alert must not fail the submission.
+   * @returns {{owner, skipped?, results?}}
+   */
+  async function alertCandidateOwner(row, user, submissionId) {
+    const owner = await candidateOwner(row.candidate_id);
+    if (!owner) return { owner: null, skipped: "no owner on candidate" };
+    const actorEmail = String(user && user.email || "").toLowerCase();
+    if (actorEmail && actorEmail === String(owner.email).toLowerCase()) return { owner: owner, skipped: "owner submitted it" };
+    if (!notifier) return { owner: owner, skipped: "no notifier configured" };
+    const actor = personName(user) || "A colleague";
+    const client = row.job_client_name || row.sub_client_name || row.client_name || "";
+    const job = row.job_title_live || row.job_title || ("Job #" + row.job_id);
+    const subject = "Client submission: " + (row.candidate_name || "Candidate #" + row.candidate_id) + " \u2192 " + job + (client ? " at " + client : "");
+    const html = notifier.card("Your candidate was submitted to a client", [
+      ["Candidate", row.candidate_name || ("Candidate #" + row.candidate_id)],
+      ["Job", job],
+      ["Client", client],
+      ["Submitted by", actor],
+      ["When", new Date().toLocaleString("en-US", { timeZone: "America/Chicago", dateStyle: "medium", timeStyle: "short" }) + " CT"],
+      ["Why you're getting this", "You own the relationship with this candidate in Bullhorn."],
+    ], publicOrigin() + "/#forge", "Open Submittal Forge");
+    const results = await notifier.send({ to: [{ email: owner.email, name: owner.name }], subject: subject, html: html, fromEmail: user && user.email });
+    console.log("[Forge] owner alert for submission " + submissionId + " → " + owner.email + ": " + JSON.stringify(results));
+    return { owner: owner, results: results };
+  }
 
   function ensureTable() {
     if (!db || !db.ready) return Promise.resolve(false);
@@ -2816,7 +2863,11 @@ function registerForge(app, deps) {
       try {
         await db.query("UPDATE submissions SET status = $1, date_last_modified = $2 WHERE id = $3", [CLIENT_SUBMITTED_STATUS, Date.now(), id]);
       } catch (e) { console.log("[Forge] local status update failed:", e.message); }
-      res.json({ ok: true, status: CLIENT_SUBMITTED_STATUS, submissionId: id, candidateName: row.candidate_name || "" });
+      // Tell the candidate's relationship owner. Failure here never fails the submission.
+      let ownerAlert = null;
+      try { ownerAlert = await alertCandidateOwner(row, getUser(req), id); }
+      catch (e) { console.error("[Forge] owner alert failed:", e.message); ownerAlert = { owner: null, skipped: "error: " + e.message }; }
+      res.json({ ok: true, status: CLIENT_SUBMITTED_STATUS, submissionId: id, candidateName: row.candidate_name || "", ownerAlert: ownerAlert });
     } catch (e) {
       console.error("[Forge] client-submitted", e.message);
       res.status(e.status || 500).json({ error: e.message });

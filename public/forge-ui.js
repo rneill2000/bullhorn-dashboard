@@ -822,12 +822,18 @@ async function forgeMarkSubmitted() {
   var ok = typeof confirm === "function" ? confirm("Mark this submission client submitted in Bullhorn? It will leave the queue.") : false;
   if (!ok) return;
   try {
-    await forgeSend("forge/submissions/" + _forge.selected + "/client-submitted", { confirm: true });
-    if (typeof showToast === "function") showToast("Marked client submitted");
+    var r = await forgeSend("forge/submissions/" + _forge.selected + "/client-submitted", { confirm: true });
+    var oa = r && r.ownerAlert;
+    var alertLine = "";
+    if (oa && oa.results && oa.results.some(function (x) { return x.success; })) alertLine = "Alerted " + esc(oa.owner.name || oa.owner.email) + " (candidate owner).";
+    else if (oa && oa.skipped === "owner submitted it") alertLine = "You own this candidate, so no alert was sent.";
+    else if (oa && oa.skipped === "no owner on candidate") alertLine = "No owner on this candidate in Bullhorn \u2014 nobody was alerted.";
+    else if (oa && oa.owner) alertLine = "Could not email " + esc(oa.owner.email) + " \u2014 please tell them directly.";
+    if (typeof showToast === "function") showToast("Marked client submitted" + (alertLine ? " \u00b7 " + alertLine : ""));
     _forge.selected = null;
     _forge.view = null;
     var main = document.getElementById("forge-main");
-    if (main) main.innerHTML = '<div class="fg-card">Marked client submitted. The row has left the queue.</div>';
+    if (main) main.innerHTML = '<div class="fg-card">Marked client submitted. The row has left the queue.' + (alertLine ? '<br><span style="color:#64748b">' + alertLine + '</span>' : '') + '</div>';
     forgeLoadQueue();
   } catch (e) {
     var box = document.getElementById("forge-result");

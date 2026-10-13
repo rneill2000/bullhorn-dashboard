@@ -2043,3 +2043,84 @@ test("a disabled primary button is visibly locked, not just inert", function () 
   assert.match(ui, /\.btn-primary:disabled[^{]*\{[^}]*cursor:not-allowed/);
   assert.match(ui, /\.btn-primary:disabled[^{]*\{[^}]*background:#cbd5e1/);
 });
+
+/* ── F26: Mark client submitted alerts the candidate's relationship owner ── */
+function ownerAlertApp(opts) {
+  const sent = [];
+  const writes = [];
+  const app = express();
+  app.use(express.json());
+  const row = fixtureRow();
+  forge(app, {
+    db: {
+      ready: true,
+      query: async function () { return { rows: [] }; },
+      getOne: async function (sql) {
+        if (/SELECT c.owner_id, c.owner_name, cu.email/.test(sql)) return opts.owner === null ? null : { owner_id: 5, owner_name: "Jen Hemming", email: opts.ownerEmail || "jen@anuraconnect.com" };
+        if (/^\s*SELECT submission_id, created_at/.test(sql)) return { submission_id: 42, created_at: new Date(), created_by: "rachel@anuraconnect.com" };
+        return row;
+      },
+      getAll: async function () { return []; },
+    },
+    graphFetch: async function () { return {}; },
+    bhFetch: async function () { return { data: {} }; },
+    bhWrite: async function (endpoint, body) { writes.push({ endpoint, body }); return { changedEntityId: 42 }; },
+    outlookUsers: function () { return {}; },
+    getUser: function () { return { name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+    notifier: opts.noNotifier ? null : {
+      card: function (title, rows) { return "<h2>" + title + "</h2>" + rows.map(function (r) { return r.join(": "); }).join("|"); },
+      send: async function (msg) { sent.push(msg); if (opts.sendFails) return [{ email: msg.to[0].email, method: "none", success: false, reason: "No email service available" }]; return [{ email: msg.to[0].email, method: "outlook", success: true }]; },
+    },
+    publicOrigin: function () { return "https://dashboard.anuraconnect.com"; },
+  });
+  return { app, sent, writes };
+}
+
+test("F26: client-submitted emails the candidate owner with job, client and who submitted", async function () {
+  const h = ownerAlertApp({});
+  const server = await listen(h.app);
+  try {
+    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/client-submitted", { confirm: true });
+    assert.equal(r.status, 200);
+    assert.equal(h.writes.length, 1, "Bullhorn status write still happens");
+    assert.equal(h.sent.length, 1, JSON.stringify(r.json));
+    const m = h.sent[0];
+    assert.equal(m.to[0].email, "jen@anuraconnect.com");
+    assert.match(m.subject, /Client submission: Jack Corbell/);
+    assert.match(m.subject, /HB Analyst/);
+    assert.match(m.html, /Submitted by: Rachel Neill/);
+    assert.match(m.html, /Memorial Hermann/);
+    assert.equal(m.fromEmail, "rachel@anuraconnect.com", "sent from the submitter's mailbox when connected");
+    assert.equal(r.json.ownerAlert.owner.email, "jen@anuraconnect.com");
+    assert.equal(r.json.ownerAlert.results[0].success, true);
+  } finally { server.close(); }
+});
+
+test("F26: no alert when the owner is the one submitting", async function () {
+  const h = ownerAlertApp({ ownerEmail: "Rachel@AnuraConnect.com" });
+  const server = await listen(h.app);
+  try {
+    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/client-submitted", { confirm: true });
+    assert.equal(r.status, 200);
+    assert.equal(h.sent.length, 0);
+    assert.equal(r.json.ownerAlert.skipped, "owner submitted it");
+  } finally { server.close(); }
+});
+
+test("F26: a failed or missing alert never fails the submission, and the UI is told", async function () {
+  const a = ownerAlertApp({ sendFails: true });
+  let server = await listen(a.app);
+  try {
+    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/client-submitted", { confirm: true });
+    assert.equal(r.status, 200);
+    assert.equal(a.writes.length, 1);
+    assert.equal(r.json.ownerAlert.results[0].success, false);
+  } finally { server.close(); }
+  const b = ownerAlertApp({ owner: null });
+  server = await listen(b.app);
+  try {
+    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/client-submitted", { confirm: true });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ownerAlert.skipped, "no owner on candidate");
+  } finally { server.close(); }
+});
