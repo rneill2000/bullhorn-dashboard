@@ -2176,6 +2176,9 @@ async function startSyncLoop(intervalMs) {
     }
   }, intervalMs);
 
+  // Anura Connect CRM archive (schema crm): incremental every 15 min, full reload Sunday nights.
+  scheduleCrmSync();
+
   // Nightly FULL sync. Incremental syncs only fetch records whose dateLastModified
   // moved, so they can never see a deletion (the record stops matching the query)
   // and they miss entities whose timestamps don't update. Without a recurring full
@@ -2212,7 +2215,68 @@ function scheduleNightlyFullSync() {
   if (_fullTimer.unref) _fullTimer.unref();
 }
 
+/* ═══ CRM ARCHIVE SYNC (crm.*) ═══ */
+var CRM_SYNC_MS = Number(process.env.CRM_SYNC_MINUTES || 15) * 60 * 1000;
+var CRM_RELOAD_UTC_DOW = 0; // Sunday
+var CRM_RELOAD_UTC_HOUR = Number(process.env.CRM_RELOAD_UTC_HOUR || 9); // 4 AM Central, after the nightly full sync
+var _crmTimer = null, _crmReloadTimer = null, _crmInFlight = false;
+
+function crmLoader() {
+  var loader = require("./crm/scripts/load");
+  // Reuse the dashboard's authenticated session; same (endpoint, params) → JSON contract.
+  loader.setClient({ get: function (endpoint, params) { return _bhFetch(endpoint, Object.assign({}, params)); } });
+  return loader;
+}
+
+async function crmIncremental() {
+  if (!dbReady || !_bhFetch || _crmInFlight || process.env.CRM_SYNC_DISABLED === "1") return;
+  _crmInFlight = true;
+  var t0 = Date.now();
+  try {
+    var r = await crmLoader().syncAll();
+    if (r.changed || r.failed.length) console.log("[CRM sync] " + r.changed + " records in " + ((Date.now() - t0) / 1000).toFixed(0) + "s" + (r.failed.length ? " — failed: " + r.failed.join(",") : ""));
+  } catch (err) { console.error("[CRM sync] error:", err.message); }
+  finally { _crmInFlight = false; }
+}
+
+async function crmReload() {
+  if (!dbReady || !_bhFetch || _crmInFlight) return;
+  _crmInFlight = true;
+  var t0 = Date.now();
+  try { await crmLoader().reload(); console.log("[CRM sync] weekly reload done in " + ((Date.now() - t0) / 60000).toFixed(1) + " min"); }
+  catch (err) { console.error("[CRM sync] weekly reload error:", err.message); }
+  finally { _crmInFlight = false; }
+}
+
+/** ms until the next `dow` (0=Sunday) at `hour`:00 UTC. */
+function msUntilNextUtcDow(dow, hour, now) {
+  var n = now == null ? Date.now() : now;
+  var d = new Date(n);
+  var next = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour, 0, 0, 0);
+  var add = (dow - d.getUTCDay() + 7) % 7;
+  next += add * 86400000;
+  if (next <= n) next += 7 * 86400000;
+  return next - n;
+}
+
+function scheduleCrmSync() {
+  if (process.env.CRM_SYNC_DISABLED === "1") { console.log("[CRM sync] disabled"); return; }
+  if (_crmTimer) clearInterval(_crmTimer);
+  _crmTimer = setInterval(function () { crmIncremental(); }, CRM_SYNC_MS);
+  if (_crmTimer.unref) _crmTimer.unref();
+  setTimeout(function () { crmIncremental(); }, 90 * 1000); // first pass shortly after boot
+  var scheduleReload = function () {
+    if (_crmReloadTimer) clearTimeout(_crmReloadTimer);
+    _crmReloadTimer = setTimeout(async function () { await crmReload(); scheduleReload(); }, msUntilNextUtcDow(CRM_RELOAD_UTC_DOW, CRM_RELOAD_UTC_HOUR));
+    if (_crmReloadTimer.unref) _crmReloadTimer.unref();
+  };
+  scheduleReload();
+  console.log("[CRM sync] every " + (CRM_SYNC_MS / 60000) + " min; full reload Sundays " + CRM_RELOAD_UTC_HOUR + ":00 UTC");
+}
+
 function stopSyncLoop() {
+  if (_crmTimer) { clearInterval(_crmTimer); _crmTimer = null; }
+  if (_crmReloadTimer) { clearTimeout(_crmReloadTimer); _crmReloadTimer = null; }
   if (syncInterval) {
     clearInterval(syncInterval);
     syncInterval = null;
@@ -3426,6 +3490,7 @@ module.exports = {
   incrementalSync: incrementalSync,
   startSyncLoop: startSyncLoop,
   msUntilNextUtcHour: msUntilNextUtcHour,
+  msUntilNextUtcDow: msUntilNextUtcDow,
   stopSyncLoop: stopSyncLoop,
   getSyncStatus: getSyncStatus,
   getSyncDetails: getSyncDetails,
