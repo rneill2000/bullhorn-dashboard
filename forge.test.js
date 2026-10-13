@@ -2124,3 +2124,72 @@ test("F44: a failed or missing alert never fails the submission, and the UI is t
     assert.equal(r.json.ownerAlert.skipped, "no owner on candidate");
   } finally { server.close(); }
 });
+
+/* ── F45: "Why Me?:" with a question mark is a label, not a name ── */
+test("F45: Why Me?: (question mark) is parsed as the Why Me section, not the candidate name", function () {
+  const html = '<span style="font-size:11.0pt"><strong style="font-weight:bold">Why Me?: </strong></span><br />\n' +
+    '<span style="font-size:11.0pt">David began his Epic career inside Epic Systems itself, spending three years on the Resolute Hospital Billing development team.</span><br />\n' +
+    '<span style="font-size:11.0pt">&nbsp;</span><br />\n<span style="font-size:11.0pt">His recent work is in implementation.</span><br />' +
+    '<strong>Availability: </strong>2 weeks<br /><strong>Location: </strong>Madison, WI<br /><strong>Bill Rate: </strong>$142.50<br /><strong>Pay Rate: </strong>$95';
+  const p = forge.parseSubmissionComments(html);
+  assert.equal(p.name, "", "a label line is never mistaken for a name");
+  assert.match(p.whyMe, /^David began his Epic career/);
+  assert.match(p.whyMe, /His recent work is in implementation\.$/);
+  assert.equal(p.availability, "2 weeks");
+  assert.equal(p.billRate, "$142.50");
+  assert.equal(p.payRate, "$95");
+  // inline form too
+  assert.equal(forge.parseSubmissionComments("Why Me?: Strong HB build. Bill Rate?: $150").whyMe, "Strong HB build.");
+  // a plain question is not a label
+  assert.equal(forge.parseSubmissionComments("Why me? He is great.\nBill Rate: $10").whyMe, "");
+});
+
+/* ── F46: explicit bill-rate override writes Bullhorn and lets the draft through ── */
+test("F46: billRateOverride writes customText10 to the Bullhorn submission and proceeds; without it the block stands", async function () {
+  const writes = [];
+  function build(liveField) {
+    const app = express();
+    app.use(express.json());
+    forge(app, {
+      db: { ready: true, query: async function () { return { rows: [] }; }, getOne: async function () { return fixtureRow(); }, getAll: async function () { return []; } },
+      graphFetch: async function (email, endpoint) { if (endpoint.indexOf("/attachments") >= 0) return {}; return { id: "M1", webLink: "https://outlook.office.com/x" }; },
+      bhFetch: async function (endpoint) {
+        if (String(endpoint).indexOf("fileAttachments") >= 0) return { data: [{ id: 9, name: "Jack.pdf", contentType: "application/pdf", fileExtension: "pdf" }] };
+        if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: liveField }; // Bullhorn is blank
+        if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { clientBillRate: null } };
+        return { data: [] };
+      },
+      bhWrite: async function (endpoint, body, method) { writes.push({ endpoint, body, method }); return { changedEntityId: 42 }; },
+      downloadCandidateFile: async function () { return { name: "Jack.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4 x") }; },
+      outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
+      getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+    });
+    return app;
+  }
+  const body = { whyMe: "Led the HB implementation.", availability: "2 weeks", location: "Houston, TX", billRate: "$142.50", resumeFileId: 9 };
+  let server = await listen(build({ customText10: null, billRate: null, comments: "" }));
+  try {
+    const blocked = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", body);
+    assert.equal(blocked.status, 400);
+    assert.equal(blocked.json.code, "bill_rate_mismatch");
+    assert.equal(blocked.json.live, "(blank)");
+    assert.equal(writes.length, 0, "no write without the override flag");
+
+    const ok = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", Object.assign({ billRateOverride: true }, body));
+    assert.equal(ok.status, 200, JSON.stringify(ok.json));
+    assert.equal(ok.json.created, true);
+    assert.deepEqual(ok.json.billRateOverridden, { from: "(blank)", to: "$142.50/hr", source: "missing" });
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].endpoint, "entity/JobSubmission/42");
+    assert.equal(writes[0].method, "POST");
+    assert.equal(writes[0].body.customText10, "142.5");
+  } finally { server.close(); }
+
+  // override with a blank typed rate is still a block — there is nothing to write
+  server = await listen(build({ customText10: "160", billRate: 160, comments: "" }));
+  try {
+    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", Object.assign({ billRateOverride: true }, body, { billRate: "" }));
+    assert.equal(r.status, 400);
+    assert.equal(r.json.code, "bill_rate_mismatch");
+  } finally { server.close(); }
+});

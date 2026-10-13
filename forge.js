@@ -151,8 +151,9 @@ const DISMISS_REASONS = {
 };
 
 const LABEL_WORD = "availability\\s*date|date\\s*available|why\\s*me|bill\\s*rate|pay\\s*rate|margin|availability|available|avail\\.?|location|loc\\.?|candidate\\s+name|rate|name";
-const INLINE_RE = new RegExp("\\b(" + LABEL_WORD + ")\\b\\s*[:\\-\\u2013\\u2014]\\s*", "gi");
-const HEADER_RE = new RegExp("^(" + LABEL_WORD + ")\\s*[:\\-\\u2013\\u2014]?\\s*$", "i");
+const INLINE_RE = new RegExp("\\b(" + LABEL_WORD + ")\\b\\s*\\??\\s*[:\\-\\u2013\\u2014]\\s*", "gi");
+// A label may carry a question mark ("Why Me?:") — recruiters type it both ways.
+const HEADER_RE = new RegExp("^(" + LABEL_WORD + ")\\s*\\??\\s*[:\\-\\u2013\\u2014]?\\s*$", "i");
 
 const BUNDLE_FROM = `
   FROM submissions s
@@ -317,7 +318,8 @@ function formatRate(v) {
   const n = moneyNumber(s);
   if (n == null) return "";
   const rounded = Math.round(n * 100) / 100;
-  const shown = Number.isInteger(rounded) ? String(rounded) : String(rounded);
+  // Whole dollars stay bare ($95/hr); cents always show two places ($142.50/hr, never $142.5/hr).
+  const shown = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
   if (rounded >= 1000) return "$" + rounded.toLocaleString("en-US");
   return "$" + shown + "/hr";
 }
@@ -473,7 +475,7 @@ function parseSubmissionComments(text) {
   });
   if (!joined.name && joined.preamble) {
     const plines = joined.preamble.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
-    if (plines.length && plines[0].length <= 80 && plines[0].indexOf(".") < 0 && plines[0].split(/\s+/).length <= 6) {
+    if (plines.length && plines[0].length <= 80 && plines[0].indexOf(".") < 0 && !/[:?]\s*$/.test(plines[0]) && plines[0].split(/\s+/).length <= 6) {
       joined.name = plines[0];
     }
   }
@@ -2669,6 +2671,7 @@ function registerForge(app, deps) {
         });
       }
 
+      let billRateOverridden = null;
       if (bhFetch) {
         const live = await liveBill(id, base.job.id, {
           candidateId: base.candidate.id,
@@ -2680,7 +2683,20 @@ function registerForge(app, deps) {
         if (live && ratesDiffer(billRate, live.amount)) {
           const liveShown = live.amount == null ? "(blank)" : formatRate(live.amount);
           const displayed = billRate || "(blank)";
-          return res.status(400).json({
+          // Explicit override: the recruiter confirms the typed rate is right (it lives in a note,
+          // or Bullhorn is blank/stale). We write it back to the submission so Bullhorn stops
+          // disagreeing, and record the override on the draft.
+          if (body.billRateOverride === true && positiveMoney(billRate) != null) {
+            if (typeof bhWrite !== "function") return res.status(503).json({ error: "Bullhorn writes are not configured; cannot record the bill rate override.", code: "bill_rate_override_unavailable" });
+            try {
+              await bhWrite("entity/JobSubmission/" + id, { customText10: String(positiveMoney(billRate)) }, "POST");
+              try { await db.query("UPDATE submissions SET raw_json = COALESCE(raw_json, '{}'::jsonb) || jsonb_build_object('customText10', $1::text), date_last_modified = $2 WHERE id = $3", [String(positiveMoney(billRate)), Date.now(), id]); } catch (e) { /* mirror catches up on sync */ }
+              console.log("[Forge] bill rate override on submission " + id + ": " + liveShown + " → " + formatRate(billRate) + " by " + (personName(getUser(req)) || "unknown"));
+              billRateOverridden = { from: liveShown, to: formatRate(billRate), source: live.source };
+            } catch (e) {
+              return res.status(502).json({ error: "Could not write the bill rate to Bullhorn: " + e.message, code: "bill_rate_override_failed" });
+            }
+          } else return res.status(400).json({
             error: "Bill rate does not match Bullhorn. This draft shows " + displayed + " and Bullhorn has " + liveShown + " (" + live.source + ").",
             code: "bill_rate_mismatch",
             snippet: displayed + " vs " + liveShown,
@@ -2841,6 +2857,7 @@ function registerForge(app, deps) {
         subject: email.subject,
         resume: { attached: !tooLarge && !!buf.length && !attachNote, status: resumeStatus, filename: attachName, bytes: buf.length },
         attachNote: attachNote,
+        billRateOverridden: billRateOverridden,
         instructions: "Draft saved in " + mailbox + ". Open it in Outlook, confirm the résumé, and send it yourself.",
       });
     } catch (e) {
