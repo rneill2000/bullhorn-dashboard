@@ -459,7 +459,7 @@ async function loadBullhornEntities(db) {
   var candidates = await db.getAll(
     "SELECT id, first_name, last_name, email, email2, company_name AS company, " +
     SLUG_SQL.replace("%s", "coalesce(raw_json->>'companyURL','') || ' ' || coalesce(description,'') || ' ' || coalesce(custom_text_block1,'') || ' ' || coalesce(custom_text_block2,'') || ' ' || coalesce(custom_text10,'')") +
-    " AS linkedin_slug FROM candidates",
+    " AS linkedin_slug FROM candidates WHERE is_deleted IS NOT TRUE",
     []
   );
   var contacts = await db.getAll(

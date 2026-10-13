@@ -387,7 +387,7 @@ async function _doAuthenticate() {
 }
 
 /* ═══ API PROXY HELPER ═══ */
-async function bhFetch(endpoint, params = {}, _retried) {
+async function bhFetch(endpoint, params = {}, _retried, _rateAttempt) {
   const s = await authenticate();
   params.BhRestToken = s.bhRestToken;
   const qs = new URLSearchParams(params).toString();
@@ -399,6 +399,16 @@ async function bhFetch(endpoint, params = {}, _retried) {
     session.expiresAt = 0; // force re-auth
     delete params.BhRestToken;
     return bhFetch(endpoint, params, true);
+  }
+  // 429 and 5xx are Bullhorn's rate-limit / overload responses. A candidate
+  // index walk is dozens of calls; fail the page only after a short backoff.
+  if ((res.status === 429 || res.status >= 500) && (_rateAttempt || 0) < 4) {
+    await res.text().catch(function () {});
+    const wait = 1000 * Math.pow(2, _rateAttempt || 0);
+    console.warn("[Bullhorn] " + res.status + " on " + endpoint + " — retry in " + wait + "ms");
+    await new Promise(function (r) { setTimeout(r, wait); });
+    delete params.BhRestToken;
+    return bhFetch(endpoint, params, _retried, (_rateAttempt || 0) + 1);
   }
   if (!res.ok) {
     const err = await res.text();
@@ -720,7 +730,7 @@ app.get("/api/meta/Opportunity", async (req, res) => {
    GET /api/health/accuracy         (10-minute cache)
    GET /api/health/accuracy?refresh=1 */
 const ACCURACY_ENTITIES = [
-  { name: "candidates",      endpoint: "search/Candidate",        query: "isDeleted:0" },
+  { name: "candidates",      endpoint: "search/Candidate",        query: "(isDeleted:false OR isDeleted:0)" },
   { name: "jobs",            endpoint: "search/JobOrder",         query: "isDeleted:0" },
   // Note wants a boolean literal — isDeleted:0 silently matches nothing here.
   { name: "notes",           endpoint: "search/Note",             query: "isDeleted:false" },
@@ -779,6 +789,21 @@ app.get("/api/health/accuracy", async (req, res) => {
         // A little drift is normal — records change between a sync and this check.
         row.status = row.drift === 0 ? "ok" : pct <= 0.02 ? "ok" : pct <= 0.1 ? "warn" : "error";
         if (row.live > 0 && row.cached === 0) row.status = "error";
+      }
+      if (spec.name === "candidates") {
+        try {
+          if (!db.getCandidatePopulation()) await db.ensureCandidatePopulation();
+          const judged = db.assessCandidateMirror(row.cached, db.getCandidatePopulation());
+          if (judged && judged.status !== "unknown") {
+            row.status = judged.status;
+            row.drift = judged.drift;
+            if (judged.detail) row.detail = judged.detail;
+            const pop = db.getCandidatePopulation();
+            if (pop) row.live = pop.mode === "scan" ? pop.idTotal : pop.total;
+          }
+        } catch (e) {
+          row.detail = (row.detail ? row.detail + "; " : "") + e.message;
+        }
       }
       counts.push(row);
     }

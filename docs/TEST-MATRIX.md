@@ -109,6 +109,19 @@ Axes: company id shape (integer / numeric string / `{id}` / bare id) · where th
 | C2 | Neon placements/jobs query mentions is_deleted, and that column is missing | The placement query throws, the error is swallowed, and the counts stay 0 | test: client placement SQL does not require is_deleted |
 | M6 | Manual: Clients summary "Placed Consultants" equals Placements "Total Active". "Clients w/ Placements" equals the distinct companies on those active rows. | Counts still disagree after deploy | Record date + result in the PR |
 
+## Candidate mirror
+
+Axes: Bullhorn search clause (isDeleted:0 / isDeleted:false / either / id index) · record isDeleted flag · incremental date format · backfill already finished
+
+| # | Case | Risk if wrong | Covered by |
+|---|------|---------------|------------|
+| K1 | isDeleted:0 is ~1,080 and the id index is ~6,600, deleted boolean is small | Sync keeps storing only the boolean subset | test: a short isDeleted:0 count against a much larger id index scans and drops deleted records |
+| K2 | isDeleted:false OR isDeleted:0 already covers the id index | Full id scan pulls deleted people into the list | test: a boolean query that covers the index is used as-is |
+| K3 | Search incremental lower bound is epoch milliseconds | Every 5-minute pass rewrites the whole candidate table | test: search incremental uses a yyyyMMdd day, query endpoints keep epoch milliseconds |
+| K4 | A finished id scan left backfill_query set | Every boot walks all ~6,600 candidates again | test: a finished scan is not repeated until a full sync forces it |
+| K5 | Backfill still in progress, Neon still near the boolean count | Health says the mirror matches Bullhorn | test: an unfinished id scan is a warning |
+| K6 | A resumed id scan reaches the reported total | Checkpoint stays set and the next boot walks again, or the tail reconcile deletes rows from the first pages | test: a resumed backfill that reaches the end is finished and does not reconcile |
+
 ## Live toasts and session host
 
 | # | Case | Risk if wrong | Covered by |

@@ -155,9 +155,23 @@ async function createTables() {
       gender TEXT,
       veteran TEXT,
       disability TEXT,
+      is_deleted BOOLEAN NOT NULL DEFAULT false,
       raw_json JSONB,
       synced_at TIMESTAMPTZ DEFAULT NOW()
     )
+  `);
+  // Existing mirrors were created before is_deleted existed. DEFAULT false
+  // marks every row already stored (the old isDeleted:0 pull) as live.
+  await query(`ALTER TABLE candidates ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false`);
+  // Table-level SELECT covers the new column. The role exists on Neon; a
+  // local database without it should still boot.
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anura_readonly') THEN
+        GRANT SELECT ON TABLE public.candidates TO anura_readonly;
+      END IF;
+    END $$;
   `);
 
   // Jobs — comprehensive
@@ -696,6 +710,8 @@ async function createTables() {
       total_records INTEGER DEFAULT 0
     )
   `);
+  await query(`ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS backfill_next INTEGER`);
+  await query(`ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS backfill_query TEXT`);
 
   // Portal custom templates
   await query(`
@@ -1280,7 +1296,11 @@ var SYNC_ENTITIES = {
   candidates: {
     endpoint: "search/Candidate",
     queryField: "query",
-    baseQuery: "isDeleted:0",
+    // Replaced at startup after a count probe. isDeleted:0 only matches the
+    // candidates whose search-index boolean is the token 0 (~1,080). The rest
+    // of the index is invisible to that clause. See chooseCandidatePopulation.
+    baseQuery: "(isDeleted:false OR isDeleted:0)",
+    dropDeleted: false,
     fields: CANDIDATE_FIELDS,
     sortField: "-dateLastModified",
     transform: function (r) {
@@ -1352,17 +1372,18 @@ var SYNC_ENTITIES = {
         gender: safeStr(r.gender),
         veteran: safeStr(r.veteran),
         disability: safeStr(r.disability),
+        is_deleted: isDeletedRecord(r),
         raw_json: JSON.stringify(r),
       };
     },
     upsertSql: `
-      INSERT INTO candidates (id,first_name,last_name,name,email,email2,phone,phone2,mobile,status,source,occupation,company_name,education_degree,salary,salary_low,day_rate,day_rate_low,hourly_rate,hourly_rate_low,employment_preference,custom_text1,custom_text2,custom_text3,custom_text4,custom_text5,custom_text6,custom_text7,custom_text8,custom_text9,custom_text10,custom_text_block1,custom_text_block2,custom_text_block3,custom_int1,custom_int2,custom_int3,custom_float1,custom_float2,custom_float3,custom_date1,custom_date2,custom_date3,description,date_available,date_added,date_last_modified,date_last_comment,date_of_birth,address_city,address_state,address_zip,address_country,address_address1,address_address2,owner_id,owner_name,skill_list,category_id,federal_additional_withholdings_amount,experience,will_relocate,ethnicity,gender,veteran,disability,raw_json,synced_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67::jsonb,NOW())
+      INSERT INTO candidates (id,first_name,last_name,name,email,email2,phone,phone2,mobile,status,source,occupation,company_name,education_degree,salary,salary_low,day_rate,day_rate_low,hourly_rate,hourly_rate_low,employment_preference,custom_text1,custom_text2,custom_text3,custom_text4,custom_text5,custom_text6,custom_text7,custom_text8,custom_text9,custom_text10,custom_text_block1,custom_text_block2,custom_text_block3,custom_int1,custom_int2,custom_int3,custom_float1,custom_float2,custom_float3,custom_date1,custom_date2,custom_date3,description,date_available,date_added,date_last_modified,date_last_comment,date_of_birth,address_city,address_state,address_zip,address_country,address_address1,address_address2,owner_id,owner_name,skill_list,category_id,federal_additional_withholdings_amount,experience,will_relocate,ethnicity,gender,veteran,disability,is_deleted,raw_json,synced_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68::jsonb,NOW())
       ON CONFLICT (id) DO UPDATE SET
-        first_name=$2,last_name=$3,name=$4,email=$5,email2=$6,phone=$7,phone2=$8,mobile=$9,status=$10,source=$11,occupation=$12,company_name=$13,education_degree=$14,salary=$15,salary_low=$16,day_rate=$17,day_rate_low=$18,hourly_rate=$19,hourly_rate_low=$20,employment_preference=$21,custom_text1=$22,custom_text2=$23,custom_text3=$24,custom_text4=$25,custom_text5=$26,custom_text6=$27,custom_text7=$28,custom_text8=$29,custom_text9=$30,custom_text10=$31,custom_text_block1=$32,custom_text_block2=$33,custom_text_block3=$34,custom_int1=$35,custom_int2=$36,custom_int3=$37,custom_float1=$38,custom_float2=$39,custom_float3=$40,custom_date1=$41,custom_date2=$42,custom_date3=$43,description=$44,date_available=$45,date_added=$46,date_last_modified=$47,date_last_comment=$48,date_of_birth=$49,address_city=$50,address_state=$51,address_zip=$52,address_country=$53,address_address1=$54,address_address2=$55,owner_id=$56,owner_name=$57,skill_list=$58,category_id=$59,federal_additional_withholdings_amount=$60,experience=$61,will_relocate=$62,ethnicity=$63,gender=$64,veteran=$65,disability=$66,raw_json=$67::jsonb,synced_at=NOW()
+        first_name=$2,last_name=$3,name=$4,email=$5,email2=$6,phone=$7,phone2=$8,mobile=$9,status=$10,source=$11,occupation=$12,company_name=$13,education_degree=$14,salary=$15,salary_low=$16,day_rate=$17,day_rate_low=$18,hourly_rate=$19,hourly_rate_low=$20,employment_preference=$21,custom_text1=$22,custom_text2=$23,custom_text3=$24,custom_text4=$25,custom_text5=$26,custom_text6=$27,custom_text7=$28,custom_text8=$29,custom_text9=$30,custom_text10=$31,custom_text_block1=$32,custom_text_block2=$33,custom_text_block3=$34,custom_int1=$35,custom_int2=$36,custom_int3=$37,custom_float1=$38,custom_float2=$39,custom_float3=$40,custom_date1=$41,custom_date2=$42,custom_date3=$43,description=$44,date_available=$45,date_added=$46,date_last_modified=$47,date_last_comment=$48,date_of_birth=$49,address_city=$50,address_state=$51,address_zip=$52,address_country=$53,address_address1=$54,address_address2=$55,owner_id=$56,owner_name=$57,skill_list=$58,category_id=$59,federal_additional_withholdings_amount=$60,experience=$61,will_relocate=$62,ethnicity=$63,gender=$64,veteran=$65,disability=$66,is_deleted=$67,raw_json=$68::jsonb,synced_at=NOW()
     `,
     paramsFn: function (t) {
-      return [t.id,t.first_name,t.last_name,t.name,t.email,t.email2,t.phone,t.phone2,t.mobile,t.status,t.source,t.occupation,t.company_name,t.education_degree,t.salary,t.salary_low,t.day_rate,t.day_rate_low,t.hourly_rate,t.hourly_rate_low,t.employment_preference,t.custom_text1,t.custom_text2,t.custom_text3,t.custom_text4,t.custom_text5,t.custom_text6,t.custom_text7,t.custom_text8,t.custom_text9,t.custom_text10,t.custom_text_block1,t.custom_text_block2,t.custom_text_block3,t.custom_int1,t.custom_int2,t.custom_int3,t.custom_float1,t.custom_float2,t.custom_float3,t.custom_date1,t.custom_date2,t.custom_date3,t.description,t.date_available,t.date_added,t.date_last_modified,t.date_last_comment,t.date_of_birth,t.address_city,t.address_state,t.address_zip,t.address_country,t.address_address1,t.address_address2,t.owner_id,t.owner_name,t.skill_list,t.category_id,t.federal_additional_withholdings_amount,t.experience,t.will_relocate,t.ethnicity,t.gender,t.veteran,t.disability,t.raw_json];
+      return [t.id,t.first_name,t.last_name,t.name,t.email,t.email2,t.phone,t.phone2,t.mobile,t.status,t.source,t.occupation,t.company_name,t.education_degree,t.salary,t.salary_low,t.day_rate,t.day_rate_low,t.hourly_rate,t.hourly_rate_low,t.employment_preference,t.custom_text1,t.custom_text2,t.custom_text3,t.custom_text4,t.custom_text5,t.custom_text6,t.custom_text7,t.custom_text8,t.custom_text9,t.custom_text10,t.custom_text_block1,t.custom_text_block2,t.custom_text_block3,t.custom_int1,t.custom_int2,t.custom_int3,t.custom_float1,t.custom_float2,t.custom_float3,t.custom_date1,t.custom_date2,t.custom_date3,t.description,t.date_available,t.date_added,t.date_last_modified,t.date_last_comment,t.date_of_birth,t.address_city,t.address_state,t.address_zip,t.address_country,t.address_address1,t.address_address2,t.owner_id,t.owner_name,t.skill_list,t.category_id,t.federal_additional_withholdings_amount,t.experience,t.will_relocate,t.ethnicity,t.gender,t.veteran,t.disability,t.is_deleted,t.raw_json];
     },
   },
 
@@ -1927,6 +1948,350 @@ var SYNC_ENTITIES = {
 };
 
 /**
+ * Bullhorn search dates are Lucene strings (yyyyMMdd), the same form the
+ * dashboard's own candidate searches use. Epoch milliseconds sort in front of
+ * every year-2xxx value, so a range [epoch TO *] matches the entire index.
+ * That is why every 5-minute candidate pass re-upserted all ~1,080 rows.
+ */
+function luceneDay(ms) {
+  var d = new Date(ms);
+  function two(n) { return (n < 10 ? "0" : "") + n; }
+  return String(d.getUTCFullYear()) + two(d.getUTCMonth() + 1) + two(d.getUTCDate());
+}
+
+/** Parenthesize a clause once. A base query that is already one group stays as-is. */
+function wrapClause(q) {
+  q = String(q || "").trim();
+  if (!q) return "()";
+  if (q.charAt(0) === "(" && q.charAt(q.length - 1) === ")") {
+    var depth = 0;
+    var wrapsAll = true;
+    for (var i = 0; i < q.length; i++) {
+      var ch = q.charAt(i);
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth < 0 || (depth === 0 && i !== q.length - 1)) { wrapsAll = false; break; }
+      }
+    }
+    if (wrapsAll && depth === 0) return q;
+  }
+  return "(" + q + ")";
+}
+
+function buildSyncQuery(config, syncType, lastIncrementalMs) {
+  var q = config.baseQuery;
+  if (syncType === "incremental" && lastIncrementalMs) {
+    var since = lastIncrementalMs - 60000;
+    var field = config.incrementalField || "dateLastModified";
+    if (config.queryField === "query") {
+      q = wrapClause(q) + " AND " + field + ":[" + luceneDay(since) + " TO *]";
+    } else {
+      q = wrapClause(q) + " AND " + field + " >= " + since;
+    }
+  }
+  return q;
+}
+
+function isDeletedRecord(r) {
+  if (!r) return false;
+  var v = r.isDeleted;
+  return v === true || v === 1 || v === "true" || v === "1";
+}
+
+// Count probes. `either` is the widest boolean "not deleted" clause; `all`
+// is every candidate in the search index, deleted included.
+var CANDIDATE_PROBES = [
+  { id: "zero", query: "isDeleted:0" },
+  { id: "false", query: "isDeleted:false" },
+  { id: "either", query: "(isDeleted:false OR isDeleted:0)" },
+  { id: "deleted", query: "(isDeleted:true OR isDeleted:1)" },
+  { id: "all", query: "id:[1 TO *]" },
+];
+
+/**
+ * Pick how to read candidates.
+ * totals: { zero, false, either, deleted, all } — numbers, or null when a probe failed.
+ * If the id index is materially larger than (best not-deleted boolean + deleted),
+ * the boolean clause is missing people. Walk the index and trust each record's
+ * isDeleted field instead of the search token.
+ */
+function chooseCandidatePopulation(totals) {
+  totals = totals || {};
+  function num(key) {
+    var v = totals[key];
+    return typeof v === "number" && isFinite(v) && v >= 0 ? v : null;
+  }
+  var options = [
+    { id: "either", total: num("either"), query: "(isDeleted:false OR isDeleted:0)" },
+    { id: "false", total: num("false"), query: "isDeleted:false" },
+    { id: "zero", total: num("zero"), query: "isDeleted:0" },
+  ].filter(function (o) { return o.total != null; });
+  options.sort(function (a, b) { return b.total - a.total || (a.id === "either" ? -1 : 1); });
+  var best = options[0] || { id: "zero", total: 0, query: "isDeleted:0" };
+  var all = num("all");
+  var deleted = num("deleted");
+  var deletedCount = deleted == null ? 0 : deleted;
+  if (all == null) {
+    return {
+      mode: "query", query: best.query, queryId: best.id, filterDeleted: false,
+      total: best.total, booleanTotal: best.total, deletedTotal: deletedCount, idTotal: null, unexplained: null,
+    };
+  }
+  var unexplained = all - best.total - deletedCount;
+  if (unexplained > Math.max(50, Math.round(all * 0.05))) {
+    return {
+      mode: "scan", query: "id:[1 TO *]", queryId: "all", filterDeleted: true,
+      total: all, booleanTotal: best.total, deletedTotal: deletedCount, idTotal: all, unexplained: unexplained,
+    };
+  }
+  return {
+    mode: "query", query: best.query, queryId: best.id, filterDeleted: false,
+    total: best.total, booleanTotal: best.total, deletedTotal: deletedCount, idTotal: all, unexplained: unexplained,
+  };
+}
+
+/**
+ * A walk that reaches the reported total with no page or upsert errors is finished.
+ * Reconcile (delete ids this walk did not see) only when it started at offset 0.
+ * A resumed tail does not contain the earlier ids, so it must not delete them.
+ */
+function candidateBackfillResult(run) {
+  var finished = !!(run && run.complete && run.total > 0 && run.start >= run.total && !run.upsertErrors);
+  return { finished: finished, reconcile: finished && !!run.fromStart };
+}
+
+function shouldBackfillCandidates(have, choice, state, force) {
+  if (force) return true;
+  if (!choice || !choice.total) return false;
+  var next = state && state.backfill_next != null ? Number(state.backfill_next) : 0;
+  if (next > 0 && state.backfill_query === choice.query) return true;
+  if (choice.mode === "query") return have < choice.total * 0.9;
+  if (state && !(next > 0) && state.backfill_query === choice.query && state.last_full_sync) return false;
+  return have < (choice.idTotal || choice.total) * 0.9;
+}
+
+function assessCandidateMirror(cached, population) {
+  if (cached == null || !population) return { status: "unknown", drift: null, detail: "" };
+  if (population.mode === "scan") {
+    var boolT = population.booleanTotal || 0;
+    if (cached > boolT * 1.05) {
+      return {
+        status: "ok",
+        drift: cached - boolT,
+        detail: "isDeleted:0 (and isDeleted:false) undercount the search index; the sync walks id:[1 TO *] and keeps records whose isDeleted field is not true",
+      };
+    }
+    return {
+      status: "warn",
+      drift: cached - (population.idTotal || 0),
+      detail: "candidate backfill has not landed the people the isDeleted search misses",
+    };
+  }
+  var live = population.total || 0;
+  var drift = cached - live;
+  var pct = live ? Math.abs(drift) / live : (cached ? 1 : 0);
+  var status = drift === 0 ? "ok" : pct <= 0.02 ? "ok" : pct <= 0.1 ? "warn" : "error";
+  return { status: status, drift: drift, detail: "" };
+}
+
+var _candidatePopulation = null;
+var _backfillRunning = false;
+var _syncTurn = null;
+var CANDIDATE_PAGE = 80;
+var CANDIDATE_PAGE_PAUSE_MS = 300;
+
+function sleepMs(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+
+async function takeSyncTurn(who) {
+  while (_syncTurn && _syncTurn !== who) await sleepMs(50);
+  _syncTurn = who;
+}
+function releaseSyncTurn(who) {
+  if (_syncTurn === who) _syncTurn = null;
+}
+
+function applyCandidatePopulation(choice) {
+  _candidatePopulation = choice;
+  if (!choice) return;
+  SYNC_ENTITIES.candidates.baseQuery = choice.query;
+  SYNC_ENTITIES.candidates.dropDeleted = !!choice.filterDeleted;
+}
+
+async function ensureCandidatePopulation() {
+  if (_candidatePopulation) return _candidatePopulation;
+  if (!_bhFetch) return null;
+  var totals = {};
+  for (var i = 0; i < CANDIDATE_PROBES.length; i++) {
+    var probe = CANDIDATE_PROBES[i];
+    try {
+      var r = await _bhFetch("search/Candidate", { query: probe.query, fields: "id", count: 1, sort: "id" });
+      totals[probe.id] = typeof r.total === "number" ? r.total : (r.data || []).length;
+    } catch (e) {
+      totals[probe.id] = null;
+      console.warn("[Sync] Candidate probe " + probe.id + " failed:", e.message);
+    }
+  }
+  var choice = chooseCandidatePopulation(totals);
+  applyCandidatePopulation(choice);
+  console.log("[Sync] Candidate population " + choice.mode + " via " + choice.query +
+    " (boolean " + choice.booleanTotal + ", deleted " + choice.deletedTotal +
+    ", index " + choice.idTotal + ", unexplained " + choice.unexplained + ")");
+  return choice;
+}
+
+async function fetchCandidatePage(queryText, start, count) {
+  var attempt = 0;
+  while (true) {
+    try {
+      return await _bhFetch("search/Candidate", {
+        query: queryText,
+        fields: CANDIDATE_FIELDS,
+        count: count,
+        start: start,
+        sort: "id",
+      });
+    } catch (e) {
+      attempt++;
+      if (attempt >= 5) throw e;
+      var wait = 1000 * Math.pow(2, attempt);
+      console.warn("[Sync] Candidate page start=" + start + " failed (" + e.message + "), retry in " + wait + "ms");
+      await sleepMs(wait);
+    }
+  }
+}
+
+async function reconcileEntity(entityType, seenIds) {
+  var beforeRes = await getOne("SELECT COUNT(*) as count FROM " + entityType);
+  var before = beforeRes ? parseInt(beforeRes.count, 10) : 0;
+  if (before > 0 && seenIds.length < before * 0.5) {
+    console.warn("[Sync] Reconcile " + entityType + " SKIPPED — pull returned " +
+      seenIds.length + " records but " + before + " rows are cached; " +
+      "looks like a partial response, not a deletion.");
+    return { skipped: true, removed: 0 };
+  }
+  var delRes = await query("DELETE FROM " + entityType + " WHERE id <> ALL($1::int[])", [seenIds]);
+  var removed = delRes && delRes.rowCount ? delRes.rowCount : 0;
+  if (removed > 0) {
+    console.log("[Sync] Reconcile " + entityType + ": removed " + removed + " orphaned row(s) no longer in Bullhorn");
+  }
+  return { skipped: false, removed: removed };
+}
+
+/**
+ * Walk every candidate in the chosen population, one page at a time.
+ * Releases the sync turn between pages so the 5-minute incremental can run.
+ * Does not reconcile unless this process walked from offset 0 to the end
+ * with no page errors — a partial walk must not delete the rows it has not reached.
+ */
+async function backfillCandidates(opts) {
+  opts = opts || {};
+  if (!dbReady || !_bhFetch) return;
+  if (_backfillRunning) return;
+  _backfillRunning = true;
+  try {
+    await takeSyncTurn("backfill");
+    var choice;
+    try { choice = await ensureCandidatePopulation(); }
+    finally { releaseSyncTurn("backfill"); }
+    if (!choice) return;
+    var haveRes = await getOne("SELECT COUNT(*)::int AS n FROM candidates");
+    var have = haveRes ? Number(haveRes.n) : 0;
+    var state = await getOne("SELECT backfill_next, backfill_query, last_full_sync FROM sync_state WHERE entity_type=$1", ["candidates"]);
+    if (!shouldBackfillCandidates(have, choice, state, !!opts.force)) {
+      console.log("[Sync] Candidate backfill not needed (" + have + " rows, population " + choice.mode + " " + (choice.total || 0) + ")");
+      return;
+    }
+    var total = choice.total || 0;
+    if (!total) {
+      console.warn("[Sync] Candidate backfill skipped — probe returned no total");
+      return;
+    }
+    var start = 0;
+    if (!opts.force && state && Number(state.backfill_next) > 0 && state.backfill_query === choice.query) {
+      start = Number(state.backfill_next);
+    }
+    var fromStart = start === 0;
+    var seenIds = [];
+    var seenPage = {};
+    var kept = 0;
+    var upsertErrors = 0;
+    var complete = true;
+    console.log("[Sync] Candidate backfill " + choice.query + " from " + start + " of " + total + (choice.filterDeleted ? " (dropping isDeleted records)" : ""));
+    while (start < total) {
+      await takeSyncTurn("backfill");
+      var data;
+      try {
+        var page = await fetchCandidatePage(choice.query, start, CANDIDATE_PAGE);
+        data = page.data || [];
+      } catch (e) {
+        console.error("[Sync] Candidate backfill stopped at " + start + ":", e.message);
+        complete = false;
+        releaseSyncTurn("backfill");
+        break;
+      }
+      if (!data.length) {
+        complete = false;
+        releaseSyncTurn("backfill");
+        console.warn("[Sync] Candidate backfill got an empty page at " + start + "/" + total);
+        break;
+      }
+      var firstId = data[0] && data[0].id;
+      if (firstId != null && seenPage[firstId]) {
+        complete = false;
+        releaseSyncTurn("backfill");
+        console.warn("[Sync] Candidate page repeated id " + firstId + " at start=" + start + " — stopping without reconcile");
+        break;
+      }
+      var config = SYNC_ENTITIES.candidates;
+      for (var i = 0; i < data.length; i++) {
+        var rec = data[i];
+        if (rec && rec.id != null) seenPage[rec.id] = true;
+        if (config.dropDeleted && isDeletedRecord(rec)) continue;
+        try {
+          var transformed = config.transform(rec);
+          await query(config.upsertSql, config.paramsFn(transformed));
+          if (rec && rec.id != null) seenIds.push(rec.id);
+          kept++;
+        } catch (err) {
+          upsertErrors++;
+          console.error("[Sync] Error upserting candidates #" + (rec && rec.id) + ":", err.message);
+        }
+      }
+      start += data.length;
+      await query(
+        "INSERT INTO sync_state (entity_type, backfill_next, backfill_query) VALUES ('candidates', $1, $2) ON CONFLICT (entity_type) DO UPDATE SET backfill_next=$1, backfill_query=$2",
+        [start, choice.query]
+      );
+      releaseSyncTurn("backfill");
+      await sleepMs(CANDIDATE_PAGE_PAUSE_MS);
+    }
+    var outcome = candidateBackfillResult({
+      complete: complete, fromStart: fromStart, start: start, total: total, upsertErrors: upsertErrors,
+    });
+    if (outcome.finished) {
+      if (outcome.reconcile && seenIds.length > 0) {
+        await takeSyncTurn("backfill");
+        try { await reconcileEntity("candidates", seenIds); }
+        finally { releaseSyncTurn("backfill"); }
+      }
+      await query(
+        "UPDATE sync_state SET backfill_next=NULL, backfill_query=$1, last_full_sync=NOW(), last_incremental_sync=NOW(), last_sync_record_count=$2, total_records=(SELECT COUNT(*)::int FROM candidates) WHERE entity_type='candidates'",
+        [choice.query, kept]
+      );
+      console.log("[Sync] Candidate backfill complete: kept " + kept + " of index " + total);
+    } else {
+      console.log("[Sync] Candidate backfill paused at " + start + "/" + total + " (kept " + kept + " this run, errors " + upsertErrors + ")");
+    }
+  } catch (err) {
+    console.error("[Sync] Candidate backfill failed:", err.message);
+  } finally {
+    releaseSyncTurn("backfill");
+    _backfillRunning = false;
+  }
+}
+
+/**
  * Sync a single entity type from Bullhorn → Postgres
  * @param {string} entityType - key in SYNC_ENTITIES
  * @param {string} syncType - "full" or "incremental"
@@ -1935,26 +2300,25 @@ async function syncEntity(entityType, syncType) {
   if (!dbReady || !_bhFetchAll) return;
   var config = SYNC_ENTITIES[entityType];
   if (!config) throw new Error("Unknown entity: " + entityType);
+  // The candidate full pass is paged in the background so it does not hold
+  // the 5-minute loop or a single Railway request open for the whole index.
+  if (entityType === "candidates" && syncType === "full") {
+    return backfillCandidates({ force: true });
+  }
 
   var logId = await startSyncLog(entityType, syncType);
 
   try {
-    // Build query — for incremental, only fetch recently modified records
-    var queryOrWhere = config.baseQuery;
+    var state = null;
     if (syncType === "incremental") {
-      var state = await getOne("SELECT * FROM sync_state WHERE entity_type=$1", [entityType]);
-      if (state && state.last_incremental_sync) {
-        var sinceMs = new Date(state.last_incremental_sync).getTime() - 60000; // 1 min overlap for safety
-        var incField = config.incrementalField || "dateLastModified";
-        if (config.queryField === "query") {
-          // search/ endpoint uses Lucene syntax
-          queryOrWhere += " AND " + incField + ":[" + sinceMs + " TO *]";
-        } else {
-          // query/ endpoint uses SQL-like syntax
-          queryOrWhere += " AND " + incField + " >= " + sinceMs;
-        }
-      }
+      state = await getOne("SELECT * FROM sync_state WHERE entity_type=$1", [entityType]);
     }
+    var lastMs = state && state.last_incremental_sync ? new Date(state.last_incremental_sync).getTime() : null;
+    // A missing watermark used to mean "pull the whole query". For candidates
+    // that query is the id index (~6,600). The backfill owns that walk; the
+    // 5-minute pass only needs people touched today.
+    if (entityType === "candidates" && syncType === "incremental" && !lastMs) lastMs = Date.now();
+    var queryOrWhere = buildSyncQuery(config, syncType, lastMs);
 
     var params = {
       fields: config.fields,
@@ -1974,6 +2338,7 @@ async function syncEntity(entityType, syncType) {
     var synced = 0;
     var seenIds = [];
     for (var i = 0; i < records.length; i++) {
+      if (config.dropDeleted && isDeletedRecord(records[i])) continue;
       try {
         var transformed = config.transform(records[i]);
         await query(config.upsertSql, config.paramsFn(transformed));
@@ -1991,28 +2356,14 @@ async function syncEntity(entityType, syncType) {
     // stale orphans and inflate counts (e.g. candidates stuck at status='Active').
     // Remove them here. Guarded so a transient/empty API response can't wipe the table.
     if (syncType === "full" && seenIds.length > 0) {
-      try {
-        // Extra guard: if the live pull came back with far fewer records than
-        // we already hold, treat it as a partial/degraded API response rather
-        // than a mass deletion in Bullhorn, and skip the reconcile.
-        var beforeRes = await getOne("SELECT COUNT(*) as count FROM " + entityType);
-        var before = beforeRes ? parseInt(beforeRes.count) : 0;
-        if (before > 0 && seenIds.length < before * 0.5) {
-          console.warn("[Sync] Reconcile " + entityType + " SKIPPED — pull returned " +
-            seenIds.length + " records but " + before + " rows are cached; " +
-            "looks like a partial response, not a deletion.");
-          throw new Error("reconcile-skipped");
-        }
-        var delRes = await query(
-          "DELETE FROM " + entityType + " WHERE id <> ALL($1::int[])",
-          [seenIds]
-        );
-        var removed = delRes && delRes.rowCount ? delRes.rowCount : 0;
-        if (removed > 0) {
-          console.log("[Sync] Reconcile " + entityType + ": removed " + removed + " orphaned row(s) no longer in Bullhorn");
-        }
-      } catch (reconErr) {
-        if (reconErr.message !== "reconcile-skipped") {
+      var reported = typeof result.total === "number" && result.total > 0 ? result.total : seenIds.length;
+      if (seenIds.length < reported * 0.95) {
+        console.warn("[Sync] Reconcile " + entityType + " SKIPPED — stored " +
+          seenIds.length + " of " + reported + " reported records");
+      } else {
+        try {
+          await reconcileEntity(entityType, seenIds);
+        } catch (reconErr) {
           console.error("[Sync] Reconcile " + entityType + " failed (non-fatal):", reconErr.message);
         }
       }
@@ -2065,6 +2416,7 @@ async function fullSync() {
   var start = Date.now();
   var entities = Object.keys(SYNC_ENTITIES);
   for (var i = 0; i < entities.length; i++) {
+    if (entities[i] === "candidates") continue; // paged backfill below, not in this loop
     try {
       await syncEntity(entities[i], "full");
     } catch (err) {
@@ -2072,8 +2424,13 @@ async function fullSync() {
       // Continue with other entities
     }
   }
+  // Candidate index walk continues after this function returns so a nightly
+  // or boot full pass is not stuck open for every candidate page.
+  backfillCandidates({ force: true }).catch(function (err) {
+    console.error("[Sync] Candidate backfill failed to start:", err.message);
+  });
   var elapsed = ((Date.now() - start) / 1000).toFixed(1);
-  console.log("[Sync] Full sync complete in " + elapsed + "s");
+  console.log("[Sync] Full sync complete in " + elapsed + "s (candidate backfill continues in the background)");
   lastSyncStatus = { time: new Date(), success: true, message: "Full sync completed in " + elapsed + "s" };
 }
 
@@ -2123,6 +2480,30 @@ async function startSyncLoop(intervalMs) {
   if (!dbReady) return;
   intervalMs = intervalMs || 5 * 60 * 1000; // default 5 minutes
 
+  try { await ensureCandidatePopulation(); }
+  catch (err) { console.warn("[Sync] Candidate population probe failed:", err.message); }
+
+  // The interval is armed before the boot pass. A candidate index walk must
+  // not postpone the 5-minute loop, and the loop waits its turn between pages.
+  syncInterval = setInterval(async function () {
+    if (_fullInFlight) return; // the nightly full pass is already touching every table
+    try {
+      await takeSyncTurn("incremental");
+      try { await incrementalSync(); }
+      finally { releaseSyncTurn("incremental"); }
+    } catch (err) {
+      console.error("[Sync] Scheduled sync error:", err.message);
+      lastSyncStatus = { time: new Date(), success: false, message: "Sync failed: " + err.message };
+    }
+  }, intervalMs);
+
+  // Nightly FULL sync. Incremental syncs only fetch records whose dateLastModified
+  // moved, so they can never see a deletion (the record stops matching the query)
+  // and they miss entities whose timestamps don't update. Without a recurring full
+  // pass, Neon drifted: +39 submissions and +4 candidates that Bullhorn had deleted,
+  // -145 appointments and -10 corporate users it never picked up (2026-10-12 audit).
+  scheduleNightlyFullSync();
+
   // Backfill any entity that has never completed a FULL sync.
   //
   // This check used to look at sync_state as a whole ("is the table empty?"),
@@ -2135,56 +2516,53 @@ async function startSyncLoop(intervalMs) {
   var fullRows = await getAll("SELECT entity_type FROM sync_state WHERE last_full_sync IS NOT NULL");
   var haveFull = {};
   fullRows.forEach(function (r) { haveFull[r.entity_type] = true; });
-  var needBackfill = allEntities.filter(function (e) { return !haveFull[e]; });
+  var needBackfill = allEntities.filter(function (e) { return e !== "candidates" && !haveFull[e]; });
+  var neverSynced = allEntities.filter(function (e) { return e !== "candidates" && !haveFull[e]; }).length === allEntities.filter(function (e) { return e !== "candidates"; }).length;
 
-  if (needBackfill.length === allEntities.length) {
-    console.log("[Sync] No previous full sync found — running full sync");
-    await fullSync();
-  } else if (needBackfill.length > 0) {
-    console.log("[Sync] Backfilling entities with no full sync on record: " + needBackfill.join(", "));
-    for (var bi = 0; bi < needBackfill.length; bi++) {
-      try {
-        await syncEntity(needBackfill[bi], "full");
-      } catch (err) {
-        console.error("[Sync] Backfill of " + needBackfill[bi] + " failed:", err.message);
+  _fullInFlight = true;
+  try {
+    if (neverSynced) {
+      console.log("[Sync] No previous full sync found — running full sync");
+      await fullSync();
+    } else if (needBackfill.length > 0) {
+      console.log("[Sync] Backfilling entities with no full sync on record: " + needBackfill.join(", "));
+      for (var bi = 0; bi < needBackfill.length; bi++) {
+        try {
+          await syncEntity(needBackfill[bi], "full");
+        } catch (err) {
+          console.error("[Sync] Backfill of " + needBackfill[bi] + " failed:", err.message);
+        }
+      }
+      await takeSyncTurn("incremental");
+      try { await incrementalSync(); }
+      finally { releaseSyncTurn("incremental"); }
+    } else {
+      // Stale full sync (nightly missed — deploy outage, crash, or the pre-2026-10-12
+      // build that never scheduled one): do the full pass now rather than waiting.
+      var stale = await getOne("SELECT MIN(last_full_sync) AS oldest FROM sync_state WHERE entity_type <> 'candidates'");
+      var oldest = stale && stale.oldest ? new Date(stale.oldest).getTime() : 0;
+      if (!oldest || Date.now() - oldest > STALE_FULL_SYNC_MS) {
+        console.log("[Sync] Oldest full sync is " + (oldest ? Math.round((Date.now() - oldest) / 3600000) + "h old" : "missing") + " — running full sync now");
+        await fullSync();
+      } else {
+        console.log("[Sync] All entities have a recent full sync — running incremental");
+        await takeSyncTurn("incremental");
+        try { await incrementalSync(); }
+        finally { releaseSyncTurn("incremental"); }
       }
     }
-    await incrementalSync();
-  } else {
-    // Stale full sync (nightly missed — deploy outage, crash, or the pre-2026-10-12
-    // build that never scheduled one): do the full pass now rather than waiting.
-    var stale = await getOne("SELECT MIN(last_full_sync) AS oldest FROM sync_state");
-    var oldest = stale && stale.oldest ? new Date(stale.oldest).getTime() : 0;
-    if (Date.now() - oldest > STALE_FULL_SYNC_MS) {
-      console.log("[Sync] Oldest full sync is " + Math.round((Date.now() - oldest) / 3600000) + "h old — running full sync now");
-      _fullInFlight = true;
-      try { await fullSync(); } finally { _fullInFlight = false; }
-    } else {
-      console.log("[Sync] All entities have a recent full sync — running incremental");
-      await incrementalSync();
-    }
+  } finally {
+    _fullInFlight = false;
   }
-
-  // Schedule incremental syncs
-  syncInterval = setInterval(async function () {
-    if (_fullInFlight) return; // the nightly full pass is already touching every table
-    try {
-      await incrementalSync();
-    } catch (err) {
-      console.error("[Sync] Scheduled sync error:", err.message);
-      lastSyncStatus = { time: new Date(), success: false, message: "Sync failed: " + err.message };
-    }
-  }, intervalMs);
 
   // Anura Connect CRM archive (schema crm): incremental every 15 min, full reload Sunday nights.
   scheduleCrmSync();
 
-  // Nightly FULL sync. Incremental syncs only fetch records whose dateLastModified
-  // moved, so they can never see a deletion (the record stops matching the query)
-  // and they miss entities whose timestamps don't update. Without a recurring full
-  // pass, Neon drifted: +39 submissions and +4 candidates that Bullhorn had deleted,
-  // -145 appointments and -10 corporate users it never picked up (2026-10-12 audit).
-  scheduleNightlyFullSync();
+  // Candidate pages run beside the 5-minute loop. fullSync already started a
+  // forced walk; this call resumes one when the boolean search undercounted.
+  backfillCandidates({ force: false }).catch(function (err) {
+    console.error("[Sync] Candidate backfill failed to start:", err.message);
+  });
 
   console.log("[Sync] Sync loop started — incremental every " + (intervalMs / 1000) + "s, full nightly at " + FULL_SYNC_UTC_HOUR + ":00 UTC");
 }
@@ -2361,7 +2739,9 @@ function fmtMoney(v) {
  */
 async function dbSearchCandidates(filters) {
   if (!dbReady) return null;
-  var conditions = ["1=1"];
+  // Deleted rows stay out of the candidate list. Status filters stay here too:
+  // the sync stores every non-deleted candidate, including Inactive.
+  var conditions = ["(is_deleted IS NOT TRUE)"];
   var params = [];
   var n = 0;
 
@@ -2697,9 +3077,9 @@ async function dbGetDashboard() {
 
   // New candidates (last 7 days)
   var newCandRows = (await query(
-    "SELECT * FROM candidates WHERE date_added >= $1 ORDER BY date_added DESC LIMIT 10", [past7]
+    "SELECT * FROM candidates WHERE date_added >= $1 AND (is_deleted IS NOT TRUE) ORDER BY date_added DESC LIMIT 10", [past7]
   )).rows;
-  var newCandTotal = await getOne("SELECT COUNT(*) as count FROM candidates WHERE date_added >= $1", [past7]);
+  var newCandTotal = await getOne("SELECT COUNT(*) as count FROM candidates WHERE date_added >= $1 AND (is_deleted IS NOT TRUE)", [past7]);
 
   // Expiring placements (next 35 days) — exclude direct-hire/permanent (they don't expire)
   var expRows = (await query(
@@ -2765,8 +3145,8 @@ async function dbGetDashboard() {
  */
 async function dbGetSmartLists() {
   if (!dbReady) return null;
-  var rows = (await query("SELECT * FROM candidates WHERE custom_text1 IS NOT NULL AND custom_text1 != '' ORDER BY date_last_modified DESC NULLS LAST")).rows;
-  var totalRes = await getOne("SELECT COUNT(*) as count FROM candidates WHERE custom_text1 IS NOT NULL AND custom_text1 != ''");
+  var rows = (await query("SELECT * FROM candidates WHERE custom_text1 IS NOT NULL AND custom_text1 != '' AND (is_deleted IS NOT TRUE) ORDER BY date_last_modified DESC NULLS LAST")).rows;
+  var totalRes = await getOne("SELECT COUNT(*) as count FROM candidates WHERE custom_text1 IS NOT NULL AND custom_text1 != '' AND (is_deleted IS NOT TRUE)");
 
   var lists = {};
   rows.forEach(function (c) {
@@ -3491,6 +3871,16 @@ module.exports = {
   startSyncLoop: startSyncLoop,
   msUntilNextUtcHour: msUntilNextUtcHour,
   msUntilNextUtcDow: msUntilNextUtcDow,
+  SYNC_ENTITIES: SYNC_ENTITIES,
+  luceneDay: luceneDay,
+  buildSyncQuery: buildSyncQuery,
+  isDeletedRecord: isDeletedRecord,
+  chooseCandidatePopulation: chooseCandidatePopulation,
+  shouldBackfillCandidates: shouldBackfillCandidates,
+  candidateBackfillResult: candidateBackfillResult,
+  assessCandidateMirror: assessCandidateMirror,
+  getCandidatePopulation: function () { return _candidatePopulation; },
+  ensureCandidatePopulation: ensureCandidatePopulation,
   stopSyncLoop: stopSyncLoop,
   getSyncStatus: getSyncStatus,
   getSyncDetails: getSyncDetails,

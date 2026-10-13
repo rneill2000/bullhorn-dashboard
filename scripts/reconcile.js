@@ -74,7 +74,7 @@ async function searchNewest(entity, query) {
 }
 
 const ENTITIES = [
-  { table: "candidates",      live: () => searchTotal("Candidate", "isDeleted:0"),   deleted: () => searchTotal("Candidate", "isDeleted:1"), newest: () => searchNewest("Candidate", "isDeleted:0") },
+  { table: "candidates",      live: () => searchTotal("Candidate", "(isDeleted:false OR isDeleted:0)"),   deleted: () => searchTotal("Candidate", "(isDeleted:true OR isDeleted:1)"), newest: () => searchNewest("Candidate", "(isDeleted:false OR isDeleted:0)") },
   { table: "jobs",            live: () => searchTotal("JobOrder", "isDeleted:0"),    deleted: () => searchTotal("JobOrder", "isDeleted:1"),  newest: () => searchNewest("JobOrder", "isDeleted:0") },
   { table: "notes",           live: () => searchTotal("Note", "isDeleted:false"),    deleted: () => searchTotal("Note", "isDeleted:true"),   newest: () => searchNewest("Note", "isDeleted:false") },
   { table: "opportunities",   live: () => searchTotal("Opportunity", "isDeleted:0"), deleted: () => searchTotal("Opportunity", "isDeleted:1"), newest: () => searchNewest("Opportunity", "isDeleted:0") },
@@ -119,6 +119,10 @@ async function main() {
         row.bh_live = await e.live(); row.bh_deleted = await e.deleted(); row.bh_newest = await e.newest();
       }
     } catch (err) { row.status = "error"; row.notes.push("Bullhorn: " + err.message); }
+    if (e.table === "candidates") {
+      try { row.notes.push("search id:[1 TO *] " + await searchTotal("Candidate", "id:[1 TO *]") + " (isDeleted:0 alone misses candidates whose index token is not 0)"); }
+      catch (err) { row.notes.push("id index: " + err.message); }
+    }
 
     if (!tables.has(e.table)) { row.status = row.status === "error" ? "error" : "not-mirrored"; row.notes.push("no Neon table"); rows.push(row); continue; }
     const cols = new Set((await q("select column_name from information_schema.columns where table_schema='public' and table_name=$1", [e.table])).map(r => r.column_name));
