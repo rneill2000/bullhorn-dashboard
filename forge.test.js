@@ -2204,7 +2204,7 @@ test("F46: /bill-rate writes customText10 to the Bullhorn submission; the draft 
 });
 
 /* ── F48: send a submittal back to the recruiter for more information ── */
-test("F48: /return notes the candidate, tasks the recruiter, emails the reason, marks the queue row; a new draft resolves it", async function () {
+test("F48: /return notes the candidate, emails the recruiter the reason, marks the queue row; a new draft resolves it", async function () {
   const writes = [], sent = [], sql = [];
   let returnsRows = [];
   const app = express();
@@ -2248,16 +2248,12 @@ test("F48: /return notes the candidate, tasks the recruiter, emails the reason, 
     assert.equal(r.status, 200, JSON.stringify(r.json));
     assert.equal(r.json.returnedTo.email, "jennifer@anuraconnect.com", "goes to whoever submitted it in Bullhorn");
     assert.equal(r.json.emailed, true);
-    assert.equal(r.json.taskId, 501);
+    assert.ok(!writes.some(function (w) { return w.endpoint === "entity/Task"; }), "no Bullhorn task — email only");
     const note = writes.find(function (w) { return w.endpoint === "entity/Note"; });
     assert.ok(note, "a Bullhorn note is written");
     assert.match(note.body.comments, /^Submittal returned for more info by Rachel Neill: Why Me is missing/);
     assert.equal(note.body.personReference.id, 7);
     assert.ok(writes.some(function (w) { return w.endpoint === "entity/Note/900/jobOrders/9"; }), "note is linked to the job");
-    const task = writes.find(function (w) { return w.endpoint === "entity/Task"; });
-    assert.equal(task.body.owner.id, 77);
-    assert.match(task.body.subject, /Submittal needs info: Jack Corbell for Epic HB Analyst at Memorial Hermann/);
-    assert.equal(task.body.candidate.id, 7);
     assert.equal(sent.length, 1);
     assert.equal(sent[0].to[0].email, "jennifer@anuraconnect.com");
     assert.match(sent[0].subject, /^Needs info before it goes out: Jack Corbell/);

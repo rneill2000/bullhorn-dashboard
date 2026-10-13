@@ -2934,9 +2934,8 @@ function registerForge(app, deps) {
 
   /**
    * Send a submittal back to the recruiter for more information. Nothing goes to the client.
-   * Writes a Bullhorn note on the candidate (linked to the job), a Bullhorn task for the
-   * recruiter, emails them the reason, and marks the queue row "Returned" until a new draft
-   * is created or someone clears it.
+   * Writes a Bullhorn note on the candidate (linked to the job), emails the recruiter the
+   * reason, and marks the queue row "Returned" until a new draft is created or someone clears it.
    */
   app.post("/api/forge/submissions/:id/return", async function (req, res) {
     try {
@@ -2956,7 +2955,7 @@ function registerForge(app, deps) {
       const jobTitle = row.job_title_live || row.job_title || "the role";
       const summary = who + " for " + jobTitle + (client.clientName ? " at " + client.clientName : "");
       const comments = "Submittal returned for more info by " + actor + ": " + reason;
-      let noteId = null, taskId = null;
+      let noteId = null;
       if (row.candidate_id) {
         const noteBody = { personReference: { id: Number(row.candidate_id) }, action: "Other", comments: comments, dateAdded: Date.now() };
         if (user && user.id) noteBody.commentingPerson = { id: Number(user.id) };
@@ -2967,23 +2966,6 @@ function registerForge(app, deps) {
           noteId = result && (result.changedEntityId || result.id) || null;
           if (noteId && row.job_id) { try { await bhWrite("entity/Note/" + noteId + "/jobOrders/" + row.job_id, {}, "PUT"); } catch (e) {} }
         } catch (e) { console.log("[Forge] return note failed:", e.message); }
-      }
-      if (recruiter.id) {
-        try {
-          const taskBody = {
-            subject: "Submittal needs info: " + summary,
-            notes: reason + "\n\nReturned by " + actor + " from Submittal Forge.",
-            owner: { id: Number(recruiter.id) },
-            type: "Submittal",
-            dateBegin: Date.now(),
-            dateEnd: Date.now() + 24 * 3600 * 1000,
-            isCompleted: false,
-          };
-          if (row.candidate_id) taskBody.candidate = { id: Number(row.candidate_id) };
-          if (row.job_id) taskBody.jobOrder = { id: Number(row.job_id) };
-          const t = await bhWrite("entity/Task", taskBody, "PUT");
-          taskId = t && (t.changedEntityId || t.id) || null;
-        } catch (e) { console.log("[Forge] return task failed:", e.message); }
       }
       let emailed = [];
       if (notifier && recruiter.email) {
@@ -2999,7 +2981,7 @@ function registerForge(app, deps) {
         "INSERT INTO submittal_forge_returns (submission_id, reason, returned_to, returned_to_email, created_by) VALUES ($1,$2,$3,$4,$5)",
         [id, reason, recruiter.name || "", recruiter.email || "", user ? (user.email || user.name || "") : ""]);
       console.log("[Forge] submission " + id + " returned to " + recruiter.email + " by " + actor);
-      res.json({ ok: true, returnedTo: { name: recruiter.name, email: recruiter.email }, noteId: noteId, taskId: taskId, emailed: emailed.some(function (r) { return r.success; }) });
+      res.json({ ok: true, returnedTo: { name: recruiter.name, email: recruiter.email }, noteId: noteId, emailed: emailed.some(function (r) { return r.success; }) });
     } catch (e) {
       console.error("[Forge] return", e.message);
       res.status(e.status || 500).json({ error: e.message });

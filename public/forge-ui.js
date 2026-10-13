@@ -889,7 +889,7 @@ async function forgeReturn() {
     var r = await forgeSend("forge/submissions/" + _forge.selected + "/return", { reason: reason.trim() });
     var to = r.returnedTo ? (r.returnedTo.name || r.returnedTo.email) : "the recruiter";
     var bits = [];
-    if (r.emailed) bits.push("emailed"); if (r.taskId) bits.push("Bullhorn task created"); if (r.noteId) bits.push("note added");
+    if (r.emailed) bits.push("emailed"); if (r.noteId) bits.push("note added");
     if (typeof showToast === "function") showToast("Sent back to " + to + (bits.length ? " \u00b7 " + bits.join(", ") : ""));
     if (result) result.innerHTML = '<div class="fg-flag warn">\u21a9 Sent back to ' + esc(to) + '. ' + (bits.length ? esc(bits.join(", ")) + '.' : '') + ' It stays in the queue marked Returned until a new draft is created.</div>';
     var ta = document.getElementById("forge-return-reason"); if (ta) ta.value = "";
