@@ -1931,6 +1931,13 @@ var SYNC_ENTITIES = {
  * @param {string} entityType - key in SYNC_ENTITIES
  * @param {string} syncType - "full" or "incremental"
  */
+/** Bullhorn search date fields are Lucene yyyyMMdd strings (UTC). */
+function luceneDay(ms) {
+  var d = new Date(ms);
+  function two(n) { return (n < 10 ? "0" : "") + n; }
+  return String(d.getUTCFullYear()) + two(d.getUTCMonth() + 1) + two(d.getUTCDate());
+}
+
 async function syncEntity(entityType, syncType) {
   if (!dbReady || !_bhFetchAll) return;
   var config = SYNC_ENTITIES[entityType];
@@ -1947,8 +1954,10 @@ async function syncEntity(entityType, syncType) {
         var sinceMs = new Date(state.last_incremental_sync).getTime() - 60000; // 1 min overlap for safety
         var incField = config.incrementalField || "dateLastModified";
         if (config.queryField === "query") {
-          // search/ endpoint uses Lucene syntax
-          queryOrWhere += " AND " + incField + ":[" + sinceMs + " TO *]";
+          // search/ endpoint uses Lucene syntax, and its date fields are yyyyMMdd strings.
+          // An epoch-ms string sorts before every "2026…" value, so [epoch TO *] matched the
+          // whole index and every 5-minute pass re-upserted every row (found 2026-10-13).
+          queryOrWhere += " AND " + incField + ":[" + luceneDay(sinceMs) + " TO *]";
         } else {
           // query/ endpoint uses SQL-like syntax
           queryOrWhere += " AND " + incField + " >= " + sinceMs;
@@ -3491,6 +3500,7 @@ module.exports = {
   startSyncLoop: startSyncLoop,
   msUntilNextUtcHour: msUntilNextUtcHour,
   msUntilNextUtcDow: msUntilNextUtcDow,
+  luceneDay: luceneDay,
   stopSyncLoop: stopSyncLoop,
   getSyncStatus: getSyncStatus,
   getSyncDetails: getSyncDetails,

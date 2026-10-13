@@ -290,6 +290,8 @@ async function links(names) {
  * dateLastModified (Sendout, lookups) are only refreshed by the weekly full reload. */
 const NO_LAST_MODIFIED = new Set(["Sendout", "Country", "State", "TimeUnit", "Category", "Skill", "Specialty", "BusinessSector", "Certification", "CandidateSource", "Location", "WorkersCompensationRate", "HousingComplex", "Department"]);
 
+function luceneDay(ms) { const d = new Date(ms); const two = n => (n < 10 ? "0" : "") + n; return "" + d.getUTCFullYear() + two(d.getUTCMonth() + 1) + two(d.getUTCDate()); }
+
 async function syncEntity(entity, opts) {
   opts = opts || {};
   if (NO_LAST_MODIFIED.has(entity)) return { entity, skipped: true };
@@ -315,7 +317,7 @@ async function syncEntity(entity, opts) {
   try {
   for (;;) {
     const where = SEARCH_ONLY.has(entity)
-      ? { query: "dateLastModified:[" + sinceMs + " TO *]", start }
+      ? { query: "dateLastModified:[" + luceneDay(sinceMs) + " TO *]", start } // search/ dates are yyyyMMdd strings
       : { where: "dateLastModified>=" + sinceMs + " AND id>" + lastId };
     const r = await fetchPage(entity, fields, where, state);
     const data = r.data || [];
@@ -382,7 +384,7 @@ async function restoreFks() {
   console.log("fks re-added NOT VALID:", ok, "failed:", bad);
 }
 
-module.exports = { plan, convert, rowToColumns, parseInvalidField, SEARCH_ONLY, NO_LAST_MODIFIED, setClient, syncEntity, syncAll, reload, migrate, closePool: async function () { if (pool) { await pool.end(); pool = null; } } };
+module.exports = { plan, convert, rowToColumns, parseInvalidField, luceneDay, SEARCH_ONLY, NO_LAST_MODIFIED, setClient, syncEntity, syncAll, reload, migrate, closePool: async function () { if (pool) { await pool.end(); pool = null; } } };
 
 if (require.main === module) (async () => {
   const [cmd, ...rest] = process.argv.slice(2);

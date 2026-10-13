@@ -20,3 +20,10 @@ test("msUntilNextUtcDow: next Sunday 09:00 UTC", function () {
   const sunLate = Date.UTC(2026, 9, 18, 10, 0); // Sunday after 09:00 → a week out
   assert.strictEqual(msUntilNextUtcDow(0, 9, sunLate), (7 * 24 - 1) * 3600 * 1000);
 });
+
+test("luceneDay: search/ incremental ranges use yyyyMMdd, not epoch ms (epoch matched the whole index)", function () {
+  const { luceneDay } = require("./db");
+  assert.strictEqual(luceneDay(Date.UTC(2026, 9, 12, 23, 59)), "20261012");
+  assert.strictEqual(luceneDay(Date.UTC(2026, 0, 5)), "20260105");
+  assert.strictEqual(require("./crm/scripts/load").luceneDay(Date.UTC(2026, 9, 13)), "20261013");
+});
