@@ -295,6 +295,7 @@ async function syncEntity(entity, opts) {
   if (NO_LAST_MODIFIED.has(entity)) return { entity, skipped: true };
   const m = MODEL[entity];
   await q("CREATE TABLE IF NOT EXISTS crm.sync_state (entity TEXT PRIMARY KEY, last_sync_ms BIGINT NOT NULL, last_run_at TIMESTAMPTZ, last_count INTEGER)");
+  await q("ALTER TABLE crm.sync_state ADD COLUMN IF NOT EXISTS dropped_fields TEXT[]");
   const st = (await q("SELECT * FROM crm.sync_state WHERE entity=$1", [entity])).rows[0];
   const loaded = (await q("SELECT finished_at FROM crm.load_state WHERE entity=$1 AND phase='done'", [entity])).rows[0];
   if (!st && !loaded) return { entity, skipped: true, reason: "not loaded" };
@@ -306,7 +307,10 @@ async function syncEntity(entity, opts) {
   const cols = await tableColumns(p.table);
   const links = m.fields.filter(f => f.joinTable);
   const fields = p.req.concat(links.map(l => l.name + "(id)"));
-  const state = { dropped: new Set(), next: 0 };
+  // Fields Bullhorn rejected during the archive load (phase 1 and links) — skip the 400 round-trips.
+  const known = (await q("SELECT dropped_fields FROM crm.load_state WHERE entity IN ($1,$2)", [entity, entity + ":links"])).rows.flatMap(r => r.dropped_fields || []);
+  const state = { dropped: new Set(known.concat(st && st.dropped_fields || [])), next: 0 };
+  const droppedBefore = state.dropped.size;
   let changed = 0, start = 0, lastId = 0;
   try {
   for (;;) {
@@ -332,8 +336,9 @@ async function syncEntity(entity, opts) {
     }
     throw e;
   }
-  await q(`INSERT INTO crm.sync_state (entity, last_sync_ms, last_run_at, last_count) VALUES ($1,$2,now(),$3)
-           ON CONFLICT (entity) DO UPDATE SET last_sync_ms=$2, last_run_at=now(), last_count=$3`, [entity, runStart, changed]);
+  await q(`INSERT INTO crm.sync_state (entity, last_sync_ms, last_run_at, last_count, dropped_fields) VALUES ($1,$2,now(),$3,$4)
+           ON CONFLICT (entity) DO UPDATE SET last_sync_ms=$2, last_run_at=now(), last_count=$3, dropped_fields=$4`, [entity, runStart, changed, Array.from(state.dropped)]);
+  if (state.dropped.size > droppedBefore) console.log("[CRM sync] " + entity + " learned rejected fields: " + Array.from(state.dropped).join(","));
   return { entity, changed };
 }
 
