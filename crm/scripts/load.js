@@ -251,6 +251,14 @@ async function loadLinks(entity) {
 async function writeLinks(entity, links, data, dropped, replace) {
   const m = MODEL[entity];
   let rows = 0, deep = 0;
+  if (replace && data.length) {
+    const ids = data.map(r => r.id);
+    for (const l of links) {
+      if (dropped.has(l.name + "(id)") || dropped.has(l.name)) continue;
+      try { await q(`DELETE FROM crm."${l.joinTable}" WHERE "${m.table}_id" = ANY($1::int[])`, [ids]); }
+      catch (e) { console.error(`  ${l.joinTable} clear: ${e.message.slice(0, 120)}`); }
+    }
+  }
   for (const rec of data) {
     for (const l of links) {
       if (dropped.has(l.name + "(id)") || dropped.has(l.name)) continue;
@@ -261,7 +269,6 @@ async function writeLinks(entity, links, data, dropped, replace) {
         catch (e) { /* keep the partial list */ }
       }
       try {
-        if (replace) await q(`DELETE FROM crm."${l.joinTable}" WHERE "${m.table}_id"=$1`, [rec.id]);
         if (!ids.length) continue;
         const vals = ids.map((id, i) => `($1,$${i + 2})`).join(",");
         await q(`INSERT INTO crm."${l.joinTable}" ("${m.table}_id","${l.joinColumn}") VALUES ${vals} ON CONFLICT DO NOTHING`, [rec.id].concat(ids));
