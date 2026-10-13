@@ -6,6 +6,8 @@
  *   railway run node crm/scripts/load.js migrate          # apply crm/db/migrations/*.sql (idempotent)
  *   railway run node crm/scripts/load.js load [Entity...] # load all entities, or the named ones; resumable
  *   railway run node crm/scripts/load.js links [Entity...]# phase 2: to-many join tables
+ *   railway run node crm/scripts/load.js sync             # incremental: records modified since last pass
+ *   railway run node crm/scripts/load.js reload           # weekly: full load + links again
  *   railway run node crm/scripts/load.js status           # per-entity progress
  *   railway run node crm/scripts/load.js restore-fks      # re-add parked foreign keys as NOT VALID
  *
@@ -16,7 +18,10 @@
 require("dotenv").config();
 const fs = require("fs"), path = require("path");
 const { Pool } = require("pg");
-const bh = require("./bh");
+let bh = require("./bh");
+/** Let the dashboard hand in its own authenticated Bullhorn GET (same signature as bh.get). */
+function setClient(client) { bh = Object.assign({}, require("./bh"), client); }
+function isBadRequest(e) { return (e && e.status === 400) || /\(400\)/.test(e && e.message || ""); }
 
 const ROOT = path.join(__dirname, "..");
 const MODEL = JSON.parse(fs.readFileSync(path.join(ROOT, "model", "entities.json"), "utf8"));
@@ -128,8 +133,8 @@ async function fetchPage(entity, fields, where, state) {
       }
       return await bh.get("query/" + entity, { where: where.where, fields: f.join(","), count: PAGE, start: 0, orderBy: "id" });
     } catch (e) {
-      if (e instanceof bh.BhError && e.status === 400) {
-        const bad = parseInvalidField(e.body);
+      if (isBadRequest(e)) {
+        const bad = parseInvalidField(e.body || e.message || "");
         if (bad && !state.dropped.has(bad) && bad !== "id") { state.dropped.add(bad); continue; }
       }
       throw e;
@@ -225,25 +230,8 @@ async function loadLinks(entity) {
       const r = await fetchPage(entity, fields, where, state);
       const data = r.data || [];
       if (!data.length) break;
-      for (const rec of data) {
-        for (const l of links) {
-          if (state.dropped.has(l.name + "(id)") || state.dropped.has(l.name)) continue;
-          let v = rec[l.name];
-          let ids = v && Array.isArray(v.data) ? v.data.map(x => x.id) : (Array.isArray(v) ? v.map(x => x.id) : []);
-          if (v && typeof v.total === "number" && v.total > ids.length) {
-            try {
-              const full = await bh.get(`entity/${entity}/${rec.id}/${l.name}`, { fields: "id", count: 500 });
-              ids = (full.data || []).map(x => x.id); extra++;
-            } catch (e) { /* keep the partial list */ }
-          }
-          if (!ids.length) continue;
-          const vals = ids.map((id, i) => `($1,$${i + 2})`).join(",");
-          try {
-            await q(`INSERT INTO crm."${l.joinTable}" ("${m.table}_id","${l.joinColumn}") VALUES ${vals} ON CONFLICT DO NOTHING`, [rec.id].concat(ids));
-            state.loaded += ids.length;
-          } catch (e) { console.error(`  ${l.joinTable} #${rec.id}: ${e.message.slice(0, 120)}`); }
-        }
-      }
+      const got = await writeLinks(entity, links, data, state.dropped, false);
+      state.loaded += got.rows; extra += got.deep;
       state.next = SEARCH_ONLY.has(entity) ? state.next + data.length : Math.max.apply(null, data.map(d => d.id));
       await q("UPDATE crm.load_state SET next_start=$2, loaded=$3, dropped_fields=$4 WHERE entity=$1", [key, state.next, state.loaded, Array.from(state.dropped)]);
       process.stdout.write(`\r${entity} links: ${state.loaded} rows, ${extra} deep fetches, ${((Date.now() - t0) / 1000).toFixed(0)}s   `);
@@ -258,9 +246,106 @@ async function loadLinks(entity) {
   }
 }
 
+/** Write join rows for a batch of records that carry their to-many fields. replace=true clears the
+ *  record's existing rows first so removals in Bullhorn are reflected (incremental sync). */
+async function writeLinks(entity, links, data, dropped, replace) {
+  const m = MODEL[entity];
+  let rows = 0, deep = 0;
+  for (const rec of data) {
+    for (const l of links) {
+      if (dropped.has(l.name + "(id)") || dropped.has(l.name)) continue;
+      let v = rec[l.name];
+      let ids = v && Array.isArray(v.data) ? v.data.map(x => x.id) : (Array.isArray(v) ? v.map(x => x.id) : []);
+      if (v && typeof v.total === "number" && v.total > ids.length) {
+        try { const full = await bh.get(`entity/${entity}/${rec.id}/${l.name}`, { fields: "id", count: 500 }); ids = (full.data || []).map(x => x.id); deep++; }
+        catch (e) { /* keep the partial list */ }
+      }
+      try {
+        if (replace) await q(`DELETE FROM crm."${l.joinTable}" WHERE "${m.table}_id"=$1`, [rec.id]);
+        if (!ids.length) continue;
+        const vals = ids.map((id, i) => `($1,$${i + 2})`).join(",");
+        await q(`INSERT INTO crm."${l.joinTable}" ("${m.table}_id","${l.joinColumn}") VALUES ${vals} ON CONFLICT DO NOTHING`, [rec.id].concat(ids));
+        rows += ids.length;
+      } catch (e) { console.error(`  ${l.joinTable} #${rec.id}: ${e.message.slice(0, 120)}`); }
+    }
+  }
+  return { rows, deep };
+}
+
 async function links(names) {
   const list = names.length ? names : Object.keys(MODEL);
   for (const e of list) { if (!MODEL[e]) { console.error("unknown entity", e); continue; } await loadLinks(e); }
+}
+
+/* ───────────── incremental sync ─────────────
+ * Pull records modified since the last pass (deleted ones included — Bullhorn bumps
+ * dateLastModified on delete), upsert them, and rewrite their link rows. Entities without
+ * dateLastModified (Sendout, lookups) are only refreshed by the weekly full reload. */
+const NO_LAST_MODIFIED = new Set(["Sendout", "Country", "State", "TimeUnit", "Category", "Skill", "Specialty", "BusinessSector", "Certification", "CandidateSource", "Location", "WorkersCompensationRate", "HousingComplex", "Department"]);
+
+async function syncEntity(entity, opts) {
+  opts = opts || {};
+  if (NO_LAST_MODIFIED.has(entity)) return { entity, skipped: true };
+  const m = MODEL[entity];
+  await q("CREATE TABLE IF NOT EXISTS crm.sync_state (entity TEXT PRIMARY KEY, last_sync_ms BIGINT NOT NULL, last_run_at TIMESTAMPTZ, last_count INTEGER)");
+  const st = (await q("SELECT * FROM crm.sync_state WHERE entity=$1", [entity])).rows[0];
+  const loaded = (await q("SELECT finished_at FROM crm.load_state WHERE entity=$1 AND phase='done'", [entity])).rows[0];
+  if (!st && !loaded) return { entity, skipped: true, reason: "not loaded" };
+  if (st && st.last_count === -1) return { entity, skipped: true, reason: "no dateLastModified" };
+  const since = st ? Number(st.last_sync_ms) : new Date(loaded.finished_at).getTime();
+  const sinceMs = since - 2 * 60 * 1000; // overlap
+  const runStart = Date.now();
+  const p = plan(entity);
+  const cols = await tableColumns(p.table);
+  const links = m.fields.filter(f => f.joinTable);
+  const fields = p.req.concat(links.map(l => l.name + "(id)"));
+  const state = { dropped: new Set(), next: 0 };
+  let changed = 0, start = 0, lastId = 0;
+  try {
+  for (;;) {
+    const where = SEARCH_ONLY.has(entity)
+      ? { query: "dateLastModified:[" + sinceMs + " TO *]", start }
+      : { where: "dateLastModified>=" + sinceMs + " AND id>" + lastId };
+    const r = await fetchPage(entity, fields, where, state);
+    const data = r.data || [];
+    if (!data.length) break;
+    await upsertRows(p.table, data.map(rec => rowToColumns(rec, p, cols)), cols);
+    if (links.length) await writeLinks(entity, links, data, state.dropped, true);
+    changed += data.length;
+    start += data.length; lastId = Math.max.apply(null, data.map(d => d.id));
+    if (data.length < PAGE) break;
+    if (SEARCH_ONLY.has(entity) && typeof r.total === "number" && start >= r.total) break;
+  }
+  } catch (e) {
+    if (/dateLastModified/.test(e.message || "") && isBadRequest(e)) {
+      // Entity can't be filtered by modification time: leave it to the weekly reload.
+      await q(`INSERT INTO crm.sync_state (entity, last_sync_ms, last_run_at, last_count) VALUES ($1,$2,now(),-1)
+               ON CONFLICT (entity) DO UPDATE SET last_count=-1, last_run_at=now()`, [entity, runStart]);
+      return { entity, skipped: true, reason: "no dateLastModified" };
+    }
+    throw e;
+  }
+  await q(`INSERT INTO crm.sync_state (entity, last_sync_ms, last_run_at, last_count) VALUES ($1,$2,now(),$3)
+           ON CONFLICT (entity) DO UPDATE SET last_sync_ms=$2, last_run_at=now(), last_count=$3`, [entity, runStart, changed]);
+  return { entity, changed };
+}
+
+/** Sync every loaded entity. Returns {changed, failed[]}. Safe to call from the app's loop. */
+async function syncAll(opts) {
+  let changed = 0; const failed = [];
+  for (const e of Object.keys(MODEL)) {
+    try { const r = await syncEntity(e, opts); changed += r.changed || 0; }
+    catch (err) { failed.push(e); console.error("[CRM sync] " + e + ": " + err.message.slice(0, 200)); }
+  }
+  return { changed, failed };
+}
+
+/** Weekly: clear progress and re-run the full load + links (idempotent upserts). */
+async function reload() {
+  await q("UPDATE crm.load_state SET phase='pending', next_start=0, loaded=0, failed=0, finished_at=NULL");
+  await dropFks();
+  await load([]); await links([]);
+  await restoreFks();
 }
 
 async function status() {
@@ -285,7 +370,7 @@ async function restoreFks() {
   console.log("fks re-added NOT VALID:", ok, "failed:", bad);
 }
 
-module.exports = { plan, convert, rowToColumns, parseInvalidField, SEARCH_ONLY };
+module.exports = { plan, convert, rowToColumns, parseInvalidField, SEARCH_ONLY, NO_LAST_MODIFIED, setClient, syncEntity, syncAll, reload, migrate, closePool: async function () { if (pool) { await pool.end(); pool = null; } } };
 
 if (require.main === module) (async () => {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -293,9 +378,11 @@ if (require.main === module) (async () => {
   if (cmd === "migrate") await migrate();
   else if (cmd === "load") await load(rest);
   else if (cmd === "links") await links(rest);
+  else if (cmd === "sync") { const r = await syncAll(); console.log("changed:", r.changed, "failed:", r.failed.join(",") || "none"); }
+  else if (cmd === "reload") await reload();
   else if (cmd === "status") await status();
   else if (cmd === "restore-fks") await restoreFks();
   else if (cmd === "drop-fks") await dropFks();
-  else console.log("usage: load.js migrate | load [Entity...] | links [Entity...] | status | restore-fks");
+  else console.log("usage: load.js migrate | load [Entity...] | links [Entity...] | sync | reload | status | drop-fks | restore-fks");
   if (pool) await pool.end();
 })().catch(e => { console.error(e.message); process.exit(1); });
