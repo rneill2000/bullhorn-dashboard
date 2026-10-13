@@ -1586,6 +1586,19 @@ function registerForge(app, deps) {
         );
       }).then(function () {
         return db.query(
+          "CREATE TABLE IF NOT EXISTS submittal_forge_returns (" +
+          "id SERIAL PRIMARY KEY," +
+          "submission_id INTEGER NOT NULL," +
+          "reason TEXT NOT NULL," +
+          "returned_to TEXT," +
+          "returned_to_email TEXT," +
+          "created_by TEXT," +
+          "created_at TIMESTAMPTZ DEFAULT NOW()," +
+          "resolved_at TIMESTAMPTZ," +
+          "resolved_by TEXT)"
+        );
+      }).then(function () {
+        return db.query(
           "CREATE TABLE IF NOT EXISTS submittal_forge_profiles (" +
           "user_key TEXT PRIMARY KEY," +
           "name TEXT," +
@@ -1882,6 +1895,40 @@ function registerForge(app, deps) {
       const rows = await db.getAll("SELECT submission_id FROM submittal_forge_dismissals");
       return (rows || []).map(function (r) { return r.submission_id; }).filter(function (id) { return id != null && id.candidate_name == null; });
     } catch (e) { return []; }
+  }
+
+  /** Open (unresolved) send-backs by submission id. */
+  async function loadOpenReturns(ids) {
+    const map = {};
+    if (!ids.length || !db || !db.ready) return map;
+    try {
+      await ensureTable();
+      const rows = await db.getAll(
+        "SELECT DISTINCT ON (submission_id) submission_id, reason, returned_to, returned_to_email, created_by, created_at FROM submittal_forge_returns " +
+        "WHERE resolved_at IS NULL AND submission_id = ANY($1::int[]) ORDER BY submission_id, created_at DESC", [ids]);
+      (rows || []).forEach(function (r) {
+        if (!r || r.submission_id == null || r.candidate_name != null) return;
+        map[r.submission_id] = { reason: r.reason, returnedTo: r.returned_to || "", returnedToEmail: r.returned_to_email || "", by: r.created_by || "", at: r.created_at, label: "Returned to " + (firstNameOf(r.returned_to) || "recruiter") + " for more info" };
+      });
+    } catch (e) { /* no returns */ }
+    return map;
+  }
+
+  async function resolveReturns(submissionId, who) {
+    if (!db || !db.ready) return;
+    try { await ensureTable(); await db.query("UPDATE submittal_forge_returns SET resolved_at = NOW(), resolved_by = $2 WHERE submission_id = $1 AND resolved_at IS NULL", [submissionId, who || ""]); } catch (e) { /* best effort */ }
+  }
+
+  /** The recruiter to send a submittal back to: who submitted it in Bullhorn, else the candidate's owner. */
+  async function recruiterFor(row) {
+    if (row.sending_user_id) {
+      try {
+        const u = await db.getOne("SELECT id, name, first_name, last_name, email FROM corporate_users WHERE id = $1", [row.sending_user_id]);
+        if (u && u.email && u.candidate_name == null) return { id: u.id, name: u.name || ((u.first_name || "") + " " + (u.last_name || "")).trim() || row.sending_user || "", email: u.email };
+      } catch (e) { /* fall through */ }
+    }
+    const owner = await candidateOwner(row.candidate_id);
+    return owner ? { id: owner.id, name: owner.name, email: owner.email } : null;
   }
 
   async function loadDraftMap(ids) {
@@ -2297,6 +2344,7 @@ function registerForge(app, deps) {
       const user = getUser(req);
       const internals = await loadInternalUsers();
       const drafts = await loadDraftMap(visible.map(function (r) { return r.id; }));
+      const returns = await loadOpenReturns(visible.map(function (r) { return r.id; }));
       const notesBy = await loadNotesForCandidates(visible.map(function (r) { return r.candidate_id; }));
       const refNotesBy = await loadReferenceNotes(visible.map(function (r) { return r.candidate_id; }));
       const clientNames = await loadClientNames();
@@ -2336,6 +2384,7 @@ function registerForge(app, deps) {
           rateCheck: p.rateCheck,
           subject: p.subject,
           existingDraft: drafts[p.submissionId] || null,
+          returned: returns[p.submissionId] || null,
           otherJobsLabel: sib.otherJobsLabel,
           otherJobCount: sib.otherJobCount,
           otherSubmissions: sib.otherSubmissions,
@@ -2837,6 +2886,7 @@ function registerForge(app, deps) {
         note: attachNote,
       }));
       console.log("[Forge] draft created for submission", id);
+      await resolveReturns(id, (user && (user.email || personName(user))) || "");
       res.json({
         created: true,
         stub: false,
@@ -2880,6 +2930,90 @@ function registerForge(app, deps) {
       console.error("[Forge] bill-rate fix", e.message);
       res.status(e.status || 502).json({ error: "Could not write the bill rate to Bullhorn: " + e.message, code: "bill_rate_fix_failed" });
     }
+  });
+
+  /**
+   * Send a submittal back to the recruiter for more information. Nothing goes to the client.
+   * Writes a Bullhorn note on the candidate (linked to the job), a Bullhorn task for the
+   * recruiter, emails them the reason, and marks the queue row "Returned" until a new draft
+   * is created or someone clears it.
+   */
+  app.post("/api/forge/submissions/:id/return", async function (req, res) {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!id) return res.status(400).json({ error: "Submission id is required" });
+      const body = req.body || {};
+      const reason = String(body.reason || "").trim();
+      if (reason.length < 10) return res.status(400).json({ error: "Say what is missing (at least a short sentence) so the recruiter knows what to fix.", code: "reason_required" });
+      if (typeof bhWrite !== "function") return res.status(503).json({ error: "Bullhorn writes are not configured" });
+      const row = await loadBundle(id);
+      const user = getUser(req);
+      const actor = personName(user) || "A reviewer";
+      const recruiter = await recruiterFor(row);
+      if (!recruiter) return res.status(400).json({ error: "Could not work out who to send this back to — the submission has no sending user and the candidate has no owner.", code: "no_recruiter" });
+      const client = resolveClient(row);
+      const who = row.candidate_name || "Candidate";
+      const jobTitle = row.job_title_live || row.job_title || "the role";
+      const summary = who + " for " + jobTitle + (client.clientName ? " at " + client.clientName : "");
+      const comments = "Submittal returned for more info by " + actor + ": " + reason;
+      let noteId = null, taskId = null;
+      if (row.candidate_id) {
+        const noteBody = { personReference: { id: Number(row.candidate_id) }, action: "Other", comments: comments, dateAdded: Date.now() };
+        if (user && user.id) noteBody.commentingPerson = { id: Number(user.id) };
+        try {
+          let result;
+          try { result = await bhWrite("entity/Note", noteBody, "PUT"); }
+          catch (e) { if (noteBody.commentingPerson) { delete noteBody.commentingPerson; result = await bhWrite("entity/Note", noteBody, "PUT"); } else throw e; }
+          noteId = result && (result.changedEntityId || result.id) || null;
+          if (noteId && row.job_id) { try { await bhWrite("entity/Note/" + noteId + "/jobOrders/" + row.job_id, {}, "PUT"); } catch (e) {} }
+        } catch (e) { console.log("[Forge] return note failed:", e.message); }
+      }
+      if (recruiter.id) {
+        try {
+          const taskBody = {
+            subject: "Submittal needs info: " + summary,
+            notes: reason + "\n\nReturned by " + actor + " from Submittal Forge.",
+            owner: { id: Number(recruiter.id) },
+            type: "Submittal",
+            dateBegin: Date.now(),
+            dateEnd: Date.now() + 24 * 3600 * 1000,
+            isCompleted: false,
+          };
+          if (row.candidate_id) taskBody.candidate = { id: Number(row.candidate_id) };
+          if (row.job_id) taskBody.jobOrder = { id: Number(row.job_id) };
+          const t = await bhWrite("entity/Task", taskBody, "PUT");
+          taskId = t && (t.changedEntityId || t.id) || null;
+        } catch (e) { console.log("[Forge] return task failed:", e.message); }
+      }
+      let emailed = [];
+      if (notifier && recruiter.email) {
+        const html = notifier.card("Submittal sent back for more info", [
+          ["Candidate", who], ["Job", jobTitle], ["Client", client.clientName || ""],
+          ["What's missing", reason], ["Returned by", actor],
+        ], publicOrigin() + "/#forge", "Open in Submittal Forge");
+        try { emailed = await notifier.send({ to: [{ email: recruiter.email, name: recruiter.name }], subject: "Needs info before it goes out: " + summary, html: html, fromEmail: user && user.email }); }
+        catch (e) { console.log("[Forge] return email failed:", e.message); }
+      }
+      await ensureTable();
+      await db.query(
+        "INSERT INTO submittal_forge_returns (submission_id, reason, returned_to, returned_to_email, created_by) VALUES ($1,$2,$3,$4,$5)",
+        [id, reason, recruiter.name || "", recruiter.email || "", user ? (user.email || user.name || "") : ""]);
+      console.log("[Forge] submission " + id + " returned to " + recruiter.email + " by " + actor);
+      res.json({ ok: true, returnedTo: { name: recruiter.name, email: recruiter.email }, noteId: noteId, taskId: taskId, emailed: emailed.some(function (r) { return r.success; }) });
+    } catch (e) {
+      console.error("[Forge] return", e.message);
+      res.status(e.status || 500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/forge/submissions/:id/return/resolve", async function (req, res) {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!id) return res.status(400).json({ error: "Submission id is required" });
+      const user = getUser(req);
+      await resolveReturns(id, (user && (user.email || personName(user))) || "");
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   app.post("/api/forge/submissions/:id/client-submitted", async function (req, res) {

@@ -2202,3 +2202,71 @@ test("F46: /bill-rate writes customText10 to the Bullhorn submission; the draft 
     assert.equal(ok.json.created, true);
   } finally { server.close(); }
 });
+
+/* ── F48: send a submittal back to the recruiter for more information ── */
+test("F48: /return notes the candidate, tasks the recruiter, emails the reason, marks the queue row; a new draft resolves it", async function () {
+  const writes = [], sent = [], sql = [];
+  let returnsRows = [];
+  const app = express();
+  app.use(express.json());
+  const row = Object.assign(fixtureRow(), { sending_user: "Jennifer Hemming", sending_user_id: 77 });
+  forge(app, {
+    db: {
+      ready: true,
+      query: async function (q, params) {
+        sql.push(q);
+        if (/INSERT INTO submittal_forge_returns/.test(q)) returnsRows.push({ submission_id: params[0], reason: params[1], returned_to: params[2], returned_to_email: params[3], created_by: params[4], created_at: new Date(), resolved_at: null });
+        if (/UPDATE submittal_forge_returns SET resolved_at/.test(q)) returnsRows.forEach(function (r) { if (r.submission_id === params[0]) r.resolved_at = new Date(); });
+        return { rows: [] };
+      },
+      getOne: async function (q, params) {
+        if (/FROM corporate_users WHERE id/.test(q)) return { id: 77, name: "Jennifer Hemming", email: "jennifer@anuraconnect.com" };
+        if (/^\s*SELECT submission_id, created_at/.test(q)) return null;
+        return row;
+      },
+      getAll: async function (q) {
+        if (/FROM submittal_forge_returns/.test(q)) return returnsRows.filter(function (r) { return !r.resolved_at; });
+        return [];
+      },
+    },
+    graphFetch: async function () { return {}; },
+    bhFetch: async function () { return { data: {} }; },
+    bhWrite: async function (endpoint, body, method) { writes.push({ endpoint, body, method }); return { changedEntityId: endpoint === "entity/Task" ? 501 : 900 }; },
+    outlookUsers: function () { return {}; },
+    getUser: function () { return { id: 3, name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+    notifier: { card: function (t, rows) { return t + "|" + rows.map(function (r) { return r.join("="); }).join("|"); }, send: async function (m) { sent.push(m); return [{ email: m.to[0].email, method: "outlook", success: true }]; } },
+    publicOrigin: function () { return "https://dashboard.anuraconnect.com"; },
+  });
+  const server = await listen(app);
+  try {
+    const short = await req(server.address().port, "POST", "/api/forge/submissions/42/return", { reason: "no" });
+    assert.equal(short.status, 400);
+    assert.equal(short.json.code, "reason_required");
+    assert.equal(writes.length, 0);
+
+    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/return", { reason: "Why Me is missing the Charge Router work and there is no availability date." });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.returnedTo.email, "jennifer@anuraconnect.com", "goes to whoever submitted it in Bullhorn");
+    assert.equal(r.json.emailed, true);
+    assert.equal(r.json.taskId, 501);
+    const note = writes.find(function (w) { return w.endpoint === "entity/Note"; });
+    assert.ok(note, "a Bullhorn note is written");
+    assert.match(note.body.comments, /^Submittal returned for more info by Rachel Neill: Why Me is missing/);
+    assert.equal(note.body.personReference.id, 7);
+    assert.ok(writes.some(function (w) { return w.endpoint === "entity/Note/900/jobOrders/9"; }), "note is linked to the job");
+    const task = writes.find(function (w) { return w.endpoint === "entity/Task"; });
+    assert.equal(task.body.owner.id, 77);
+    assert.match(task.body.subject, /Submittal needs info: Jack Corbell for Epic HB Analyst at Memorial Hermann/);
+    assert.equal(task.body.candidate.id, 7);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to[0].email, "jennifer@anuraconnect.com");
+    assert.match(sent[0].subject, /^Needs info before it goes out: Jack Corbell/);
+    assert.match(sent[0].html, /What's missing=Why Me is missing/);
+    assert.ok(!/client|dana@mh/i.test(sent[0].to[0].email), "never addressed to a client");
+    assert.equal(returnsRows.length, 1);
+
+    const resolved = await req(server.address().port, "POST", "/api/forge/submissions/42/return/resolve", {});
+    assert.equal(resolved.status, 200);
+    assert.ok(returnsRows[0].resolved_at, "resolve clears the open return");
+  } finally { server.close(); }
+});

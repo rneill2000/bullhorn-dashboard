@@ -206,6 +206,7 @@ function forgePaintQueue() {
       h += '<div class="sub">' + refCount + " positive reference" + (refCount === 1 ? "" : "s") + " on file</div>";
     }
     if (row.existingDraft && row.existingDraft.label) h += '<div class="sub">' + esc(row.existingDraft.label) + '</div>';
+    if (row.returned) h += '<div class="sub" style="color:#b45309;font-weight:600">\u21a9 ' + esc(row.returned.label) + ': ' + esc(row.returned.reason) + '</div>';
     (row.flags || []).forEach(function (f) {
       h += '<div class="sub">' + esc(f.message) + '</div>';
     });
@@ -372,6 +373,14 @@ function forgePaintDraft() {
   h += '<button type="button" class="btn-outline" onclick="forgeMarkSubmitted()">Mark client submitted</button>';
   h += '<select class="fg-in" id="forge-dismiss-reason" style="max-width:180px"><option value="stale">Stale</option><option value="withdrawn">Withdrawn</option><option value="job_on_hold">Job on hold</option></select>';
   h += '<button type="button" class="btn-outline" onclick="forgeDismiss()">Not sending</button>';
+  h += '</div>';
+  var ret = warmRow && warmRow.returned;
+  h += '<div class="fg-actions" style="margin-top:10px;align-items:flex-start;flex-wrap:wrap">';
+  if (ret) {
+    h += '<div class="fg-flag warn" style="flex:1 1 100%">\u21a9 ' + esc(ret.label) + (ret.by ? ' (by ' + esc(ret.by) + ')' : '') + ': ' + esc(ret.reason) + ' <button type="button" class="btn-outline" style="margin-left:8px" onclick="forgeResolveReturn()">Mark resolved</button></div>';
+  }
+  h += '<textarea class="fg-in" id="forge-return-reason" rows="2" placeholder="What does the recruiter need to add or fix before this can go out?" style="flex:1 1 320px;min-width:240px"></textarea>';
+  h += '<button type="button" class="btn-outline" onclick="forgeReturn()" title="Sends the submittal back to the recruiter with your note. Nothing goes to the client.">Send back to recruiter</button>';
   h += '</div>';
   h += '<div class="fg-note">Creates a draft only. Nothing is sent. Mark client submitted only after a draft exists.</div>';
   if (r.outlook && r.outlook.hint) h += '<div class="fg-note">' + esc(r.outlook.hint) + '</div>';
@@ -866,6 +875,38 @@ async function forgeMarkSubmitted() {
     var box = document.getElementById("forge-result");
     if (box) box.innerHTML = '<div class="fg-flag alert">' + esc(e.message) + '</div>';
   }
+}
+
+async function forgeReturn() {
+  if (!_forge.selected || _forge.busy) return;
+  var reason = forgeVal("forge-return-reason");
+  var result = document.getElementById("forge-result");
+  if (!reason || reason.trim().length < 10) {
+    if (result) result.innerHTML = '<div class="fg-flag warn">Say what is missing so the recruiter knows what to fix.</div>';
+    return;
+  }
+  try {
+    var r = await forgeSend("forge/submissions/" + _forge.selected + "/return", { reason: reason.trim() });
+    var to = r.returnedTo ? (r.returnedTo.name || r.returnedTo.email) : "the recruiter";
+    var bits = [];
+    if (r.emailed) bits.push("emailed"); if (r.taskId) bits.push("Bullhorn task created"); if (r.noteId) bits.push("note added");
+    if (typeof showToast === "function") showToast("Sent back to " + to + (bits.length ? " \u00b7 " + bits.join(", ") : ""));
+    if (result) result.innerHTML = '<div class="fg-flag warn">\u21a9 Sent back to ' + esc(to) + '. ' + (bits.length ? esc(bits.join(", ")) + '.' : '') + ' It stays in the queue marked Returned until a new draft is created.</div>';
+    var ta = document.getElementById("forge-return-reason"); if (ta) ta.value = "";
+    forgeLoadQueue();
+  } catch (e) {
+    if (forgeSignIn(e)) return;
+    if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.message) + '</div>';
+  }
+}
+
+async function forgeResolveReturn() {
+  if (!_forge.selected) return;
+  try {
+    await forgeSend("forge/submissions/" + _forge.selected + "/return/resolve", {});
+    if (typeof showToast === "function") showToast("Marked resolved");
+    forgeLoadQueue(); forgeOpen(_forge.selected);
+  } catch (e) { if (forgeSignIn(e)) return; }
 }
 
 async function forgeDismiss() {
