@@ -11838,6 +11838,10 @@ app.listen(PORT, async () => {
           console.error("[DB] Sync loop failed to start:", err.message);
         });
       }, 5000);
+      // Email the team if the Bullhorn sync stops succeeding (2026-10-17: expired API password, 4 days unnoticed)
+      try {
+        require("./sync-watchdog").makeSyncWatchdog({ db: db, notifier: notifier, outlookUsers: function () { return _outlookUsers; }, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; } }).start(10 * 60 * 1000);
+      } catch (e) { console.error("[Watchdog] failed to start:", e.message); }
       // Start market intelligence feed scanner
       startIntelScan(30 * 60 * 1000);
     } catch (err) {
