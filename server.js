@@ -11794,6 +11794,7 @@ require("./events")(app, { db: db, bhFetch: bhFetch, bhWrite: bhWriteAsService }
 linkedinGraph.register(app, { db: db, getUser: getUser });
 require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetchAll: bhFetchAll });
 require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
+const filesArchive = require("./files").registerFiles(app, { db: db, bhFetch: bhFetch, authenticate: authenticate, getUser: getUser });
 const notifier = require("./notify").makeNotifier({ graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; } });
 require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate, notifier: notifier, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; } });
 
@@ -11842,6 +11843,8 @@ app.listen(PORT, async () => {
       try {
         require("./sync-watchdog").makeSyncWatchdog({ db: db, notifier: notifier, outlookUsers: function () { return _outlookUsers; }, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; } }).start(10 * 60 * 1000);
       } catch (e) { console.error("[Watchdog] failed to start:", e.message); }
+      // File attachments archive (résumés/docs → FILES_DIR volume), swept after the main sync settles
+      try { filesArchive.start(); } catch (e) { console.error("[Files] failed to start:", e.message); }
       // Start market intelligence feed scanner
       startIntelScan(30 * 60 * 1000);
     } catch (err) {
