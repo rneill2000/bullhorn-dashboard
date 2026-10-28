@@ -1,0 +1,446 @@
+"use strict";
+/**
+ * Anura Connect Card. Rows K1–K20 in docs/TEST-MATRIX.md.
+ * Pure rules run everywhere. Route tests need Postgres: set CARD_TEST_DATABASE_URL
+ * (CI starts a postgres service; locally any throwaway database works). Each run uses its own schema.
+ */
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const http = require("http");
+const path = require("path");
+const express = require("express");
+const card = require("./card");
+const forge = require("./forge");
+
+/* ── pure rules ─────────────────────────────────────────────────── */
+
+test("K1 tokens: 32 consonants, never a digit or vowel, never trip the Forge leak guard", function () {
+  for (let i = 0; i < 2000; i++) {
+    const t = card.makeToken();
+    assert.equal(t.length, 32);
+    assert.match(t, /^[bcdfghjkmnpqrstvwxz]{32}$/);
+    assert.ok(card.validToken(t));
+    const email = forge.composeEmail({ candidateName: "Jack Corbell", cardUrl: "https://dashboard.anuraconnect.com/card/" + t, availability: "2 weeks", location: "Houston, TX", billRate: "$185/hr" });
+    assert.equal(forge.findInternalLeak([email.subject, email.text], ["Rachel"], {}), null, "token " + t);
+  }
+  assert.equal(card.validToken("abc"), false);
+  assert.equal(card.validToken("../../etc/passwd"), false);
+  assert.notEqual(card.hashToken("a"), "a");
+});
+
+test("K2 email: Card line sits after the intro; preview shows a placeholder; no Cards, no line", function () {
+  const withLink = forge.composeEmail({ candidateName: "Jack Corbell", jobTitle: "HB Analyst", whyMe: "Led HB.", cardUrl: "https://x.test/card/bcd" });
+  assert.match(withLink.text, /Jack's Anura Connect Card: https:\/\/x\.test\/card\/bcd/);
+  assert.ok(withLink.text.indexOf("Anura Connect Card") < withLink.text.indexOf("Why Me"));
+  assert.match(withLink.html, /href="https:\/\/x\.test\/card\/bcd"/);
+  const pending = forge.composeEmail({ candidateName: "Jack Corbell", cardPending: true });
+  assert.match(pending.text, /link is added when you create the draft/);
+  const none = forge.composeEmail({ candidateName: "Jack Corbell" });
+  assert.doesNotMatch(none.text, /Anura Connect Card/);
+});
+
+test("K3 candidate text: contact details, links, handles and pay are refused; ordinary text passes", function () {
+  const bad = {
+    "reach me at jane@x.com": /email/i,
+    "call 608-555-1212": /phone/i,
+    "6085551212 anytime": /phone/i,
+    "see www.janedoe.com": /links/i,
+    "linkedin.com/in/jane": /links/i,
+    "find me @janedoe_epic": /links/i,
+    "my rate is flexible": /pay/i,
+    "I bill $95 an hour": /pay/i,
+    "95/hr on W2": /pay/i,
+    "prefer 1099": /pay/i,
+    "corp to corp only": /pay/i,
+  };
+  Object.keys(bad).forEach(function (text) {
+    assert.match(card.checkCandidateText("intro", text), bad[text], text);
+  });
+  ["I've done three Beaker go-lives since 2019 and I pay attention to detail.", "Coach my kid's hockey team.", ""].forEach(function (text) {
+    assert.equal(card.checkCandidateText("intro", text), "", text);
+  });
+  assert.match(card.checkCandidateText("headline", "x".repeat(91)), /under 90/);
+  assert.equal(card.checkCandidateText("nope", "x"), "Unknown field.");
+  const parsed = card.readCandidateFields({ headline: "  Beaker analyst \r\n", sneaky: "x", fun: "call 608-555-1212" });
+  assert.deepEqual(Object.keys(parsed.fields).sort(), ["fun", "headline"]);
+  assert.equal(parsed.fields.headline, "Beaker analyst");
+  assert.ok(parsed.errors.fun);
+});
+
+test("K4 job status decides whether a link is live", function () {
+  assert.equal(card.jobIsActive({ status: "Accepting Candidates", is_open: true }), true);
+  assert.equal(card.jobIsActive({ status: "Accepting Candidates", is_open: false }), false);
+  assert.equal(card.jobIsActive({ status: "Filled", is_open: true }), false);
+  assert.equal(card.jobIsActive({ status: "Closed", is_open: null }), false);
+  assert.equal(card.jobIsActive({ status: "Placed" }), false);
+  assert.equal(card.jobIsActive({ status: "Open", is_deleted: true }), false);
+  assert.equal(card.jobIsActive(null), false);
+  assert.equal(card.submissionHidden("Client Rejected"), true);
+  assert.equal(card.submissionHidden("Candidate Withdrew"), true);
+  assert.equal(card.submissionHidden("Client Submission"), false);
+});
+
+test("K5 photos: only real JPG/PNG/WebP bytes; SVG refused", function () {
+  assert.equal(card.sniffImage(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0])), "image/jpeg");
+  assert.equal(card.sniffImage(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0])), "image/png");
+  assert.equal(card.sniffImage(Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBP")])), "image/webp");
+  assert.equal(card.sniffImage(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')), "");
+  assert.equal(card.sniffImage(Buffer.from("GIF89a......")), "");
+});
+
+test("K6 full references: org and title kept; writer's name, phone, email, departures and pay dropped", function () {
+  const note = {
+    id: 77,
+    action: "Reference",
+    date_added: 5,
+    comments_text: [
+      "Reference Name: Patricia Gomez",
+      "Title: Director of Clinical Applications",
+      "Company: Riverside Health",
+      "Relationship: Direct manager for 3 years",
+      "Phone: 608-555-1212",
+      "Email: pgomez@riverside.example",
+      "Would you rehire: Yes, absolutely",
+      "Comments: Jack is the strongest Beaker analyst I have managed. He rebuilt our specimen tracking build ahead of go-live and trained the whole team. Patricia Gomez can be reached at 608-555-1212. He left after the layoffs last spring. His pay rate was 95. I would recommend him without hesitation.",
+    ].join("\n"),
+  };
+  const refs = forge.cardReferences({ notes: [note], candidateName: "Jack Corbell", clientName: "UW Health", jobTitle: "Beaker Analyst" }, ["note:77"]);
+  assert.equal(refs.length, 1);
+  const r = refs[0];
+  assert.equal(r.organization, "Riverside Health");
+  assert.match(r.role, /Director of Clinical Applications/);
+  assert.equal(r.rehire, "Yes");
+  assert.match(r.text, /strongest Beaker analyst/);
+  assert.match(r.text, /recommend him/);
+  assert.doesNotMatch(r.text, /Patricia|Gomez|608|pgomez|@/);
+  assert.doesNotMatch(r.text, /layoff/i);
+  assert.doesNotMatch(r.text, /pay rate|\b95\b/);
+  assert.doesNotMatch(JSON.stringify(r), /Patricia|Gomez|608-555|pgomez/);
+  assert.deepEqual(forge.cardReferences({ notes: [note], candidateName: "Jack Corbell" }, []), [], "only picked references");
+  const negative = Object.assign({}, note, { id: 78, comments_text: "Reference Name: Sam Lee\nComments: I would not rehire him. He missed deadlines and was unreliable." });
+  assert.deepEqual(forge.cardReferences({ notes: [negative], candidateName: "Jack Corbell" }, ["note:78"]), []);
+});
+
+/* ── routes, against a real Postgres ────────────────────────────── */
+
+const DB_URL = process.env.CARD_TEST_DATABASE_URL || "";
+
+function listen(app) {
+  return new Promise(function (resolve) { const s = app.listen(0, "127.0.0.1", function () { resolve(s); }); });
+}
+function req(port, method, p, opts) {
+  opts = opts || {};
+  return new Promise(function (resolve, reject) {
+    const headers = Object.assign({ "User-Agent": "Mozilla/5.0 (Macintosh) Safari/605.1" }, opts.headers || {});
+    let payload = null;
+    if (opts.raw) { payload = opts.raw; headers["Content-Type"] = opts.type || "image/jpeg"; }
+    else if (opts.body !== undefined) { payload = Buffer.from(JSON.stringify(opts.body)); headers["Content-Type"] = "application/json"; }
+    const r = http.request({ hostname: "127.0.0.1", port: port, method: method, path: p, headers: headers }, function (res) {
+      const chunks = [];
+      res.on("data", function (c) { chunks.push(c); });
+      res.on("end", function () {
+        const buf = Buffer.concat(chunks);
+        let json = null;
+        try { json = JSON.parse(buf.toString("utf8")); } catch (e) {}
+        resolve({ status: res.statusCode, json: json, text: buf.toString("utf8"), buf: buf, headers: res.headers });
+      });
+    });
+    r.on("error", reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64, 7)]);
+
+async function harness() {
+  const { Pool } = require("pg");
+  const schema = "card_test_" + process.pid + "_" + Date.now();
+  const admin = new Pool({ connectionString: DB_URL });
+  await admin.query("CREATE SCHEMA " + schema);
+  await admin.end();
+  const pool = new Pool({ connectionString: DB_URL, options: "-c search_path=" + schema });
+  const db = {
+    ready: true,
+    query: function (t, p) { return pool.query(t, p); },
+    getOne: async function (t, p) { const r = await pool.query(t, p); return r.rows[0] || null; },
+    getAll: async function (t, p) { const r = await pool.query(t, p); return r.rows; },
+  };
+  await db.query("CREATE TABLE jobs (id INTEGER PRIMARY KEY, title TEXT, status TEXT, is_open BOOLEAN, is_deleted BOOLEAN)");
+  await db.query("CREATE TABLE submissions (id INTEGER PRIMARY KEY, status TEXT, date_added BIGINT, is_deleted BOOLEAN)");
+  await db.query("CREATE TABLE candidates (id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, name TEXT, email TEXT, custom_text1 TEXT, custom_text2 TEXT, custom_text5 TEXT, owner_id INTEGER, date_last_modified BIGINT)");
+  await db.query("CREATE TABLE corporate_users (id INTEGER PRIMARY KEY, email TEXT, name TEXT)");
+  await db.query("INSERT INTO corporate_users VALUES (5, 'ben@anuraconnect.com', 'Ben Gray')");
+  await db.query("INSERT INTO jobs VALUES (100, 'Beaker Analyst', 'Accepting Candidates', true, false), (200, 'HB Analyst', 'Accepting Candidates', true, false), (300, 'Old Role', 'Accepting Candidates', true, false)");
+  await db.query("INSERT INTO candidates VALUES " +
+    "(1, 'Jack', 'Corbell', 'Jack Corbell', 'jack@x.com', 'Beaker Clinical Pathology', 'Beaker AP', 'Beaker Analyst', 5, 1)," +
+    "(2, 'Mia', 'Lopez', 'Mia Lopez', 'mia@x.com', 'Beaker CP', '', 'Beaker Analyst', 5, 1)," +
+    "(3, 'Sam', 'Reed', 'Sam Reed', 'sam@x.com', 'HB', '', 'HB Analyst', 5, 1)," +
+    "(4, 'Ana', 'Ito', 'Ana Ito', 'ana@x.com', 'Beaker CP', '', 'Beaker Analyst', 5, 1)," +
+    "(6, 'Lee', 'Park', 'Lee Park', 'lee@x.com', 'Beaker CP', '', 'Beaker Analyst', 5, 1)");
+  await db.query("INSERT INTO submissions VALUES (11, 'Client Submission', 1, false), (12, 'Client Submission', 2, false), (13, 'Client Submission', 3, false), (14, 'Client Submission', 4, false), (15, 'Client Rejected', 5, false), (16, 'Client Submission', 6, false)");
+
+  const sent = [];
+  const notifier = {
+    card: function (title, rows) { return title + "|" + rows.map(function (r) { return r.join(":"); }).join("|"); },
+    send: async function (msg) { sent.push(msg); return [{ email: msg.to[0].email, method: "test", success: true }]; },
+  };
+  const rates = { 11: { amount: 185 }, 12: { amount: 170 }, 13: { amount: 150 }, 14: { amount: 160 }, 15: { amount: 140 }, 16: { amount: 165 } };
+  const app = express();
+  app.use(express.json());
+  const api = card(app, {
+    db: db,
+    notifier: notifier,
+    getUser: function (r) { return r.headers["x-test-user"] ? { email: r.headers["x-test-user"], firstName: "Ben", lastName: "Gray" } : null; },
+    verifyBill: async function (id) {
+      const v = rates[id];
+      if (v && v.throws) throw new Error("Bullhorn down");
+      return { amount: v ? v.amount : null, source: "from submission" };
+    },
+    getFile: async function (entity, id, fileId) { return { buffer: Buffer.from("%PDF-1.4 resume " + id + ":" + fileId), name: "r.pdf", contentType: "application/pdf" }; },
+    publicOrigin: function () { return "https://dash.test"; },
+    pagesDir: path.join(__dirname, "public"),
+    log: function () {},
+  });
+  const server = await listen(app);
+  const port = server.address().port;
+  function mint(o) {
+    return api.mintClientLink(Object.assign({
+      jobId: 100, jobTitle: "Beaker Analyst", clientId: 900, clientName: "UW Health", contactEmail: "dana@uw.example",
+      whyMe: "Rebuilt specimen tracking.", availability: "2 weeks", location: "Madison, WI", billRate: "$185/hr", resumeFileId: "9", resumeName: "Jack.pdf",
+      references: [{ role: "Director of Clinical Applications", organization: "Riverside Health", relationship: "", rehire: "Yes", text: "Strongest Beaker analyst I have managed." }],
+      recruiter: { name: "Ben Gray", title: "Head of Recruiting", phone: "608-555-0000", email: "ben@anuraconnect.com" },
+      createdBy: "ben@anuraconnect.com",
+    }, o));
+  }
+  function tok(url) { return url.split("/card/")[1]; }
+  async function close() {
+    server.close();
+    await pool.query("DROP SCHEMA " + schema + " CASCADE");
+    await pool.end();
+  }
+  return { db: db, port: port, mint: mint, tok: tok, sent: sent, rates: rates, api: api, close: close };
+}
+
+test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_URL to run" }, async function (t) {
+  const h = await harness();
+  try {
+    const jack = await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell" });
+    const mia = await h.mint({ submissionId: 12, candidateId: 2, candidateName: "Mia Lopez", billRate: "$170/hr" });
+    const other = await h.mint({ submissionId: 13, candidateId: 3, candidateName: "Sam Reed", jobId: 200, jobTitle: "HB Analyst", billRate: "$150/hr" });
+    const otherClient = await h.mint({ submissionId: 14, candidateId: 4, candidateName: "Ana Ito", clientId: 901, clientName: "Mercy", billRate: "$160/hr" });
+    const rejected = await h.mint({ submissionId: 15, candidateId: 6, candidateName: "Lee Park", billRate: "$140/hr" });
+    const J = h.tok(jack.url);
+    assert.match(jack.url, /^https:\/\/dash\.test\/card\/[bcdfghjkmnpqrstvwxz]{32}$/);
+
+    await t.test("K7 client sees this job at this client only, oldest submission first", async function () {
+      const r = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.headers["cache-control"], "no-store");
+      assert.equal(r.headers["x-robots-tag"], "noindex, nofollow");
+      assert.equal(r.headers["referrer-policy"], "no-referrer");
+      const names = r.json.candidates.map(function (c) { return c.name; });
+      assert.deepEqual(names, ["Jack Corbell", "Mia Lopez"], "other job, other client and client-rejected stay out");
+      assert.equal(r.json.card.name, "Jack Corbell");
+      assert.equal(r.json.card.epicRole, "Beaker Analyst");
+      assert.deepEqual(r.json.card.certs, ["Beaker Clinical Pathology", "Beaker AP"]);
+      assert.equal(r.json.card.references[0].organization, "Riverside Health");
+      assert.equal(r.json.contact.email, "ben@anuraconnect.com");
+    });
+
+    await t.test("K8 nothing internal in the client JSON", async function () {
+      const r = await req(h.port, "GET", "/api/card-public/" + J);
+      const blob = r.text;
+      ["candidate_id", "submission_id", "candidateId", "submissionId", "job_id", "client_id", "dana@uw.example", "jack@x.com", "owner", "created_by", "token"].forEach(function (k) {
+        assert.equal(blob.indexOf(k), -1, k + " leaked");
+      });
+      assert.doesNotMatch(blob, /"id":\s*\d/, "no numeric Bullhorn ids");
+    });
+
+    await t.test("K9 rates are re-read from Bullhorn; mismatch or outage hides the rate and alerts once", async function () {
+      let r = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(r.json.card.rate, "$185/hr");
+      assert.equal(r.json.candidates[1].rate, "$170/hr");
+      h.api._rateCache.clear();
+      h.rates[11] = { amount: 190 };
+      h.sent.length = 0;
+      r = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(r.json.card.rate, null);
+      assert.equal(r.json.candidates[0].rate, null);
+      assert.equal(h.sent.filter(function (m) { return /Rate mismatch/.test(m.subject); }).length, 1);
+      h.api._rateCache.clear();
+      await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(h.sent.filter(function (m) { return /Rate mismatch/.test(m.subject); }).length, 1, "one alert per day");
+      h.api._rateCache.clear();
+      h.rates[11] = { throws: true };
+      r = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(r.status, 200);
+      assert.equal(r.json.card.rate, null, "Bullhorn down hides the rate rather than guessing");
+      h.api._rateCache.clear();
+      h.rates[11] = { amount: 185 };
+    });
+
+    await t.test("K10 recruiter can move the Card to Bullhorn's rate (read live, never typed)", async function () {
+      h.api._rateCache.clear();
+      h.rates[12] = { amount: 175 };
+      const link = await h.db.getOne("SELECT id FROM card_links WHERE submission_id = 12");
+      const r = await req(h.port, "POST", "/api/cards/links/" + link.id + "/use-bullhorn-rate", { headers: { "x-test-user": "ben@anuraconnect.com" }, body: {} });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.billDisplay, "$175/hr");
+      const view = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(view.json.candidates[1].rate, "$175/hr");
+    });
+
+    await t.test("K11 scope: another job's or client's candidate is unreachable from this link", async function () {
+      const outside = [other, otherClient, rejected];
+      for (const o of outside) {
+        const pid = o.publicId;
+        assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/c/" + pid)).status, 404);
+        assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/photo/" + pid)).status, 404);
+        assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/resume/" + pid)).status, 404);
+      }
+      const ok = await req(h.port, "GET", "/api/card-public/" + J + "/c/" + mia.publicId);
+      assert.equal(ok.status, 200);
+      assert.equal(ok.json.card.name, "Mia Lopez");
+      const pdf = await req(h.port, "GET", "/api/card-public/" + J + "/resume/" + jack.publicId);
+      assert.equal(pdf.status, 200);
+      assert.equal(pdf.headers["content-type"], "application/pdf");
+      assert.match(pdf.buf.toString(), /resume 1:9/, "only the résumé Forge picked");
+    });
+
+    await t.test("K12 bad, unknown and revoked tokens", async function () {
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + "abc")).status, 404);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + card.makeToken())).status, 404);
+      const extra = await h.mint({ submissionId: 12, candidateId: 2, candidateName: "Mia Lopez", billRate: "$175/hr" });
+      const row = await h.db.getOne("SELECT id FROM card_links WHERE public_id = $1", [extra.publicId]);
+      await req(h.port, "POST", "/api/cards/links/" + row.id + "/revoke", { headers: { "x-test-user": "ben@anuraconnect.com" }, body: {} });
+      const r = await req(h.port, "GET", "/api/card-public/" + h.tok(extra.url));
+      assert.equal(r.status, 410);
+      assert.equal(r.json.state, "revoked");
+      assert.equal(r.json.card, undefined);
+    });
+
+    await t.test("K13 job closes: link shows contact only", async function () {
+      const closing = await h.mint({ submissionId: 16, candidateId: 6, candidateName: "Lee Park", jobId: 300, jobTitle: "Old Role" });
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + h.tok(closing.url))).status, 200);
+      await h.db.query("UPDATE jobs SET status = 'Filled', is_open = false WHERE id = 300");
+      const r = await req(h.port, "GET", "/api/card-public/" + h.tok(closing.url));
+      assert.equal(r.status, 410);
+      assert.equal(r.json.state, "expired");
+      assert.equal(r.text.indexOf("Lee"), -1, "no candidate details on a closed Card");
+      assert.equal(r.json.contact.email, "ben@anuraconnect.com");
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + h.tok(closing.url) + "/resume/" + closing.publicId)).status, 404);
+    });
+
+    await t.test("K14 opens: recruiters and link scanners don't count; a client open alerts once a day", async function () {
+      h.sent.length = 0;
+      let r = await req(h.port, "POST", "/api/card-public/" + J + "/seen", { body: { page: "card" }, headers: { "x-test-user": "ben@anuraconnect.com" } });
+      assert.equal(r.json.counted, false);
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/seen", { body: { page: "card" }, headers: { "User-Agent": "Mozilla/5.0 (compatible; SafeLinks scanner)" } });
+      assert.equal(r.json.counted, false);
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/seen", { body: { page: "card" } });
+      assert.equal(r.json.counted, true);
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/seen", { body: { page: "compare" } });
+      await new Promise(function (res) { setTimeout(res, 50); });
+      const alerts = h.sent.filter(function (m) { return /opened/.test(m.subject); });
+      assert.equal(alerts.length, 1);
+      assert.equal(alerts[0].to[0].email, "ben@anuraconnect.com");
+      assert.match(alerts[0].subject, /UW Health opened Jack Corbell's Card/);
+      const row = await h.db.getOne("SELECT view_count FROM card_links WHERE submission_id = 11 ORDER BY id LIMIT 1");
+      assert.equal(row.view_count, 2);
+    });
+
+    await t.test("K15 candidate edits stay private until approved; contact details and pay can't be submitted", async function () {
+      const mk = await req(h.port, "POST", "/api/cards/candidate/1/edit-link", { headers: { "x-test-user": "ben@anuraconnect.com" }, body: {} });
+      assert.equal(mk.status, 200, mk.text);
+      const E = mk.json.url.split("/card-edit/")[1];
+      assert.ok(card.validToken(E));
+      let r = await req(h.port, "GET", "/api/card-edit/" + E);
+      assert.equal(r.status, 200);
+      assert.equal(r.json.candidate.firstName, "Jack");
+      assert.equal(r.json.recruiter, "Ben Gray");
+      r = await req(h.port, "PUT", "/api/card-edit/" + E, { body: { headline: "Beaker analyst, five go-lives", fun: "Text me at 608-555-1212", outside: "Hockey dad." } });
+      assert.equal(r.status, 200);
+      assert.ok(r.json.errors.fun, "saved, but flagged");
+      r = await req(h.port, "POST", "/api/card-edit/" + E + "/submit", { body: {} });
+      assert.equal(r.status, 400);
+      r = await req(h.port, "PUT", "/api/card-edit/" + E, { body: { fun: "I've skated since I was four." } });
+      assert.deepEqual(r.json.errors, {});
+      r = await req(h.port, "POST", "/api/card-edit/" + E + "/photo", { raw: Buffer.from("<svg onload=alert(1)></svg>"), type: "image/svg+xml" });
+      assert.equal(r.status, 400);
+      r = await req(h.port, "POST", "/api/card-edit/" + E + "/photo", { raw: JPEG });
+      assert.equal(r.status, 200, r.text);
+      h.sent.length = 0;
+      r = await req(h.port, "POST", "/api/card-edit/" + E + "/submit", { body: {} });
+      assert.equal(r.status, 200, r.text);
+      await new Promise(function (res) { setTimeout(res, 50); });
+      assert.equal(h.sent.filter(function (m) { return /updated their Anura Connect Card/.test(m.subject); }).length, 1);
+      // Not live yet.
+      let pub = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(pub.json.card.headline, "");
+      assert.equal(pub.json.card.hasPhoto, false);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/photo/" + jack.publicId)).status, 404);
+      const pending = await req(h.port, "GET", "/api/cards/overview", { headers: { "x-test-user": "ben@anuraconnect.com" } });
+      assert.equal(pending.json.pending[0].candidateId, 1);
+      // Reviewer can't approve a contact detail slipped in during review.
+      r = await req(h.port, "POST", "/api/cards/candidate/1/approve", { headers: { "x-test-user": "ben@anuraconnect.com" }, body: { fields: { intro: "Email jack@x.com" } } });
+      assert.equal(r.status, 400);
+      r = await req(h.port, "POST", "/api/cards/candidate/1/approve", { headers: { "x-test-user": "ben@anuraconnect.com" }, body: { fields: {} } });
+      assert.equal(r.status, 200, r.text);
+      pub = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(pub.json.card.headline, "Beaker analyst, five go-lives");
+      assert.equal(pub.json.card.hasPhoto, true);
+      assert.deepEqual(pub.json.card.culture.map(function (c) { return c.text; }), ["Hockey dad.", "I've skated since I was four."]);
+      const ph = await req(h.port, "GET", "/api/card-public/" + J + "/photo/" + jack.publicId);
+      assert.equal(ph.status, 200);
+      assert.equal(ph.headers["content-type"], "image/jpeg");
+      assert.equal(ph.headers["x-content-type-options"], "nosniff");
+    });
+
+    await t.test("K16 send-back note reaches the candidate; expired and revoked edit links are dead", async function () {
+      const mk = await req(h.port, "POST", "/api/cards/candidate/2/edit-link", { headers: { "x-test-user": "ben@anuraconnect.com" }, body: {} });
+      const E = mk.json.url.split("/card-edit/")[1];
+      await req(h.port, "PUT", "/api/card-edit/" + E, { body: { headline: "Beaker CP" } });
+      await req(h.port, "POST", "/api/card-edit/" + E + "/submit", { body: {} });
+      let r = await req(h.port, "POST", "/api/cards/candidate/2/send-back", { headers: { "x-test-user": "ben@anuraconnect.com" }, body: { note: "Add a photo please" } });
+      assert.equal(r.status, 200);
+      r = await req(h.port, "GET", "/api/card-edit/" + E);
+      assert.equal(r.json.reviewNote, "Add a photo please");
+      await h.db.query("UPDATE card_edit_links SET expires_at = now() - interval '1 minute' WHERE candidate_id = 2");
+      assert.equal((await req(h.port, "GET", "/api/card-edit/" + E)).status, 410);
+      assert.equal((await req(h.port, "PUT", "/api/card-edit/" + E, { body: { headline: "x" } })).status, 410);
+      const mk2 = await req(h.port, "POST", "/api/cards/candidate/2/edit-link", { headers: { "x-test-user": "ben@anuraconnect.com" }, body: {} });
+      const E2 = mk2.json.url.split("/card-edit/")[1];
+      const row = await h.db.getOne("SELECT id FROM card_edit_links WHERE candidate_id = 2 AND revoked_at IS NULL AND expires_at > now()");
+      await req(h.port, "POST", "/api/cards/edit-links/" + row.id + "/revoke", { headers: { "x-test-user": "ben@anuraconnect.com" }, body: {} });
+      assert.equal((await req(h.port, "GET", "/api/card-edit/" + E2)).status, 410);
+    });
+
+    await t.test("K17 a new draft for the same submission refreshes older links", async function () {
+      await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell", whyMe: "Updated Why Me." });
+      const r = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(r.json.card.whyMe, "Updated Why Me.");
+    });
+
+    await t.test("K18 public pages are served with a strict CSP and the recruiter page is not public", async function () {
+      const page = await req(h.port, "GET", "/card/" + J);
+      assert.equal(page.status, 200);
+      assert.match(page.headers["content-security-policy"], /frame-ancestors 'none'/);
+      assert.match(page.text, /Anura Connect Card/);
+      const edit = await req(h.port, "GET", "/card-edit/" + J);
+      assert.equal(edit.status, 200);
+    });
+  } finally {
+    await h.close();
+  }
+});
+
+test("K19 server: Card paths are public, the recruiter page is not", function () {
+  const src = require("fs").readFileSync(path.join(__dirname, "server.js"), "utf8");
+  const m = src.match(/const PUBLIC_PREFIX = (\[[^\]]*\])/);
+  const prefixes = JSON.parse(m[1]);
+  ["/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/"].forEach(function (p) { assert.ok(prefixes.indexOf(p) >= 0, p); });
+  ["/cards", "/api/cards/overview", "/api/cards/candidate/1/approve"].forEach(function (p) {
+    assert.ok(!prefixes.some(function (x) { return p.startsWith(x); }), p + " must stay behind login");
+  });
+});

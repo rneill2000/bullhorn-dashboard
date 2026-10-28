@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Anura Connect Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#0E2E47; --blue:#176087; --sky:#53A2BE; --ink:#102331; --muted:#566B7A; --line:#D7E1E8; --fog:#EEF3F6; --paper:#fff; --ok:#1F7A55;
+  --serif:"Source Serif 4", Georgia, serif; --sans:"Public Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{font-family:var(--sans);color:var(--ink);background:var(--fog);font-size:16px;line-height:1.5}
+a{color:var(--blue)}
+a:focus-visible,button:focus-visible{outline:3px solid var(--sky);outline-offset:2px;border-radius:4px}
+img{display:block}
+
+.top{background:var(--paper);border-bottom:1px solid var(--line)}
+.top-inner{max-width:1120px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.top img{height:34px;width:auto}
+.top .shared{font-size:14px;color:var(--muted);text-align:right}
+.top .shared b{color:var(--ink);font-weight:600}
+
+.context{max-width:1120px;margin:0 auto;padding:28px 24px 0}
+.context h1{font-family:var(--serif);font-weight:400;font-size:clamp(22px,3vw,30px);line-height:1.2;letter-spacing:-.01em}
+.context h1 span{color:var(--blue)}
+.tabs{display:flex;gap:4px;margin-top:18px;border-bottom:1px solid var(--line)}
+.tabs button{font:inherit;font-size:15px;font-weight:600;color:var(--muted);background:none;border:0;padding:10px 14px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--navy);border-bottom-color:var(--blue)}
+
+main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
+
+/* The badge — the one loud thing on the page. */
+.layout{display:grid;grid-template-columns:300px 1fr;gap:40px;align-items:start}
+.badge{position:sticky;top:20px;background:var(--paper);border-radius:14px;box-shadow:0 1px 0 var(--line),0 12px 32px -18px rgba(14,46,71,.45);overflow:hidden}
+.badge .slot{width:54px;height:9px;border-radius:9px;background:var(--fog);box-shadow:inset 0 1px 2px rgba(14,46,71,.25);margin:14px auto 0}
+.badge .face{padding:18px 26px 0;text-align:center}
+.photo{width:152px;height:182px;margin:0 auto;border-radius:10px;background:var(--fog);object-fit:cover;border:1px solid var(--line)}
+.initials{display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:54px;color:var(--blue)}
+.badge h2{font-family:var(--serif);font-weight:600;font-size:26px;line-height:1.15;margin-top:16px;letter-spacing:-.01em}
+.badge .headline{font-size:14px;color:var(--muted);margin-top:6px}
+.badge .role{margin-top:14px;font-weight:600;color:var(--blue);font-size:15px}
+.badge .certs{list-style:none;margin-top:6px;font-size:13px;color:var(--ink)}
+.badge .certs li{padding:2px 0}
+.facts{margin:20px 26px 0;border-top:1px solid var(--line);padding-top:14px;display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+.facts dt{color:var(--muted)}
+.facts dd{font-weight:600;text-align:right}
+.facts dd.quiet{font-weight:400;color:var(--muted)}
+.badge .actions{padding:18px 26px 22px;display:grid;gap:8px}
+.btn{display:block;text-align:center;font:inherit;font-weight:600;font-size:15px;padding:11px 14px;border-radius:8px;text-decoration:none;cursor:pointer;border:1px solid transparent}
+.btn.primary{background:var(--blue);color:#fff}
+.btn.primary:hover{background:var(--navy)}
+.btn.plain{background:var(--paper);color:var(--blue);border-color:var(--line)}
+.btn.plain:hover{border-color:var(--sky)}
+.badge .band{background:var(--navy);color:#fff;font-size:12px;letter-spacing:.04em;padding:8px 26px;display:flex;justify-content:space-between}
+.badge .band span:last-child{color:var(--sky)}
+
+.story section{padding:0 0 34px;margin-bottom:34px;border-bottom:1px solid var(--line)}
+.story section:last-child{border-bottom:0;margin-bottom:0}
+.story h3{font-size:14px;font-weight:700;color:var(--blue);margin-bottom:12px}
+.prose{font-family:var(--serif);font-size:19px;line-height:1.6;max-width:66ch}
+.prose p+p{margin-top:12px}
+.culture{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 32px}
+.culture .q{font-size:14px;color:var(--muted);margin-bottom:4px}
+.culture .a{font-family:var(--serif);font-size:18px;line-height:1.5}
+.ref + .ref{margin-top:26px}
+.ref blockquote{font-family:var(--serif);font-size:18px;line-height:1.6;border-left:3px solid var(--sky);padding-left:18px;max-width:66ch}
+.ref .who{margin-top:10px;padding-left:21px;font-size:14px;color:var(--muted)}
+.ref .who b{color:var(--ink);font-weight:600}
+.ref .rehire{color:var(--ok);font-weight:600}
+.resume-frame{width:100%;height:880px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+
+.compare{background:var(--paper);border-radius:14px;box-shadow:0 1px 0 var(--line);overflow:hidden}
+.compare table{width:100%;border-collapse:collapse;font-size:15px}
+.compare th{text-align:left;font-size:13px;font-weight:600;color:var(--muted);padding:14px 18px;border-bottom:1px solid var(--line);background:#F7FAFB}
+.compare td{padding:16px 18px;border-bottom:1px solid var(--line);vertical-align:top}
+.compare tr:last-child td{border-bottom:0}
+.compare .who{display:flex;gap:14px;align-items:center}
+.compare .mini{width:48px;height:56px;border-radius:7px;object-fit:cover;background:var(--fog);border:1px solid var(--line);flex-shrink:0}
+.compare .mini.initials{font-size:20px}
+.compare .name{font-family:var(--serif);font-weight:600;font-size:18px}
+.compare .sub{font-size:13px;color:var(--muted)}
+.compare .rate,.compare .nowrap{white-space:nowrap}
+.compare .rate{font-weight:700}
+.compare .open{white-space:nowrap}
+.compare .open .btn{padding:8px 14px;font-size:14px}
+.compare-note{font-size:14px;color:var(--muted);margin-top:14px}
+
+.contact{max-width:1120px;margin:0 auto;padding:0 24px 56px}
+.contact-inner{background:var(--navy);color:#fff;border-radius:14px;padding:26px 28px;display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}
+.contact h4{font-family:var(--serif);font-weight:400;font-size:22px}
+.contact p{color:#C9DCE6;font-size:15px;margin-top:4px}
+.contact p a{color:#fff}
+.contact .reach{display:flex;flex-wrap:wrap;gap:4px 18px}
+.contact .reach a{white-space:nowrap}
+.contact .btn.primary{background:#fff;color:var(--navy)}
+.contact .btn.primary:hover{background:var(--fog)}
+
+.closed{max-width:560px;margin:72px auto;background:var(--paper);border-radius:14px;padding:36px;box-shadow:0 1px 0 var(--line)}
+.closed h1{font-family:var(--serif);font-weight:400;font-size:28px;margin-bottom:10px}
+.closed p{color:var(--muted)}
+.closed p+p{margin-top:10px}
+.loading{text-align:center;color:var(--muted);padding:80px 0}
+
+@media (max-width:860px){
+  .layout{grid-template-columns:1fr;gap:28px}
+  .badge{position:static;max-width:420px;margin:0 auto;width:100%}
+  .culture{grid-template-columns:1fr}
+  .resume-frame{display:none}
+  .prose{font-size:18px}
+  .compare thead{display:none}
+  .compare table,.compare tbody,.compare tr,.compare td{display:block;width:100%}
+  .compare tr{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .compare td{border:0;padding:4px 0}
+  .compare td[data-label]::before{content:attr(data-label) ": ";color:var(--muted)}
+  .compare .open{padding-top:10px}
+  .top .shared{display:none}
+}
+@media (max-width:480px){
+  .top-inner,.context,main,.contact{padding-left:16px;padding-right:16px}
+}
+@media print{
+  .top,.tabs,.contact,.badge .actions,.resume-frame{display:none}
+  body{background:#fff}
+  .badge{position:static;box-shadow:none;border:1px solid var(--line)}
+}
+@media (prefers-reduced-motion:no-preference){
+  .badge{animation:lift .5s cubic-bezier(.2,.7,.2,1) both}
+  @keyframes lift{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <img src="https://images.squarespace-cdn.com/content/v1/671fb0d9fec6997ddc5025cd/79107203-ad2e-4d39-96a6-5faa3f2f70bf/fulllogo_transparent_nobuffer.png" alt="Anura Connect">
+    <div class="shared" id="shared"></div>
+  </div>
+</header>
+<div id="app"><p class="loading">Loading…</p></div>
+
+<script>
+(function () {
+  "use strict";
+  var token = (location.pathname.match(/\/card\/([a-z]+)/) || [])[1] || "";
+  var api = "/api/card-public/" + token;
+  var app = document.getElementById("app");
+  var data = null;
+
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (attrs[k] == null || attrs[k] === false) return;
+      if (k === "class") n.className = attrs[k];
+      else if (k === "text") n.textContent = attrs[k];
+      else if (k.indexOf("on") === 0) n.addEventListener(k.slice(2), attrs[k]);
+      else n.setAttribute(k, attrs[k]);
+    });
+    (kids || []).forEach(function (c) { if (c != null && c !== false) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function first(name) { return String(name || "").split(/\s+/)[0] || "this candidate"; }
+  function initials(name) { return String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(function (p) { return p[0].toUpperCase(); }).join(""); }
+  function paragraphs(text) {
+    return String(text || "").split(/\n{2,}|\n(?=\s*[-•*]\s)/).map(function (p) { return p.trim(); }).filter(Boolean).map(function (p) {
+      var node = el("p");
+      p.split("\n").forEach(function (line, i) { if (i) node.appendChild(el("br")); node.appendChild(document.createTextNode(line.replace(/^\s*[-•*]\s*/, "• "))); });
+      return node;
+    });
+  }
+  function photo(c, cls) {
+    if (c.hasPhoto) return el("img", { class: cls, src: api + "/photo/" + c.id, alt: "Photo of " + c.name, loading: "lazy" });
+    return el("div", { class: cls + " initials", "aria-hidden": "true", text: initials(c.name) });
+  }
+  function contactFirst() { return first(data.contact.name); }
+  function interviewHref(c) {
+    var subject = "Interview: " + c.name + (data.job.title ? " for " + data.job.title : "");
+    return "mailto:" + encodeURIComponent(data.contact.email || "") + "?subject=" + encodeURIComponent(subject);
+  }
+
+  function seen(page) {
+    var fired = false;
+    function fire() {
+      if (fired || document.visibilityState !== "visible") return;
+      fired = true;
+      fetch(api + "/seen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ page: page }), keepalive: true }).catch(function () {});
+    }
+    setTimeout(fire, 3000);
+    document.addEventListener("visibilitychange", function () { setTimeout(fire, 3000); });
+  }
+
+  function closedPage(body) {
+    var c = body.contact || {};
+    var role = body.job && body.job.title ? "the " + body.job.title + " role" : "this role";
+    var msg = body.state === "missing"
+      ? "This link isn't valid. Check that the whole link was copied from the email."
+      : "This Card was shared for " + role + ", which is no longer open, so it has been closed.";
+    app.innerHTML = "";
+    app.appendChild(el("div", { class: "closed" }, [
+      el("h1", { text: body.state === "missing" ? "Link not found" : "This Card is closed" }),
+      el("p", { text: msg }),
+      c.email ? el("p", {}, ["To see this candidate again, contact ", el("a", { href: "mailto:" + c.email, text: c.name || c.email }), c.phone ? " at " + c.phone : "", "."]) : null,
+    ]));
+  }
+
+  function badge(c) {
+    var facts = el("dl", { class: "facts" }, [
+      el("dt", { text: "Available" }), el("dd", { class: c.availability ? "" : "quiet", text: c.availability || "Ask " + contactFirst() }),
+      el("dt", { text: "Location" }), el("dd", { class: c.location ? "" : "quiet", text: c.location || "Ask " + contactFirst() }),
+      el("dt", { text: "Bill rate" }), el("dd", { class: c.rate ? "" : "quiet", text: c.rate || "Ask " + contactFirst() }),
+    ]);
+    var actions = el("div", { class: "actions" }, [
+      data.contact.email ? el("a", { class: "btn primary", href: interviewHref(c), text: "Request an interview" }) : null,
+      c.resumeName ? el("a", { class: "btn plain", href: api + "/resume/" + c.id + "?download=1", text: "Download résumé" }) : null,
+    ]);
+    return el("aside", { class: "badge", "aria-label": c.name + " at a glance" }, [
+      el("div", { class: "slot", "aria-hidden": "true" }),
+      el("div", { class: "face" }, [
+        photo(c, "photo"),
+        el("h2", { text: c.name }),
+        c.headline ? el("p", { class: "headline", text: c.headline }) : null,
+        c.epicRole ? el("p", { class: "role", text: c.epicRole }) : null,
+        c.certs.length ? el("ul", { class: "certs", "aria-label": "Epic certifications" }, c.certs.map(function (x) { return el("li", { text: x }); })) : null,
+      ]),
+      facts,
+      actions,
+      el("div", { class: "band", "aria-hidden": "true" }, [el("span", { text: "Anura Connect" }), el("span", { text: "Epic consultant" })]),
+    ]);
+  }
+
+  function story(c) {
+    var name = first(c.name);
+    var parts = [];
+    if (c.whyMe) parts.push(el("section", {}, [el("h3", { text: "Why " + name }), el("div", { class: "prose" }, paragraphs(c.whyMe))]));
+    if (c.intro) parts.push(el("section", {}, [el("h3", { text: "In " + name + "'s words" }), el("div", { class: "prose" }, paragraphs(c.intro))]));
+    if (c.culture.length) parts.push(el("section", {}, [
+      el("h3", { text: "Culture corner" }),
+      el("div", { class: "culture" }, c.culture.map(function (x) { return el("div", {}, [el("p", { class: "q", text: x.prompt }), el("p", { class: "a", text: x.text })]); })),
+    ]));
+    if (c.references.length) parts.push(el("section", {}, [
+      el("h3", { text: c.references.length === 1 ? "Reference" : "References" }),
+    ].concat(c.references.map(function (r) {
+      var who = [r.role, r.organization].filter(Boolean).join(", ");
+      return el("div", { class: "ref" }, [
+        el("blockquote", {}, paragraphs(r.text)),
+        el("p", { class: "who" }, [
+          el("b", { text: who || "Former manager" }),
+          r.relationship ? ". " + r.relationship : "",
+          r.rehire ? el("span", {}, [". ", el("span", { class: "rehire", text: "Would rehire" })]) : "",
+        ]),
+      ]);
+    }))));
+    if (c.resumeName) parts.push(el("section", {}, [
+      el("h3", { text: "Résumé" }),
+      el("iframe", { class: "resume-frame", src: api + "/resume/" + c.id, title: c.name + " résumé" }),
+      el("p", { class: "compare-note" }, [el("a", { href: api + "/resume/" + c.id + "?download=1", text: "Download the PDF" })]),
+    ]));
+    if (!parts.length) parts.push(el("section", {}, [el("p", { class: "prose", text: "More detail on " + name + " is on the way. " + contactFirst() + " can walk you through their background." })]));
+    return el("div", { class: "story" }, parts);
+  }
+
+  function compareView() {
+    var rows = data.candidates.map(function (c) {
+      return el("tr", {}, [
+        el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name", text: c.name }), c.headline ? el("div", { class: "sub", text: c.headline }) : null])])]),
+        el("td", {}, [el("div", { text: c.epicRole || "—" }), c.certs.length ? el("div", { class: "sub", text: c.certs.join(", ") }) : null]),
+        el("td", { class: "nowrap", "data-label": "Available", text: c.availability || "Ask " + contactFirst() }),
+        el("td", { "data-label": "Location", text: c.location || "Ask " + contactFirst() }),
+        el("td", { class: "rate", "data-label": "Bill rate", text: c.rate || "Ask " + contactFirst() }),
+        el("td", { class: "open" }, [el("a", { class: "btn plain", href: "#c=" + c.id, text: "Open Card" })]),
+      ]);
+    });
+    return el("div", {}, [
+      el("div", { class: "compare" }, [el("table", {}, [
+        el("thead", {}, [el("tr", {}, ["Candidate", "Epic", "Available", "Location", "Bill rate", ""].map(function (h) { return el("th", { scope: "col", text: h }); }))]),
+        el("tbody", {}, rows),
+      ])]),
+      el("p", { class: "compare-note", text: "Everyone Anura Connect has sent for this role, in the order we sent them. Rates are checked against our records each time you open this page." }),
+    ]);
+  }
+
+  function render() {
+    var hash = location.hash.slice(1);
+    var view = hash === "compare" ? "compare" : "card";
+    var c = data.card;
+    app.innerHTML = "";
+    var job = data.job.title ? data.job.title : "this role";
+    var h1 = el("h1", {}, view === "compare"
+      ? ["Candidates for " + job + (data.job.clientName ? " at " + data.job.clientName : "")]
+      : [c.name + " for " + job]);
+    var tabs = el("div", { class: "tabs", role: "tablist" }, [
+      el("button", { role: "tab", "aria-selected": String(view === "card"), text: first(c.name) + "'s Card", onclick: function () { location.hash = c.id === data.sent ? "" : "c=" + c.id; } }),
+      data.candidates.length > 1 ? el("button", { role: "tab", "aria-selected": String(view === "compare"), text: "Compare all " + data.candidates.length, onclick: function () { location.hash = "compare"; } }) : null,
+    ]);
+    app.appendChild(el("div", { class: "context" }, [h1, tabs]));
+    var main = el("main");
+    if (view === "compare") main.appendChild(compareView());
+    else main.appendChild(el("div", { class: "layout" }, [badge(c), story(c)]));
+    app.appendChild(main);
+    var ct = data.contact;
+    app.appendChild(el("div", { class: "contact" }, [el("div", { class: "contact-inner" }, [
+      el("div", {}, [
+        el("h4", { text: "Questions about " + (view === "compare" ? "any of them" : first(c.name)) + "?" }),
+        el("p", { text: ct.name + (ct.title ? ", " + ct.title : "") }),
+        el("p", { class: "reach" }, [
+          ct.phone ? el("a", { href: "tel:" + ct.phone.replace(/[^\d+]/g, ""), text: ct.phone }) : null,
+          ct.email ? el("a", { href: "mailto:" + ct.email, text: ct.email }) : null,
+        ]),
+      ]),
+      ct.email ? el("a", { class: "btn primary", href: interviewHref(c), text: "Request an interview" }) : null,
+    ])]));
+    document.title = (view === "compare" ? "Candidates for " + job : c.name) + " | Anura Connect";
+    window.scrollTo(0, 0);
+  }
+
+  function shared() {
+    var s = document.getElementById("shared");
+    s.innerHTML = "";
+    if (data && data.contact && data.contact.name) s.appendChild(el("span", {}, ["Shared by ", el("b", { text: data.contact.name })]));
+  }
+
+  function load() {
+    var hash = location.hash.slice(1);
+    var other = (hash.match(/^c=([a-z]+)$/) || [])[1];
+    var url = other ? api + "/c/" + other : api;
+    fetch(url, { headers: { Accept: "application/json" } }).then(function (r) {
+      return r.json().then(function (body) { return { status: r.status, body: body }; });
+    }).then(function (res) {
+      if (res.status === 429) { app.innerHTML = '<p class="loading">Too many requests. Try again in a minute.</p>'; return; }
+      if (res.body.state !== "active") { data = res.body; shared(); closedPage(res.body); return; }
+      data = res.body;
+      shared();
+      render();
+      seen(location.hash === "#compare" ? "compare" : (other ? "card:" + other : "card"));
+    }).catch(function () {
+      app.innerHTML = '<p class="loading">This page didn\'t load. Check your connection and refresh.</p>';
+    });
+  }
+
+  window.addEventListener("hashchange", function () {
+    if (!data || data.state !== "active") return load();
+    var hash = location.hash.slice(1);
+    if (hash === "compare") { render(); seen("compare"); return; }
+    var other = (hash.match(/^c=([a-z]+)$/) || [])[1];
+    if ((other || data.sent) !== data.card.id) load(); else render();
+  });
+  load();
+})();
+</script>
+</body>
+</html>

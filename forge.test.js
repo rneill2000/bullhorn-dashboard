@@ -2266,3 +2266,86 @@ test("F48: /return notes the candidate, emails the recruiter the reason, marks t
     assert.ok(returnsRows[0].resolved_at, "resolve clears the open return");
   } finally { server.close(); }
 });
+
+/* ── Anura Connect Card hook (K20) ─────────────────────────────── */
+function cardForgeApp(cards, calls) {
+  const app = express();
+  app.use(express.json());
+  const row = fixtureRow();
+  forge(app, {
+    db: {
+      ready: true,
+      query: async function () { return { rows: [] }; },
+      getOne: async function () { return row; },
+      getAll: async function (sql) {
+        if (/client_contacts/.test(sql)) return [{ id: 1, first_name: "Dana", last_name: "Ruiz", name: "Dana Ruiz", email: "dana@mh.example", occupation: "Director" }];
+        if (/FROM submissions/.test(sql)) return [row];
+        return [];
+      },
+    },
+    graphFetch: async function (email, endpoint, options) {
+      calls.push({ endpoint: endpoint, body: options && options.body });
+      if (endpoint.indexOf("/attachments") >= 0) return {};
+      return { id: "MSG1", webLink: "https://outlook.office.com/mail/deeplink/draft" };
+    },
+    bhFetch: async function (endpoint) {
+      if (String(endpoint).indexOf("fileAttachments") >= 0) return { data: [{ id: 9, name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", fileExtension: "pdf", dateAdded: 3 }] };
+      if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: { id: 42, customText10: "185", billRate: 185 } };
+      if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { id: 9, clientBillRate: 185 } };
+      return { data: {} };
+    },
+    downloadCandidateFile: async function () { return { name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4 jack") }; },
+    outlookUsers: function () { return { "rachel@anuraconnect.com": { name: "Rachel" } }; },
+    getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+    cards: cards,
+  });
+  return app;
+}
+const CARD_DRAFT_BODY = {
+  to: "dana@mh.example", greetingName: "Dana", subject: "HB Consultant Resume", candidateName: "Jack Corbell",
+  whyMe: "Jack led the HB implementation at Memorial Hermann.", availability: "2 weeks", location: "Houston, TX", billRate: "$185/hr", resumeFileId: 9,
+};
+
+test("K20 Forge puts the Card link in the draft only after every guard passes", async function () {
+  const minted = [];
+  const calls = [];
+  const app = cardForgeApp({ mintClientLink: async function (o) { minted.push(o); return { url: "https://dashboard.anuraconnect.com/card/bcdfghjkmnpqrstvwxzbcdfghjkmnpqr" }; } }, calls);
+  const server = await listen(app);
+  try {
+    const preview = await req(server.address().port, "GET", "/api/forge/submissions/42?polish=0");
+    assert.match(preview.json.email.text, /Jack's Anura Connect Card: \[link is added when you create the draft\]/);
+    assert.equal(minted.length, 0, "preview never mints");
+    const blocked = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", Object.assign({}, CARD_DRAFT_BODY, { billRate: "$200/hr" }));
+    assert.equal(blocked.status, 400);
+    assert.equal(minted.length, 0, "a blocked draft mints nothing");
+    const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", CARD_DRAFT_BODY);
+    assert.equal(draft.status, 200, draft.text);
+    assert.equal(minted.length, 1);
+    const m = minted[0];
+    assert.equal(m.submissionId, 42);
+    assert.equal(m.contactEmail, "dana@mh.example");
+    assert.equal(m.billAmount, 185);
+    assert.equal(m.resumeFileId, "9");
+    assert.equal(m.recruiter.email, "rachel@anuraconnect.com");
+    assert.ok(Array.isArray(m.references));
+    assert.equal(m.payRate, undefined, "pay never goes to the Card");
+    assert.doesNotMatch(JSON.stringify(m), /\$95|pay/i);
+    const sent = JSON.parse(calls[0].body);
+    assert.match(sent.body.content, /href="https:\/\/dashboard\.anuraconnect\.com\/card\/bcdfghjkmnpqrstvwxzbcdfghjkmnpqr"/);
+    assert.equal(draft.json.card.url, "https://dashboard.anuraconnect.com/card/bcdfghjkmnpqrstvwxzbcdfghjkmnpqr");
+  } finally { server.close(); }
+});
+
+test("K20b a Card failure never blocks the submittal", async function () {
+  const calls = [];
+  const app = cardForgeApp({ mintClientLink: async function () { throw new Error("Neon is down"); } }, calls);
+  const server = await listen(app);
+  try {
+    const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", CARD_DRAFT_BODY);
+    assert.equal(draft.status, 200, draft.text);
+    assert.equal(draft.json.created, true);
+    assert.equal(draft.json.card, null);
+    assert.match(draft.json.cardNote, /without the Card link/);
+    assert.doesNotMatch(JSON.parse(calls[0].body).body.content, /Anura Connect Card/);
+  } finally { server.close(); }
+});

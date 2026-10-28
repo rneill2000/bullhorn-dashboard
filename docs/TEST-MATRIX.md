@@ -127,3 +127,29 @@ Axes: company id shape (integer / numeric string / `{id}` / bare id) · where th
 | T6 | Session table created on the Neon Bullhorn mirror (DATABASE_URL) | App login rows mixed into the Bullhorn clone | test: the Neon Bullhorn mirror is not the session database |
 | M3 | Manual: Forge Create with Outlook disconnected — yellow panel, no red toast. Expired session on Create or Write to Bullhorn — login page, no red toast | Real cookie / Graph behavior | Record date + result in the PR |
 | M5 | Manual: log in on dashboard.anuraconnect.com, redeploy or restart the Railway service, reload. Still signed in. Forge and Mail still see that user. Log out, restart, still logged out. Confirm app.user_sessions is on Railway Postgres, not Neon. | Real cookie and Railway Postgres | Record date + result in the PR |
+
+## Anura Connect Card (card.js)
+
+Axes: viewer (client / candidate / recruiter / link scanner) · link (valid / unknown / revoked / job closed) · scope (same job+client / other job / other client / client-rejected) · rate (matches Bullhorn / differs / Bullhorn down) · candidate text (clean / contact / pay)
+Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in test.yml).
+
+| # | Case | Risk if wrong | Covered by |
+|---|------|---------------|------------|
+| K1 | Token alphabet | Link spells a word or trips Forge's pay/1099/W2 guard | card.test.js K1 |
+| K2 | Card line placement / preview placeholder | Link missing or broken in the email | K2, forge.test.js K20 |
+| K3 | Candidate types phone/email/link/handle/pay | Client contacts candidate directly; pay to client | K3, K15 |
+| K4 | Job filled/closed/deleted | Old Card keeps circulating | K4, K13 |
+| K5 | SVG or non-image upload | Script served from our domain | K5, K15 |
+| K6 | Full references | Referee name/phone/email, layoffs or pay reach a client | K6 |
+| K7 | Comparison scope | Client sees another client's or another job's candidates | K7, K11 |
+| K8 | Client JSON | Bullhorn ids, contact emails, owner leak | K8 |
+| K9 | Rate differs from Bullhorn / Bullhorn down | Stale or wrong rate shown to a client | K9 |
+| K10 | Recruiter updates rate | Rate typed by hand instead of read from Bullhorn | K10 |
+| K11 | /c, /photo, /resume for out-of-scope id | Data from another job | K11 |
+| K12 | Unknown / revoked token | Revoked link still works | K12 |
+| K14 | Recruiter or link scanner opens | False "client opened" alerts | K14 |
+| K15 | Candidate edits before approval | Unreviewed text/photo reaches a client | K15 |
+| K16 | Expired / revoked edit link | Old link edits a profile | K16 |
+| K19 | Public path allowlist | Recruiter pages exposed without login | K19 |
+| K20 | Forge draft with Cards | Card minted for a blocked draft; Card failure blocks a submittal | forge.test.js K20, K20b |
+| KM1 | Manual smoke after deploy: Forge draft on a real submission, open the Card logged out on a phone, check rate and résumé | Real data differs from fakes | Record date + result in the PR |

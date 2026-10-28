@@ -738,6 +738,7 @@ function fromNote(note, deps) {
     organization: fields.organization || "",
     quote: pickQuote(body, fields),
     status: fields.status || "",
+    rehire: fields.rehire || "",
     positiveText: body,
     sourceRank: referenceAction ? 2 : 1,
   };
@@ -779,6 +780,7 @@ function fromFile(file, deps) {
     organization: fields.organization || "",
     quote: pickQuote(body, fields) || body,
     status: fields.status || "",
+    rehire: fields.rehire || "",
     positiveText: body,
     sourceRank: 1,
   };
@@ -864,6 +866,106 @@ function collectReferenceBundle(input, deps) {
   return { offers: publicOffers, contexts: contexts };
 }
 
+/* ── Anura Connect Card: full references ─────────────────────────────
+   The email carries one short anonymized line per reference. The Card shows the whole
+   reference, with the writer's title and organization, but never the writer's name,
+   phone, email, or any link. Sentences that name another person, mention a layoff or
+   departure, or carry pay/employment terms are dropped rather than rewritten. */
+const CARD_REFERENCE_MAX = 2400;
+
+function rawReferences(input, deps) {
+  const src = input || {};
+  const raws = [];
+  (src.notes || []).forEach(function (note) { const r = fromNote(note, deps); if (r) raws.push(r); });
+  (src.records || []).forEach(function (record) { const r = fromRecord(record); if (r) raws.push(r); });
+  (src.files || []).forEach(function (file) { const r = fromFile(file, deps); if (r) raws.push(r); });
+  return raws;
+}
+
+function cardSentence(sentence, ctx, candidate, writerPhrases, deps) {
+  let s = cleanSpace(sentence);
+  if (!s || isGreetingOrClosing(s)) return "";
+  s = withoutDeparture(s);
+  if (!s) return "";
+  if (hasUnknownPerson(s, candidate)) return "";
+  for (let i = 0; i < writerPhrases.length; i++) {
+    if (phraseIn(s, writerPhrases[i])) return "";
+  }
+  if (hasContact(s)) s = stripContacts(s);
+  s = readsCleanly(s);
+  if (!s || hasContact(s)) return "";
+  const leak = leakOf(deps, s, { clientName: ctx.clientName || "", jobTitle: ctx.jobTitle || "", clients: [] });
+  if (leak && leak.rule !== "references" && leak.rule !== "other client") return "";
+  return s;
+}
+
+function cardRehire(value) {
+  const v = cleanSpace(value).toLowerCase();
+  if (!v) return "";
+  if (/^(?:y|yes|yep|absolutely|definitely|without hesitation|in a heartbeat)\b/.test(v)) return "Yes";
+  return "";
+}
+
+/**
+ * Full references for the Anura Connect Card, limited to the ids the recruiter picked.
+ * @returns [{ id, role, organization, relationship, rehire, text }]
+ */
+function cardReferences(input, ids, deps) {
+  const src = input || {};
+  const wanted = [];
+  (Array.isArray(ids) ? ids : []).forEach(function (id) {
+    const s = String(id == null ? "" : id).trim();
+    if (s && wanted.indexOf(s) < 0) wanted.push(s);
+  });
+  if (!wanted.length) return [];
+  const byId = {};
+  rawReferences(src, deps).forEach(function (raw) { byId[raw.id] = raw; });
+  const out = [];
+  wanted.forEach(function (id) {
+    const raw = byId[id];
+    if (!raw) return;
+    if (!isPositive(raw.positiveText || raw.quote, raw.status)) return;
+    const candidate = candidateOf(src.candidateName || raw.candidateName || "", [raw.candidateName || ""].concat(src.candidateAliases || []));
+    const ctx = { clientName: src.clientName || "", jobTitle: src.jobTitle || "" };
+    const writerPhrases = dropPhrases({ writerName: raw.writerName || "", personNames: src.personNames || [] }, candidate);
+    const body = plain(deps, raw.quote || "");
+    const kept = [];
+    splitSentences(body).forEach(function (sentence) {
+      const clean = cardSentence(sentence, ctx, candidate, writerPhrases, deps);
+      if (clean) kept.push(clean);
+    });
+    let text = kept.join(" ").trim();
+    if (text.length > CARD_REFERENCE_MAX) {
+      const cut = text.lastIndexOf(". ", CARD_REFERENCE_MAX);
+      text = text.slice(0, cut > 200 ? cut + 1 : CARD_REFERENCE_MAX).trim();
+    }
+    if (text.length < 24) return;
+    let organization = cleanSpace(raw.organization || "");
+    if (hasContact(organization) || organization.length > 100) organization = "";
+    for (let i = 0; i < writerPhrases.length; i++) {
+      if (organization && phraseIn(organization, writerPhrases[i])) organization = "";
+    }
+    let role = displayRole(raw.role || "", raw.relationship || "", {}) || ROLE_FALLBACK;
+    for (let i = 0; i < writerPhrases.length; i++) {
+      if (phraseIn(role, writerPhrases[i])) role = ROLE_FALLBACK;
+    }
+    let relationship = cleanSpace(raw.relationship || "");
+    if (!relationship || relationship.length > 120 || hasContact(relationship) || hasUnknownPerson(relationship, candidate)) relationship = "";
+    for (let i = 0; i < writerPhrases.length; i++) {
+      if (relationship && phraseIn(relationship, writerPhrases[i])) relationship = "";
+    }
+    out.push({
+      id: raw.id,
+      role: role,
+      organization: organization,
+      relationship: relationship,
+      rehire: cardRehire(raw.rehire),
+      text: text,
+    });
+  });
+  return out;
+}
+
 function collectReferenceOffers(input, deps) {
   return collectReferenceBundle(input, deps).offers;
 }
@@ -902,4 +1004,5 @@ module.exports = {
   selectReferenceOffers: selectReferenceOffers,
   shortenQuote: shortenQuote,
   untetherReference: untetherReference,
+  cardReferences: cardReferences,
 };

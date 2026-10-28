@@ -1304,6 +1304,31 @@ function signatureLines(fields) {
   return lines.length ? lines.join("\n") : "Anura Connect";
 }
 
+/**
+ * The Anura Connect Card line. cardUrl = a real link (draft); cardPending = the preview, which
+ * shows where the link will go before one exists. Wording avoids every findInternalLeak trigger.
+ */
+function cardLine(fields) {
+  const url = String(fields.cardUrl || "").trim();
+  const first = String(fields.candidateName || "").trim().split(/\s+/)[0] || "";
+  const label = (first ? first + "'s" : "Their") + " Anura Connect Card";
+  const blurb = "Photo, résumé, the full write-up, and a side-by-side with the other candidates we've sent for this role.";
+  if (url) {
+    return {
+      text: label + ": " + url + "\n" + blurb,
+      html: "<p style=\"margin:0 0 4px\"><a href=\"" + esc(url) + "\" style=\"color:#176087;font-weight:bold\">View " + esc(label) + "</a></p>" +
+        "<p style=\"margin:0 0 12px;color:#555\">" + esc(blurb) + "</p>",
+    };
+  }
+  if (fields.cardPending) {
+    return {
+      text: label + ": [link is added when you create the draft]",
+      html: "<p style=\"margin:0 0 12px;color:#176087\"><b>View " + esc(label) + "</b> <span style=\"color:#888\">[link is added when you create the draft]</span></p>",
+    };
+  }
+  return null;
+}
+
 function composeEmail(fields) {
   const name = (fields.candidateName || "").trim();
   const greet = String(fields.greetingName || "").trim().replace(/,+$/, "");
@@ -1317,7 +1342,9 @@ function composeEmail(fields) {
   const bill = (fields.billRate || "").trim();
   const refLines = (Array.isArray(fields.references) ? fields.references : []).map(referenceLib.referenceLine).filter(Boolean).slice(0, 2);
   const sig = signatureLines(fields);
+  const card = cardLine(fields);
   const lines = [greeting, "", intro, ""];
+  if (card) lines.push(card.text, "");
   if (why) lines.push("Why Me", "", why, "");
   refLines.forEach(function (line) { lines.push(line, ""); });
   lines.push("Availability: " + availability, "Location: " + location, "Bill rate: " + bill, "", sig);
@@ -1333,6 +1360,7 @@ function composeEmail(fields) {
     "<div style=\"font-family:Calibri,'Segoe UI',sans-serif;font-size:14px;color:#1a1a1a;line-height:1.45\">",
     "<p style=\"margin:0 0 12px\">" + esc(greeting) + "</p>",
     "<p style=\"margin:0 0 12px\">" + esc(intro) + "</p>",
+    card ? card.html : "",
     whyHtml,
     refHtml,
     "<p style=\"margin:0 0 6px\"><b>Availability:</b> " + esc(availability) + "</p>",
@@ -1501,6 +1529,7 @@ function registerForge(app, deps) {
   const referencePicks = deps.referencePicks || createReferencePicks();
   const notifier = deps.notifier || null; // { send, card } from notify.js
   const publicOrigin = deps.publicOrigin || function () { return process.env.PUBLIC_ORIGIN || "https://dashboard.anuraconnect.com"; };
+  const cards = deps.cards || null; // card.js — mints the client's Anura Connect Card link
   let tableReady = null;
 
   /** Who owns the candidate relationship: Neon mirror first (candidates.owner_id → corporate_users), Bullhorn as fallback. */
@@ -1716,7 +1745,7 @@ function registerForge(app, deps) {
     const merged = mergeNoteRows(notes, extra[String(candidateId)] || []);
     const records = await loadCandidateReferenceRecords(candidateId);
     const files = await loadReferenceFileTexts(candidateId);
-    return referenceLib.collectReferenceBundle({
+    const input = {
       notes: merged,
       records: records,
       files: files,
@@ -1724,7 +1753,10 @@ function registerForge(app, deps) {
       clientName: ctx && ctx.clientName || "",
       jobTitle: ctx && ctx.jobTitle || "",
       clients: ctx && ctx.clients || [],
-    }, referenceDeps());
+    };
+    const bundle = referenceLib.collectReferenceBundle(input, referenceDeps());
+    bundle.input = input;
+    return bundle;
   }
 
   function referenceContext(row, clients) {
@@ -2591,6 +2623,7 @@ function registerForge(app, deps) {
         signerName: profile.name || (user && (user.firstName || personName(user))) || "Anura Connect",
         signerTitle: profile.title,
         signerPhone: profile.phone,
+        cardPending: !!cards,
       });
       try {
         const holder = [{ candidateId: draft.candidate.id, clientId: draft.job.clientId }];
@@ -2695,7 +2728,7 @@ function registerForge(app, deps) {
       const signerName = (body.signerName || profile.name || (user && (user.firstName || personName(user))) || "Anura Connect").trim();
       const signerTitle = body.signerTitle != null ? String(body.signerTitle) : profile.title;
       const signerPhone = body.signerPhone != null ? String(body.signerPhone) : profile.phone;
-      const email = composeEmail({
+      const emailFields = {
         candidateName: candidateName,
         jobTitle: body.jobTitle || base.job.title,
         clientName: body.clientName || base.job.clientName,
@@ -2709,10 +2742,11 @@ function registerForge(app, deps) {
         signerName: signerName,
         signerTitle: signerTitle,
         signerPhone: signerPhone,
-      });
+      };
+      const baseEmail = composeEmail(emailFields);
       const names = internalFirstNames(await loadInternalUsers());
       const leak = findInternalLeak([
-        email.subject, email.text, whyMe, availability, location, billRate, candidateName, greetingName, signerName, signerTitle,
+        baseEmail.subject, baseEmail.text, whyMe, availability, location, billRate, candidateName, greetingName, signerName, signerTitle,
       ], names, { clientName: body.clientName || base.job.clientName, jobTitle: body.jobTitle || base.job.title, clients: clientNames });
       if (leak) {
         return res.status(400).json({
@@ -2796,6 +2830,46 @@ function registerForge(app, deps) {
         });
       }
 
+      let email = baseEmail;
+      let card = null;
+      let cardNote = "";
+      if (cards) {
+        try {
+          const contactKey = to || "";
+          card = await cards.mintClientLink({
+            submissionId: id,
+            candidateId: base.candidate.id,
+            candidateName: candidateName || base.candidate.name,
+            jobId: base.job.id,
+            jobTitle: body.jobTitle || base.job.title,
+            clientId: base.job.clientId,
+            clientName: body.clientName || base.job.clientName,
+            contactEmail: contactKey,
+            whyMe: whyMe,
+            availability: availability,
+            location: location,
+            billRate: billRate,
+            billAmount: moneyNumber(billRate),
+            resumeFileId: resumeFileId,
+            resumeName: attachName,
+            references: referenceLib.cardReferences(referenceBundle.input || {}, chosenReferences.map(function (offer) { return offer.id; }), referenceDeps()),
+            recruiter: { name: signerName, title: signerTitle || "", phone: signerPhone || "", email: (user && user.email) || "" },
+            createdBy: user ? (user.email || user.name || "") : "",
+          });
+          const withCard = composeEmail(Object.assign({}, emailFields, { cardUrl: card.url }));
+          const cardLeak = findInternalLeak([withCard.subject, withCard.text], names, { clientName: body.clientName || base.job.clientName, jobTitle: body.jobTitle || base.job.title, clients: clientNames });
+          if (cardLeak) {
+            cardNote = "Card link left out of the email (" + cardLeak.rule + "). The Card still exists; share it from the Cards page.";
+          } else {
+            email = withCard;
+          }
+        } catch (e) {
+          console.log("[Forge] card link failed for submission " + id + ": " + e.message);
+          cardNote = "Draft created without the Card link (" + e.message + ").";
+          card = null;
+        }
+      }
+
       const boxes = await mailboxes();
       const mailbox = matchMailbox(boxes, body.mailbox) || matchMailbox(boxes, user && user.email) || boxes[0] || "";
       const resumeStatus = tooLarge ? "too_large" : "ok";
@@ -2825,6 +2899,8 @@ function registerForge(app, deps) {
           bodyHtml: email.html,
           bodyText: email.text,
           resume: { attached: false, status: resumeStatus, filename: attachName },
+          card: card ? { url: card.url } : null,
+          cardNote: cardNote,
         });
       }
 
@@ -2851,6 +2927,8 @@ function registerForge(app, deps) {
             bodyText: email.text,
             mailbox: mailbox,
             resume: { attached: false, status: resumeStatus, filename: attachName },
+            card: card ? { url: card.url } : null,
+            cardNote: cardNote,
           });
         }
         await writeAudit(Object.assign({}, auditBase, { mailbox: mailbox, draftStatus: "failed", note: e.message }));
@@ -2896,6 +2974,8 @@ function registerForge(app, deps) {
         subject: email.subject,
         resume: { attached: !tooLarge && !!buf.length && !attachNote, status: resumeStatus, filename: attachName, bytes: buf.length },
         attachNote: attachNote,
+        card: card ? { url: card.url } : null,
+        cardNote: cardNote,
         instructions: "Draft saved in " + mailbox + ". Open it in Outlook, confirm the résumé, and send it yourself.",
       });
     } catch (e) {
@@ -3077,6 +3157,23 @@ function registerForge(app, deps) {
       res.status(e.status || 500).json({ error: e.message });
     }
   });
+  /**
+   * Re-read a submission's bill rate from Bullhorn with the same rules the draft guard uses.
+   * The Card calls this before showing any rate to a client. Throws if Bullhorn can't be read.
+   */
+  async function verifyBillForSubmission(submissionId) {
+    const row = await loadBundle(submissionId);
+    const client = resolveClient(row);
+    return liveBill(submissionId, row.job_id, {
+      candidateId: row.candidate_id,
+      jobTitle: row.job_title_live || row.job_title || "",
+      clientName: client.clientName,
+      submittedAt: row.date_added,
+      pay: row.pay_rate || row.sub_custom_pay,
+    });
+  }
+
+  return { verifyBillForSubmission: verifyBillForSubmission };
 }
 
 module.exports = registerForge;
@@ -3087,6 +3184,7 @@ module.exports.pickAvailability = pickAvailability;
 module.exports.templateWhyMe = templateWhyMe;
 module.exports.subjectFor = subjectFor;
 module.exports.composeEmail = composeEmail;
+module.exports.cardLine = cardLine;
 module.exports.classifyGraphError = classifyGraphError;
 module.exports.formatRate = formatRate;
 module.exports.htmlToPlain = htmlToPlain;
@@ -3120,4 +3218,7 @@ module.exports.guardEditedReference = function (quote, ctx) {
   return referenceLib.guardEditedReference(quote, ctx || {}, referenceDeps());
 };
 module.exports.referenceLine = referenceLib.referenceLine;
+module.exports.cardReferences = function (input, ids) {
+  return referenceLib.cardReferences(input || {}, ids, referenceDeps());
+};
 module.exports.REFERENCE_NOTES_SQL = REFERENCE_NOTES_SQL;

@@ -814,16 +814,18 @@ async function forgeCreate() {
       confirmAnother: !!f.confirmAnother,
       confirmSameClient: !!f.confirmSameClient,
     });
+    var cardBit = (r.card && r.card.url ? '<div style="margin-top:8px"><a href="' + forgeAttr(r.card.url) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:700">Preview the client\'s Anura Connect Card</a> <span style="color:#64748b">(your views aren\'t counted)</span></div>' : "")
+      + (r.cardNote ? '<div style="margin-top:6px;color:#92400e">' + esc(r.cardNote) + '</div>' : "");
     if (r.created) {
       var link = r.webLink ? '<div style="margin-top:8px"><a href="' + forgeAttr(r.webLink) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:700">Open draft in Outlook</a></div>' : "";
-      if (result) result.innerHTML = '<div class="fg-flag" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">' + esc(r.instructions || "Draft saved.") + (r.attachNote ? " " + esc(r.attachNote) : "") + link + '</div>';
+      if (result) result.innerHTML = '<div class="fg-flag" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">' + esc(r.instructions || "Draft saved.") + (r.attachNote ? " " + esc(r.attachNote) : "") + link + cardBit + '</div>';
       if (_forge.view && _forge.view.draft) {
         _forge.view.draft.existingDraft = { label: "Draft created just now by you" };
       }
       if (typeof showToast === "function") showToast("Outlook draft saved");
       forgeLoadQueue();
     } else {
-      if (result) result.innerHTML = '<div class="fg-flag warn"><b>Draft was not saved in Outlook.</b><div style="margin-top:4px">' + esc(r.instructions || "Copy the email into Outlook.") + '</div></div>';
+      if (result) result.innerHTML = '<div class="fg-flag warn"><b>Draft was not saved in Outlook.</b><div style="margin-top:4px">' + esc(r.instructions || "Copy the email into Outlook.") + '</div>' + cardBit + '</div>';
     }
   } catch (e) {
     if (forgeSignIn(e)) return;

@@ -3757,6 +3757,7 @@ var NAV_GROUPS=[
     {key:"candidates",label:"Candidates",emoji:"\uD83D\uDC65"},
     {key:"subtracker",label:"Submittal Tracker",emoji:"\uD83D\uDCCA"},
     {key:"forge",label:"Submittal Forge",emoji:"\u2692\uFE0F"},
+    {key:"cards",label:"Candidate Cards",emoji:"\uD83E\uDEAA",href:"/cards"},
     {key:"smartmatch",label:"Smart Match",emoji:"\uD83C\uDFAF"},
     {key:"sourcing",label:"Sourcing Board",emoji:"\uD83D\uDD0D"},
     {key:"touches",label:"Touches",emoji:"\uD83D\uDC4B"},
@@ -3817,7 +3818,7 @@ function renderNav(){
       return;
     }
     g.items.forEach(function(n){
-      h+='<button class="'+(currentPage===n.key?"active":"")+'" onclick="closeMobileMenu();setPage(\''+n.key+'\')">'
+      h+='<button class="'+(currentPage===n.key?"active":"")+'" onclick="closeMobileMenu();'+(n.href?'window.location.href=\''+n.href+'\'':'setPage(\''+n.key+'\')')+'">'
         +'<span style="font-size:14px">'+n.emoji+'</span> '+n.label
         +'</button>';
     });

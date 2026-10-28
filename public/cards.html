@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anura Connect Cards</title>
+<link rel="icon" type="image/jpeg" href="/fulllogo.jpg">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc;color:#334155;font-size:14px}
+a{color:#176087}
+header{background:#0E2E47;color:#fff;padding:14px 24px;display:flex;align-items:center;gap:14px}
+header img{height:30px;border-radius:6px}
+header h1{font-size:17px;font-weight:700}
+header a{color:#53A2BE;margin-left:auto;font-size:13px}
+.wrap{max-width:1200px;margin:0 auto;padding:22px 24px 60px;display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start}
+.panel{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px}
+.panel+.panel{margin-top:16px}
+h2{font-size:15px;color:#0f172a;margin-bottom:10px}
+h3{font-size:13px;color:#176087;margin:18px 0 8px}
+input[type=search],input[type=text],textarea{width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font:inherit;color:#334155}
+textarea{resize:vertical}
+.list{list-style:none}
+.list li{padding:8px 0;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.list li:last-child{border-bottom:0}
+.list button.pick{background:none;border:0;font:inherit;color:#176087;font-weight:600;cursor:pointer;text-align:left;padding:0}
+.muted{color:#64748b;font-size:12px}
+.pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:#eef2f7;color:#475569}
+.pill.active{background:#dcfce7;color:#166534}.pill.expired{background:#f1f5f9;color:#64748b}.pill.revoked{background:#fee2e2;color:#991b1b}.pill.submitted{background:#fef3c7;color:#92400e}
+.btn{font:inherit;font-weight:600;font-size:13px;padding:7px 12px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;color:#176087;cursor:pointer}
+.btn:hover{border-color:#53A2BE}
+.btn.primary{background:#176087;border-color:#176087;color:#fff}
+.btn.danger{color:#b91c1c}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.fieldbox{margin-bottom:12px}
+.fieldbox label{font-weight:600;font-size:13px;display:block;margin-bottom:4px}
+.fieldbox .err{color:#b91c1c;font-size:12px;margin-top:3px}
+.diff{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;white-space:pre-wrap}
+.same{color:#94a3b8;font-size:12px}
+.photo{width:96px;height:114px;border-radius:8px;object-fit:cover;border:1px solid #e2e8f0;background:#f1f5f9}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:12px;color:#64748b;font-weight:600;padding:6px 8px;border-bottom:1px solid #e2e8f0}
+td{padding:8px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+.linkbox{background:#f1f5f9;border-radius:8px;padding:10px;word-break:break-all;font-size:13px;margin:8px 0}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0E2E47;color:#fff;padding:10px 18px;border-radius:8px;display:none}
+.empty{color:#94a3b8;padding:6px 0}
+@media (max-width:900px){.wrap{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><img src="/fulllogo.jpg" alt=""><h1>Anura Connect Cards</h1><a href="/">Back to dashboard</a></header>
+<div class="wrap">
+  <div>
+    <div class="panel">
+      <h2>Find a candidate</h2>
+      <input type="search" id="q" placeholder="Name" aria-label="Search candidates">
+      <ul class="list" id="results"></ul>
+    </div>
+    <div class="panel">
+      <h2>Waiting for your review</h2>
+      <ul class="list" id="pending"><li class="empty">Loading…</li></ul>
+    </div>
+  </div>
+  <div>
+    <div class="panel" id="detail"><h2>Recent Card links</h2><div id="recent" class="empty">Loading…</div></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script>
+(function () {
+  "use strict";
+  var schema = [];
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function when(d) { return d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""; }
+  function toast(t) { var n = $("toast"); n.textContent = t; n.style.display = "block"; clearTimeout(n._t); n._t = setTimeout(function () { n.style.display = "none"; }, 2600); }
+  function call(method, url, body, raw) {
+    var opts = { method: method, headers: {} };
+    if (raw) { opts.body = raw; opts.headers["Content-Type"] = raw.type || "image/jpeg"; }
+    else if (body) { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
+    return fetch(url, opts).then(function (r) {
+      if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search); throw new Error("Sign in"); }
+      return r.json().then(function (b) { if (!r.ok) { var e = new Error(b.error || "Request failed"); e.body = b; throw e; } return b; });
+    });
+  }
+
+  function linksTable(links, withCandidate) {
+    if (!links.length) return '<p class="empty">No Card links yet. They are created when Submittal Forge drafts an email.</p>';
+    return '<table><thead><tr>' + (withCandidate ? '<th>Candidate</th>' : '') + '<th>Job</th><th>Sent to</th><th>Opens</th><th>Rate</th><th></th></tr></thead><tbody>' +
+      links.map(function (l) {
+        return '<tr>' + (withCandidate ? '<td><button class="btn" data-cand="' + l.candidateId + '">' + esc(l.candidateName) + '</button></td>' : '') +
+          '<td>' + esc(l.jobTitle) + '<div class="muted">' + esc(l.clientName) + ' &middot; created ' + esc(when(l.createdAt)) + '</div></td>' +
+          '<td>' + esc(l.contactEmail || "—") + '</td>' +
+          '<td>' + (l.views || 0) + (l.lastViewedAt ? '<div class="muted">last ' + esc(when(l.lastViewedAt)) + '</div>' : '') + '</td>' +
+          '<td>' + esc(l.billDisplay || "—") + '</td>' +
+          '<td><span class="pill ' + l.state + '">' + l.state + '</span>' +
+          (l.state === "active" ? '<div class="row" style="margin-top:6px"><button class="btn" data-rate="' + l.id + '">Use Bullhorn rate</button><button class="btn danger" data-revoke="' + l.id + '">Turn off</button></div>' : '') +
+          '</td></tr>';
+      }).join("") + '</tbody></table>';
+  }
+
+  function bindLinkButtons(root, reload) {
+    root.querySelectorAll("[data-cand]").forEach(function (b) { b.onclick = function () { openCandidate(b.getAttribute("data-cand")); }; });
+    root.querySelectorAll("[data-revoke]").forEach(function (b) {
+      b.onclick = function () {
+        if (!confirm("Turn off this link? The client will see that the Card is closed.")) return;
+        call("POST", "/api/cards/links/" + b.getAttribute("data-revoke") + "/revoke").then(function () { toast("Link turned off"); reload(); }).catch(function (e) { toast(e.message); });
+      };
+    });
+    root.querySelectorAll("[data-rate]").forEach(function (b) {
+      b.onclick = function () {
+        call("POST", "/api/cards/links/" + b.getAttribute("data-rate") + "/use-bullhorn-rate").then(function (r) { toast("Card rate now " + (r.billDisplay || "blank") + " (read from Bullhorn)"); reload(); }).catch(function (e) { toast(e.message); });
+      };
+    });
+  }
+
+  function overview() {
+    call("GET", "/api/cards/overview").then(function (o) {
+      $("pending").innerHTML = o.pending.length ? o.pending.map(function (p) {
+        return '<li><button class="pick" data-cand="' + p.candidateId + '">' + esc(p.name) + '</button><span class="muted">' + esc(when(p.submittedAt)) + (p.photoChanged ? " &middot; new photo" : "") + '</span></li>';
+      }).join("") : '<li class="empty">Nothing waiting.</li>';
+      bindLinkButtons($("pending"), overview);
+      if (!new URLSearchParams(location.search).get("candidate")) {
+        $("detail").innerHTML = '<h2>Recent Card links</h2>' + linksTable(o.links, true);
+        bindLinkButtons($("detail"), overview);
+      }
+    }).catch(function (e) { $("pending").innerHTML = '<li class="empty">' + esc(e.message) + '</li>'; });
+  }
+
+  var searchTimer;
+  $("q").addEventListener("input", function () {
+    clearTimeout(searchTimer);
+    var q = this.value.trim();
+    searchTimer = setTimeout(function () {
+      if (q.length < 2) { $("results").innerHTML = ""; return; }
+      call("GET", "/api/cards/search?q=" + encodeURIComponent(q)).then(function (r) {
+        $("results").innerHTML = r.data.length ? r.data.map(function (c) { return '<li><button class="pick" data-cand="' + c.id + '">' + esc(c.name) + '</button><span class="muted">' + esc(c.epicRole) + '</span></li>'; }).join("") : '<li class="empty">No match.</li>';
+        bindLinkButtons($("results"), overview);
+      });
+    }, 250);
+  });
+
+  function fieldInputs(prefix, fields, errors) {
+    return schema.map(function (f) {
+      var v = fields[f.key] || "";
+      var input = f.max <= 90 ? '<input type="text" id="' + prefix + f.key + '" maxlength="' + f.max + '" value="' + esc(v) + '">' : '<textarea id="' + prefix + f.key + '" rows="3" maxlength="' + f.max + '">' + esc(v) + '</textarea>';
+      return '<div class="fieldbox"><label for="' + prefix + f.key + '">' + esc(f.label) + '</label>' + input + (errors && errors[f.key] ? '<div class="err">' + esc(errors[f.key]) + '</div>' : '') + '</div>';
+    }).join("");
+  }
+  function readInputs(prefix) {
+    var out = {};
+    schema.forEach(function (f) { var n = $(prefix + f.key); if (n) out[f.key] = n.value; });
+    return out;
+  }
+  function errorText(e) {
+    var errs = e.body && e.body.errors ? Object.keys(e.body.errors).map(function (k) { return k + ": " + e.body.errors[k]; }).join(" ") : "";
+    return e.message + (errs ? " " + errs : "");
+  }
+
+  function openCandidate(id) {
+    history.replaceState(null, "", "/cards?candidate=" + id);
+    $("detail").innerHTML = '<p class="empty">Loading…</p>';
+    call("GET", "/api/cards/candidate/" + id).then(function (d) {
+      schema = d.schema;
+      var c = d.candidate, live = d.live, draft = d.draft;
+      var pendingReview = draft && draft.status === "submitted";
+      var h = '<div class="row" style="justify-content:space-between"><h2>' + esc(c.name) + '</h2><button class="btn" id="back">All links</button></div>' +
+        '<div class="muted">' + esc(c.epicRole) + (c.certs.length ? " &middot; " + esc(c.certs.join(", ")) : "") + '</div>';
+
+      if (pendingReview) {
+        h += '<h3>Candidate sent changes ' + esc(when(draft.submittedAt)) + '</h3><div class="grid2"><div>' +
+          (draft.photoChanged ? '<p class="muted">New photo</p>' + (draft.hasPhoto ? '<img class="photo" src="/api/cards/candidate/' + id + '/photo?draft=1&v=' + Date.now() + '" alt="New photo">' : '<p>Photo removed</p>') : '<p class="same">Photo unchanged</p>') +
+          '</div><div>' + (live.hasPhoto ? '<p class="muted">Current photo</p><img class="photo" src="/api/cards/candidate/' + id + '/photo?v=' + Date.now() + '" alt="Current photo">' : '<p class="same">No current photo</p>') + '</div></div>' +
+          '<p class="muted" style="margin:12px 0 6px">Highlighted fields changed. Edit wording here before approving if you need to.</p>' +
+          schema.map(function (f) {
+            var nv = draft.fields[f.key] || "", ov = live.fields[f.key] || "";
+            var changed = nv !== ov;
+            var input = f.max <= 90 ? '<input type="text" id="rv-' + f.key + '" maxlength="' + f.max + '" value="' + esc(nv) + '">' : '<textarea id="rv-' + f.key + '" rows="3" maxlength="' + f.max + '">' + esc(nv) + '</textarea>';
+            return '<div class="fieldbox"><label for="rv-' + f.key + '">' + esc(f.label) + (changed ? ' <span class="pill submitted">changed</span>' : '') + '</label>' + input +
+              (changed && ov ? '<div class="same">Was: ' + esc(ov) + '</div>' : '') + (draft.errors[f.key] ? '<div class="err">' + esc(draft.errors[f.key]) + '</div>' : '') + '</div>';
+          }).join("") +
+          '<div class="row"><button class="btn primary" id="approve">Approve and publish</button><input type="text" id="sendBackNote" placeholder="What should they change?" style="flex:1;min-width:200px"><button class="btn" id="sendBack">Send back</button></div>';
+      }
+
+      h += '<h3>Live on the Card' + (live.approvedAt ? ' <span class="muted">approved ' + esc(when(live.approvedAt)) + ' by ' + esc(live.approvedBy) + '</span>' : '') + '</h3>' +
+        '<div class="row" style="margin-bottom:12px">' + (live.hasPhoto ? '<img class="photo" src="/api/cards/candidate/' + id + '/photo?v=' + Date.now() + '" alt="Live photo">' : '<div class="photo"></div>') +
+        '<div><input type="file" id="recPhoto" accept="image/jpeg,image/png,image/webp" style="display:none"><button class="btn" id="recPhotoBtn">' + (live.hasPhoto ? "Replace photo" : "Add photo") + '</button> ' +
+        (live.hasPhoto ? '<button class="btn danger" id="recPhotoRm">Remove</button>' : '') +
+        '<div class="muted" style="margin-top:6px">' + (live.photoSource === "recruiter" ? "Added by a recruiter. " : "") + 'Best when the candidate adds it themselves.</div></div></div>' +
+        fieldInputs("lv-", live.fields, live.errors) + '<button class="btn primary" id="saveLive">Save live Card</button>';
+
+      h += '<h3>Candidate edit link</h3><p class="muted">Lets ' + esc(c.firstName || "them") + ' add a photo and edit the fields above. Lasts 14 days. You approve every change.</p>' +
+        '<div id="editLinkOut"></div><div class="row" style="margin-top:8px"><button class="btn primary" id="mkEdit">Create edit link</button></div>' +
+        (d.editLinks.length ? '<ul class="list" style="margin-top:8px">' + d.editLinks.map(function (e) {
+          var expired = e.revoked || new Date(e.expiresAt) < new Date();
+          return '<li><span>Created ' + esc(when(e.createdAt)) + ' by ' + esc(e.createdBy) + (e.lastUsedAt ? ' <span class="muted">opened ' + esc(when(e.lastUsedAt)) + '</span>' : '') + '</span>' +
+            (expired ? '<span class="pill expired">' + (e.revoked ? "turned off" : "expired") + '</span>' : '<button class="btn danger" data-editrevoke="' + e.id + '">Turn off</button>') + '</li>';
+        }).join("") + '</ul>' : '');
+
+      h += '<h3>Client links</h3>' + linksTable(d.links, false);
+      $("detail").innerHTML = h;
+
+      $("back").onclick = function () { history.replaceState(null, "", "/cards"); overview(); };
+      bindLinkButtons($("detail"), function () { openCandidate(id); });
+      $("detail").querySelectorAll("[data-editrevoke]").forEach(function (b) {
+        b.onclick = function () { call("POST", "/api/cards/edit-links/" + b.getAttribute("data-editrevoke") + "/revoke").then(function () { toast("Edit link turned off"); openCandidate(id); }); };
+      });
+      if (pendingReview) {
+        $("approve").onclick = function () {
+          call("POST", "/api/cards/candidate/" + id + "/approve", { fields: readInputs("rv-") }).then(function () { toast("Approved. Clients see it now."); openCandidate(id); overview(); }).catch(function (e) { toast(errorText(e)); });
+        };
+        $("sendBack").onclick = function () {
+          call("POST", "/api/cards/candidate/" + id + "/send-back", { note: $("sendBackNote").value }).then(function () { toast("Sent back. They'll see your note on their edit page."); openCandidate(id); overview(); }).catch(function (e) { toast(e.message); });
+        };
+      }
+      $("saveLive").onclick = function () {
+        call("PUT", "/api/cards/candidate/" + id + "/live", readInputs("lv-")).then(function () { toast("Live Card saved"); openCandidate(id); }).catch(function (e) { toast(errorText(e)); });
+      };
+      $("recPhotoBtn").onclick = function () { $("recPhoto").click(); };
+      $("recPhoto").onchange = function () {
+        var f = this.files[0]; if (!f) return;
+        shrink(f).then(function (blob) { return call("POST", "/api/cards/candidate/" + id + "/photo", null, blob); }).then(function () { toast("Photo saved"); openCandidate(id); }).catch(function (e) { toast(e.message); });
+      };
+      if ($("recPhotoRm")) $("recPhotoRm").onclick = function () { call("DELETE", "/api/cards/candidate/" + id + "/photo").then(function () { toast("Photo removed"); openCandidate(id); }); };
+      $("mkEdit").onclick = function () {
+        call("POST", "/api/cards/candidate/" + id + "/edit-link").then(function (r) {
+          var body = "Hi " + (r.firstName || "there") + ",\n\nWhen we put you forward for a role, hiring managers get a one-page profile of you along with your résumé. Here's a link to add a photo and a few lines in your own words:\n\n" + r.url +
+            "\n\nIt takes about five minutes and works on your phone. I review everything before any client sees it. The link works for two weeks.\n\nThanks!";
+          var mail = "mailto:" + encodeURIComponent(r.candidateEmail || "") + "?subject=" + encodeURIComponent("Your Anura Connect profile") + "&body=" + encodeURIComponent(body);
+          $("editLinkOut").innerHTML = '<div class="linkbox">' + esc(r.url) + '</div><div class="row"><button class="btn" id="copyEdit">Copy link</button><a class="btn primary" href="' + esc(mail) + '">Email it to ' + esc(r.firstName || "them") + '</a></div>';
+          $("copyEdit").onclick = function () { navigator.clipboard.writeText(r.url).then(function () { toast("Copied"); }); };
+        }).catch(function (e) { toast(e.message); });
+      };
+    }).catch(function (e) { $("detail").innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; });
+  }
+
+  function shrink(file) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image(), url = URL.createObjectURL(file);
+      img.onload = function () {
+        var scale = Math.min(1, 900 / Math.max(img.naturalWidth, img.naturalHeight));
+        var c = document.createElement("canvas");
+        c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        c.toBlob(function (b) { b ? resolve(b) : reject(new Error("That photo couldn't be read.")); }, "image/jpeg", 0.86);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("Use a JPG, PNG or WebP photo.")); };
+      img.src = url;
+    });
+  }
+
+  overview();
+  var start = new URLSearchParams(location.search).get("candidate");
+  if (start) openCandidate(start);
+})();
+</script>
+</body>
+</html>

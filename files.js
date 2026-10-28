@@ -203,20 +203,30 @@ function registerFiles(app, deps) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  /** One stored file: from the volume when archived, else live from Bullhorn (and archived for next time). */
+  async function getFile(entity, entityId, fileId) {
+    if (!SAFE_ENTITY.has(entity)) throw Object.assign(new Error("Unknown entity"), { status: 400 });
+    let meta = null;
+    try {
+      if (await ensureTable()) meta = await db.getOne("SELECT * FROM crm.file_attachment WHERE entity=$1 AND id=$2 AND entity_id=$3", [entity, fileId, entityId]);
+    } catch (e) { meta = null; }
+    let buf, name = (meta && meta.name) || "file", ct = (meta && meta.content_type) || "application/octet-stream";
+    if (meta && meta.storage_path && fs.existsSync(meta.storage_path)) buf = fs.readFileSync(meta.storage_path);
+    else {
+      const d = await download(entity, entityId, fileId); // not stored yet: serve live and keep a copy
+      buf = d.buffer; if (!meta) name = d.name || name; ct = d.contentType || ct;
+      try { if (meta) await storeFile(entity, entityId, { id: fileId, fileExtension: meta.file_extension }); } catch (e) {}
+    }
+    return { buffer: buf, name: name, contentType: ct };
+  }
+
   app.get("/api/files/:entity/:entityId/:fileId", async function (req, res) {
     try {
       const entity = req.params.entity;
       if (!SAFE_ENTITY.has(entity)) return res.status(400).json({ error: "Unknown entity" });
       const entityId = parseInt(req.params.entityId, 10), fileId = parseInt(req.params.fileId, 10);
-      await ensureTable();
-      const meta = await db.getOne("SELECT * FROM crm.file_attachment WHERE entity=$1 AND id=$2 AND entity_id=$3", [entity, fileId, entityId]);
-      let buf, name = (meta && meta.name) || "file", ct = (meta && meta.content_type) || "application/octet-stream";
-      if (meta && meta.storage_path && fs.existsSync(meta.storage_path)) buf = fs.readFileSync(meta.storage_path);
-      else {
-        const d = await download(entity, entityId, fileId); // not stored yet: serve live and keep a copy
-        buf = d.buffer; if (!meta) name = d.name || name; ct = d.contentType || ct;
-        try { if (meta) await storeFile(entity, entityId, { id: fileId, fileExtension: meta.file_extension }); } catch (e) {}
-      }
+      const f = await getFile(entity, entityId, fileId);
+      const buf = f.buffer, name = f.name, ct = f.contentType;
       res.setHeader("Content-Type", ct);
       res.setHeader("Content-Disposition", (req.query.download ? "attachment" : "inline") + "; filename=\"" + safeName(name) + "\"");
       res.setHeader("Cache-Control", "private, max-age=3600");
@@ -237,7 +247,7 @@ function registerFiles(app, deps) {
     log("[Files] attachment archive at " + FILES_DIR + "; sweep in " + Math.round((opts.initialDelayMs == null ? 600000 : opts.initialDelayMs) / 60000) + " min, then daily");
   }
 
-  return { sweep, start, ensureTable, diskPath, _state: state, ENTITIES };
+  return { sweep, start, ensureTable, diskPath, getFile, _state: state, ENTITIES };
 }
 
 module.exports = { registerFiles, ENTITIES };

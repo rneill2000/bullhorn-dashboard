@@ -268,7 +268,8 @@ app.get("/auth/logout", async (req, res) => {
  * submission portal (links are signed), inbound webhooks (token in URL), a bare health
  * check, and non-HTML static assets. Pages redirect to /login; API calls get a 401. */
 const PUBLIC_EXACT = new Set(["/login", "/health", "/portal", "/api/portal/config", "/api/portal/submit", "/favicon.ico"]);
-const PUBLIC_PREFIX = ["/auth/", "/api/dux-webhook/"];
+// /card/ and /card-edit/ are the Anura Connect Card: unguessable token links for clients and candidates (card.js).
+const PUBLIC_PREFIX = ["/auth/", "/api/dux-webhook/", "/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/"];
 const PUBLIC_ASSET = /\.(js|css|png|jpg|jpeg|gif|svg|ico|webp|woff2?|ttf|map)$/i;
 function isPublicPath(p) {
   if (PUBLIC_EXACT.has(p)) return true;
@@ -11796,7 +11797,16 @@ require("./digest")(app, { db: db, graphFetch: graphFetch, outlookUsers: functio
 require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bhFetch: bhFetch, getUser: getUser });
 const filesArchive = require("./files").registerFiles(app, { db: db, bhFetch: bhFetch, authenticate: authenticate, getUser: getUser });
 const notifier = require("./notify").makeNotifier({ graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; } });
-require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate, notifier: notifier, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; } });
+let forgeApi = null;
+const cardsApi = require("./card")(app, {
+  db: db,
+  getUser: getUser,
+  notifier: notifier,
+  getFile: filesArchive.getFile,
+  verifyBill: function (submissionId) { return forgeApi.verifyBillForSubmission(submissionId); },
+  publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; },
+});
+forgeApi = require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate, notifier: notifier, cards: cardsApi, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; } });
 
 app.use(function (err, req, res, next) {
   console.error("[Express] Unhandled route error:", err.message);

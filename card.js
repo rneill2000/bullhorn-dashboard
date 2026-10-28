@@ -1,0 +1,967 @@
+/**
+ * Anura Connect Card — a client-facing candidate page, linked from the Submittal Forge email.
+ *
+ *   Client (no login, token link):  /card/:token            page
+ *                                   /api/card-public/:token  data (+ /c/:pid, /resume/:pid, /photo/:pid, /seen)
+ *   Candidate (no login, token):    /card-edit/:token        edit their own fields + photo
+ *                                   /api/card-edit/:token    data, save, photo, submit
+ *   Recruiter (signed in):          /cards                   review + approve, links, views
+ *                                   /api/cards/...
+ *
+ * Rules that cost money or trust if broken:
+ *  - A client link sees one job at one client: its own candidate plus the other candidates Anura sent
+ *    for that same job. Nothing else, and never a Bullhorn id.
+ *  - Links die when the job closes (Neon jobs mirror) or when a recruiter revokes them.
+ *  - Bill rate is re-read from Bullhorn before it is shown. If Bullhorn disagrees with what the client was
+ *    sent, or can't be read, the rate is hidden and the recruiter is told. No stale number reaches a client.
+ *  - Nothing a candidate types reaches a client until a recruiter approves it. Contact details and pay
+ *    talk are refused at save time (a client must come back through Anura).
+ *  - Tokens are stored hashed. The token alphabet has no vowels or digits so a link can never spell a
+ *    word or trip Forge's pay/1099/W2 leak guard.
+ */
+"use strict";
+
+const crypto = require("crypto");
+const path = require("path");
+
+const TOKEN_ALPHABET = "bcdfghjkmnpqrstvwxz"; // 19 letters, 32 chars ≈ 136 bits
+const TOKEN_LENGTH = 32;
+const PUBLIC_ID_LENGTH = 12;
+const EDIT_LINK_DAYS = 14;
+const RATE_CACHE_MS = 10 * 60 * 1000;
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+
+/** Fields a candidate may edit. Everything else on the Card comes from the recruiter's submittal. */
+const CANDIDATE_FIELDS = [
+  { key: "headline", label: "Your headline", max: 90, hint: "One line a hiring manager reads first." },
+  { key: "intro", label: "In your own words", max: 700, hint: "A few sentences about the work you do best." },
+  { key: "outside", label: "Outside of work, you'll find me…", max: 300, culture: true },
+  { key: "team", label: "On a team, I'm the one who…", max: 300, culture: true },
+  { key: "why", label: "What I like about Epic work", max: 300, culture: true },
+  { key: "fun", label: "A fun fact", max: 200, culture: true },
+];
+const FIELD_BY_KEY = {};
+CANDIDATE_FIELDS.forEach(function (f) { FIELD_BY_KEY[f.key] = f; });
+
+const BOT_UA = /bot|crawl|spider|preview|scanner|safelinks|proofpoint|mimecast|barracuda|urldefense|slurp|facebookexternalhit|headless/i;
+
+function makeToken(length) {
+  const n = length || TOKEN_LENGTH;
+  let out = "";
+  for (let i = 0; i < n; i++) out += TOKEN_ALPHABET[crypto.randomInt(TOKEN_ALPHABET.length)];
+  return out;
+}
+
+function hashToken(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function validToken(token) {
+  return new RegExp("^[" + TOKEN_ALPHABET + "]{" + TOKEN_LENGTH + "}$").test(String(token || ""));
+}
+
+function validPublicId(id) {
+  return new RegExp("^[" + TOKEN_ALPHABET + "]{" + PUBLIC_ID_LENGTH + "}$").test(String(id || ""));
+}
+
+/** The job is still live for clients. A job missing from the mirror counts as closed. */
+function jobIsActive(job) {
+  if (!job) return false;
+  if (job.is_deleted === true) return false;
+  if (job.is_open === false) return false;
+  if (/\b(?:closed|filled|cancel+ed|lost|archived|placed)\b/i.test(String(job.status || ""))) return false;
+  return true;
+}
+
+/** Submissions the client already passed on, or that were pulled, drop out of the comparison. */
+function submissionHidden(status) {
+  return /reject|withdr|declin|not\s+submitted|dnu/i.test(String(status || ""));
+}
+
+const CONTACT_RES = [
+  { re: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, msg: "Leave out email addresses. Your recruiter handles introductions." },
+  { re: /(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]?\d{4}\b/, msg: "Leave out phone numbers. Your recruiter handles introductions." },
+  { re: /https?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|net|org|io|me|co|us)\b|linkedin|instagram|tiktok|facebook|twitter|(?:^|\s)@[a-z0-9_]{3,}/i, msg: "Leave out links and social handles." },
+];
+const PAY_RE = /\$\s*\d|\b\d{2,3}(?:\.\d+)?\s*(?:\/\s*|per\s+|an?\s+)(?:hr|hour)\b|\bhourly\b|\bmy\s+rate\b|\bbill\s*rate\b|\bpay\s*(?:rate|range|is|of)\b|\bsalary\b|\b1099\b|\bw-?2\b|\bc2c\b|corp(?:orate)?\s*to\s*corp/i;
+
+/** "" when the text can go on a Card, else a message the candidate can act on. */
+function checkCandidateText(key, value) {
+  const field = FIELD_BY_KEY[key];
+  if (!field) return "Unknown field.";
+  const text = String(value == null ? "" : value);
+  if (text.length > field.max) return "Keep this under " + field.max + " characters.";
+  for (let i = 0; i < CONTACT_RES.length; i++) {
+    if (CONTACT_RES[i].re.test(text)) return CONTACT_RES[i].msg;
+  }
+  if (PAY_RE.test(text)) return "Leave out pay and rates. Your recruiter covers those with the client.";
+  return "";
+}
+
+function cleanFieldValue(value) {
+  return String(value == null ? "" : value).replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Pull the editable fields out of a request body; returns { fields, errors }. */
+function readCandidateFields(body) {
+  const src = body && typeof body === "object" ? body : {};
+  const fields = {};
+  const errors = {};
+  CANDIDATE_FIELDS.forEach(function (f) {
+    if (!Object.prototype.hasOwnProperty.call(src, f.key)) return;
+    const v = cleanFieldValue(src[f.key]);
+    fields[f.key] = v;
+    const err = checkCandidateText(f.key, v);
+    if (err) errors[f.key] = err;
+  });
+  return { fields: fields, errors: errors };
+}
+
+function errorsFor(fields) {
+  const errors = {};
+  CANDIDATE_FIELDS.forEach(function (f) {
+    const err = checkCandidateText(f.key, fields && fields[f.key]);
+    if (err) errors[f.key] = err;
+  });
+  return errors;
+}
+
+/** Only real raster images. SVG and anything else is refused (an SVG can carry script). */
+function sniffImage(buf) {
+  if (!buf || buf.length < 12) return "";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf.slice(0, 4).toString("ascii") === "RIFF" && buf.slice(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  return "";
+}
+
+function moneyNumber(value) {
+  if (value == null || value === "") return null;
+  const n = Number(String(value).replace(/[^0-9.]/g, ""));
+  return isFinite(n) && n > 0 ? n : null;
+}
+
+function formatMoney(amount) {
+  const n = Number(amount);
+  if (!isFinite(n) || n <= 0) return "";
+  return "$" + (Math.round(n * 100) % 100 === 0 ? String(Math.round(n)) : n.toFixed(2)) + "/hr";
+}
+
+function certList(row) {
+  const out = [];
+  [row && row.custom_text1, row && row.custom_text2].forEach(function (v) {
+    String(v || "").split(/[;,\n|]+/).forEach(function (part) {
+      const s = part.trim();
+      if (s && s.length <= 80 && out.indexOf(s) < 0) out.push(s);
+    });
+  });
+  return out.slice(0, 6);
+}
+
+function setPublicHeaders(res, opts) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  if (opts && opts.page) {
+    res.setHeader("Content-Security-Policy",
+      "default-src 'self'; img-src 'self' data: blob: https://images.squarespace-cdn.com; " +
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; " +
+      "script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  }
+}
+
+function makeLimiter(perMinute) {
+  const hits = new Map();
+  return function (req, res, next) {
+    const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim() || "?";
+    const now = Date.now();
+    let row = hits.get(ip);
+    if (!row || row.reset < now) { row = { n: 0, reset: now + 60000 }; hits.set(ip, row); }
+    row.n += 1;
+    if (hits.size > 5000) { for (const [k, v] of hits) { if (v.reset < now) hits.delete(k); } }
+    if (row.n > perMinute) {
+      res.setHeader("Retry-After", "60");
+      return res.status(429).json({ error: "Too many requests. Try again in a minute." });
+    }
+    next();
+  };
+}
+
+function registerCard(app, deps) {
+  const db = deps.db;
+  const getUser = deps.getUser || function () { return null; };
+  const notifier = deps.notifier || null;
+  const log = deps.log || console.log;
+  const now = deps.now || function () { return Date.now(); };
+  const publicOrigin = deps.publicOrigin || function () { return "https://dashboard.anuraconnect.com"; };
+  const verifyBill = deps.verifyBill || null; // (submissionId) → { amount, source }; throws when Bullhorn can't be read
+  const getFile = deps.getFile || null; // (entity, entityId, fileId) → { buffer, name, contentType }
+  const pagesDir = deps.pagesDir || path.join(__dirname, "public");
+  const rateCache = new Map();
+  let ready = null;
+
+  /* ── schema ─────────────────────────────────────────────────────── */
+  function ensureTables() {
+    if (!db || !db.ready) return Promise.resolve(false);
+    if (!ready) {
+      const stmts = [
+        "CREATE TABLE IF NOT EXISTS card_profiles (candidate_id INTEGER PRIMARY KEY, fields JSONB NOT NULL DEFAULT '{}'::jsonb, " +
+          "photo BYTEA, photo_type TEXT, photo_source TEXT, photo_updated_at TIMESTAMPTZ, approved_by TEXT, approved_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+        "CREATE TABLE IF NOT EXISTS card_drafts (candidate_id INTEGER PRIMARY KEY, fields JSONB NOT NULL DEFAULT '{}'::jsonb, " +
+          "photo BYTEA, photo_type TEXT, photo_changed BOOLEAN NOT NULL DEFAULT false, status TEXT NOT NULL DEFAULT 'editing', " +
+          "submitted_at TIMESTAMPTZ, reviewed_by TEXT, reviewed_at TIMESTAMPTZ, review_note TEXT, edit_link_id INTEGER, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+        "CREATE TABLE IF NOT EXISTS card_edit_links (id SERIAL PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, candidate_id INTEGER NOT NULL, " +
+          "created_by TEXT, created_by_name TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ)",
+        "CREATE TABLE IF NOT EXISTS card_links (id SERIAL PRIMARY KEY, public_id TEXT UNIQUE NOT NULL, token_hash TEXT UNIQUE NOT NULL, " +
+          "submission_id INTEGER NOT NULL, candidate_id INTEGER NOT NULL, candidate_name TEXT, job_id INTEGER NOT NULL, job_title TEXT, " +
+          "client_id INTEGER NOT NULL, client_name TEXT, contact_email TEXT, why_me TEXT, availability TEXT, location TEXT, " +
+          "bill_display TEXT, bill_amount NUMERIC, resume_file_id TEXT, resume_name TEXT, refs JSONB NOT NULL DEFAULT '[]'::jsonb, " +
+          "recruiter JSONB NOT NULL DEFAULT '{}'::jsonb, created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), " +
+          "revoked_at TIMESTAMPTZ, revoked_by TEXT, first_viewed_at TIMESTAMPTZ, last_viewed_at TIMESTAMPTZ, " +
+          "view_count INTEGER NOT NULL DEFAULT 0, last_alert_at TIMESTAMPTZ, rate_alert_at TIMESTAMPTZ)",
+        "CREATE INDEX IF NOT EXISTS card_links_job ON card_links (job_id, client_id)",
+        "CREATE INDEX IF NOT EXISTS card_links_candidate ON card_links (candidate_id)",
+        "CREATE TABLE IF NOT EXISTS card_views (id BIGSERIAL PRIMARY KEY, link_id INTEGER NOT NULL, viewed_at TIMESTAMPTZ NOT NULL DEFAULT now(), " +
+          "page TEXT, ip_hash TEXT, user_agent TEXT)",
+        "CREATE INDEX IF NOT EXISTS card_views_link ON card_views (link_id, viewed_at)",
+      ];
+      ready = stmts.reduce(function (p, sql) { return p.then(function () { return db.query(sql); }); }, Promise.resolve())
+        .then(function () { return true; })
+        .catch(function (e) { ready = null; throw e; });
+    }
+    return ready;
+  }
+
+  async function needDb() {
+    const ok = await ensureTables();
+    if (!ok) throw Object.assign(new Error("The Card database is not connected."), { status: 503 });
+  }
+
+  function cardUrl(token) { return publicOrigin().replace(/\/$/, "") + "/card/" + token; }
+  function editUrl(token) { return publicOrigin().replace(/\/$/, "") + "/card-edit/" + token; }
+
+  /* ── minting (called by Forge once a draft passes every guard) ─────── */
+  async function mintClientLink(o) {
+    await needDb();
+    if (!o || !o.submissionId || !o.candidateId || !o.jobId || !o.clientId) {
+      throw Object.assign(new Error("A Card needs a submission, candidate, job and client."), { status: 400 });
+    }
+    const token = makeToken();
+    const publicId = makeToken(PUBLIC_ID_LENGTH);
+    const amount = o.billAmount != null ? o.billAmount : moneyNumber(o.billRate);
+    const snapshot = [
+      o.candidateName || "", o.jobTitle || "", o.clientName || "",
+      o.whyMe || "", o.availability || "", o.location || "",
+      o.billRate || "", amount, o.resumeFileId != null ? String(o.resumeFileId) : null, o.resumeName || "",
+      JSON.stringify(Array.isArray(o.references) ? o.references : []), JSON.stringify(o.recruiter || {}),
+    ];
+    const row = await db.getOne(
+      "INSERT INTO card_links (public_id, token_hash, submission_id, candidate_id, job_id, client_id, contact_email, created_by, " +
+      "candidate_name, job_title, client_name, why_me, availability, location, bill_display, bill_amount, resume_file_id, resume_name, refs, recruiter) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb) RETURNING id",
+      [publicId, hashToken(token), o.submissionId, o.candidateId, o.jobId, o.clientId, String(o.contactEmail || "").toLowerCase(), o.createdBy || ""].concat(snapshot));
+    // Earlier links for this submission show what was just approved, not an older draft.
+    await db.query(
+      "UPDATE card_links SET candidate_name=$2, job_title=$3, client_name=$4, why_me=$5, availability=$6, location=$7, bill_display=$8, " +
+      "bill_amount=$9, resume_file_id=$10, resume_name=$11, refs=$12::jsonb, recruiter=$13::jsonb WHERE submission_id=$1 AND revoked_at IS NULL",
+      [o.submissionId].concat(snapshot));
+    rateCache.delete(String(o.submissionId));
+    log("[Card] minted link " + (row && row.id) + " for submission " + o.submissionId);
+    return { id: row && row.id, publicId: publicId, url: cardUrl(token) };
+  }
+
+  /* ── lookups ─────────────────────────────────────────────────────── */
+  async function linkByToken(token) {
+    if (!validToken(token)) return null;
+    return db.getOne("SELECT * FROM card_links WHERE token_hash = $1", [hashToken(token)]);
+  }
+
+  /** { state: "active"|"expired"|"revoked"|"missing", link, job } */
+  async function resolveClientLink(token) {
+    await needDb();
+    const link = await linkByToken(token);
+    if (!link) return { state: "missing" };
+    if (link.revoked_at) return { state: "revoked", link: link };
+    const job = await db.getOne("SELECT id, title, status, is_open, is_deleted FROM jobs WHERE id = $1", [link.job_id]);
+    const sub = await db.getOne("SELECT id, status, is_deleted FROM submissions WHERE id = $1", [link.submission_id]);
+    if (!sub || sub.is_deleted === true) return { state: "revoked", link: link, job: job };
+    if (!jobIsActive(job)) return { state: "expired", link: link, job: job };
+    return { state: "active", link: link, job: job };
+  }
+
+  /** The newest live link per candidate for this job at this client. */
+  async function siblings(link) {
+    const rows = await db.getAll(
+      "SELECT DISTINCT ON (l.candidate_id) l.*, s.status AS sub_status, s.date_added AS sub_added, " +
+      "c.first_name, c.last_name, c.custom_text1, c.custom_text2, c.custom_text5, p.fields AS profile_fields, (p.photo IS NOT NULL) AS has_photo " +
+      "FROM card_links l JOIN submissions s ON s.id = l.submission_id AND s.is_deleted IS NOT TRUE " +
+      "LEFT JOIN candidates c ON c.id = l.candidate_id LEFT JOIN card_profiles p ON p.candidate_id = l.candidate_id " +
+      "WHERE l.job_id = $1 AND l.client_id = $2 AND l.revoked_at IS NULL " +
+      "ORDER BY l.candidate_id, l.created_at DESC", [link.job_id, link.client_id]);
+    return rows.filter(function (r) {
+      return r.candidate_id === link.candidate_id || !submissionHidden(r.sub_status);
+    }).sort(function (a, b) { return Number(a.sub_added || 0) - Number(b.sub_added || 0); });
+  }
+
+  /* ── bill rate: verified against Bullhorn on every view (cached briefly) ── */
+  async function liveRate(submissionId) {
+    const key = String(submissionId);
+    const hit = rateCache.get(key);
+    if (hit && hit.at > now() - RATE_CACHE_MS) return hit.value;
+    let value;
+    if (!verifyBill) value = { ok: false, reason: "not configured" };
+    else {
+      try {
+        const live = await verifyBill(submissionId);
+        value = { ok: true, amount: live && live.amount != null ? Number(live.amount) : null, source: live && live.source || "" };
+      } catch (e) {
+        value = { ok: false, reason: e.message };
+      }
+    }
+    rateCache.set(key, { at: now(), value: value });
+    return value;
+  }
+
+  /** What the client may see for rate. null = hidden ("ask your Anura contact"). */
+  async function shownRate(link) {
+    const snap = link.bill_amount != null ? Number(link.bill_amount) : null;
+    if (snap == null) return { display: null, reason: "none" };
+    const live = await liveRate(link.submission_id);
+    if (!live.ok) return { display: null, reason: "unverified", detail: live.reason };
+    if (live.amount == null || Math.abs(live.amount - snap) >= 0.01) {
+      return { display: null, reason: "mismatch", live: live.amount, snap: snap };
+    }
+    return { display: link.bill_display || formatMoney(snap), reason: "verified" };
+  }
+
+  async function rateAlert(link, rate) {
+    if (!notifier || rate.reason !== "mismatch") return;
+    try {
+      // Claim the alert atomically so two views at once can't both send it.
+      const claimed = await db.getOne(
+        "UPDATE card_links SET rate_alert_at = now() WHERE id = $1 AND (rate_alert_at IS NULL OR rate_alert_at < now() - interval '24 hours') RETURNING id", [link.id]);
+      if (!claimed) return;
+      const to = link.created_by && /@/.test(link.created_by) ? link.created_by : (link.recruiter && link.recruiter.email);
+      if (!to) return;
+      const html = notifier.card("Bill rate hidden on a client's Card", [
+        ["Candidate", link.candidate_name],
+        ["Job", link.job_title],
+        ["Client", link.client_name],
+        ["Client was sent", formatMoney(rate.snap) || "(blank)"],
+        ["Bullhorn now has", rate.live == null ? "(blank)" : formatMoney(rate.live)],
+        ["What to do", "If Bullhorn is right, open the Cards page and update the Card to the new rate. If the Card is right, fix Bullhorn."],
+      ], publicOrigin() + "/cards?candidate=" + link.candidate_id, "Open Cards");
+      await notifier.send({ to: [{ email: to }], subject: "Rate mismatch: " + link.candidate_name + " (" + link.client_name + ")", html: html, fromEmail: to });
+    } catch (e) { log("[Card] rate alert failed: " + e.message); }
+  }
+
+  /* ── shaping what a client sees ─────────────────────────────────── */
+  function profileFields(row) {
+    const f = row && row.profile_fields;
+    if (!f) return {};
+    return typeof f === "string" ? JSON.parse(f) : f;
+  }
+
+  function displayName(row) {
+    const n = [row.first_name, row.last_name].filter(Boolean).join(" ").trim();
+    return n || row.candidate_name || "Candidate";
+  }
+
+  async function summaryFor(row, rate) {
+    const pf = profileFields(row);
+    return {
+      id: row.public_id,
+      name: displayName(row),
+      headline: pf.headline || "",
+      epicRole: String(row.custom_text5 || "").trim(),
+      certs: certList(row),
+      availability: row.availability || "",
+      location: row.location || "",
+      rate: rate.display,
+      hasPhoto: !!row.has_photo,
+      hasResume: !!row.resume_file_id,
+    };
+  }
+
+  async function fullCard(row) {
+    const rate = await shownRate(row);
+    await rateAlert(row, rate);
+    const pf = profileFields(row);
+    const culture = CANDIDATE_FIELDS.filter(function (f) { return f.culture && pf[f.key]; })
+      .map(function (f) { return { prompt: f.label, text: pf[f.key] }; });
+    const refs = Array.isArray(row.refs) ? row.refs : (row.refs ? JSON.parse(row.refs) : []);
+    const base = await summaryFor(row, rate);
+    return Object.assign(base, {
+      whyMe: row.why_me || "",
+      intro: pf.intro || "",
+      culture: culture,
+      references: refs.map(function (r) {
+        return { role: r.role || "", organization: r.organization || "", relationship: r.relationship || "", rehire: r.rehire || "", text: r.text || "" };
+      }),
+      resumeName: row.resume_file_id ? (row.resume_name || "Résumé.pdf") : "",
+    });
+  }
+
+  function contactOf(link) {
+    const r = link && link.recruiter ? (typeof link.recruiter === "string" ? JSON.parse(link.recruiter) : link.recruiter) : {};
+    return { name: r.name || "Anura Connect", title: r.title || "", phone: r.phone || "", email: r.email || "" };
+  }
+
+  async function publicView(token, otherId) {
+    const r = await resolveClientLink(token);
+    if (r.state === "missing") return { status: 404, body: { state: "missing" } };
+    const contact = contactOf(r.link);
+    const job = { title: r.link.job_title || "", clientName: r.link.client_name || "" };
+    if (r.state !== "active") return { status: 410, body: { state: r.state, contact: contact, job: job } };
+    const rows = await siblings(r.link);
+    let current = rows.filter(function (x) { return x.candidate_id === r.link.candidate_id; })[0];
+    if (!current) current = Object.assign({}, r.link);
+    let focus = current;
+    if (otherId) {
+      if (!validPublicId(otherId)) return { status: 404, body: { state: "missing" } };
+      focus = rows.filter(function (x) { return x.public_id === otherId; })[0];
+      if (!focus) return { status: 404, body: { state: "missing" } };
+    }
+    const summaries = [];
+    for (const row of rows) {
+      const rate = await shownRate(row);
+      await rateAlert(row, rate);
+      summaries.push(await summaryFor(row, rate));
+    }
+    return {
+      status: 200,
+      body: {
+        state: "active",
+        contact: contact,
+        job: job,
+        sent: current.public_id,
+        candidates: summaries,
+        card: await fullCard(focus),
+      },
+    };
+  }
+
+  /** Same scope check every public sub-resource uses: the target must be in this link's job. */
+  async function scopedRow(token, pid) {
+    const r = await resolveClientLink(token);
+    if (r.state !== "active") return null;
+    if (!validPublicId(pid)) return null;
+    const rows = await siblings(r.link);
+    return rows.filter(function (x) { return x.public_id === pid; })[0] || null;
+  }
+
+  /* ── views + alerts ─────────────────────────────────────────────── */
+  async function recordView(req, token, page) {
+    const user = getUser(req);
+    if (user) return { counted: false, reason: "internal" };
+    const ua = String(req.headers["user-agent"] || "");
+    if (!ua || BOT_UA.test(ua)) return { counted: false, reason: "bot" };
+    const r = await resolveClientLink(token);
+    if (r.state !== "active") return { counted: false, reason: r.state };
+    const link = r.link;
+    const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+    const ipHash = crypto.createHash("sha256").update(ip + "|" + new Date(now()).toISOString().slice(0, 10)).digest("hex").slice(0, 16);
+    await db.query("INSERT INTO card_views (link_id, page, ip_hash, user_agent) VALUES ($1,$2,$3,$4)", [link.id, String(page || "card").slice(0, 40), ipHash, ua.slice(0, 200)]);
+    const updated = await db.getOne(
+      "UPDATE card_links SET view_count = view_count + 1, last_viewed_at = now(), first_viewed_at = COALESCE(first_viewed_at, now()) WHERE id = $1 RETURNING view_count",
+      [link.id]);
+    if (notifier) {
+      const claimed = await db.getOne(
+        "UPDATE card_links SET last_alert_at = now() WHERE id = $1 AND (last_alert_at IS NULL OR last_alert_at < now() - interval '24 hours') RETURNING id", [link.id]);
+      if (claimed) viewAlert(link, updated ? updated.view_count : 1).catch(function (e) { log("[Card] view alert failed: " + e.message); });
+    }
+    return { counted: true };
+  }
+
+  async function viewAlert(link, count) {
+    const to = link.created_by && /@/.test(link.created_by) ? link.created_by : contactOf(link).email;
+    if (!to) return;
+    const html = notifier.card("Client opened a Card", [
+      ["Candidate", link.candidate_name],
+      ["Job", link.job_title],
+      ["Client", link.client_name],
+      ["Sent to", link.contact_email || ""],
+      ["Opens", String(count || 1) + (count > 1 ? " (first alert today)" : "")],
+      ["Next step", "Good moment for a follow-up call."],
+    ], publicOrigin() + "/cards?candidate=" + link.candidate_id, "Open Cards");
+    await notifier.send({ to: [{ email: to }], subject: link.client_name + " opened " + link.candidate_name + "'s Card", html: html, fromEmail: to });
+  }
+
+  /* ── candidate editing ──────────────────────────────────────────── */
+  async function resolveEditLink(token) {
+    await needDb();
+    if (!validToken(token)) return null;
+    const link = await db.getOne("SELECT * FROM card_edit_links WHERE token_hash = $1", [hashToken(token)]);
+    if (!link || link.revoked_at) return null;
+    if (new Date(link.expires_at).getTime() < now()) return null;
+    return link;
+  }
+
+  async function draftFor(candidateId) {
+    return db.getOne("SELECT candidate_id, fields, photo_type, (photo IS NOT NULL) AS has_photo, photo_changed, status, submitted_at, review_note, reviewed_at, updated_at FROM card_drafts WHERE candidate_id = $1", [candidateId]);
+  }
+
+  async function profileFor(candidateId) {
+    return db.getOne("SELECT candidate_id, fields, photo_type, (photo IS NOT NULL) AS has_photo, photo_source, approved_by, approved_at, updated_at FROM card_profiles WHERE candidate_id = $1", [candidateId]);
+  }
+
+  function jsonField(v) { return !v ? {} : (typeof v === "string" ? JSON.parse(v) : v); }
+
+  /** Start a draft from what's live so the candidate edits, not retypes. */
+  async function ensureDraft(candidateId, editLinkId) {
+    const d = await draftFor(candidateId);
+    if (d) return d;
+    const live = await profileFor(candidateId);
+    await db.query(
+      "INSERT INTO card_drafts (candidate_id, fields, status, edit_link_id) VALUES ($1, $2::jsonb, 'editing', $3) ON CONFLICT (candidate_id) DO NOTHING",
+      [candidateId, JSON.stringify(live ? jsonField(live.fields) : {}), editLinkId || null]);
+    return draftFor(candidateId);
+  }
+
+  async function candidateRow(candidateId) {
+    return db.getOne("SELECT id, first_name, last_name, name, email, custom_text1, custom_text2, custom_text5, owner_id FROM candidates WHERE id = $1", [candidateId]);
+  }
+
+  async function ownerEmail(candidateId) {
+    try {
+      const r = await db.getOne("SELECT cu.email, cu.name FROM candidates c JOIN corporate_users cu ON cu.id = c.owner_id WHERE c.id = $1", [candidateId]);
+      return r && r.email ? r : null;
+    } catch (e) { return null; }
+  }
+
+  /* ── photos ─────────────────────────────────────────────────────── */
+  function sendPhoto(res, row) {
+    if (!row || !row.photo) return res.status(404).end();
+    res.setHeader("Content-Type", row.photo_type || "image/jpeg");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Disposition", "inline");
+    res.send(Buffer.isBuffer(row.photo) ? row.photo : Buffer.from(row.photo));
+  }
+
+  const rawImage = require("express").raw({ type: ["image/*", "application/octet-stream"], limit: MAX_PHOTO_BYTES });
+
+  function readPhoto(req) {
+    const buf = Buffer.isBuffer(req.body) ? req.body : null;
+    if (!buf || !buf.length) throw Object.assign(new Error("Choose a photo to upload."), { status: 400 });
+    const type = sniffImage(buf);
+    if (!type) throw Object.assign(new Error("Use a JPG, PNG or WebP photo."), { status: 400 });
+    return { buffer: buf, type: type };
+  }
+
+  function fail(res, e) {
+    const status = e.status || 500;
+    if (status >= 500) log("[Card] " + e.message);
+    res.status(status).json({ error: status >= 500 && !e.status ? "Something went wrong loading this page." : e.message });
+  }
+
+  /* ════ public: client ════ */
+  const limiter = makeLimiter(Number(process.env.CARD_RATE_LIMIT || 120));
+
+  app.get("/card/:token", limiter, function (req, res) {
+    setPublicHeaders(res, { page: true });
+    res.sendFile(path.join(pagesDir, "card.html"));
+  });
+
+  app.get("/api/card-public/:token", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const v = await publicView(req.params.token, null);
+      res.status(v.status).json(v.body);
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/card-public/:token/c/:pid", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const v = await publicView(req.params.token, req.params.pid);
+      res.status(v.status).json(v.body);
+    } catch (e) { fail(res, e); }
+  });
+
+  // Counted only when the page has been visible for a few seconds — link scanners don't do that.
+  app.post("/api/card-public/:token/seen", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const page = req.body && typeof req.body.page === "string" ? req.body.page : "card";
+      const out = await recordView(req, req.params.token, page);
+      res.json(out);
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/card-public/:token/photo/:pid", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const row = await scopedRow(req.params.token, req.params.pid);
+      if (!row) return res.status(404).end();
+      sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [row.candidate_id]));
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/card-public/:token/resume/:pid", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const row = await scopedRow(req.params.token, req.params.pid);
+      if (!row || !row.resume_file_id || !getFile) return res.status(404).json({ error: "Résumé not available." });
+      const f = await getFile("Candidate", row.candidate_id, parseInt(row.resume_file_id, 10));
+      const name = String(row.resume_name || "Resume.pdf").replace(/[^\w.\- ]+/g, "_").slice(0, 120);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+      res.setHeader("Content-Disposition", (req.query.download ? "attachment" : "inline") + "; filename=\"" + name + "\"");
+      res.send(f.buffer);
+    } catch (e) { fail(res, e); }
+  });
+
+  /* ════ public: candidate editing ════ */
+  app.get("/card-edit/:token", limiter, function (req, res) {
+    setPublicHeaders(res, { page: true });
+    res.sendFile(path.join(pagesDir, "card-edit.html"));
+  });
+
+  app.get("/api/card-edit/:token", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const link = await resolveEditLink(req.params.token);
+      if (!link) return res.status(410).json({ state: "expired" });
+      const cand = await candidateRow(link.candidate_id);
+      const draft = await ensureDraft(link.candidate_id, link.id);
+      const live = await profileFor(link.candidate_id);
+      await db.query("UPDATE card_edit_links SET last_used_at = now() WHERE id = $1", [link.id]);
+      const photo = draft && draft.photo_changed ? !!draft.has_photo : !!(live && live.has_photo);
+      res.json({
+        state: "active",
+        candidate: {
+          firstName: (cand && cand.first_name) || "",
+          name: cand ? ([cand.first_name, cand.last_name].filter(Boolean).join(" ") || cand.name || "") : "",
+          epicRole: cand ? String(cand.custom_text5 || "").trim() : "",
+          certs: cand ? certList(cand) : [],
+        },
+        fields: jsonField(draft && draft.fields),
+        errors: errorsFor(jsonField(draft && draft.fields)),
+        hasPhoto: photo,
+        status: draft ? draft.status : "editing",
+        reviewNote: draft && draft.status === "editing" ? (draft.review_note || "") : "",
+        recruiter: link.created_by_name || "",
+        expiresAt: link.expires_at,
+        schema: CANDIDATE_FIELDS.map(function (f) { return { key: f.key, label: f.label, max: f.max, hint: f.hint || "", culture: !!f.culture }; }),
+      });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.put("/api/card-edit/:token", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const link = await resolveEditLink(req.params.token);
+      if (!link) return res.status(410).json({ state: "expired" });
+      const draft = await ensureDraft(link.candidate_id, link.id);
+      const parsed = readCandidateFields(req.body);
+      const merged = Object.assign({}, jsonField(draft && draft.fields), parsed.fields);
+      // Saved even with problems — a draft is never shown to a client, and autosave must not lose typing.
+      await db.query(
+        "UPDATE card_drafts SET fields = $2::jsonb, status = CASE WHEN status = 'submitted' THEN 'editing' ELSE status END, updated_at = now() WHERE candidate_id = $1",
+        [link.candidate_id, JSON.stringify(merged)]);
+      res.json({ ok: true, errors: errorsFor(merged), status: "editing" });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/card-edit/:token/photo", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const link = await resolveEditLink(req.params.token);
+      if (!link) return res.status(410).end();
+      const d = await db.getOne("SELECT photo, photo_type, photo_changed FROM card_drafts WHERE candidate_id = $1", [link.candidate_id]);
+      if (d && d.photo_changed) return sendPhoto(res, d);
+      sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [link.candidate_id]));
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/card-edit/:token/photo", limiter, rawImage, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const link = await resolveEditLink(req.params.token);
+      if (!link) return res.status(410).json({ state: "expired" });
+      const img = readPhoto(req);
+      await ensureDraft(link.candidate_id, link.id);
+      await db.query("UPDATE card_drafts SET photo = $2, photo_type = $3, photo_changed = true, status = 'editing', updated_at = now() WHERE candidate_id = $1",
+        [link.candidate_id, img.buffer, img.type]);
+      res.json({ ok: true, hasPhoto: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.delete("/api/card-edit/:token/photo", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const link = await resolveEditLink(req.params.token);
+      if (!link) return res.status(410).json({ state: "expired" });
+      await ensureDraft(link.candidate_id, link.id);
+      await db.query("UPDATE card_drafts SET photo = NULL, photo_type = NULL, photo_changed = true, status = 'editing', updated_at = now() WHERE candidate_id = $1", [link.candidate_id]);
+      res.json({ ok: true, hasPhoto: false });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/card-edit/:token/submit", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const link = await resolveEditLink(req.params.token);
+      if (!link) return res.status(410).json({ state: "expired" });
+      const draft = await ensureDraft(link.candidate_id, link.id);
+      const fields = jsonField(draft && draft.fields);
+      const errors = errorsFor(fields);
+      if (Object.keys(errors).length) return res.status(400).json({ error: "Fix the highlighted fields first.", errors: errors });
+      await db.query("UPDATE card_drafts SET status = 'submitted', submitted_at = now(), review_note = NULL, updated_at = now() WHERE candidate_id = $1", [link.candidate_id]);
+      const cand = await candidateRow(link.candidate_id);
+      const owner = await ownerEmail(link.candidate_id);
+      const to = (link.created_by && /@/.test(link.created_by)) ? link.created_by : (owner && owner.email);
+      if (notifier && to) {
+        const name = cand ? ([cand.first_name, cand.last_name].filter(Boolean).join(" ") || cand.name) : "A candidate";
+        const html = notifier.card("Card ready for review", [
+          ["Candidate", name],
+          ["Changed", (draft && draft.photo_changed ? "Photo, " : "") + "profile fields"],
+          ["What happens next", "Nothing reaches a client until you approve it."],
+        ], publicOrigin() + "/cards?candidate=" + link.candidate_id, "Review the Card");
+        notifier.send({ to: [{ email: to }], subject: name + " updated their Anura Connect Card", html: html, fromEmail: to })
+          .catch(function (e) { log("[Card] review alert failed: " + e.message); });
+      }
+      res.json({ ok: true, status: "submitted" });
+    } catch (e) { fail(res, e); }
+  });
+
+  /* ════ recruiter (behind the dashboard login) ════ */
+  function who(req) {
+    const u = getUser(req);
+    return u ? (u.email || u.name || "") : "";
+  }
+
+  app.get("/cards", function (req, res) {
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(path.join(pagesDir, "cards.html"));
+  });
+
+  app.get("/api/cards/overview", async function (req, res) {
+    try {
+      await needDb();
+      const pending = await db.getAll(
+        "SELECT d.candidate_id, d.submitted_at, d.photo_changed, c.first_name, c.last_name, c.name FROM card_drafts d " +
+        "LEFT JOIN candidates c ON c.id = d.candidate_id WHERE d.status = 'submitted' ORDER BY d.submitted_at ASC LIMIT 100");
+      const links = await db.getAll(
+        "SELECT l.id, l.candidate_id, l.candidate_name, l.job_id, l.job_title, l.client_name, l.contact_email, l.created_by, l.created_at, " +
+        "l.view_count, l.last_viewed_at, l.revoked_at, j.status AS job_status, j.is_open, j.is_deleted FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id " +
+        "ORDER BY COALESCE(l.last_viewed_at, l.created_at) DESC LIMIT 60");
+      res.json({
+        pending: pending.map(function (p) { return { candidateId: p.candidate_id, name: [p.first_name, p.last_name].filter(Boolean).join(" ") || p.name || ("#" + p.candidate_id), submittedAt: p.submitted_at, photoChanged: p.photo_changed }; }),
+        links: links.map(linkOut),
+      });
+    } catch (e) { fail(res, e); }
+  });
+
+  function linkOut(l) {
+    return {
+      id: l.id, candidateId: l.candidate_id, candidateName: l.candidate_name, jobId: l.job_id, jobTitle: l.job_title, clientName: l.client_name,
+      contactEmail: l.contact_email, createdBy: l.created_by, createdAt: l.created_at, views: l.view_count, lastViewedAt: l.last_viewed_at,
+      billDisplay: l.bill_display || "",
+      state: l.revoked_at ? "revoked" : (jobIsActive({ status: l.job_status, is_open: l.is_open, is_deleted: l.is_deleted }) ? "active" : "expired"),
+    };
+  }
+
+  app.get("/api/cards/search", async function (req, res) {
+    try {
+      await needDb();
+      const q = String(req.query.q || "").trim();
+      if (q.length < 2) return res.json({ data: [] });
+      const rows = await db.getAll(
+        "SELECT id, first_name, last_name, name, custom_text5 FROM candidates WHERE (COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) ILIKE $1 OR name ILIKE $1 " +
+        "ORDER BY date_last_modified DESC NULLS LAST LIMIT 15", ["%" + q.replace(/[%_]/g, "") + "%"]);
+      res.json({ data: rows.map(function (r) { return { id: r.id, name: [r.first_name, r.last_name].filter(Boolean).join(" ") || r.name, epicRole: r.custom_text5 || "" }; }) });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/cards/candidate/:id", async function (req, res) {
+    try {
+      await needDb();
+      const id = parseInt(req.params.id, 10);
+      const cand = await candidateRow(id);
+      if (!cand) return res.status(404).json({ error: "Candidate not found." });
+      const live = await profileFor(id);
+      const draft = await draftFor(id);
+      const edits = await db.getAll("SELECT id, created_by, created_at, expires_at, revoked_at, last_used_at FROM card_edit_links WHERE candidate_id = $1 ORDER BY created_at DESC LIMIT 10", [id]);
+      const links = await db.getAll(
+        "SELECT l.*, j.status AS job_status, j.is_open, j.is_deleted FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id WHERE l.candidate_id = $1 ORDER BY l.created_at DESC LIMIT 40", [id]);
+      const liveFields = jsonField(live && live.fields);
+      const draftFields = jsonField(draft && draft.fields);
+      res.json({
+        candidate: { id: id, name: [cand.first_name, cand.last_name].filter(Boolean).join(" ") || cand.name, firstName: cand.first_name || "", email: cand.email || "", epicRole: cand.custom_text5 || "", certs: certList(cand) },
+        schema: CANDIDATE_FIELDS,
+        live: { fields: liveFields, hasPhoto: !!(live && live.has_photo), photoSource: live && live.photo_source || "", approvedBy: live && live.approved_by || "", approvedAt: live && live.approved_at || null, errors: errorsFor(liveFields) },
+        draft: draft ? { fields: draftFields, hasPhoto: !!draft.has_photo, photoChanged: !!draft.photo_changed, status: draft.status, submittedAt: draft.submitted_at, reviewNote: draft.review_note || "", errors: errorsFor(draftFields) } : null,
+        editLinks: edits.map(function (e) { return { id: e.id, createdBy: e.created_by, createdAt: e.created_at, expiresAt: e.expires_at, revoked: !!e.revoked_at, lastUsedAt: e.last_used_at }; }),
+        links: links.map(linkOut),
+      });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/cards/candidate/:id/edit-link", async function (req, res) {
+    try {
+      await needDb();
+      const id = parseInt(req.params.id, 10);
+      const cand = await candidateRow(id);
+      if (!cand) return res.status(404).json({ error: "Candidate not found." });
+      const u = getUser(req);
+      const token = makeToken();
+      const expires = new Date(now() + EDIT_LINK_DAYS * 86400000);
+      await db.query("INSERT INTO card_edit_links (token_hash, candidate_id, created_by, created_by_name, expires_at) VALUES ($1,$2,$3,$4,$5)",
+        [hashToken(token), id, who(req), u ? ([u.firstName, u.lastName].filter(Boolean).join(" ") || u.name || "") : "", expires.toISOString()]);
+      res.json({ url: editUrl(token), expiresAt: expires.toISOString(), candidateEmail: cand.email || "", firstName: cand.first_name || "" });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/cards/edit-links/:linkId/revoke", async function (req, res) {
+    try {
+      await needDb();
+      await db.query("UPDATE card_edit_links SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL", [parseInt(req.params.linkId, 10)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/cards/candidate/:id/approve", async function (req, res) {
+    try {
+      await needDb();
+      const id = parseInt(req.params.id, 10);
+      const d = await db.getOne("SELECT fields, photo, photo_type, photo_changed FROM card_drafts WHERE candidate_id = $1", [id]);
+      if (!d) return res.status(404).json({ error: "Nothing to approve." });
+      // The reviewer may tidy wording while approving; the same rules apply to their edits.
+      const parsed = readCandidateFields(req.body && req.body.fields);
+      const fields = Object.assign({}, jsonField(d.fields), parsed.fields);
+      const errors = errorsFor(fields);
+      if (Object.keys(errors).length) return res.status(400).json({ error: "Some fields can't go to a client yet.", errors: errors });
+      await db.query(
+        "INSERT INTO card_profiles (candidate_id, fields, approved_by, approved_at, updated_at) VALUES ($1,$2::jsonb,$3,now(),now()) " +
+        "ON CONFLICT (candidate_id) DO UPDATE SET fields = EXCLUDED.fields, approved_by = EXCLUDED.approved_by, approved_at = now(), updated_at = now()",
+        [id, JSON.stringify(fields), who(req)]);
+      if (d.photo_changed) {
+        await db.query("UPDATE card_profiles SET photo = $2, photo_type = $3, photo_source = $4, photo_updated_at = now() WHERE candidate_id = $1",
+          [id, d.photo || null, d.photo ? d.photo_type : null, d.photo ? "candidate" : null]);
+      }
+      await db.query("UPDATE card_drafts SET fields = $2::jsonb, photo = NULL, photo_type = NULL, photo_changed = false, status = 'approved', reviewed_by = $3, reviewed_at = now(), review_note = NULL WHERE candidate_id = $1",
+        [id, JSON.stringify(fields), who(req)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/cards/candidate/:id/send-back", async function (req, res) {
+    try {
+      await needDb();
+      const id = parseInt(req.params.id, 10);
+      const note = String(req.body && req.body.note || "").trim().slice(0, 500);
+      if (!note) return res.status(400).json({ error: "Tell the candidate what to change." });
+      await db.query("UPDATE card_drafts SET status = 'editing', review_note = $2, reviewed_by = $3, reviewed_at = now() WHERE candidate_id = $1", [id, note, who(req)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.put("/api/cards/candidate/:id/live", async function (req, res) {
+    try {
+      await needDb();
+      const id = parseInt(req.params.id, 10);
+      const live = await profileFor(id);
+      const parsed = readCandidateFields(req.body);
+      const fields = Object.assign({}, jsonField(live && live.fields), parsed.fields);
+      const errors = errorsFor(fields);
+      if (Object.keys(errors).length) return res.status(400).json({ error: "Some fields can't go to a client.", errors: errors });
+      await db.query(
+        "INSERT INTO card_profiles (candidate_id, fields, approved_by, approved_at, updated_at) VALUES ($1,$2::jsonb,$3,now(),now()) " +
+        "ON CONFLICT (candidate_id) DO UPDATE SET fields = EXCLUDED.fields, approved_by = EXCLUDED.approved_by, approved_at = now(), updated_at = now()",
+        [id, JSON.stringify(fields), who(req)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/cards/candidate/:id/photo", async function (req, res) {
+    try {
+      await needDb();
+      const id = parseInt(req.params.id, 10);
+      res.setHeader("Cache-Control", "no-store");
+      if (req.query.draft) return sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_drafts WHERE candidate_id = $1", [id]));
+      sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [id]));
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/cards/candidate/:id/photo", rawImage, async function (req, res) {
+    try {
+      await needDb();
+      const id = parseInt(req.params.id, 10);
+      const img = readPhoto(req);
+      await db.query(
+        "INSERT INTO card_profiles (candidate_id, photo, photo_type, photo_source, photo_updated_at, updated_at) VALUES ($1,$2,$3,'recruiter',now(),now()) " +
+        "ON CONFLICT (candidate_id) DO UPDATE SET photo = EXCLUDED.photo, photo_type = EXCLUDED.photo_type, photo_source = 'recruiter', photo_updated_at = now(), updated_at = now()",
+        [id, img.buffer, img.type]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.delete("/api/cards/candidate/:id/photo", async function (req, res) {
+    try {
+      await needDb();
+      await db.query("UPDATE card_profiles SET photo = NULL, photo_type = NULL, photo_source = NULL, photo_updated_at = now() WHERE candidate_id = $1", [parseInt(req.params.id, 10)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/cards/links/:linkId/revoke", async function (req, res) {
+    try {
+      await needDb();
+      await db.query("UPDATE card_links SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL", [parseInt(req.params.linkId, 10), who(req)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  /** Recruiter confirms Bullhorn's current rate is what the client should see. Re-read live; never typed in. */
+  app.post("/api/cards/links/:linkId/use-bullhorn-rate", async function (req, res) {
+    try {
+      await needDb();
+      const link = await db.getOne("SELECT * FROM card_links WHERE id = $1", [parseInt(req.params.linkId, 10)]);
+      if (!link) return res.status(404).json({ error: "Link not found." });
+      rateCache.delete(String(link.submission_id));
+      const live = await liveRate(link.submission_id);
+      if (!live.ok) return res.status(502).json({ error: "Could not read the rate from Bullhorn. " + (live.reason || "") });
+      const display = live.amount == null ? "" : formatMoney(live.amount);
+      await db.query("UPDATE card_links SET bill_amount = $2, bill_display = $3, rate_alert_at = NULL WHERE submission_id = $1 AND revoked_at IS NULL",
+        [link.submission_id, live.amount, display]);
+      res.json({ ok: true, billDisplay: display });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/cards/links/:linkId/views", async function (req, res) {
+    try {
+      await needDb();
+      const rows = await db.getAll("SELECT viewed_at, page FROM card_views WHERE link_id = $1 ORDER BY viewed_at DESC LIMIT 100", [parseInt(req.params.linkId, 10)]);
+      res.json({ data: rows });
+    } catch (e) { fail(res, e); }
+  });
+
+  /** Preview any Card as the client would see it, without minting a link or counting a view. */
+  app.get("/api/cards/links/:linkId/preview", async function (req, res) {
+    try {
+      await needDb();
+      const link = await db.getOne("SELECT * FROM card_links WHERE id = $1", [parseInt(req.params.linkId, 10)]);
+      if (!link) return res.status(404).json({ error: "Link not found." });
+      const rows = await siblings(link);
+      const row = rows.filter(function (x) { return x.id === link.id || x.candidate_id === link.candidate_id; })[0] || link;
+      res.json({ card: await fullCard(row), contact: contactOf(link), job: { title: link.job_title, clientName: link.client_name } });
+    } catch (e) { fail(res, e); }
+  });
+
+  return { mintClientLink: mintClientLink, ensureTables: ensureTables, _rateCache: rateCache };
+}
+
+module.exports = registerCard;
+module.exports.makeToken = makeToken;
+module.exports.hashToken = hashToken;
+module.exports.validToken = validToken;
+module.exports.jobIsActive = jobIsActive;
+module.exports.submissionHidden = submissionHidden;
+module.exports.checkCandidateText = checkCandidateText;
+module.exports.readCandidateFields = readCandidateFields;
+module.exports.sniffImage = sniffImage;
+module.exports.formatMoney = formatMoney;
+module.exports.CANDIDATE_FIELDS = CANDIDATE_FIELDS;
+module.exports.TOKEN_ALPHABET = TOKEN_ALPHABET;
