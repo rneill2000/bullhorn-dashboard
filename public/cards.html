@@ -59,6 +59,15 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
 .linkbox{background:var(--fog);border-radius:8px;padding:10px 12px;word-break:break-all;font-size:13px;margin:8px 0}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:11px 20px;border-radius:10px;display:none;box-shadow:0 10px 30px -10px rgba(0,0,0,.4)}
 .empty{color:var(--muted);padding:8px 0}
+.liveform{margin-top:6px}
+.liveform > summary{list-style:none;display:inline-block}
+.liveform > summary::-webkit-details-marker{display:none}
+.liveform[open] > summary{margin-bottom:10px}
+.liveinner{background:#F7FAFB;border-radius:12px;padding:16px 18px}
+.grp{font-family:var(--display);font-weight:700;font-size:15px;color:var(--navy);margin:16px 0 8px}
+.grp:first-child{margin-top:0}
+.more{margin:4px 0 12px}
+.more summary{cursor:pointer;color:var(--blue);font-weight:600;font-size:14px;margin-bottom:8px}
 @media (max-width:900px){.wrap{grid-template-columns:1fr;padding:18px 16px 60px}.grid2{grid-template-columns:1fr}.who{flex-wrap:wrap}.who .acts{margin-left:0}}
 </style>
 </head>
@@ -166,8 +175,8 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
     }, 250);
   });
 
-  function fieldInputs(prefix, fields, errors) {
-    return schema.map(function (f) {
+  function fieldInputs(prefix, fields, errors, only) {
+    return schema.filter(function (f) { return !only || only(f); }).map(function (f) {
       var v = fields[f.key] || "";
       var input = f.max <= 90 ? '<input type="text" id="' + prefix + f.key + '" maxlength="' + f.max + '" value="' + esc(v) + '">' : '<textarea id="' + prefix + f.key + '" rows="3" maxlength="' + f.max + '">' + esc(v) + '</textarea>';
       return '<div class="fieldbox"><label for="' + prefix + f.key + '">' + esc(f.label) + '</label>' + input + (errors && errors[f.key] ? '<div class="err">' + esc(errors[f.key]) + '</div>' : '') + '</div>';
@@ -203,8 +212,8 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
           (draft.photoChanged ? '<p class="muted">New photo' + (draft.photoSource === "linkedin" ? " (from LinkedIn)" : "") + '</p>' + (draft.hasPhoto ? '<img class="photo" src="/api/cards/candidate/' + id + '/photo?draft=1&v=' + Date.now() + '" alt="New photo">' : '<p>Photo removed</p>') +
             (draft.photoNote ? '<p class="' + (/match|Small/.test(draft.photoNote) ? 'err' : 'muted') + '" style="max-width:260px;margin-top:6px;color:' + (/match|Small/.test(draft.photoNote) ? '#b45309' : '#64748b') + '">' + esc(draft.photoNote) + '</p>' : '') : '<p class="same">Photo unchanged</p>') +
           '</div><div>' + (live.hasPhoto ? '<p class="muted">Current photo</p><img class="photo" src="/api/cards/candidate/' + id + '/photo?v=' + Date.now() + '" alt="Current photo">' : '<p class="same">No current photo</p>') + '</div></div>' +
-          '<p class="muted" style="margin:12px 0 6px">Highlighted fields changed. Edit wording here before approving if you need to.</p>' +
-          schema.map(function (f) {
+          '<p class="muted" style="margin:12px 0 6px">What they filled in. Changed answers are marked; tidy the wording here before approving if you need to.</p>' +
+          schema.filter(function (f) { return (draft.fields[f.key] || live.fields[f.key]); }).map(function (f) {
             var nv = draft.fields[f.key] || "", ov = live.fields[f.key] || "";
             var changed = nv !== ov;
             var input = f.max <= 90 ? '<input type="text" id="rv-' + f.key + '" maxlength="' + f.max + '" value="' + esc(nv) + '">' : '<textarea id="rv-' + f.key + '" rows="3" maxlength="' + f.max + '">' + esc(nv) + '</textarea>';
@@ -219,7 +228,20 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
         '<div><input type="file" id="recPhoto" accept="image/jpeg,image/png,image/webp" style="display:none"><button class="btn" id="recPhotoBtn">' + (live.hasPhoto ? "Replace photo" : "Add photo") + '</button> ' +
         (live.hasPhoto ? '<button class="btn danger" id="recPhotoRm">Remove</button>' : '') +
         '<div class="muted" style="margin-top:6px">' + (live.photoSource === "recruiter" ? "Added by a recruiter. " : "") + 'Best when the candidate adds it themselves.</div></div></div>' +
-        fieldInputs("lv-", live.fields, live.errors) + '<button class="btn primary" id="saveLive">Save live Card</button>';
+        (function () {
+          var lf = live.fields;
+          var prompts = schema.filter(function (f) { return f.kind === "prompt" && lf[f.key]; });
+          var facts = schema.filter(function (f) { return f.kind === "fact" && lf[f.key]; });
+          var summary = [lf.headline ? "Headline" : null, lf.intro ? "intro" : null, prompts.length ? prompts.length + " culture prompt" + (prompts.length > 1 ? "s" : "") : null, facts.length ? facts.length + " quick fact" + (facts.length > 1 ? "s" : "") : null].filter(Boolean);
+          return '<p class="muted" style="margin:4px 0 10px">' + (summary.length ? "On the Card: " + esc(summary.join(", ")) + "." : "Nothing in their own words yet. Send them an edit link below, or fill it in yourself.") + '</p>' +
+            '<details class="liveform"><summary class="btn">Edit their story here</summary><div class="liveinner">' +
+            '<p class="grp">Headline and intro</p>' + fieldInputs("lv-", lf, live.errors, function (f) { return f.kind === "about"; }) +
+            '<p class="grp">Culture corner <span class="muted">(up to 4 prompts show)</span></p>' + fieldInputs("lv-", lf, live.errors, function (f) { return f.kind === "prompt" && lf[f.key]; }) +
+            '<details class="more"><summary>More prompts</summary>' + fieldInputs("lv-", lf, live.errors, function (f) { return f.kind === "prompt" && !lf[f.key]; }) + '</details>' +
+            '<p class="grp">Quick facts</p><div class="grid2">' + fieldInputs("lv-", lf, live.errors, function (f) { return f.kind === "fact"; }) + '</div>' +
+            (live.errors && live.errors._prompts ? '<div class="err">' + esc(live.errors._prompts) + '</div>' : '') +
+            '<button class="btn primary" id="saveLive">Save</button></div></details>';
+        })();
 
       h += '<h3>Candidate edit link</h3><p class="muted">Lets ' + esc(c.firstName || "them") + ' add a photo and edit the fields above. Lasts 14 days. You approve every change.</p>' +
         '<div id="editLinkOut"></div><div class="row" style="margin-top:8px"><button class="btn primary" id="mkEdit">Create edit link</button></div>' +

@@ -232,6 +232,26 @@ function linkedinConfigured() {
   return !!(process.env.LINKEDIN_CLIENT_ID && process.env.LINKEDIN_CLIENT_SECRET);
 }
 
+/** Bullhorn names often arrive in all caps or all lower case. "JEFFREY O'NEILL-SMITH" → "Jeffrey O'Neill-Smith". */
+function niceName(raw) {
+  const s = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  const letters = s.replace(/[^A-Za-z]/g, "");
+  if (!letters || (letters !== letters.toUpperCase() && letters !== letters.toLowerCase())) return s;
+  return s.toLowerCase().replace(/(^|[\s\-'’])([a-z])/g, function (m, p, c) { return p + c.toUpperCase(); })
+    .replace(/\bMc([a-z])/g, function (m, c) { return "Mc" + c.toUpperCase(); });
+}
+function personName(row) {
+  if (!row) return "";
+  return niceName([row.first_name, row.last_name].filter(Boolean).join(" ") || row.name || row.candidate_name || "");
+}
+/** Hide placeholder or junk values from Bullhorn's Epic role field (e.g. "IS", "N/A"). */
+function cleanRole(raw) {
+  const s = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!s || s.length < 4 || /^(n\/?a|none|tbd|unknown|other|is|it|-+)$/i.test(s)) return "";
+  return s;
+}
+
 function moneyNumber(value) {
   if (value == null || value === "") return null;
   const n = Number(String(value).replace(/[^0-9.]/g, ""));
@@ -385,7 +405,7 @@ function registerCard(app, deps) {
     const docs = o.resumeFileId != null && String(o.resumeFileId) !== "" ? [{ fileId: String(o.resumeFileId), name: o.resumeName || "Résumé.pdf", kind: "Résumé" }] : [];
     const amount = o.billAmount != null ? o.billAmount : moneyNumber(o.billRate);
     const snapshot = [
-      o.candidateName || "", o.jobTitle || "", o.clientName || "",
+      niceName(o.candidateName || ""), o.jobTitle || "", o.clientName || "",
       o.whyMe || "", o.availability || "", o.location || "",
       o.billRate || "", amount, o.resumeFileId != null ? String(o.resumeFileId) : null, o.resumeName || "",
       JSON.stringify(keptRefs), JSON.stringify(o.recruiter || {}),
@@ -512,7 +532,7 @@ function registerCard(app, deps) {
   }
 
   function displayName(row) {
-    const n = [row.first_name, row.last_name].filter(Boolean).join(" ").trim();
+    const n = personName(row);
     return n || row.candidate_name || "Candidate";
   }
 
@@ -522,7 +542,7 @@ function registerCard(app, deps) {
       id: row.public_id,
       name: displayName(row),
       headline: pf.headline || "",
-      epicRole: String(row.custom_text5 || "").trim(),
+      epicRole: cleanRole(row.custom_text5),
       certs: certList(row),
       availability: row.availability || "",
       location: row.location || "",
@@ -898,9 +918,9 @@ function registerCard(app, deps) {
       res.json({
         state: "active",
         candidate: {
-          firstName: (cand && cand.first_name) || "",
-          name: cand ? ([cand.first_name, cand.last_name].filter(Boolean).join(" ") || cand.name || "") : "",
-          epicRole: cand ? String(cand.custom_text5 || "").trim() : "",
+          firstName: niceName(cand && cand.first_name),
+          name: personName(cand),
+          epicRole: cand ? cleanRole(cand.custom_text5) : "",
           certs: cand ? certList(cand) : [],
         },
         fields: jsonField(draft && draft.fields),
@@ -983,7 +1003,7 @@ function registerCard(app, deps) {
       const owner = await ownerEmail(link.candidate_id);
       const to = (link.created_by && /@/.test(link.created_by)) ? link.created_by : (owner && owner.email);
       if (notifier && to) {
-        const name = cand ? ([cand.first_name, cand.last_name].filter(Boolean).join(" ") || cand.name) : "A candidate";
+        const name = cand ? personName(cand) : "A candidate";
         const html = notifier.card("Card ready for review", [
           ["Candidate", name],
           ["Changed", (draft && draft.photo_changed ? "Photo, " : "") + "profile fields"],
@@ -1018,7 +1038,7 @@ function registerCard(app, deps) {
         "l.view_count, l.last_viewed_at, l.revoked_at, j.status AS job_status, j.is_open, j.is_deleted FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id " +
         "ORDER BY COALESCE(l.last_viewed_at, l.created_at) DESC LIMIT 60");
       res.json({
-        pending: pending.map(function (p) { return { candidateId: p.candidate_id, name: [p.first_name, p.last_name].filter(Boolean).join(" ") || p.name || ("#" + p.candidate_id), submittedAt: p.submitted_at, photoChanged: p.photo_changed }; }),
+        pending: pending.map(function (p) { return { candidateId: p.candidate_id, name: personName(p) || ("#" + p.candidate_id), submittedAt: p.submitted_at, photoChanged: p.photo_changed }; }),
         links: links.map(linkOut),
       });
     } catch (e) { fail(res, e); }
@@ -1043,7 +1063,7 @@ function registerCard(app, deps) {
       const rows = await db.getAll(
         "SELECT id, first_name, last_name, name, custom_text5 FROM candidates WHERE (COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) ILIKE $1 OR name ILIKE $1 " +
         "ORDER BY date_last_modified DESC NULLS LAST LIMIT 15", ["%" + q.replace(/[%_]/g, "") + "%"]);
-      res.json({ data: rows.map(function (r) { return { id: r.id, name: [r.first_name, r.last_name].filter(Boolean).join(" ") || r.name, epicRole: r.custom_text5 || "" }; }) });
+      res.json({ data: rows.map(function (r) { return { id: r.id, name: personName(r), epicRole: cleanRole(r.custom_text5) }; }) });
     } catch (e) { fail(res, e); }
   });
 
@@ -1061,7 +1081,7 @@ function registerCard(app, deps) {
       const liveFields = jsonField(live && live.fields);
       const draftFields = jsonField(draft && draft.fields);
       res.json({
-        candidate: { id: id, name: [cand.first_name, cand.last_name].filter(Boolean).join(" ") || cand.name, firstName: cand.first_name || "", email: cand.email || "", epicRole: cand.custom_text5 || "", certs: certList(cand) },
+        candidate: { id: id, name: personName(cand), firstName: niceName(cand.first_name), email: cand.email || "", epicRole: cleanRole(cand.custom_text5), certs: certList(cand) },
         schema: schemaOut(),
         live: { fields: liveFields, hasPhoto: !!(live && live.has_photo), photoSource: live && live.photo_source || "", approvedBy: live && live.approved_by || "", approvedAt: live && live.approved_at || null, errors: errorsFor(liveFields) },
         draft: draft ? { fields: draftFields, hasPhoto: !!draft.has_photo, photoChanged: !!draft.photo_changed, photoSource: draft.photo_source || "", photoNote: draft.photo_note || "", status: draft.status, submittedAt: draft.submitted_at, reviewNote: draft.review_note || "", errors: errorsFor(draftFields), version: draft.version } : null,
@@ -1082,7 +1102,7 @@ function registerCard(app, deps) {
       const expires = new Date(now() + EDIT_LINK_DAYS * 86400000);
       await db.query("INSERT INTO card_edit_links (token_hash, candidate_id, created_by, created_by_name, expires_at) VALUES ($1,$2,$3,$4,$5)",
         [hashToken(token), id, who(req), u ? ([u.firstName, u.lastName].filter(Boolean).join(" ") || u.name || "") : "", expires.toISOString()]);
-      res.json({ url: editUrl(token), expiresAt: expires.toISOString(), candidateEmail: cand.email || "", firstName: cand.first_name || "" });
+      res.json({ url: editUrl(token), expiresAt: expires.toISOString(), candidateEmail: cand.email || "", firstName: niceName(cand.first_name) });
     } catch (e) { fail(res, e); }
   });
 
@@ -1445,6 +1465,8 @@ module.exports.checkCandidateText = checkCandidateText;
 module.exports.readCandidateFields = readCandidateFields;
 module.exports.sniffImage = sniffImage;
 module.exports.formatMoney = formatMoney;
+module.exports.niceName = niceName;
+module.exports.cleanRole = cleanRole;
 module.exports.imageSize = imageSize;
 module.exports.sameName = sameName;
 module.exports.CANDIDATE_FIELDS = CANDIDATE_FIELDS;
