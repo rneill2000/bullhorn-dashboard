@@ -8,10 +8,10 @@
 <title>Your Anura Connect Card</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-:root{--navy:#0E2E47;--blue:#176087;--sky:#53A2BE;--ink:#102331;--muted:#566B7A;--line:#D7E1E8;--fog:#EEF3F6;--paper:#fff;--bad:#B42318;--ok:#1F7A55;
-  --serif:"Source Serif 4",Georgia,serif;--sans:"Public Sans",-apple-system,"Segoe UI",Roboto,sans-serif}
+:root{--navy:#0A2239;--blue:#176087;--sky:#53A2BE;--ink:#1A2533;--muted:#566B7A;--line:#D7E1E8;--fog:#EEF3F6;--paper:#fff;--bad:#B42318;--ok:#1F7A55;
+  --display:Poppins,"Trebuchet MS",system-ui,sans-serif;--serif:"Source Sans 3","Segoe UI",system-ui,sans-serif;--sans:"Source Sans 3","Segoe UI",system-ui,-apple-system,sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--sans);color:var(--ink);background:var(--fog);font-size:16px;line-height:1.5}
 a{color:var(--blue)}
@@ -20,18 +20,18 @@ a{color:var(--blue)}
 .top-inner{max-width:1040px;margin:0 auto;padding:14px 24px}
 .top img{height:34px}
 .wrap{max-width:1040px;margin:0 auto;padding:28px 24px 64px;display:grid;grid-template-columns:1fr 300px;gap:40px;align-items:start}
-h1{font-family:var(--serif);font-weight:400;font-size:clamp(24px,3vw,32px);line-height:1.2}
+h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,3.2vw,34px);line-height:1.15;letter-spacing:-.02em;color:var(--navy)}
 .lede{color:var(--muted);margin-top:8px;max-width:60ch}
 .note{margin-top:18px;padding:14px 16px;border-radius:10px;font-size:15px}
 .note.warn{background:#FFF6E5;border:1px solid #F5D9A8}
 .note.done{background:#E9F6EF;border:1px solid #BFE3CF}
 form{margin-top:26px}
 fieldset{border:0;margin-bottom:30px}
-legend{font-size:14px;font-weight:700;color:var(--blue);margin-bottom:12px}
+legend{font-family:var(--display);font-size:18px;font-weight:700;color:var(--navy);margin-bottom:12px}
 .field{margin-bottom:18px}
 .field label{display:block;font-weight:600;font-size:15px}
 .field .hint{font-size:13px;color:var(--muted)}
-.field textarea,.field input{width:100%;margin-top:6px;font:inherit;font-family:var(--serif);font-size:17px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);resize:vertical}
+.field textarea,.field input{width:100%;margin-top:6px;font:inherit;font-size:17px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);resize:vertical}
 .field textarea:focus,.field input:focus{border-color:var(--blue);outline:none;box-shadow:0 0 0 3px rgba(23,96,135,.15)}
 .field .meta{display:flex;justify-content:space-between;font-size:13px;margin-top:4px;color:var(--muted)}
 .field.has-error textarea,.field.has-error input{border-color:var(--bad)}
@@ -47,7 +47,7 @@ legend{font-size:14px;font-weight:700;color:var(--blue);margin-bottom:12px}
 .sublegend{font-size:14px;font-weight:700;color:var(--ink);margin:22px 0 4px}
 .facts-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
 .err{color:var(--bad)}
-.photo-row .ph{width:96px;height:114px;border-radius:9px;object-fit:cover;background:var(--paper);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:34px;color:var(--blue)}
+.photo-row .ph{width:96px;height:114px;border-radius:10px;object-fit:cover;background:var(--paper);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:32px;color:var(--blue)}
 .btn{display:inline-block;font:inherit;font-weight:600;font-size:15px;padding:10px 16px;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:var(--paper);color:var(--blue);text-decoration:none}
 .btn:hover{border-color:var(--sky)}
 .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
@@ -61,11 +61,11 @@ input[type=file]{position:absolute;left:-9999px}
 /* live preview: the same badge clients see */
 .preview{position:sticky;top:20px}
 .preview .label{font-size:13px;color:var(--muted);margin-bottom:8px}
-.badge{background:var(--paper);border-radius:14px;box-shadow:0 1px 0 var(--line),0 12px 32px -18px rgba(14,46,71,.45);overflow:hidden;text-align:center}
-.badge .slot{width:54px;height:9px;border-radius:9px;background:var(--fog);box-shadow:inset 0 1px 2px rgba(14,46,71,.25);margin:14px auto 0}
+.badge{background:var(--paper);border-radius:16px;box-shadow:0 1px 0 var(--line),0 12px 32px -18px rgba(7,24,42,.45);overflow:hidden;text-align:center}
+.badge .slot{width:54px;height:9px;border-radius:9px;background:var(--fog);box-shadow:inset 0 1px 2px rgba(7,24,42,.25);margin:14px auto 0}
 .badge .face{padding:16px 24px 20px}
-.badge .bp{width:132px;height:158px;margin:0 auto;border-radius:10px;object-fit:cover;background:var(--fog);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:46px;color:var(--blue)}
-.badge h2{font-family:var(--serif);font-weight:600;font-size:23px;margin-top:14px;line-height:1.15}
+.badge .bp{width:132px;height:158px;margin:0 auto;border-radius:10px;object-fit:cover;background:var(--fog);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:44px;color:var(--blue)}
+.badge h2{font-family:var(--display);font-weight:800;font-size:22px;margin-top:14px;line-height:1.15;letter-spacing:-.02em;color:var(--navy)}
 .badge .headline{font-size:14px;color:var(--muted);margin-top:6px;min-height:1em}
 .badge .role{margin-top:12px;font-weight:600;color:var(--blue);font-size:14px}
 .badge .certs{font-size:13px;margin-top:4px}

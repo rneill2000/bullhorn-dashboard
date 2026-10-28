@@ -7,26 +7,26 @@
 <link rel="icon" type="image/jpeg" href="/fulllogo.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-:root{--navy:#0E2E47;--blue:#176087;--sky:#53A2BE;--ink:#102331;--muted:#566B7A;--line:#D7E1E8;--fog:#EEF3F6;--paper:#fff;--ok:#1F7A55;--bad:#B42318;--warn:#8A5300;
-  --serif:"Source Serif 4",Georgia,serif;--sans:"Public Sans",-apple-system,"Segoe UI",Roboto,sans-serif}
+:root{--navy:#0A2239;--blue:#176087;--sky:#53A2BE;--ink:#1A2533;--muted:#566B7A;--line:#D7E1E8;--fog:#EEF3F6;--paper:#fff;--ok:#1F7A55;--bad:#B42318;--warn:#8A5300;
+  --display:Poppins,"Trebuchet MS",system-ui,sans-serif;--serif:"Source Sans 3","Segoe UI",system-ui,sans-serif;--sans:"Source Sans 3","Segoe UI",system-ui,-apple-system,sans-serif}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:var(--sans);background:var(--fog);color:var(--ink);font-size:14px;line-height:1.45}
 a{color:var(--blue)}
 :focus-visible{outline:3px solid var(--sky);outline-offset:2px}
 header{background:var(--navy);color:#fff;padding:14px 28px;display:flex;align-items:center;gap:14px}
 header img{height:32px;border-radius:6px;background:#fff}
-header h1{font-family:var(--serif);font-weight:400;font-size:21px;letter-spacing:-.01em}
+header h1{font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:-.01em}
 header a{color:#C9DCE6;margin-left:auto;font-size:13px;text-decoration:none}
 header a:hover{color:#fff}
 .wrap{max-width:1240px;margin:0 auto;padding:26px 28px 70px;display:grid;grid-template-columns:320px 1fr;gap:26px;align-items:start}
-.panel{background:var(--paper);border-radius:14px;padding:20px 22px;box-shadow:0 1px 0 var(--line),0 10px 28px -24px rgba(14,46,71,.5)}
+.panel{background:var(--paper);border-radius:16px;padding:20px 22px;box-shadow:0 1px 0 var(--line),0 10px 28px -24px rgba(7,24,42,.5)}
 .panel+.panel{margin-top:18px}
-h2{font-family:var(--serif);font-weight:600;font-size:19px;color:var(--ink);margin-bottom:12px;letter-spacing:-.01em}
+h2{font-family:var(--display);font-weight:700;font-size:18px;color:var(--ink);margin-bottom:12px;letter-spacing:-.01em}
 h3{font-size:13px;font-weight:700;color:var(--blue);margin:26px 0 10px;padding-top:20px;border-top:1px solid var(--line)}
 input[type=search],input[type=text],textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px;color:var(--ink);background:#fff}
-textarea{resize:vertical;font-family:var(--serif);font-size:15px}
+textarea{resize:vertical;font-size:15px}
 input:focus,textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(23,96,135,.15)}
 .list{list-style:none;margin-top:6px}
 .list li{padding:10px 0;border-bottom:1px solid var(--fog);display:flex;justify-content:space-between;gap:8px;align-items:center}
@@ -49,8 +49,8 @@ input:focus,textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 
 .photo{width:96px;height:114px;border-radius:10px;object-fit:cover;border:1px solid var(--line);background:var(--fog)}
 .who{display:flex;gap:18px;align-items:center;margin-bottom:4px}
 .who .photo{width:84px;height:100px}
-.who .initials{width:84px;height:100px;border-radius:10px;background:var(--fog);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:32px;color:var(--blue)}
-.who h2{font-size:28px;margin:0}
+.who .initials{width:84px;height:100px;border-radius:10px;background:var(--fog);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:30px;color:var(--blue)}
+.who h2{font-size:28px;margin:0;font-weight:800;letter-spacing:-.02em}
 .who .sub{color:var(--muted);font-size:14px;margin-top:2px}
 .who .acts{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 table{width:100%;border-collapse:collapse}
