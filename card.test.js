@@ -191,7 +191,9 @@ async function harness() {
   const rates = { 11: { amount: 185 }, 12: { amount: 170 }, 13: { amount: 150 }, 14: { amount: 160 }, 15: { amount: 140 }, 16: { amount: 165 } };
   const app = express();
   app.use(express.json());
+  const net = { calls: [], handler: null };
   const api = card(app, {
+    fetch: async function (url, opts) { net.calls.push(String(url)); return net.handler(String(url), opts || {}); },
     db: db,
     notifier: notifier,
     getUser: function (r) { return r.headers["x-test-user"] ? { email: r.headers["x-test-user"], firstName: "Ben", lastName: "Gray" } : null; },
@@ -222,7 +224,7 @@ async function harness() {
     await pool.query("DROP SCHEMA " + schema + " CASCADE");
     await pool.end();
   }
-  return { db: db, port: port, mint: mint, tok: tok, sent: sent, rates: rates, api: api, close: close };
+  return { db: db, port: port, mint: mint, tok: tok, sent: sent, rates: rates, api: api, close: close, net: net };
 }
 
 test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_URL to run" }, async function (t) {
@@ -453,6 +455,84 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.deepEqual(pub.json.card.references, []);
     });
 
+    await t.test("K23 Use my LinkedIn photo: official sign-in, LinkedIn's image host only, name check, recruiter approves", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      const mk = await req(h.port, "POST", "/api/cards/candidate/6/edit-link", { headers: rec, body: {} });
+      const E = mk.json.url.split("/card-edit/")[1];
+      delete process.env.LINKEDIN_CLIENT_ID; delete process.env.LINKEDIN_CLIENT_SECRET;
+      let r = await req(h.port, "GET", "/card-edit/" + E + "/linkedin");
+      assert.equal(r.status, 302);
+      assert.equal(r.headers.location, "/card-edit/" + E + "?li=off", "dormant until Railway has the LinkedIn keys");
+      assert.equal((await req(h.port, "GET", "/api/card-edit/" + E)).json.linkedinEnabled, false);
+      process.env.LINKEDIN_CLIENT_ID = "cid123"; process.env.LINKEDIN_CLIENT_SECRET = "shh";
+      try {
+        assert.equal((await req(h.port, "GET", "/api/card-edit/" + E)).json.linkedinEnabled, true);
+        async function start() {
+          const s = await req(h.port, "GET", "/card-edit/" + E + "/linkedin");
+          assert.equal(s.status, 302);
+          const u = new URL(s.headers.location);
+          assert.equal(u.origin + u.pathname, "https://www.linkedin.com/oauth/v2/authorization");
+          assert.equal(u.searchParams.get("scope"), "openid profile", "photo and name only");
+          assert.equal(u.searchParams.get("redirect_uri"), "https://dash.test/card-edit/linkedin/callback");
+          assert.equal(u.searchParams.get("client_id"), "cid123");
+          assert.equal(u.searchParams.get("state").indexOf(E), -1, "the edit link never goes to LinkedIn");
+          return u.searchParams.get("state");
+        }
+        function linkedin(info, picture) {
+          h.net.calls.length = 0;
+          h.net.handler = async function (url, opts) {
+            if (/accessToken/.test(url)) { assert.match(String(opts.body), /client_secret=shh/); return { ok: true, json: async function () { return { access_token: "at" }; } }; }
+            if (/userinfo/.test(url)) return { ok: true, json: async function () { return Object.assign({ picture: picture }, info); } };
+            return { ok: true, arrayBuffer: async function () { return JPEG.buffer.slice(JPEG.byteOffset, JPEG.byteOffset + JPEG.length); } };
+          };
+        }
+        // Someone else's LinkedIn (a recruiter testing the link): saved, but flagged to candidate and reviewer.
+        let state = await start();
+        linkedin({ given_name: "Ben", family_name: "Gray" }, "https://media.licdn.com/dms/image/abc/profile.jpg");
+        r = await req(h.port, "GET", "/card-edit/linkedin/callback?code=c1&state=" + state);
+        assert.equal(r.headers.location, "/card-edit/" + E + "?li=othername");
+        let d = await req(h.port, "GET", "/api/cards/candidate/6", { headers: rec });
+        assert.equal(d.json.draft.photoSource, "linkedin");
+        assert.match(d.json.draft.photoNote, /Ben Gray, which doesn't match/);
+        // The state is single-use.
+        assert.equal((await req(h.port, "GET", "/card-edit/linkedin/callback?code=c1&state=" + state)).status, 400);
+        // A picture URL off LinkedIn's image host is never fetched.
+        state = await start();
+        linkedin({ given_name: "Lee", family_name: "Park" }, "https://evil.example/x.jpg");
+        r = await req(h.port, "GET", "/card-edit/linkedin/callback?code=c2&state=" + state);
+        assert.equal(r.headers.location, "/card-edit/" + E + "?li=error");
+        assert.ok(!h.net.calls.some(function (u) { return /evil/.test(u); }));
+        // No photo on the profile.
+        state = await start();
+        linkedin({ given_name: "Lee", family_name: "Park" }, "");
+        r = await req(h.port, "GET", "/card-edit/linkedin/callback?code=c3&state=" + state);
+        assert.equal(r.headers.location, "/card-edit/" + E + "?li=nophoto");
+        // Cancelled at LinkedIn.
+        state = await start();
+        r = await req(h.port, "GET", "/card-edit/linkedin/callback?error=user_cancelled_login&state=" + state);
+        assert.equal(r.headers.location, "/card-edit/" + E + "?li=cancel");
+        // The candidate themself.
+        state = await start();
+        linkedin({ given_name: "Lee", family_name: "Park" }, "https://media.licdn.com/dms/image/lee/profile.jpg");
+        r = await req(h.port, "GET", "/card-edit/linkedin/callback?code=c4&state=" + state);
+        assert.equal(r.headers.location, "/card-edit/" + E + "?li=ok");
+        d = await req(h.port, "GET", "/api/cards/candidate/6", { headers: rec });
+        assert.equal(d.json.draft.photoNote, "From LinkedIn.");
+        // Still needs the recruiter: not on any client Card yet.
+        const live = await h.db.getOne("SELECT photo FROM card_profiles WHERE candidate_id = 6");
+        assert.ok(!live || !live.photo);
+        await req(h.port, "POST", "/api/card-edit/" + E + "/submit", { body: {} });
+        d = await req(h.port, "GET", "/api/cards/candidate/6", { headers: rec });
+        r = await req(h.port, "POST", "/api/cards/candidate/6/approve", { headers: rec, body: { fields: {}, version: d.json.draft.version } });
+        assert.equal(r.status, 200, r.text);
+        const after = await h.db.getOne("SELECT photo_source, (photo IS NOT NULL) AS has FROM card_profiles WHERE candidate_id = 6");
+        assert.equal(after.photo_source, "linkedin");
+        assert.equal(after.has, true);
+      } finally {
+        delete process.env.LINKEDIN_CLIENT_ID; delete process.env.LINKEDIN_CLIENT_SECRET;
+      }
+    });
+
     await t.test("K17 a new draft for the same submission refreshes older links", async function () {
       await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell", whyMe: "Updated Why Me." });
       const r = await req(h.port, "GET", "/api/card-public/" + J);
@@ -471,6 +551,17 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
   } finally {
     await h.close();
   }
+});
+
+test("K24 photo size and LinkedIn name matching", function () {
+  const png = Buffer.alloc(24); Buffer.from([0x89, 0x50, 0x4e, 0x47]).copy(png); png.writeUInt32BE(100, 16); png.writeUInt32BE(120, 20);
+  assert.deepEqual(card.imageSize(png), { width: 100, height: 120 });
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0, 0, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x90, 0x01, 0x2c, 0, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(card.imageSize(jpeg), { width: 300, height: 400 });
+  assert.equal(card.sameName({ given_name: "Jack", family_name: "Corbell" }, { first_name: "Jackson", last_name: "Corbell" }), true);
+  assert.equal(card.sameName({ given_name: "José", family_name: "García-López" }, { first_name: "Jose", last_name: "Garcia" }), true);
+  assert.equal(card.sameName({ given_name: "Ben", family_name: "Gray" }, { first_name: "Jack", last_name: "Corbell" }), false);
+  assert.equal(card.sameName({ given_name: "", family_name: "" }, { first_name: "Jack", last_name: "Corbell" }), false);
 });
 
 test("K22 login gate: only real files in public/ skip login; extensions on API or page routes don't", function () {

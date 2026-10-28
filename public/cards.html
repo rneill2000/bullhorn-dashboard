@@ -183,7 +183,8 @@ td{padding:8px;border-bottom:1px solid #f1f5f9;vertical-align:top}
 
       if (pendingReview) {
         h += '<h3>Candidate sent changes ' + esc(when(draft.submittedAt)) + '</h3><div class="grid2"><div>' +
-          (draft.photoChanged ? '<p class="muted">New photo</p>' + (draft.hasPhoto ? '<img class="photo" src="/api/cards/candidate/' + id + '/photo?draft=1&v=' + Date.now() + '" alt="New photo">' : '<p>Photo removed</p>') : '<p class="same">Photo unchanged</p>') +
+          (draft.photoChanged ? '<p class="muted">New photo' + (draft.photoSource === "linkedin" ? " (from LinkedIn)" : "") + '</p>' + (draft.hasPhoto ? '<img class="photo" src="/api/cards/candidate/' + id + '/photo?draft=1&v=' + Date.now() + '" alt="New photo">' : '<p>Photo removed</p>') +
+            (draft.photoNote ? '<p class="' + (/match|Small/.test(draft.photoNote) ? 'err' : 'muted') + '" style="max-width:260px;margin-top:6px;color:' + (/match|Small/.test(draft.photoNote) ? '#b45309' : '#64748b') + '">' + esc(draft.photoNote) + '</p>' : '') : '<p class="same">Photo unchanged</p>') +
           '</div><div>' + (live.hasPhoto ? '<p class="muted">Current photo</p><img class="photo" src="/api/cards/candidate/' + id + '/photo?v=' + Date.now() + '" alt="Current photo">' : '<p class="same">No current photo</p>') + '</div></div>' +
           '<p class="muted" style="margin:12px 0 6px">Highlighted fields changed. Edit wording here before approving if you need to.</p>' +
           schema.map(function (f) {

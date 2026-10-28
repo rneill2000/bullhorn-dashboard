@@ -144,6 +144,47 @@ function sniffImage(buf) {
   return "";
 }
 
+/** Pixel size of a JPEG or PNG, or null. Enough to warn when a photo will look soft on the badge. */
+function imageSize(buf) {
+  if (!buf || buf.length < 24) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50) return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) { i += 1; continue; }
+      const marker = buf[i + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+      }
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+  }
+  return null;
+}
+
+function lowResNote(buf, prefix) {
+  const size = imageSize(buf);
+  const parts = prefix ? [prefix] : [];
+  if (size && Math.min(size.width, size.height) < 300) parts.push("Small photo (" + size.width + "×" + size.height + "px); it may look soft on the Card.");
+  return parts.join(" ") || null;
+}
+
+function normName(s) { return String(s || "").toLowerCase().normalize("NFD").replace(/[^a-z]/g, ""); }
+
+/** Loose match between the LinkedIn account and the candidate. First initial + last name, or full first name. */
+function sameName(li, cand) {
+  const lf = normName(li.given_name), ll = normName(li.family_name);
+  const cf = normName(cand && cand.first_name), cl = normName(cand && cand.last_name);
+  if (!ll || !cl) return false;
+  if (ll !== cl && ll.indexOf(cl) < 0 && cl.indexOf(ll) < 0) return false;
+  return !!lf && !!cf && (lf === cf || lf[0] === cf[0]);
+}
+
+function linkedinConfigured() {
+  return !!(process.env.LINKEDIN_CLIENT_ID && process.env.LINKEDIN_CLIENT_SECRET);
+}
+
 function moneyNumber(value) {
   if (value == null || value === "") return null;
   const n = Number(String(value).replace(/[^0-9.]/g, ""));
@@ -251,6 +292,8 @@ function registerCard(app, deps) {
           "revoked_at TIMESTAMPTZ, revoked_by TEXT, first_viewed_at TIMESTAMPTZ, last_viewed_at TIMESTAMPTZ, " +
           "view_count INTEGER NOT NULL DEFAULT 0, last_alert_at TIMESTAMPTZ, rate_alert_at TIMESTAMPTZ, removed_refs JSONB NOT NULL DEFAULT '[]'::jsonb)",
         "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS removed_refs JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "ALTER TABLE card_drafts ADD COLUMN IF NOT EXISTS photo_source TEXT",
+        "ALTER TABLE card_drafts ADD COLUMN IF NOT EXISTS photo_note TEXT",
         "CREATE INDEX IF NOT EXISTS card_links_job ON card_links (job_id, client_id)",
         "CREATE INDEX IF NOT EXISTS card_links_candidate ON card_links (candidate_id)",
         "CREATE TABLE IF NOT EXISTS card_views (id BIGSERIAL PRIMARY KEY, link_id INTEGER NOT NULL, viewed_at TIMESTAMPTZ NOT NULL DEFAULT now(), " +
@@ -537,7 +580,7 @@ function registerCard(app, deps) {
   }
 
   async function draftFor(candidateId) {
-    return db.getOne("SELECT candidate_id, fields, photo_type, (photo IS NOT NULL) AS has_photo, photo_changed, status, submitted_at, review_note, reviewed_at, updated_at, " +
+    return db.getOne("SELECT candidate_id, fields, photo_type, (photo IS NOT NULL) AS has_photo, photo_changed, photo_source, photo_note, status, submitted_at, review_note, reviewed_at, updated_at, " +
       "to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS version FROM card_drafts WHERE candidate_id = $1", [candidateId]);
   }
 
@@ -652,6 +695,79 @@ function registerCard(app, deps) {
   });
 
   /* ════ public: candidate editing ════ */
+  /* ── "Use my LinkedIn photo": Sign In with LinkedIn (OpenID Connect). The candidate signs in to
+     LinkedIn themselves; LinkedIn returns their profile photo URL; we keep our own copy. ── */
+  const linkedinPending = new Map(); // state → { token, exp }
+  const fetchImpl = deps.fetch || fetch;
+  function linkedinRedirectUri() { return publicOrigin().replace(/\/$/, "") + "/card-edit/linkedin/callback"; }
+  function backToEdit(res, token, result) { res.redirect(302, "/card-edit/" + token + "?li=" + encodeURIComponent(result)); }
+
+  app.get("/card-edit/linkedin/callback", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    const state = String(req.query.state || "");
+    const pending = linkedinPending.get(state);
+    linkedinPending.delete(state);
+    if (!pending || pending.exp < now()) {
+      return res.status(400).type("text/plain").send("That sign-in took too long or was already used. Go back to your Card link and try again.");
+    }
+    const token = pending.token;
+    try {
+      const link = await resolveEditLink(token);
+      if (!link) return res.status(410).type("text/plain").send("This edit link has expired. Ask your Anura Connect recruiter for a new one.");
+      if (req.query.error || !req.query.code) return backToEdit(res, token, "cancel");
+      const tokenRes = await fetchImpl("https://www.linkedin.com/oauth/v2/accessToken", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code", code: String(req.query.code), redirect_uri: linkedinRedirectUri(),
+          client_id: process.env.LINKEDIN_CLIENT_ID || "", client_secret: process.env.LINKEDIN_CLIENT_SECRET || "",
+        }).toString(),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!tokenRes.ok) throw new Error("LinkedIn token " + tokenRes.status);
+      const access = (await tokenRes.json()).access_token;
+      const infoRes = await fetchImpl("https://api.linkedin.com/v2/userinfo", { headers: { Authorization: "Bearer " + access }, signal: AbortSignal.timeout(15000) });
+      if (!infoRes.ok) throw new Error("LinkedIn userinfo " + infoRes.status);
+      const info = await infoRes.json();
+      let pic;
+      try { pic = new URL(String(info.picture || "")); } catch (e) { pic = null; }
+      if (!pic) return backToEdit(res, token, "nophoto");
+      // Only LinkedIn's own image host. The URL comes from LinkedIn, but never fetch an arbitrary address.
+      if (pic.protocol !== "https:" || !/(^|\.)licdn\.com$/i.test(pic.hostname)) throw new Error("unexpected photo host " + pic.hostname);
+      const imgRes = await fetchImpl(pic.toString(), { signal: AbortSignal.timeout(15000) });
+      if (!imgRes.ok) throw new Error("LinkedIn photo " + imgRes.status);
+      const buf = Buffer.from(await imgRes.arrayBuffer());
+      if (buf.length > MAX_PHOTO_BYTES) throw new Error("photo too large");
+      const type = sniffImage(buf);
+      if (!type) throw new Error("photo is not a JPG, PNG or WebP");
+      const cand = await candidateRow(link.candidate_id);
+      const liName = [info.given_name, info.family_name].filter(Boolean).join(" ") || info.name || "";
+      const mismatch = !sameName(info, cand) ? "From a LinkedIn account named " + (liName || "(no name)") + ", which doesn't match the candidate." : "From LinkedIn.";
+      await ensureDraft(link.candidate_id, link.id);
+      await db.query("UPDATE card_drafts SET photo = $2, photo_type = $3, photo_changed = true, photo_source = 'linkedin', photo_note = $4, status = 'editing', updated_at = now() WHERE candidate_id = $1",
+        [link.candidate_id, buf, type, lowResNote(buf, mismatch)]);
+      log("[Card] LinkedIn photo saved to draft for candidate " + link.candidate_id);
+      backToEdit(res, token, mismatch.indexOf("doesn't match") >= 0 ? "othername" : "ok");
+    } catch (e) {
+      log("[Card] LinkedIn photo failed: " + e.message);
+      backToEdit(res, token, "error");
+    }
+  });
+
+  app.get("/card-edit/:token/linkedin", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const link = await resolveEditLink(req.params.token);
+      if (!link) return res.status(410).type("text/plain").send("This edit link has expired. Ask your Anura Connect recruiter for a new one.");
+      if (!linkedinConfigured()) return backToEdit(res, req.params.token, "off");
+      for (const [k, v] of linkedinPending) { if (v.exp < now()) linkedinPending.delete(k); }
+      const state = makeToken();
+      linkedinPending.set(state, { token: req.params.token, exp: now() + 10 * 60 * 1000 });
+      const q = new URLSearchParams({ response_type: "code", client_id: process.env.LINKEDIN_CLIENT_ID, redirect_uri: linkedinRedirectUri(), state: state, scope: "openid profile" });
+      res.redirect(302, "https://www.linkedin.com/oauth/v2/authorization?" + q.toString());
+    } catch (e) { fail(res, e); }
+  });
+
   app.get("/card-edit/:token", limiter, function (req, res) {
     setPublicHeaders(res, { page: true });
     res.sendFile(path.join(pagesDir, "card-edit.html"));
@@ -678,6 +794,8 @@ function registerCard(app, deps) {
         fields: jsonField(draft && draft.fields),
         errors: errorsFor(jsonField(draft && draft.fields)),
         hasPhoto: photo,
+        photoNote: draft && draft.photo_changed ? (draft.photo_note || "") : "",
+        linkedinEnabled: linkedinConfigured(),
         status: draft ? draft.status : "editing",
         reviewNote: draft && draft.status === "editing" ? (draft.review_note || "") : "",
         recruiter: link.created_by_name || "",
@@ -721,8 +839,8 @@ function registerCard(app, deps) {
       if (!link) return res.status(410).json({ state: "expired" });
       const img = readPhoto(req);
       await ensureDraft(link.candidate_id, link.id);
-      await db.query("UPDATE card_drafts SET photo = $2, photo_type = $3, photo_changed = true, status = 'editing', updated_at = now() WHERE candidate_id = $1",
-        [link.candidate_id, img.buffer, img.type]);
+      await db.query("UPDATE card_drafts SET photo = $2, photo_type = $3, photo_changed = true, photo_source = 'upload', photo_note = $4, status = 'editing', updated_at = now() WHERE candidate_id = $1",
+        [link.candidate_id, img.buffer, img.type, lowResNote(img.buffer, "")]);
       res.json({ ok: true, hasPhoto: true });
     } catch (e) { fail(res, e); }
   });
@@ -733,7 +851,7 @@ function registerCard(app, deps) {
       const link = await resolveEditLink(req.params.token);
       if (!link) return res.status(410).json({ state: "expired" });
       await ensureDraft(link.candidate_id, link.id);
-      await db.query("UPDATE card_drafts SET photo = NULL, photo_type = NULL, photo_changed = true, status = 'editing', updated_at = now() WHERE candidate_id = $1", [link.candidate_id]);
+      await db.query("UPDATE card_drafts SET photo = NULL, photo_type = NULL, photo_changed = true, photo_source = NULL, photo_note = NULL, status = 'editing', updated_at = now() WHERE candidate_id = $1", [link.candidate_id]);
       res.json({ ok: true, hasPhoto: false });
     } catch (e) { fail(res, e); }
   });
@@ -833,7 +951,7 @@ function registerCard(app, deps) {
         candidate: { id: id, name: [cand.first_name, cand.last_name].filter(Boolean).join(" ") || cand.name, firstName: cand.first_name || "", email: cand.email || "", epicRole: cand.custom_text5 || "", certs: certList(cand) },
         schema: CANDIDATE_FIELDS,
         live: { fields: liveFields, hasPhoto: !!(live && live.has_photo), photoSource: live && live.photo_source || "", approvedBy: live && live.approved_by || "", approvedAt: live && live.approved_at || null, errors: errorsFor(liveFields) },
-        draft: draft ? { fields: draftFields, hasPhoto: !!draft.has_photo, photoChanged: !!draft.photo_changed, status: draft.status, submittedAt: draft.submitted_at, reviewNote: draft.review_note || "", errors: errorsFor(draftFields), version: draft.version } : null,
+        draft: draft ? { fields: draftFields, hasPhoto: !!draft.has_photo, photoChanged: !!draft.photo_changed, photoSource: draft.photo_source || "", photoNote: draft.photo_note || "", status: draft.status, submittedAt: draft.submitted_at, reviewNote: draft.review_note || "", errors: errorsFor(draftFields), version: draft.version } : null,
         editLinks: edits.map(function (e) { return { id: e.id, createdBy: e.created_by, createdAt: e.created_at, expiresAt: e.expires_at, revoked: !!e.revoked_at, lastUsedAt: e.last_used_at }; }),
         links: links.map(linkOut),
       });
@@ -881,10 +999,10 @@ function registerCard(app, deps) {
       // Claim the reviewed version and clear the draft in one statement. If the candidate saved or uploaded
       // anything since the check above, the version no longer matches and nothing is claimed.
       const claimed = await db.getOne(
-        "WITH old AS (SELECT candidate_id, photo, photo_type, photo_changed FROM card_drafts WHERE candidate_id = $1 AND status = 'submitted' " +
+        "WITH old AS (SELECT candidate_id, photo, photo_type, photo_changed, photo_source FROM card_drafts WHERE candidate_id = $1 AND status = 'submitted' " +
         "AND to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US') = $2 FOR UPDATE) " +
         "UPDATE card_drafts d SET fields = $3::jsonb, photo = NULL, photo_type = NULL, photo_changed = false, status = 'approved', reviewed_by = $4, " +
-        "reviewed_at = now(), review_note = NULL FROM old WHERE d.candidate_id = old.candidate_id RETURNING old.photo, old.photo_type, old.photo_changed",
+        "reviewed_at = now(), review_note = NULL FROM old WHERE d.candidate_id = old.candidate_id RETURNING old.photo, old.photo_type, old.photo_changed, old.photo_source",
         [id, d.version, JSON.stringify(fields), who(req)]);
       if (!claimed) return res.status(409).json({ error: "The candidate changed their Card while you were reviewing it. Reload and review the latest version." });
       await db.query(
@@ -893,7 +1011,7 @@ function registerCard(app, deps) {
         [id, JSON.stringify(fields), who(req)]);
       if (claimed.photo_changed) {
         await db.query("UPDATE card_profiles SET photo = $2, photo_type = $3, photo_source = $4, photo_updated_at = now() WHERE candidate_id = $1",
-          [id, claimed.photo || null, claimed.photo ? claimed.photo_type : null, claimed.photo ? "candidate" : null]);
+          [id, claimed.photo || null, claimed.photo ? claimed.photo_type : null, claimed.photo ? (claimed.photo_source === "linkedin" ? "linkedin" : "candidate") : null]);
       }
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
@@ -1044,5 +1162,7 @@ module.exports.checkCandidateText = checkCandidateText;
 module.exports.readCandidateFields = readCandidateFields;
 module.exports.sniffImage = sniffImage;
 module.exports.formatMoney = formatMoney;
+module.exports.imageSize = imageSize;
+module.exports.sameName = sameName;
 module.exports.CANDIDATE_FIELDS = CANDIDATE_FIELDS;
 module.exports.TOKEN_ALPHABET = TOKEN_ALPHABET;

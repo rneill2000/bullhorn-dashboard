@@ -37,6 +37,7 @@ legend{font-size:14px;font-weight:700;color:var(--blue);margin-bottom:12px}
 .field.has-error textarea,.field.has-error input{border-color:var(--bad)}
 .field .err{color:var(--bad)}
 .photo-row{display:flex;gap:18px;align-items:center}
+.row-btns{display:flex;gap:8px;flex-wrap:wrap}
 .photo-row .ph{width:96px;height:114px;border-radius:9px;object-fit:cover;background:var(--paper);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:34px;color:var(--blue)}
 .btn{display:inline-block;font:inherit;font-weight:600;font-size:15px;padding:10px 16px;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:var(--paper);color:var(--blue);text-decoration:none}
 .btn:hover{border-color:var(--sky)}
@@ -250,9 +251,13 @@ input[type=file]{position:absolute;left:-9999px}
             el("div", { class: "photo-row" }, [
               (function () { var p = photoNode("ph"); p.id = "my-photo"; return p; })(),
               el("div", {}, [
-                el("button", { type: "button", class: "btn", text: state.hasPhoto ? "Change photo" : "Add your photo", onclick: function () { $("file").click(); } }), file,
+                el("div", { class: "row-btns" }, [
+                  state.linkedinEnabled ? el("a", { class: "btn primary", href: "/card-edit/" + token + "/linkedin", text: "Use my LinkedIn photo" }) : null,
+                  el("button", { type: "button", class: "btn", text: state.linkedinEnabled ? "Upload a photo" : (state.hasPhoto ? "Change photo" : "Add your photo"), onclick: function () { $("file").click(); } }), file,
+                ]),
                 el("div", {}, [el("button", { type: "button", class: "btn link", id: "rm-photo", onclick: removePhoto, text: "Remove photo", style: state.hasPhoto ? "" : "display:none" })]),
-                el("p", { class: "hint", style: "font-size:13px;color:var(--muted);margin-top:4px", text: "A clear, recent headshot. Your LinkedIn photo is perfect." }),
+                el("p", { class: "hint", id: "photo-hint", style: "font-size:13px;color:var(--muted);margin-top:4px", text: state.linkedinEnabled ? "LinkedIn asks you to sign in, then sends us your profile photo. Nothing else from your profile." : "A clear, recent headshot. Your LinkedIn photo is perfect." }),
+                state.photoNote && /match/.test(state.photoNote) ? el("p", { class: "hint", style: "font-size:13px;color:var(--bad);margin-top:4px", text: "That photo came from a LinkedIn account that isn't yours. Remove it and try again signed in as yourself." }) : null,
               ]),
             ]),
           ]),
@@ -289,6 +294,18 @@ input[type=file]{position:absolute;left:-9999px}
       if (res.status !== 200 || res.b.state !== "active") return closed();
       state = res.b; state.errors = {}; state.initialErrors = res.b.errors || {};
       render();
+      var li = new URLSearchParams(location.search).get("li");
+      if (li) {
+        history.replaceState(null, "", location.pathname);
+        setStatus({
+          ok: "LinkedIn photo added. Send it to " + recruiter() + " when you're ready.",
+          othername: "Photo added, but it came from a LinkedIn account with a different name.",
+          nophoto: "Your LinkedIn profile doesn't have a photo. Upload one instead.",
+          cancel: "LinkedIn sign-in was cancelled. Your Card wasn't changed.",
+          off: "LinkedIn isn't connected yet. Upload a photo instead.",
+          error: "LinkedIn didn't send the photo. Try again, or upload one instead.",
+        }[li] || "");
+      }
     }).catch(function () { app.innerHTML = '<p class="loading">This page didn\'t load. Check your connection and refresh.</p>'; });
 })();
 </script>
