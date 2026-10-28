@@ -78,8 +78,10 @@ function jobIsActive(job) {
  * marked Client Submission (or further along) in Bullhorn. A Forge draft that was never sent, a
  * failed draft, a dismissed submission, or one the client rejected stays out.
  */
-const SHOWN_STATUSES = ["client submission", "first interview", "second interview", "third interview", "interview",
-  "offer out", "offer extended", "offer accepted", "placed"];
+// Forge's client-facing statuses, minus the ones where the client or candidate said no.
+const SHOWN_STATUSES = require("./forge").CLIENT_FACING_STATUSES
+  .map(function (s) { return String(s).toLowerCase(); })
+  .filter(function (s) { return !/reject|declin|withdr/.test(s); });
 function submissionShown(status) {
   return SHOWN_STATUSES.indexOf(String(status || "").trim().toLowerCase()) >= 0;
 }
@@ -183,9 +185,15 @@ function clientIp(req) {
   return parts.length ? parts[parts.length - 1] : String(req.ip || (req.socket && req.socket.remoteAddress) || "?");
 }
 
+/** Stable identity for a reference across redrafts: its source id, else its text. */
+function refKey(r) {
+  if (r && r.id) return "id:" + String(r.id);
+  return "text:" + crypto.createHash("sha256").update(String(r && r.text || "")).digest("hex").slice(0, 16);
+}
+
 function digitsId(value) {
   const s = String(value == null ? "" : value);
-  if (!/^\d{1,10}$/.test(s)) throw Object.assign(new Error("Not found."), { status: 404 });
+  if (!/^\d{1,9}$/.test(s)) throw Object.assign(new Error("Not found."), { status: 404 });
   return parseInt(s, 10);
 }
 
@@ -241,7 +249,8 @@ function registerCard(app, deps) {
           "bill_display TEXT, bill_amount NUMERIC, resume_file_id TEXT, resume_name TEXT, refs JSONB NOT NULL DEFAULT '[]'::jsonb, " +
           "recruiter JSONB NOT NULL DEFAULT '{}'::jsonb, created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), " +
           "revoked_at TIMESTAMPTZ, revoked_by TEXT, first_viewed_at TIMESTAMPTZ, last_viewed_at TIMESTAMPTZ, " +
-          "view_count INTEGER NOT NULL DEFAULT 0, last_alert_at TIMESTAMPTZ, rate_alert_at TIMESTAMPTZ)",
+          "view_count INTEGER NOT NULL DEFAULT 0, last_alert_at TIMESTAMPTZ, rate_alert_at TIMESTAMPTZ, removed_refs JSONB NOT NULL DEFAULT '[]'::jsonb)",
+        "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS removed_refs JSONB NOT NULL DEFAULT '[]'::jsonb",
         "CREATE INDEX IF NOT EXISTS card_links_job ON card_links (job_id, client_id)",
         "CREATE INDEX IF NOT EXISTS card_links_candidate ON card_links (candidate_id)",
         "CREATE TABLE IF NOT EXISTS card_views (id BIGSERIAL PRIMARY KEY, link_id INTEGER NOT NULL, viewed_at TIMESTAMPTZ NOT NULL DEFAULT now(), " +
@@ -271,18 +280,25 @@ function registerCard(app, deps) {
     }
     const token = makeToken();
     const publicId = makeToken(PUBLIC_ID_LENGTH);
+    // A reference a recruiter took off this submission's Card stays off when Forge drafts it again.
+    const prior = await db.getAll("SELECT removed_refs FROM card_links WHERE submission_id = $1", [o.submissionId]);
+    const removed = [];
+    prior.forEach(function (r) { (Array.isArray(r.removed_refs) ? r.removed_refs : []).forEach(function (x) { if (removed.indexOf(x) < 0) removed.push(x); }); });
+    const keptRefs = (Array.isArray(o.references) ? o.references : []).filter(function (r) {
+      return removed.indexOf(refKey(r)) < 0;
+    });
     const amount = o.billAmount != null ? o.billAmount : moneyNumber(o.billRate);
     const snapshot = [
       o.candidateName || "", o.jobTitle || "", o.clientName || "",
       o.whyMe || "", o.availability || "", o.location || "",
       o.billRate || "", amount, o.resumeFileId != null ? String(o.resumeFileId) : null, o.resumeName || "",
-      JSON.stringify(Array.isArray(o.references) ? o.references : []), JSON.stringify(o.recruiter || {}),
+      JSON.stringify(keptRefs), JSON.stringify(o.recruiter || {}),
     ];
     const row = await db.getOne(
       "INSERT INTO card_links (public_id, token_hash, submission_id, candidate_id, job_id, client_id, contact_email, created_by, " +
-      "candidate_name, job_title, client_name, why_me, availability, location, bill_display, bill_amount, resume_file_id, resume_name, refs, recruiter) " +
-      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb) RETURNING id",
-      [publicId, hashToken(token), o.submissionId, o.candidateId, o.jobId, o.clientId, String(o.contactEmail || "").toLowerCase(), o.createdBy || ""].concat(snapshot));
+      "candidate_name, job_title, client_name, why_me, availability, location, bill_display, bill_amount, resume_file_id, resume_name, refs, recruiter, removed_refs) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21::jsonb) RETURNING id",
+      [publicId, hashToken(token), o.submissionId, o.candidateId, o.jobId, o.clientId, String(o.contactEmail || "").toLowerCase(), o.createdBy || ""].concat(snapshot, [JSON.stringify(removed)]));
     // Earlier links for this submission show what was just approved, not an older draft.
     await db.query(
       "UPDATE card_links SET candidate_name=$2, job_title=$3, client_name=$4, why_me=$5, availability=$6, location=$7, bill_display=$8, " +
@@ -862,16 +878,23 @@ function registerCard(app, deps) {
       const fields = Object.assign({}, jsonField(d.fields), parsed.fields);
       const errors = errorsFor(fields);
       if (Object.keys(errors).length) return res.status(400).json({ error: "Some fields can't go to a client yet.", errors: errors });
+      // Claim the reviewed version and clear the draft in one statement. If the candidate saved or uploaded
+      // anything since the check above, the version no longer matches and nothing is claimed.
+      const claimed = await db.getOne(
+        "WITH old AS (SELECT candidate_id, photo, photo_type, photo_changed FROM card_drafts WHERE candidate_id = $1 AND status = 'submitted' " +
+        "AND to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US') = $2 FOR UPDATE) " +
+        "UPDATE card_drafts d SET fields = $3::jsonb, photo = NULL, photo_type = NULL, photo_changed = false, status = 'approved', reviewed_by = $4, " +
+        "reviewed_at = now(), review_note = NULL FROM old WHERE d.candidate_id = old.candidate_id RETURNING old.photo, old.photo_type, old.photo_changed",
+        [id, d.version, JSON.stringify(fields), who(req)]);
+      if (!claimed) return res.status(409).json({ error: "The candidate changed their Card while you were reviewing it. Reload and review the latest version." });
       await db.query(
         "INSERT INTO card_profiles (candidate_id, fields, approved_by, approved_at, updated_at) VALUES ($1,$2::jsonb,$3,now(),now()) " +
         "ON CONFLICT (candidate_id) DO UPDATE SET fields = EXCLUDED.fields, approved_by = EXCLUDED.approved_by, approved_at = now(), updated_at = now()",
         [id, JSON.stringify(fields), who(req)]);
-      if (d.photo_changed) {
+      if (claimed.photo_changed) {
         await db.query("UPDATE card_profiles SET photo = $2, photo_type = $3, photo_source = $4, photo_updated_at = now() WHERE candidate_id = $1",
-          [id, d.photo || null, d.photo ? d.photo_type : null, d.photo ? "candidate" : null]);
+          [id, claimed.photo || null, claimed.photo ? claimed.photo_type : null, claimed.photo ? "candidate" : null]);
       }
-      await db.query("UPDATE card_drafts SET fields = $2::jsonb, photo = NULL, photo_type = NULL, photo_changed = false, status = 'approved', reviewed_by = $3, reviewed_at = now(), review_note = NULL WHERE candidate_id = $1",
-        [id, JSON.stringify(fields), who(req)]);
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
@@ -972,8 +995,10 @@ function registerCard(app, deps) {
       const refs = Array.isArray(link.refs) ? link.refs.slice() : [];
       const i = digitsId(req.params.index);
       if (i >= refs.length) return res.status(404).json({ error: "Reference not found." });
-      refs.splice(i, 1);
-      await db.query("UPDATE card_links SET refs = $2::jsonb WHERE submission_id = $1", [link.submission_id, JSON.stringify(refs)]);
+      const gone = refs.splice(i, 1)[0];
+      await db.query(
+        "UPDATE card_links SET refs = $2::jsonb, removed_refs = (SELECT COALESCE(jsonb_agg(DISTINCT x), '[]'::jsonb) FROM jsonb_array_elements(removed_refs || $3::jsonb) x) WHERE submission_id = $1",
+        [link.submission_id, JSON.stringify(refs), JSON.stringify([refKey(gone)])]);
       res.json({ ok: true, references: refs.length });
     } catch (e) { fail(res, e); }
   });

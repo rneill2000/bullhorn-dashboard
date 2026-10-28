@@ -332,6 +332,7 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/c/" + mia.publicId)).status, 404);
       assert.equal((await req(h.port, "GET", "/api/cards/candidate/abc", { headers: { "x-test-user": "ben@anuraconnect.com" } })).status, 404);
       assert.equal((await req(h.port, "GET", "/api/cards/candidate/1.png", { headers: { "x-test-user": "ben@anuraconnect.com" } })).status, 404);
+      assert.equal((await req(h.port, "GET", "/api/cards/candidate/99999999999", { headers: { "x-test-user": "ben@anuraconnect.com" } })).status, 404, "out-of-range id is a 404, not a 500");
     });
 
     await t.test("K13 job closes: link shows contact only", async function () {
@@ -456,6 +457,7 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell", whyMe: "Updated Why Me." });
       const r = await req(h.port, "GET", "/api/card-public/" + J);
       assert.equal(r.json.card.whyMe, "Updated Why Me.");
+      assert.deepEqual(r.json.card.references, [], "a reference the recruiter removed stays off after a redraft");
     });
 
     await t.test("K18 public pages are served with a strict CSP and the recruiter page is not public", async function () {

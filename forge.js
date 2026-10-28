@@ -3196,6 +3196,7 @@ module.exports.pickResumeFile = pickResumeFile;
 module.exports.resolveClient = resolveClient;
 module.exports.missingChecklist = missingChecklist;
 module.exports.CLIENT_SUBMITTED_STATUS = CLIENT_SUBMITTED_STATUS;
+module.exports.CLIENT_FACING_STATUSES = CLIENT_FACING_STATUSES;
 module.exports.samePerson = samePerson;
 module.exports.buildSiblingView = buildSiblingView;
 module.exports.isClientSubmittedStatus = isClientSubmittedStatus;
