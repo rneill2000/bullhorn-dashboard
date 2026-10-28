@@ -32,15 +32,33 @@ const RATE_CACHE_MS = 2 * 60 * 1000;
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const CARD_TEXT_MAX = 2400;
 
-/** Fields a candidate may edit. Everything else on the Card comes from the recruiter's submittal. */
+/**
+ * Fields a candidate may edit. Everything else on the Card comes from the recruiter's submittal.
+ * kind: "about" (headline, intro), "prompt" (culture corner, they answer up to MAX_PROMPTS),
+ * "fact" (short quick-fact chips).
+ */
+const MAX_PROMPTS = 4;
 const CANDIDATE_FIELDS = [
-  { key: "headline", label: "Your headline", max: 90, hint: "One line a hiring manager reads first." },
-  { key: "intro", label: "In your own words", max: 700, hint: "A few sentences about the work you do best." },
-  { key: "outside", label: "Outside of work, you'll find me…", max: 300, culture: true },
-  { key: "team", label: "On a team, I'm the one who…", max: 300, culture: true },
-  { key: "why", label: "What I like about Epic work", max: 300, culture: true },
-  { key: "fun", label: "A fun fact", max: 200, culture: true },
+  { key: "headline", kind: "about", label: "Your headline", max: 90, hint: "One line a hiring manager reads first." },
+  { key: "intro", kind: "about", label: "In your own words", max: 700, hint: "A few sentences about the work you do best." },
+  { key: "outside", kind: "prompt", label: "Outside of work, you'll find me…", max: 280 },
+  { key: "team", kind: "prompt", label: "On a team, I'm the one who…", max: 280 },
+  { key: "why", kind: "prompt", label: "What I like about Epic work", max: 280 },
+  { key: "golive", kind: "prompt", label: "My most memorable go-live", max: 280 },
+  { key: "goodat", kind: "prompt", label: "I'm weirdly good at…", max: 280 },
+  { key: "askme", kind: "prompt", label: "Ask me about…", max: 280 },
+  { key: "saturday", kind: "prompt", label: "My perfect Saturday", max: 280 },
+  { key: "advice", kind: "prompt", label: "The best advice I've gotten", max: 280 },
+  { key: "proud", kind: "prompt", label: "A small win I'm proud of", max: 280 },
+  { key: "fun", kind: "prompt", label: "A fun fact", max: 280 },
+  { key: "hometown", kind: "fact", label: "Hometown", max: 40 },
+  { key: "hobbies", kind: "fact", label: "Hobbies", max: 60 },
+  { key: "pets", kind: "fact", label: "Pets", max: 40 },
+  { key: "fuel", kind: "fact", label: "Go-live fuel", max: 40 },
+  { key: "travel", kind: "fact", label: "Favorite trip", max: 40 },
+  { key: "reading", kind: "fact", label: "Reading or watching", max: 60 },
 ];
+CANDIDATE_FIELDS.forEach(function (f) { f.culture = f.kind === "prompt"; });
 const FIELD_BY_KEY = {};
 CANDIDATE_FIELDS.forEach(function (f) { FIELD_BY_KEY[f.key] = f; });
 
@@ -133,7 +151,35 @@ function errorsFor(fields) {
     const err = checkCandidateText(f.key, fields && fields[f.key]);
     if (err) errors[f.key] = err;
   });
+  const answered = CANDIDATE_FIELDS.filter(function (f) { return f.kind === "prompt" && fields && String(fields[f.key] || "").trim(); }).length;
+  if (answered > MAX_PROMPTS) errors._prompts = "Pick up to " + MAX_PROMPTS + " prompts. Clear one to add another.";
   return errors;
+}
+
+function schemaOut() {
+  return CANDIDATE_FIELDS.map(function (f) { return { key: f.key, kind: f.kind, label: f.label, max: f.max, hint: f.hint || "", culture: f.kind === "prompt" }; });
+}
+
+/* ── Highlights: pull quotes, always a reference's own words ── */
+const MAX_HIGHLIGHTS = 3;
+function normQuote(s) {
+  return String(s || "").toLowerCase().replace(/[“”"'‘’]/g, "").replace(/\s+/g, " ").replace(/^[\s.,;:-]+|[\s.,;:-]+$/g, "").trim();
+}
+/** A highlight is fine if it was already approved (unchanged) or is word for word inside one of the references. */
+function highlightAllowed(quote, refs, approved) {
+  const q = normQuote(quote);
+  if (q.length < 20) return false;
+  if ((approved || []).some(function (a) { return normQuote(a) === q; })) return true;
+  return (refs || []).some(function (r) { return normQuote(r && r.text).indexOf(q) >= 0; });
+}
+
+/* ── Documents: the résumé plus files a recruiter picks from the candidate's Bullhorn record ── */
+const DOC_TYPES = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg" };
+function docExt(name) { const m = String(name || "").toLowerCase().match(/\.([a-z0-9]+)$/); return m ? m[1] : ""; }
+/** Reference letters carry the writer's phone and email, so they never go on a Card as a file. */
+function docAllowed(name, type) {
+  if (!DOC_TYPES[docExt(name)]) return false;
+  return !/reference|referral|background|offer|salary|rate|w-?9|i-?9|ssn|passport|license/i.test(String(name || "") + " " + String(type || ""));
 }
 
 /** Only real raster images. SVG and anything else is refused (an SVG can carry script). */
@@ -294,6 +340,8 @@ function registerCard(app, deps) {
           "revoked_at TIMESTAMPTZ, revoked_by TEXT, first_viewed_at TIMESTAMPTZ, last_viewed_at TIMESTAMPTZ, " +
           "view_count INTEGER NOT NULL DEFAULT 0, last_alert_at TIMESTAMPTZ, rate_alert_at TIMESTAMPTZ, removed_refs JSONB NOT NULL DEFAULT '[]'::jsonb)",
         "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS removed_refs JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS highlights JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS docs JSONB NOT NULL DEFAULT '[]'::jsonb",
         "ALTER TABLE card_drafts ADD COLUMN IF NOT EXISTS photo_source TEXT",
         "ALTER TABLE card_drafts ADD COLUMN IF NOT EXISTS photo_note TEXT",
         "CREATE INDEX IF NOT EXISTS card_links_job ON card_links (job_id, client_id)",
@@ -332,6 +380,9 @@ function registerCard(app, deps) {
     const keptRefs = (Array.isArray(o.references) ? o.references : []).filter(function (r) {
       return removed.indexOf(refKey(r)) < 0;
     });
+    const highlights = (Array.isArray(o.highlights) ? o.highlights : []).filter(function (h) { return h && normQuote(h.quote).length >= 20; })
+      .slice(0, MAX_HIGHLIGHTS).map(function (h) { return { quote: String(h.quote).trim(), role: h.role || "", organization: h.organization || "", approved: true }; });
+    const docs = o.resumeFileId != null && String(o.resumeFileId) !== "" ? [{ fileId: String(o.resumeFileId), name: o.resumeName || "Résumé.pdf", kind: "Résumé" }] : [];
     const amount = o.billAmount != null ? o.billAmount : moneyNumber(o.billRate);
     const snapshot = [
       o.candidateName || "", o.jobTitle || "", o.clientName || "",
@@ -344,6 +395,11 @@ function registerCard(app, deps) {
       "candidate_name, job_title, client_name, why_me, availability, location, bill_display, bill_amount, resume_file_id, resume_name, refs, recruiter, removed_refs) " +
       "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21::jsonb) RETURNING id",
       [publicId, hashToken(token), o.submissionId, o.candidateId, o.jobId, o.clientId, String(o.contactEmail || "").toLowerCase(), o.createdBy || ""].concat(snapshot, [JSON.stringify(removed)]));
+    // Keep documents a recruiter already added for this submission; refresh the résumé and highlights from Forge.
+    const priorDocs = await db.getOne("SELECT docs FROM card_links WHERE submission_id = $1 AND id <> $2 AND revoked_at IS NULL ORDER BY id DESC LIMIT 1", [o.submissionId, row.id]);
+    const extraDocs = (priorDocs && Array.isArray(priorDocs.docs) ? priorDocs.docs : []).filter(function (d) { return d.kind !== "Résumé"; });
+    await db.query("UPDATE card_links SET highlights = $2::jsonb, docs = $3::jsonb WHERE submission_id = $1 AND revoked_at IS NULL",
+      [o.submissionId, JSON.stringify(highlights), JSON.stringify(docs.concat(extraDocs))]);
     // Earlier links for this submission show what was just approved, not an older draft.
     await db.query(
       "UPDATE card_links SET candidate_name=$2, job_title=$3, client_name=$4, why_me=$5, availability=$6, location=$7, bill_display=$8, " +
@@ -473,6 +529,7 @@ function registerCard(app, deps) {
       rate: rate.display,
       hasPhoto: !!row.has_photo,
       hasResume: !!row.resume_file_id,
+      highlight: (Array.isArray(row.highlights) && row.highlights[0] && row.highlights[0].quote) || "",
     };
   }
 
@@ -480,14 +537,23 @@ function registerCard(app, deps) {
     const rate = await shownRate(row);
     if (!(opts && opts.preview)) await rateAlert(row, rate);
     const pf = profileFields(row);
-    const culture = CANDIDATE_FIELDS.filter(function (f) { return f.culture && pf[f.key]; })
-      .map(function (f) { return { prompt: f.label, text: pf[f.key] }; });
+    const culture = CANDIDATE_FIELDS.filter(function (f) { return f.kind === "prompt" && pf[f.key]; })
+      .slice(0, MAX_PROMPTS).map(function (f) { return { prompt: f.label, text: pf[f.key] }; });
+    const facts = CANDIDATE_FIELDS.filter(function (f) { return f.kind === "fact" && pf[f.key]; })
+      .map(function (f) { return { label: f.label, value: pf[f.key] }; });
     const refs = Array.isArray(row.refs) ? row.refs : (row.refs ? JSON.parse(row.refs) : []);
+    const highlights = (Array.isArray(row.highlights) ? row.highlights : []).map(function (h) { return { quote: h.quote || "", role: h.role || "", organization: h.organization || "" }; });
+    const docs = (Array.isArray(row.docs) ? row.docs : []).map(function (d, i) {
+      return { index: i, name: d.name || "Document", kind: d.kind || "", viewable: docExt(d.name) === "pdf" || !!DOC_TYPES[docExt(d.name)] };
+    });
     const base = await summaryFor(row, rate);
     return Object.assign(base, {
       whyMe: row.why_me || "",
       intro: pf.intro || "",
       culture: culture,
+      facts: facts,
+      highlights: highlights,
+      documents: docs,
       references: refs.map(function (r) {
         return { role: r.role || "", organization: r.organization || "", relationship: r.relationship || "", rehire: r.rehire || "", text: r.text || "" };
       }),
@@ -650,6 +716,20 @@ function registerCard(app, deps) {
     return { buffer: buf, type: type };
   }
 
+  async function sendDoc(req, res, row, index) {
+    const docs = Array.isArray(row.docs) ? row.docs : [];
+    const d = docs[index];
+    if (!d || !getFile) return res.status(404).json({ error: "Document not available." });
+    const ext = docExt(d.name);
+    if (!DOC_TYPES[ext]) return res.status(404).json({ error: "Document not available." });
+    const f = await getFile("Candidate", row.candidate_id, parseInt(d.fileId, 10));
+    const name = String(d.name || "Document").replace(/[^\w.\- ]+/g, "_").slice(0, 120);
+    res.setHeader("Content-Type", DOC_TYPES[ext]);
+    res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+    res.setHeader("Content-Disposition", (req.query.download ? "attachment" : "inline") + "; filename=\"" + name + "\"");
+    res.send(f.buffer);
+  }
+
   async function sendResume(req, res, row) {
     const f = await getFile("Candidate", row.candidate_id, parseInt(row.resume_file_id, 10));
     const name = String(row.resume_name || "Resume.pdf").replace(/[^\w.\- ]+/g, "_").slice(0, 120);
@@ -705,6 +785,15 @@ function registerCard(app, deps) {
       const row = await scopedRow(req.params.token, req.params.pid);
       if (!row) return res.status(404).end();
       sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [row.candidate_id]));
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/card-public/:token/doc/:pid/:index", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const row = await scopedRow(req.params.token, req.params.pid);
+      if (!row) return res.status(404).json({ error: "Document not available." });
+      await sendDoc(req, res, row, digitsId(req.params.index));
     } catch (e) { fail(res, e); }
   });
 
@@ -823,7 +912,8 @@ function registerCard(app, deps) {
         reviewNote: draft && draft.status === "editing" ? (draft.review_note || "") : "",
         recruiter: link.created_by_name || "",
         expiresAt: link.expires_at,
-        schema: CANDIDATE_FIELDS.map(function (f) { return { key: f.key, label: f.label, max: f.max, hint: f.hint || "", culture: !!f.culture }; }),
+        schema: schemaOut(),
+        maxPrompts: MAX_PROMPTS,
       });
     } catch (e) { fail(res, e); }
   });
@@ -972,7 +1062,7 @@ function registerCard(app, deps) {
       const draftFields = jsonField(draft && draft.fields);
       res.json({
         candidate: { id: id, name: [cand.first_name, cand.last_name].filter(Boolean).join(" ") || cand.name, firstName: cand.first_name || "", email: cand.email || "", epicRole: cand.custom_text5 || "", certs: certList(cand) },
-        schema: CANDIDATE_FIELDS,
+        schema: schemaOut(),
         live: { fields: liveFields, hasPhoto: !!(live && live.has_photo), photoSource: live && live.photo_source || "", approvedBy: live && live.approved_by || "", approvedAt: live && live.approved_at || null, errors: errorsFor(liveFields) },
         draft: draft ? { fields: draftFields, hasPhoto: !!draft.has_photo, photoChanged: !!draft.photo_changed, photoSource: draft.photo_source || "", photoNote: draft.photo_note || "", status: draft.status, submittedAt: draft.submitted_at, reviewNote: draft.review_note || "", errors: errorsFor(draftFields), version: draft.version } : null,
         editLinks: edits.map(function (e) { return { id: e.id, createdBy: e.created_by, createdAt: e.created_at, expiresAt: e.expires_at, revoked: !!e.revoked_at, lastUsedAt: e.last_used_at }; }),
@@ -1182,9 +1272,26 @@ function registerCard(app, deps) {
       references: refs.map(function (r) { return { role: r.role || "", organization: r.organization || "", relationship: r.relationship || "", rehire: r.rehire || "", text: r.text || "" }; }),
       profile: jsonField(live && live.fields),
       hasPhoto: !!(live && live.has_photo),
-      schema: CANDIDATE_FIELDS.map(function (f) { return { key: f.key, label: f.label, max: f.max, culture: !!f.culture }; }),
+      schema: schemaOut(),
+      maxPrompts: MAX_PROMPTS,
+      highlights: (Array.isArray(link.highlights) ? link.highlights : []).map(function (h) { return { quote: h.quote || "", role: h.role || "", organization: h.organization || "" }; }),
+      documents: (Array.isArray(link.docs) ? link.docs : []).map(function (d) { return { fileId: String(d.fileId), name: d.name || "", kind: d.kind || "" }; }),
     };
   }
+
+  async function candidateFiles(candidateId) {
+    try {
+      return await db.getAll("SELECT id, name, type, content_type, date_added FROM crm.file_attachment WHERE entity = 'Candidate' AND entity_id = $1 AND is_deleted IS NOT TRUE ORDER BY date_added DESC NULLS LAST", [candidateId]);
+    } catch (e) { return []; }
+  }
+
+  app.get("/api/cards/candidate/:id/files", async function (req, res) {
+    try {
+      await needDb();
+      const files = await candidateFiles(digitsId(req.params.id));
+      res.json({ data: files.map(function (f) { return { id: String(f.id), name: f.name || "", type: f.type || "", allowed: docAllowed(f.name, f.type) }; }) });
+    } catch (e) { fail(res, e); }
+  });
 
   /** Recruiter text that goes to a client: no contact details, no pay or employment terms. */
   function recruiterTextError(label, text, max) {
@@ -1230,9 +1337,40 @@ function registerCard(app, deps) {
           return out;
         });
       }
+      let highlights = Array.isArray(link.highlights) ? link.highlights : [];
+      if (Array.isArray(b.highlights)) {
+        const approved = highlights.filter(function (h) { return h.approved; }).map(function (h) { return h.quote; });
+        if (b.highlights.length > MAX_HIGHLIGHTS) errors.push("Keep it to " + MAX_HIGHLIGHTS + " highlights.");
+        highlights = b.highlights.slice(0, MAX_HIGHLIGHTS).map(function (h, i) {
+          const quote = cleanFieldValue(h && h.quote).replace(/^["“]+|["”]+$/g, "");
+          const ref = refs.filter(function (r) { return normQuote(r.text).indexOf(normQuote(quote)) >= 0; })[0];
+          if (!highlightAllowed(quote, refs, approved)) errors.push("Highlight " + (i + 1) + " has to be the reference's own words. Copy a sentence from one of the references below.");
+          const err = recruiterTextError("Highlight " + (i + 1), quote, 400); if (err) errors.push(err);
+          const wasApproved = approved.some(function (a) { return normQuote(a) === normQuote(quote); });
+          return { quote: quote, role: (ref && ref.role) || (h && h.role) || "", organization: (ref && ref.organization) || (h && h.organization) || "", approved: wasApproved };
+        });
+      }
+      let docs = Array.isArray(link.docs) ? link.docs : [];
+      if (Array.isArray(b.documents)) {
+        const files = await candidateFiles(link.candidate_id);
+        const byId = {}; files.forEach(function (f) { byId[String(f.id)] = f; });
+        const resume = docs.filter(function (d) { return d.kind === "Résumé"; });
+        const extra = [];
+        b.documents.forEach(function (d) {
+          const id = String(d && d.fileId || "");
+          if (resume.some(function (r) { return String(r.fileId) === id; })) return;
+          const f = byId[id];
+          if (!f) { errors.push("That document isn't on this candidate's Bullhorn record."); return; }
+          if (!docAllowed(f.name, f.type)) { errors.push(f.name + " can't go on a Card (PDF or image only, and no reference letters, IDs or pay documents)."); return; }
+          if (extra.some(function (x) { return x.fileId === id; })) return;
+          extra.push({ fileId: id, name: f.name, kind: cleanFieldValue(d.kind).slice(0, 40) || "Document" });
+        });
+        if (extra.length > 6) errors.push("Up to 6 documents besides the résumé.");
+        docs = resume.concat(extra.slice(0, 6));
+      }
       if (errors.length) return res.status(400).json({ error: errors[0], errors: errors });
-      await db.query("UPDATE card_links SET why_me = $2, availability = $3, location = $4, refs = $5::jsonb WHERE submission_id = $1 AND revoked_at IS NULL",
-        [link.submission_id, whyMe, availability, location, JSON.stringify(refs)]);
+      await db.query("UPDATE card_links SET why_me = $2, availability = $3, location = $4, refs = $5::jsonb, highlights = $6::jsonb, docs = $7::jsonb WHERE submission_id = $1 AND revoked_at IS NULL",
+        [link.submission_id, whyMe, availability, location, JSON.stringify(refs), JSON.stringify(highlights), JSON.stringify(docs)]);
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
@@ -1251,6 +1389,14 @@ function registerCard(app, deps) {
       const row = await scopedFor(await resolveLinkById(digitsId(req.params.linkId)), req.params.pid);
       if (!row) return res.status(404).end();
       sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [row.candidate_id]));
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/cards/preview/:linkId/doc/:pid/:index", async function (req, res) {
+    try {
+      const row = await scopedFor(await resolveLinkById(digitsId(req.params.linkId)), req.params.pid);
+      if (!row) return res.status(404).json({ error: "Document not available." });
+      await sendDoc(req, res, row, digitsId(req.params.index));
     } catch (e) { fail(res, e); }
   });
 
@@ -1275,7 +1421,7 @@ function registerCard(app, deps) {
     const live = await profileFor(candidateId);
     const draft = await draftFor(candidateId);
     const f = jsonField(live && live.fields);
-    const hasStory = !!(f.headline || f.intro || CANDIDATE_FIELDS.some(function (x) { return x.culture && f[x.key]; }));
+    const hasStory = !!(f.headline || f.intro || CANDIDATE_FIELDS.some(function (x) { return x.kind !== "about" && f[x.key]; }));
     const pendingLink = await db.getOne("SELECT id FROM card_edit_links WHERE candidate_id = $1 AND revoked_at IS NULL AND expires_at > now() LIMIT 1", [candidateId]);
     return {
       hasPhoto: !!(live && live.has_photo),
@@ -1302,4 +1448,7 @@ module.exports.formatMoney = formatMoney;
 module.exports.imageSize = imageSize;
 module.exports.sameName = sameName;
 module.exports.CANDIDATE_FIELDS = CANDIDATE_FIELDS;
+module.exports.MAX_PROMPTS = MAX_PROMPTS;
+module.exports.highlightAllowed = highlightAllowed;
+module.exports.docAllowed = docAllowed;
 module.exports.TOKEN_ALPHABET = TOKEN_ALPHABET;

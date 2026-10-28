@@ -38,6 +38,15 @@ legend{font-size:14px;font-weight:700;color:var(--blue);margin-bottom:12px}
 .field .err{color:var(--bad)}
 .photo-row{display:flex;gap:18px;align-items:center}
 .row-btns{display:flex;gap:8px;flex-wrap:wrap}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font:inherit;font-size:14px;background:var(--paper);border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:8px 14px;cursor:pointer}
+.chip:hover{border-color:var(--sky);color:var(--blue)}
+.prompt-field{background:var(--paper);border-radius:12px;padding:14px 16px 10px;border-top:4px solid var(--sky);box-shadow:0 1px 0 var(--line)}
+.prompt-field label{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.prompt-field .btn.link{font-size:13px;padding:0}
+.sublegend{font-size:14px;font-weight:700;color:var(--ink);margin:22px 0 4px}
+.facts-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.err{color:var(--bad)}
 .photo-row .ph{width:96px;height:114px;border-radius:9px;object-fit:cover;background:var(--paper);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:34px;color:var(--blue)}
 .btn{display:inline-block;font:inherit;font-weight:600;font-size:15px;padding:10px 16px;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:var(--paper);color:var(--blue);text-decoration:none}
 .btn:hover{border-color:var(--sky)}
@@ -66,7 +75,7 @@ input[type=file]{position:absolute;left:-9999px}
 .closed h1{margin-bottom:10px}
 .closed p{color:var(--muted)}
 .loading{text-align:center;color:var(--muted);padding:80px 0}
-@media (max-width:860px){.wrap{grid-template-columns:1fr}.preview{position:static;order:-1;max-width:340px;margin:0 auto;width:100%}}
+@media (max-width:860px){.facts-grid{grid-template-columns:1fr}.wrap{grid-template-columns:1fr}.preview{position:static;order:-1;max-width:340px;margin:0 auto;width:100%}}
 @media (max-width:480px){.wrap,.top-inner{padding-left:16px;padding-right:16px}}
 </style>
 </head>
@@ -121,6 +130,7 @@ input[type=file]{position:absolute;left:-9999px}
       wrap.classList.toggle("has-error", !!msg);
       err.textContent = msg;
     });
+    var pe = $("e-_prompts"); if (pe) pe.textContent = state.errors._prompts || "";
     var blocked = Object.keys(state.errors).length > 0;
     $("send").disabled = blocked;
   }
@@ -236,8 +246,8 @@ input[type=file]{position:absolute;left:-9999px}
     var c = state.candidate;
     var expires = new Date(state.expiresAt).toLocaleDateString("en-US", { month: "long", day: "numeric" });
     var file = el("input", { type: "file", id: "file", accept: "image/jpeg,image/png,image/webp", onchange: function (e) { upload(e.target.files[0]); e.target.value = ""; } });
-    var about = state.schema.filter(function (f) { return !f.culture; });
-    var culture = state.schema.filter(function (f) { return f.culture; });
+    var about = state.schema.filter(function (f) { return f.kind === "about"; });
+    var facts = state.schema.filter(function (f) { return f.kind === "fact"; });
     app.innerHTML = "";
     app.appendChild(el("div", { class: "wrap" }, [
       el("div", {}, [
@@ -262,7 +272,14 @@ input[type=file]{position:absolute;left:-9999px}
             ]),
           ]),
           el("fieldset", {}, [el("legend", { text: "About you" })].concat(about.map(field))),
-          el("fieldset", {}, [el("legend", { text: "Culture corner" }), el("p", { class: "hint", style: "font-size:14px;color:var(--muted);margin:-6px 0 14px", text: "Answer any you like. Skipped ones don't show." })].concat(culture.map(field))),
+          el("fieldset", {}, [
+            el("legend", { text: "Culture corner" }),
+            el("p", { class: "hint", style: "font-size:14px;color:var(--muted);margin:-6px 0 14px", text: "The fun part. Pick up to " + (state.maxPrompts || 4) + " prompts and answer them like you'd tell a new teammate." }),
+            el("div", { id: "prompts-area" }),
+            el("p", { class: "sublegend", text: "Quick facts" }),
+            el("p", { class: "hint", style: "font-size:14px;color:var(--muted);margin:-4px 0 12px", text: "Short ones. They show as little tags on your Card." }),
+            el("div", { class: "facts-grid" }, facts.map(field)),
+          ]),
           el("p", { class: "hint", style: "font-size:14px;color:var(--muted);margin-bottom:18px", text: "Leave out phone numbers, emails, links and pay. Your recruiter handles those with the client." }),
           el("div", { class: "submit-row" }, [
             el("button", { type: "submit", class: "btn primary", id: "send", text: "Send to " + recruiter() + " for review" }),
@@ -286,7 +303,40 @@ input[type=file]{position:absolute;left:-9999px}
       ]),
     ]));
     doneNote(false);
+    renderPrompts();
     showErrors(state.initialErrors);
+  }
+
+  /* Culture corner prompts: show the ones they've answered (or just opened), offer the rest as chips. */
+  var openPrompts = [];
+  function renderPrompts() {
+    var area = $("prompts-area");
+    if (!area) return;
+    var max = state.maxPrompts || 4;
+    var prompts = state.schema.filter(function (f) { return f.kind === "prompt"; });
+    var shown = prompts.filter(function (f) { return String(state.fields[f.key] || "").trim() || openPrompts.indexOf(f.key) >= 0; });
+    area.innerHTML = "";
+    shown.forEach(function (f) {
+      var box = field(f);
+      var rm = el("button", { type: "button", class: "btn link", text: "Remove", onclick: function () {
+        state.fields[f.key] = ""; openPrompts = openPrompts.filter(function (k) { return k !== f.key; });
+        renderPrompts(); queueSave();
+      } });
+      box.querySelector("label").appendChild(rm);
+      box.classList.add("prompt-field");
+      area.appendChild(box);
+    });
+    area.appendChild(el("p", { class: "err", id: "e-_prompts", role: "status" }));
+    if (shown.length < max) {
+      area.appendChild(el("p", { class: "hint", style: "font-size:13px;color:var(--muted);margin:4px 0 8px", text: shown.length ? "Add another (" + shown.length + " of " + max + ")" : "Choose a prompt to start" }));
+      area.appendChild(el("div", { class: "chips" }, prompts.filter(function (f) { return shown.indexOf(f) < 0; }).map(function (f) {
+        return el("button", { type: "button", class: "chip", text: f.label, onclick: function () {
+          openPrompts.push(f.key); renderPrompts();
+          var t = $("i-" + f.key); if (t) t.focus();
+        } });
+      })));
+    }
+    showErrors(state.errors);
   }
 
   fetch(api).then(function (r) { return r.json().then(function (b) { return { status: r.status, b: b }; }); })

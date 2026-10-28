@@ -74,6 +74,31 @@ main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
 .ref .who{margin-top:10px;padding-left:21px;font-size:14px;color:var(--muted)}
 .ref .who b{color:var(--ink);font-weight:600}
 .ref .rehire{color:var(--ok);font-weight:600}
+/* Highlights: pull quotes, the reference's own words */
+.highlights .pull{margin:0 0 22px;padding:4px 0 0 26px;position:relative;max-width:62ch}
+.highlights .pull::before{content:"“";position:absolute;left:-4px;top:-14px;font-family:var(--serif);font-size:64px;line-height:1;color:var(--sky)}
+.highlights blockquote{font-family:var(--serif);font-size:23px;line-height:1.4;letter-spacing:-.005em;color:var(--navy)}
+.highlights figcaption{margin-top:8px;font-size:14px;color:var(--muted)}
+/* Culture corner: a little like a dating profile, kept professional */
+.facts-row{list-style:none;display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+.facts-row li{background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:7px 14px;display:flex;gap:8px;align-items:baseline;font-size:14px}
+.facts-row .k{color:var(--muted);font-size:12.5px}
+.facts-row .v{font-weight:600;color:var(--ink)}
+.prompts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.prompt{background:var(--paper);border-radius:14px;padding:18px 20px 20px;box-shadow:0 1px 0 var(--line);border-top:4px solid var(--sky)}
+.prompt:nth-child(4n+2){border-top-color:var(--blue)}
+.prompt:nth-child(4n+3){border-top-color:var(--navy)}
+.prompt:nth-child(4n+4){border-top-color:#8FC3D6}
+.prompt .q{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px}
+.prompt .a{font-family:var(--serif);font-size:20px;line-height:1.4;color:var(--ink)}
+/* Documents */
+.docs{list-style:none;background:var(--paper);border-radius:12px;box-shadow:0 1px 0 var(--line);margin-bottom:16px}
+.docs li{display:flex;align-items:center;gap:14px;padding:13px 16px;border-bottom:1px solid var(--fog)}
+.docs li:last-child{border-bottom:0}
+.doc-kind{font-size:12px;font-weight:600;color:var(--blue);background:#E7F1F6;border-radius:6px;padding:3px 8px;white-space:nowrap}
+.doc-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-acts{display:flex;gap:14px;font-size:14px;font-weight:600}
+.compare .standout{font-family:var(--serif);font-size:14px;color:var(--navy);margin-top:6px;max-width:34ch}
 .resume-frame{width:100%;height:880px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
 
 .compare{background:var(--paper);border-radius:14px;box-shadow:0 1px 0 var(--line);overflow:hidden}
@@ -138,6 +163,10 @@ body.editing .editor{transform:none}
 .editor .ref{border:1px solid var(--line);border-radius:10px;padding:4px 12px 12px;margin-top:10px}
 .editor .ref .row{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
 .editor .ref .row b{font-size:13px}
+.editor .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.editor .chip{font:inherit;font-size:13px;background:var(--fog);border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:6px 11px;cursor:pointer}
+.editor .chip:hover{border-color:var(--sky);background:#fff}
+.editor select.pick{width:100%;margin-top:10px;font:inherit;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
 .editor .linkish{background:none;border:0;color:#B42318;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
 .editor footer{padding:14px 22px;border-top:1px solid var(--line);display:flex;gap:12px;align-items:center;background:#F7FAFB}
 .editor footer .status{font-size:13px;color:var(--muted);flex:1}
@@ -147,7 +176,8 @@ body.editing .editor{transform:none}
 @media (max-width:860px){
   .layout{grid-template-columns:1fr;gap:28px}
   .badge{position:static;max-width:420px;margin:0 auto;width:100%}
-  .culture{grid-template-columns:1fr}
+  .culture,.prompts{grid-template-columns:1fr}
+  .highlights blockquote{font-size:20px}
   .resume-frame{display:none}
   .prose{font-size:18px}
   .compare thead{display:none}
@@ -275,13 +305,45 @@ body.editing .editor{transform:none}
     var name = first(c.name);
     var parts = [];
     if (c.whyMe) parts.push(el("section", {}, [el("h3", { text: "Why " + name }), el("div", { class: "prose" }, paragraphs(c.whyMe))]));
+    if ((c.highlights || []).length) parts.push(el("section", { class: "highlights" }, [
+      el("h3", { text: "What people who've worked with " + name + " say" }),
+    ].concat(c.highlights.map(function (h) {
+      return el("figure", { class: "pull" }, [
+        el("blockquote", { text: h.quote }),
+        el("figcaption", { text: [h.role, h.organization].filter(Boolean).join(", ") || "Former manager" }),
+      ]);
+    }))));
     if (c.intro) parts.push(el("section", {}, [el("h3", { text: "In " + name + "'s words" }), el("div", { class: "prose" }, paragraphs(c.intro))]));
-    if (c.culture.length) parts.push(el("section", {}, [
+    if ((c.culture || []).length || (c.facts || []).length) parts.push(el("section", { class: "corner" }, [
       el("h3", { text: "Culture corner" }),
-      el("div", { class: "culture" }, c.culture.map(function (x) { return el("div", {}, [el("p", { class: "q", text: x.prompt }), el("p", { class: "a", text: x.text })]); })),
+      (c.facts || []).length ? el("ul", { class: "facts-row", "aria-label": "Quick facts" }, c.facts.map(function (f) {
+        return el("li", {}, [el("span", { class: "k", text: f.label }), el("span", { class: "v", text: f.value })]);
+      })) : null,
+      (c.culture || []).length ? el("div", { class: "prompts" }, c.culture.map(function (x) {
+        return el("div", { class: "prompt" }, [el("p", { class: "q", text: x.prompt }), el("p", { class: "a", text: x.text })]);
+      })) : null,
     ]));
+    var docs = c.documents || [];
+    if (docs.length) {
+      var resumeIdx = docs.filter(function (d) { return d.kind === "Résumé"; })[0];
+      parts.push(el("section", {}, [
+        el("h3", { text: "Documents" }),
+        el("ul", { class: "docs" }, docs.map(function (d) {
+          var href = api + "/doc/" + c.id + "/" + d.index;
+          return el("li", {}, [
+            el("span", { class: "doc-kind", text: d.kind || "Document" }),
+            el("span", { class: "doc-name", text: d.name }),
+            el("span", { class: "doc-acts" }, [
+              d.viewable ? el("a", { href: href, target: "_blank", rel: "noopener", text: "View" }) : null,
+              el("a", { href: href + "?download=1", text: "Download" }),
+            ]),
+          ]);
+        })),
+        resumeIdx ? el("iframe", { class: "resume-frame", src: api + "/doc/" + c.id + "/" + resumeIdx.index, title: c.name + " résumé" }) : null,
+      ]));
+    }
     if (c.references.length) parts.push(el("section", {}, [
-      el("h3", { text: c.references.length === 1 ? "Reference" : "References" }),
+      el("h3", { text: c.references.length === 1 ? "Full reference" : "Full references" }),
     ].concat(c.references.map(function (r) {
       var who = [r.role, r.organization].filter(Boolean).join(", ");
       return el("div", { class: "ref" }, [
@@ -293,11 +355,6 @@ body.editing .editor{transform:none}
         ]),
       ]);
     }))));
-    if (c.resumeName) parts.push(el("section", {}, [
-      el("h3", { text: "Résumé" }),
-      el("iframe", { class: "resume-frame", src: api + "/resume/" + c.id, title: c.name + " résumé" }),
-      el("p", { class: "compare-note" }, [el("a", { href: api + "/resume/" + c.id + "?download=1", text: "Download the PDF" })]),
-    ]));
     if (!parts.length) parts.push(el("section", {}, [el("p", { class: "prose", text: "More detail on " + name + " is on the way. " + contactFirst() + " can walk you through their background." })]));
     return el("div", { class: "story" }, parts);
   }
@@ -305,7 +362,7 @@ body.editing .editor{transform:none}
   function compareView() {
     var rows = data.candidates.map(function (c) {
       return el("tr", {}, [
-        el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name", text: c.name }), c.headline ? el("div", { class: "sub", text: c.headline }) : null])])]),
+        el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name", text: c.name }), c.headline ? el("div", { class: "sub", text: c.headline }) : null, c.highlight ? el("div", { class: "standout", text: "“" + c.highlight + "”" }) : null])])]),
         el("td", {}, [el("div", { text: c.epicRole || "—" }), c.certs.length ? el("div", { class: "sub", text: c.certs.join(", ") }) : null]),
         el("td", { class: "nowrap", "data-label": "Available", text: c.availability || "Ask " + contactFirst() }),
         el("td", { "data-label": "Location", text: c.location || "Ask " + contactFirst() }),
@@ -372,14 +429,21 @@ body.editing .editor{transform:none}
   }
 
   function cultureFromProfile(p) {
-    return (edit.schema || []).filter(function (f) { return f.culture && p[f.key]; }).map(function (f) { return { prompt: f.label, text: p[f.key] }; });
+    return (edit.schema || []).filter(function (f) { return f.kind === "prompt" && p[f.key]; }).slice(0, edit.maxPrompts || 4).map(function (f) { return { prompt: f.label, text: p[f.key] }; });
+  }
+  function factsFromProfile(p) {
+    return (edit.schema || []).filter(function (f) { return f.kind === "fact" && p[f.key]; }).map(function (f) { return { label: f.label, value: p[f.key] }; });
   }
 
   function syncPreview() {
     // Mirror the editor into the page the client sees, then redraw it.
     if (!data.card || data.card.id !== data.sent || location.hash === "#compare") return;
     var c = data.card, p = edit.profile;
-    c.headline = p.headline || ""; c.intro = p.intro || ""; c.culture = cultureFromProfile(p);
+    c.headline = p.headline || ""; c.intro = p.intro || ""; c.culture = cultureFromProfile(p); c.facts = factsFromProfile(p);
+    c.highlights = edit.highlights.filter(function (h) { return h.quote; }).map(function (h) { return { quote: h.quote, role: h.role, organization: h.organization }; });
+    var saved = (data.editable.documents || []).map(function (d) { return d.fileId; });
+    c.documents = edit.documents.map(function (d, i) { return { index: saved.indexOf(d.fileId) >= 0 ? saved.indexOf(d.fileId) : i, name: d.name, kind: d.kind, viewable: saved.indexOf(d.fileId) >= 0 }; });
+    if (c.highlights[0]) { var meH = data.candidates.filter(function (x) { return x.id === c.id; })[0]; if (meH) meH.highlight = c.highlights[0].quote; }
     c.whyMe = edit.whyMe; c.availability = edit.availability; c.location = edit.location;
     c.references = edit.references.map(function (r) { return { role: r.role, organization: r.organization, relationship: r.relationship, rehire: r.rehire, text: r.text }; });
     var me = data.candidates.filter(function (x) { return x.id === c.id; })[0];
@@ -463,11 +527,63 @@ body.editing .editor{transform:none}
         field("What they said", r.text, function (v) { r.text = v; }, { area: true, rows: 6, max: 2400 }),
       ]);
     });
+    var redraw = function () { editDirty = true; setEditStatus("Unsaved changes"); syncPreview(); buildEditor(); };
+    // Culture corner: answered prompts, then the ones they could add (up to the max)
+    var maxP = edit.maxPrompts || 4;
+    var prompts = (edit.schema || []).filter(function (f) { return f.kind === "prompt"; });
+    var answered = prompts.filter(function (f) { return String(p[f.key] || "").trim() || edit.openPrompts.indexOf(f.key) >= 0; });
+    var cultureParts = answered.map(function (f) {
+      return el("div", { class: "ref" }, [
+        el("div", { class: "row" }, [el("b", { text: f.label }), el("button", { class: "linkish", type: "button", text: "Remove", onclick: function () {
+          p[f.key] = ""; edit.openPrompts = edit.openPrompts.filter(function (k) { return k !== f.key; }); redraw();
+        } })]),
+        field("Answer", p[f.key], function (v) { p[f.key] = v; }, { area: true, rows: 3, max: f.max }),
+      ]);
+    });
+    if (answered.length < maxP) {
+      cultureParts.push(el("p", { class: "note", text: "Add a prompt (" + answered.length + " of " + maxP + "):" }));
+      cultureParts.push(el("div", { class: "chips" }, prompts.filter(function (f) { return answered.indexOf(f) < 0; }).map(function (f) {
+        return el("button", { class: "chip", type: "button", text: f.label, onclick: function () { edit.openPrompts.push(f.key); buildEditor(); } });
+      })));
+    }
+    cultureParts.push(el("p", { class: "note", style: "margin-top:14px", text: "Quick facts" }));
+    cultureParts = cultureParts.concat(fields(function (f) { return f.kind === "fact"; }));
+    // Highlights: the reference's own words only
+    var hl = edit.highlights.map(function (h, i) {
+      return el("div", { class: "ref" }, [
+        el("div", { class: "row" }, [el("b", { text: "Highlight " + (i + 1) }), el("button", { class: "linkish", type: "button", text: "Remove", onclick: function () { edit.highlights.splice(i, 1); redraw(); } })]),
+        field("Quote", h.quote, function (v) { h.quote = v; }, { area: true, rows: 3, max: 400 }),
+        h.role || h.organization ? el("p", { class: "note", text: [h.role, h.organization].filter(Boolean).join(", ") }) : null,
+      ]);
+    });
+    if (edit.highlights.length < 3) hl.push(el("button", { class: "chip", type: "button", text: "Add a highlight", onclick: function () { edit.highlights.push({ quote: "", role: "", organization: "" }); buildEditor(); } }));
+    hl.unshift(el("p", { class: "note", text: "Pull quotes shown near the top. Copy a sentence word for word from a reference below; made-up quotes won't save." }));
+    // Documents: résumé stays; add others from Bullhorn
+    var docParts = edit.documents.map(function (d, i) {
+      var isResume = d.kind === "Résumé";
+      return el("div", { class: "ref" }, [
+        el("div", { class: "row" }, [el("b", { text: d.name }), isResume ? el("span", { class: "note", text: "Résumé from Forge" }) : el("button", { class: "linkish", type: "button", text: "Remove", onclick: function () { edit.documents.splice(i, 1); redraw(); } })]),
+        isResume ? null : field("Label", d.kind, function (v) { d.kind = v; }, { max: 40 }),
+      ]);
+    });
+    var pick = el("select", { class: "pick" }, [el("option", { value: "", text: edit.files ? "Add a document from Bullhorn…" : "Loading Bullhorn files…" })].concat((edit.files || []).filter(function (f) {
+      return f.allowed && !edit.documents.some(function (d) { return String(d.fileId) === String(f.id); });
+    }).map(function (f) { return el("option", { value: f.id, text: f.name + (f.type ? " (" + f.type + ")" : "") }); })));
+    pick.addEventListener("change", function () {
+      var f = (edit.files || []).filter(function (x) { return String(x.id) === pick.value; })[0];
+      if (!f) return;
+      edit.documents.push({ fileId: String(f.id), name: f.name, kind: /cert/i.test(f.name + f.type) ? "Certification" : (/cover/i.test(f.name) ? "Cover letter" : "Document") });
+      redraw();
+    });
+    docParts.push(pick);
+    docParts.push(el("p", { class: "note", text: "PDFs and images only. Reference letters, IDs and pay documents are left out on purpose." }));
+    if (!edit.files) loadFiles();
+
     box.innerHTML = "";
     box.appendChild(el("header", {}, [el("h2", { text: "Edit " + first + "'s Card" }), el("button", { class: "x", type: "button", "aria-label": "Close", text: "×", onclick: closeEditor })]));
     box.appendChild(el("div", { class: "body" }, [
       el("fieldset", {}, [el("legend", { text: "Photo" }), photoBlock()]),
-      el("fieldset", {}, [el("legend", { text: "Headline and intro" })].concat(fields(function (f) { return !f.culture; }))),
+      el("fieldset", {}, [el("legend", { text: "Headline and intro" })].concat(fields(function (f) { return f.kind === "about"; }))),
       el("fieldset", {}, [
         el("legend", { text: "For this role" }),
         field("Why " + first, edit.whyMe, function (v) { edit.whyMe = v; }, { area: true, rows: 7, max: 3000 }),
@@ -475,7 +591,9 @@ body.editing .editor{transform:none}
         field("Location", edit.location, function (v) { edit.location = v; }, { max: 120 }),
         el("p", { class: "locked", text: "Bill rate, Epic role and certifications come from Bullhorn. Change them there and the Card follows." }),
       ]),
-      el("fieldset", {}, [el("legend", { text: "Culture corner" })].concat(fields(function (f) { return f.culture; }))),
+      el("fieldset", {}, [el("legend", { text: "Highlights" })].concat(hl)),
+      el("fieldset", {}, [el("legend", { text: "Culture corner" })].concat(cultureParts)),
+      el("fieldset", {}, [el("legend", { text: "Documents" })].concat(docParts)),
       el("fieldset", {}, [el("legend", { text: "References" })].concat(refs.length ? refs : [el("p", { class: "note", text: "No references on this Card. They come from Bullhorn when Forge drafts the email." })])),
     ]));
     box.appendChild(el("footer", {}, [
@@ -485,9 +603,16 @@ body.editing .editor{transform:none}
     ]));
   }
 
+  function loadFiles() {
+    fetch("/api/cards/candidate/" + edit.candidateId + "/files").then(function (r) { return r.json(); })
+      .then(function (b) { edit.files = b.data || []; buildEditor(); })
+      .catch(function () { edit.files = []; buildEditor(); });
+  }
+
   function openEditor() {
     if (!data.editable) return;
     edit = JSON.parse(JSON.stringify(data.editable));
+    edit.openPrompts = []; edit.highlights = edit.highlights || []; edit.documents = edit.documents || []; edit.files = null;
     editDirty = false;
     buildEditor();
     requestAnimationFrame(function () { document.body.classList.add("editing"); });
@@ -505,9 +630,13 @@ body.editing .editor{transform:none}
       return fetch(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
         .then(function (r) { return r.json().then(function (b) { if (!r.ok) { var e = new Error(b.error || "Not saved."); e.errors = b.errors; throw e; } return b; }); });
     };
-    put("/api/cards/links/" + edit.linkId + "/content", { whyMe: edit.whyMe, availability: edit.availability, location: edit.location, references: edit.references })
+    put("/api/cards/links/" + edit.linkId + "/content", {
+      whyMe: edit.whyMe, availability: edit.availability, location: edit.location, references: edit.references,
+      highlights: edit.highlights.filter(function (h) { return String(h.quote || "").trim(); }),
+      documents: edit.documents.map(function (d) { return { fileId: d.fileId, kind: d.kind }; }),
+    })
       .then(function () { return put("/api/cards/candidate/" + edit.candidateId + "/live", profile); })
-      .then(function () { editDirty = false; setEditStatus("Saved. The client's Card shows this now."); data.editable = JSON.parse(JSON.stringify(edit)); })
+      .then(function () { editDirty = false; setEditStatus("Saved. The client's Card shows this now."); var keep = edit; setTimeout(function () { if (!editDirty) load(); }, 600); data.editable = JSON.parse(JSON.stringify(keep)); })
       .catch(function (e) {
         var msg = e.message;
         if (Array.isArray(e.errors)) msg = e.errors[0];

@@ -172,6 +172,10 @@ async function harness() {
   await db.query("CREATE TABLE submissions (id INTEGER PRIMARY KEY, status TEXT, date_added BIGINT, is_deleted BOOLEAN)");
   await db.query("CREATE TABLE candidates (id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, name TEXT, email TEXT, custom_text1 TEXT, custom_text2 TEXT, custom_text5 TEXT, owner_id INTEGER, date_last_modified BIGINT)");
   await db.query("CREATE TABLE corporate_users (id INTEGER PRIMARY KEY, email TEXT, name TEXT)");
+  await db.query("CREATE SCHEMA IF NOT EXISTS crm");
+  await db.query("CREATE TABLE IF NOT EXISTS crm.file_attachment (id INTEGER NOT NULL, entity TEXT NOT NULL, entity_id INTEGER NOT NULL, name TEXT, type TEXT, content_type TEXT, date_added TIMESTAMPTZ, is_deleted BOOLEAN, PRIMARY KEY (entity, id))");
+  await db.query("DELETE FROM crm.file_attachment WHERE entity = 'Candidate' AND entity_id = 1");
+  await db.query("INSERT INTO crm.file_attachment (id, entity, entity_id, name, type) VALUES (9, 'Candidate', 1, 'Jack.pdf', 'Resume'), (21, 'Candidate', 1, 'Beaker CP Certification.pdf', 'Certification'), (22, 'Candidate', 1, 'Reference - Patricia.pdf', 'Reference'), (23, 'Candidate', 1, 'Drivers License.jpg', '')");
   await db.query("INSERT INTO corporate_users VALUES (5, 'ben@anuraconnect.com', 'Ben Gray')");
   await db.query("INSERT INTO jobs VALUES (100, 'Beaker Analyst', 'Accepting Candidates', true, false), (200, 'HB Analyst', 'Accepting Candidates', true, false), (300, 'Old Role', 'Accepting Candidates', true, false)");
   await db.query("INSERT INTO candidates VALUES " +
@@ -579,6 +583,57 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal((await req(h.port, "GET", "/api/card-public/" + J)).json.card.whyMe, "Two Beaker go-lives, both early.", "refused edits change nothing");
     });
 
+    await t.test("K30 highlights, culture prompts, quick facts and documents end to end", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      const link = await h.db.getOne("SELECT id FROM card_links WHERE submission_id = 11 AND revoked_at IS NULL ORDER BY id LIMIT 1");
+      await h.db.query("UPDATE card_links SET refs = $1::jsonb, highlights = $2::jsonb WHERE submission_id = 11", [
+        JSON.stringify([{ id: "note:1", role: "Director", organization: "Riverside Health", text: "Jack is the strongest Beaker analyst I have managed. He trained every super user himself." }]),
+        JSON.stringify([{ quote: "Strongest Beaker analyst I've managed (Former manager).", role: "Director", organization: "Riverside Health", approved: true }])]);
+      let pv = await req(h.port, "GET", "/api/cards/preview/" + link.id, { headers: rec });
+      assert.equal(pv.json.editable.highlights.length, 1);
+      assert.equal(pv.json.editable.documents[0].kind, "Résumé");
+      // Invented highlight refused; verbatim one saves with the reference's title.
+      let r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { highlights: [{ quote: "Jack is the best analyst in the country." }] } });
+      assert.equal(r.status, 400);
+      assert.match(r.json.error, /own words/);
+      r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { highlights: [{ quote: "Strongest Beaker analyst I've managed (Former manager)." }, { quote: "He trained every super user himself." }] } });
+      assert.equal(r.status, 200, r.text);
+      // Documents: Bullhorn files on this candidate only, no reference letters or IDs.
+      const files = await req(h.port, "GET", "/api/cards/candidate/1/files", { headers: rec });
+      const allowed = files.json.data.filter(function (f) { return f.allowed; }).map(function (f) { return f.name; }).sort();
+      assert.deepEqual(allowed, ["Beaker CP Certification.pdf", "Jack.pdf"]);
+      r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { documents: [{ fileId: "22", kind: "Reference" }] } });
+      assert.equal(r.status, 400);
+      r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { documents: [{ fileId: "999", kind: "Doc" }] } });
+      assert.equal(r.status, 400);
+      r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { documents: [{ fileId: "21", kind: "Certification" }] } });
+      assert.equal(r.status, 200, r.text);
+      // Culture: prompts + facts; five prompts refused.
+      r = await req(h.port, "PUT", "/api/cards/candidate/1/live", { headers: rec, body: { golive: "Beaker cutover, 3am, pizza.", hometown: "Green Bay", hobbies: "Skiing, trivia" } });
+      assert.equal(r.status, 200, r.text);
+      r = await req(h.port, "PUT", "/api/cards/candidate/1/live", { headers: rec, body: { goodat: "Parallel parking.", askme: "Curling." } });
+      assert.equal(r.status, 400, "more than four prompts");
+      const pub = await req(h.port, "GET", "/api/card-public/" + J);
+      const c = pub.json.card;
+      assert.deepEqual(c.highlights.map(function (x) { return x.quote; }), ["Strongest Beaker analyst I've managed (Former manager).", "He trained every super user himself."]);
+      assert.equal(c.highlights[1].organization, "Riverside Health");
+      assert.ok(c.culture.length <= 4);
+      assert.ok(c.culture.some(function (x) { return x.prompt === "My most memorable go-live"; }));
+      assert.deepEqual(c.facts.map(function (f) { return f.label; }), ["Hometown", "Hobbies"]);
+      assert.deepEqual(c.documents.map(function (d) { return d.kind; }), ["Résumé", "Certification"]);
+      assert.equal(pub.json.candidates[0].highlight, "Strongest Beaker analyst I've managed (Former manager).");
+      const doc = await req(h.port, "GET", "/api/card-public/" + J + "/doc/" + jack.publicId + "/1");
+      assert.equal(doc.status, 200);
+      assert.equal(doc.headers["content-type"], "application/pdf");
+      assert.match(doc.buf.toString(), /resume 1:21/);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/doc/" + jack.publicId + "/7")).status, 404);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/doc/" + other.publicId + "/0")).status, 404, "out of scope");
+      // A redraft from Forge keeps the recruiter's added documents.
+      await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell", whyMe: "Two Beaker go-lives, both early." });
+      const again = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.deepEqual(again.json.card.documents.map(function (d) { return d.kind; }), ["Résumé", "Certification"]);
+    });
+
     await t.test("K17 a new draft for the same submission refreshes older links", async function () {
       await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell", whyMe: "Updated Why Me." });
       const r = await req(h.port, "GET", "/api/card-public/" + J);
@@ -608,6 +663,35 @@ test("K24 photo size and LinkedIn name matching", function () {
   assert.equal(card.sameName({ given_name: "José", family_name: "García-López" }, { first_name: "Jose", last_name: "Garcia" }), true);
   assert.equal(card.sameName({ given_name: "Ben", family_name: "Gray" }, { first_name: "Jack", last_name: "Corbell" }), false);
   assert.equal(card.sameName({ given_name: "", family_name: "" }, { first_name: "Jack", last_name: "Corbell" }), false);
+});
+
+test("K28 highlights must be a reference's own words; documents exclude reference letters and IDs", function () {
+  const refs = [{ text: "Jack is the strongest Beaker analyst I have managed. He trained every super user himself." }];
+  assert.equal(card.highlightAllowed("He trained every super user himself.", refs, []), true);
+  assert.equal(card.highlightAllowed("“Jack is the strongest Beaker analyst I have managed”", refs, []), true, "quote marks and case don't matter");
+  assert.equal(card.highlightAllowed("Jack is the best analyst in the country.", refs, []), false, "invented");
+  assert.equal(card.highlightAllowed("Short.", refs, []), false);
+  assert.equal(card.highlightAllowed("Strong Beaker analyst who trained the team (Former manager).", refs, ["Strong Beaker analyst who trained the team (Former manager)."]), true, "Forge-approved quote unchanged");
+  assert.equal(card.docAllowed("Epic Beaker CP Certification.pdf", ""), true);
+  assert.equal(card.docAllowed("headshot.jpg", ""), true);
+  ["Jack Reference Letter.pdf", "references.pdf", "Drivers License.jpg", "W9.pdf", "Offer letter.pdf", "resume.docx", "notes.txt"].forEach(function (n) {
+    assert.equal(card.docAllowed(n, ""), false, n);
+  });
+  assert.equal(card.docAllowed("cert.pdf", "Reference"), false, "Bullhorn type counts too");
+});
+
+test("K29 culture corner: up to four prompts, quick facts", function () {
+  const ok = card.readCandidateFields({ outside: "Hockey.", golive: "Epic Beaker cutover at 3am.", hometown: "Green Bay", hobbies: "Skiing, trivia" });
+  assert.deepEqual(ok.errors, {});
+  const prompts = card.CANDIDATE_FIELDS.filter(function (f) { return f.kind === "prompt"; });
+  assert.ok(prompts.length >= 8, "a real menu of prompts");
+  const five = {}; prompts.slice(0, 5).forEach(function (f) { five[f.key] = "Answer for " + f.key; });
+  const all = require("./card");
+  // errorsFor is internal; the edit route reports it. Check through the exported reader + count rule.
+  const answered = Object.keys(five).length;
+  assert.ok(answered > all.MAX_PROMPTS);
+  assert.match(card.checkCandidateText("hometown", "x".repeat(41)), /under 40/);
+  assert.match(card.checkCandidateText("hobbies", "find me @jackc"), /handles/);
 });
 
 test("K22 login gate: only real files in public/ skip login; extensions on API or page routes don't", function () {

@@ -2836,6 +2836,7 @@ function registerForge(app, deps) {
       if (cards) {
         try {
           const contactKey = to || "";
+          const cardRefs = referenceLib.cardReferences(referenceBundle.input || {}, chosenReferences.map(function (offer) { return offer.id; }), referenceDeps());
           card = await cards.mintClientLink({
             submissionId: id,
             candidateId: base.candidate.id,
@@ -2852,7 +2853,12 @@ function registerForge(app, deps) {
             billAmount: moneyNumber(billRate),
             resumeFileId: resumeFileId,
             resumeName: attachName,
-            references: referenceLib.cardReferences(referenceBundle.input || {}, chosenReferences.map(function (offer) { return offer.id; }), referenceDeps()),
+            references: cardRefs,
+            // The email's short, already-guarded quotes become the Card's pull quotes.
+            highlights: chosenReferences.map(function (offer) {
+              const full = cardRefs.filter(function (r) { return r.id === offer.id; })[0] || {};
+              return { quote: offer.quote, role: full.role || offer.role || "", organization: full.organization || "" };
+            }),
             recruiter: { name: signerName, title: signerTitle || "", phone: signerPhone || "", email: (user && user.email) || "" },
             createdBy: user ? (user.email || user.name || "") : "",
           });
