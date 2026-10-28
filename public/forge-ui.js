@@ -1,5 +1,37 @@
 /* Submittal Forge — pick an Internally Submitted row, preview the client email, save an Outlook draft.
    Expects globals from index.html: esc, apiFetch, showToast, setHash, NAV_GROUPS, currentPage. */
+/* Nudge: the client's Card has no photo or story yet. One click makes the candidate's edit link
+   and opens a ready email in the recruiter's mail app. */
+function forgeCardSetup(st) {
+  if (!st || !st.candidateId) return "";
+  var who = st.firstName || "the candidate";
+  var missing = st.needsPhoto && st.needsStory ? "a photo or anything in their own words" : (st.needsPhoto ? "a photo" : "anything in their own words");
+  if (st.waitingOnReview) {
+    return '<div style="margin-top:8px;color:#475569">' + esc(who) + ' sent Card changes for your review. <a href="/cards?candidate=' + st.candidateId + '" target="_blank" rel="noopener" style="color:#176087;font-weight:700">Review them</a></div>';
+  }
+  if (st.waitingOnCandidate) {
+    return '<div style="margin-top:8px;color:#475569">' + esc(who) + "'s Card has no " + esc(missing) + ' yet. An edit link is already out to them.</div>';
+  }
+  return '<div style="margin-top:8px;color:#475569" id="fg-card-setup">' + esc(who) + "'s Card has no " + esc(missing) + ' yet. '
+    + '<button class="btn-outline" style="margin-left:4px" onclick="forgeSendCardLink(' + Number(st.candidateId) + ', \'' + forgeAttr(who).replace(/'/g, "") + '\')">Send ' + esc(who) + ' their Card link</button></div>';
+}
+
+async function forgeSendCardLink(candidateId, who) {
+  var box = document.getElementById("fg-card-setup");
+  try {
+    var res = await fetch("/api/cards/candidate/" + candidateId + "/edit-link", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    var r = await res.json();
+    if (!res.ok) throw new Error(r.error || "Could not create the link");
+    var body = "Hi " + (r.firstName || who) + ",\n\nWhen we put you forward for a role, the hiring manager gets a one-page profile of you along with your résumé. Here's a link to add a photo and a few lines in your own words:\n\n" + r.url
+      + "\n\nIt takes about five minutes and works on your phone. I review everything before any client sees it. The link works for two weeks.\n\nThanks!";
+    var mail = "mailto:" + encodeURIComponent(r.candidateEmail || "") + "?subject=" + encodeURIComponent("Your Anura Connect profile") + "&body=" + encodeURIComponent(body);
+    if (box) box.innerHTML = 'Link created. <a href="' + forgeAttr(mail) + '" style="color:#176087;font-weight:700">Email it to ' + esc(who) + '</a>'
+      + ' <button class="btn-outline" style="margin-left:6px" onclick="navigator.clipboard.writeText(\'' + forgeAttr(r.url) + '\');this.textContent=\'Copied\'">Copy link</button>';
+  } catch (e) {
+    if (box) box.innerHTML = '<span style="color:#b91c1c">' + esc(e.message) + '</span>';
+  }
+}
+
 function forgeAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
 function forgeStoreGet(key, fallback) {
   try {
@@ -816,6 +848,7 @@ async function forgeCreate() {
     });
     var cardBit = (r.card && r.card.url ? '<div style="margin-top:8px"><a href="' + forgeAttr(r.card.url) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:700">Preview the client\'s Anura Connect Card</a> <span style="color:#64748b">(your views aren\'t counted)</span></div>' : "")
       + (r.cardNote ? '<div style="margin-top:6px;color:#92400e">' + esc(r.cardNote) + '</div>' : "");
+    cardBit += forgeCardSetup(r.cardSetup);
     if (r.created) {
       var link = r.webLink ? '<div style="margin-top:8px"><a href="' + forgeAttr(r.webLink) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:700">Open draft in Outlook</a></div>' : "";
       if (result) result.innerHTML = '<div class="fg-flag" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">' + esc(r.instructions || "Draft saved.") + (r.attachNote ? " " + esc(r.attachNote) : "") + link + cardBit + '</div>';

@@ -2379,3 +2379,19 @@ test("K20c a failed Outlook draft turns its Card link off", async function () {
     assert.deepEqual(revoked, [[77, "outlook draft failed"]]);
   } finally { server.close(); }
 });
+
+test("K26 Forge nudges the recruiter when the candidate's Card has no photo or story", async function () {
+  const calls = [];
+  const app = cardForgeApp({
+    mintClientLink: async function () { return { id: 1, url: "https://dashboard.anuraconnect.com/card/bcdfghjkmnpqrstvwxzbcdfghjkmnpqr" }; },
+    profileStatus: async function () { return { hasPhoto: false, hasStory: true, waitingOnCandidate: false, waitingOnReview: false }; },
+  }, calls);
+  const server = await listen(app);
+  try {
+    const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", CARD_DRAFT_BODY);
+    assert.equal(draft.status, 200, draft.text);
+    assert.equal(draft.json.cardSetup.needsPhoto, true);
+    assert.equal(draft.json.cardSetup.needsStory, false);
+    assert.equal(draft.json.cardSetup.firstName, "Jack");
+  } finally { server.close(); }
+});

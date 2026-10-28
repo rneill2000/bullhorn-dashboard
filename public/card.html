@@ -107,6 +107,42 @@ main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
 .closed p{color:var(--muted)}
 .closed p+p{margin-top:10px}
 .loading{text-align:center;color:var(--muted);padding:80px 0}
+.preview-bar{position:sticky;top:0;z-index:30;background:var(--navy);color:#C9DCE6;font-size:14px;padding:10px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.preview-bar b{color:#fff;font-weight:600}
+.preview-bar .acts{display:flex;gap:8px}
+.preview-bar .btn{padding:7px 14px;font-size:14px}
+.preview-bar .btn.plain{background:transparent;color:#fff;border-color:rgba(255,255,255,.35)}
+.preview-bar .btn.primary{background:#fff;color:var(--navy)}
+
+/* Recruiter editor: a panel beside the live Card, so every change is seen as the client will see it. */
+.editor{position:fixed;top:0;right:0;bottom:0;width:min(440px,100%);background:var(--paper);border-left:1px solid var(--line);box-shadow:-18px 0 40px -28px rgba(14,46,71,.6);z-index:40;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s ease}
+body.editing .editor{transform:none}
+@media (min-width:1100px){body.editing #app,body.editing .top,body.editing .preview-bar{margin-right:440px}}
+.editor header{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.editor header h2{font-family:var(--serif);font-weight:400;font-size:22px}
+.editor .x{background:none;border:0;font-size:24px;line-height:1;color:var(--muted);cursor:pointer;padding:4px 8px}
+.editor .body{overflow:auto;padding:6px 22px 22px;flex:1}
+.editor fieldset{border:0;padding:16px 0;border-bottom:1px solid var(--line)}
+.editor fieldset:last-child{border-bottom:0}
+.editor legend{font-size:13px;font-weight:700;color:var(--blue);padding:0;margin-bottom:2px}
+.editor legend + div label,.editor legend + .ph{margin-top:6px}
+.editor label{display:block;font-size:13px;font-weight:600;color:var(--ink);margin:10px 0 4px}
+.editor input,.editor textarea{width:100%;font:inherit;font-size:15px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:#fff;resize:vertical}
+.editor textarea{font-family:var(--serif);font-size:16px;line-height:1.5}
+.editor input:focus,.editor textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(23,96,135,.15)}
+.editor .note{font-size:13px;color:var(--muted);margin-top:6px}
+.editor .ph{display:flex;gap:14px;align-items:center}
+.editor .ph img,.editor .ph .initials{width:72px;height:86px;border-radius:8px;object-fit:cover;border:1px solid var(--line);background:var(--fog);font-size:26px}
+.editor .ph .btns{display:flex;gap:8px;flex-wrap:wrap}
+.editor .ph .btn{padding:7px 12px;font-size:14px}
+.editor .ref{border:1px solid var(--line);border-radius:10px;padding:4px 12px 12px;margin-top:10px}
+.editor .ref .row{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+.editor .ref .row b{font-size:13px}
+.editor .linkish{background:none;border:0;color:#B42318;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.editor footer{padding:14px 22px;border-top:1px solid var(--line);display:flex;gap:12px;align-items:center;background:#F7FAFB}
+.editor footer .status{font-size:13px;color:var(--muted);flex:1}
+.editor footer .status.bad{color:#B42318}
+.editor .locked{font-size:13px;color:var(--muted);background:var(--fog);border-radius:8px;padding:10px 12px;margin-top:12px}
 
 @media (max-width:860px){
   .layout{grid-template-columns:1fr;gap:28px}
@@ -148,10 +184,11 @@ main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
 <script>
 (function () {
   "use strict";
-  var token = (location.pathname.match(/\/card\/([a-z]+)/) || [])[1] || "";
-  var api = "/api/card-public/" + token;
+  var token = (location.pathname.match(/^\/card\/([a-z]+)/) || [])[1] || "";
+  var previewId = (location.pathname.match(/^\/cards\/preview\/(\d+)/) || [])[1] || "";
+  var api = previewId ? "/api/cards/preview/" + previewId : "/api/card-public/" + token;
   var app = document.getElementById("app");
-  var data = null;
+  var data = null, photoBust = 0;
 
   function el(tag, attrs, kids) {
     var n = document.createElement(tag);
@@ -175,7 +212,7 @@ main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
     });
   }
   function photo(c, cls) {
-    if (c.hasPhoto) return el("img", { class: cls, src: api + "/photo/" + c.id, alt: "Photo of " + c.name, loading: "lazy" });
+    if (c.hasPhoto) return el("img", { class: cls, src: api + "/photo/" + c.id + (photoBust ? "?v=" + photoBust : ""), alt: "Photo of " + c.name, loading: "lazy" });
     return el("div", { class: cls + " initials", "aria-hidden": "true", text: initials(c.name) });
   }
   function contactFirst() { return first(data.contact.name); }
@@ -319,6 +356,172 @@ main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
     window.scrollTo(0, 0);
   }
 
+  /* ── recruiter edit mode (preview pages only) ── */
+  var edit = null, editDirty = false;
+
+  function recruiterBar() {
+    if (document.querySelector(".preview-bar")) return;
+    var bar = el("div", { class: "preview-bar" }, [
+      el("span", {}, [el("b", { text: "Preview" }), " This is exactly what the client sees. Your visits don't count as opens."]),
+      el("span", { class: "acts" }, [
+        el("a", { class: "btn plain", href: "/cards", text: "Back to Cards" }),
+        data.editable ? el("button", { class: "btn primary", type: "button", text: "Edit this Card", onclick: openEditor }) : null,
+      ]),
+    ]);
+    document.body.insertBefore(bar, document.body.firstChild);
+  }
+
+  function cultureFromProfile(p) {
+    return (edit.schema || []).filter(function (f) { return f.culture && p[f.key]; }).map(function (f) { return { prompt: f.label, text: p[f.key] }; });
+  }
+
+  function syncPreview() {
+    // Mirror the editor into the page the client sees, then redraw it.
+    if (!data.card || data.card.id !== data.sent || location.hash === "#compare") return;
+    var c = data.card, p = edit.profile;
+    c.headline = p.headline || ""; c.intro = p.intro || ""; c.culture = cultureFromProfile(p);
+    c.whyMe = edit.whyMe; c.availability = edit.availability; c.location = edit.location;
+    c.references = edit.references.map(function (r) { return { role: r.role, organization: r.organization, relationship: r.relationship, rehire: r.rehire, text: r.text }; });
+    var me = data.candidates.filter(function (x) { return x.id === c.id; })[0];
+    if (me) { me.headline = c.headline; me.availability = c.availability; me.location = c.location; }
+    var y = window.scrollY; render(); window.scrollTo(0, y);
+  }
+
+  function field(label, value, onInput, opts) {
+    opts = opts || {};
+    var input = opts.area ? el("textarea", { rows: String(opts.rows || 3), maxlength: opts.max ? String(opts.max) : null }, [value || ""]) : el("input", { type: "text", value: value || "", maxlength: opts.max ? String(opts.max) : null });
+    input.addEventListener("input", function () { onInput(input.value); editDirty = true; setEditStatus("Unsaved changes"); syncPreview(); });
+    return el("div", {}, [el("label", { text: label }), input]);
+  }
+
+  function setEditStatus(t, bad) { var n = document.getElementById("edit-status"); if (n) { n.textContent = t; n.className = "status" + (bad ? " bad" : ""); } }
+
+  function photoBlock() {
+    var img = edit.hasPhoto ? el("img", { src: "/api/cards/candidate/" + edit.candidateId + "/photo?v=" + Date.now(), alt: "" }) : el("div", { class: "initials", text: initials(data.card.name) });
+    var file = el("input", { type: "file", accept: "image/jpeg,image/png,image/webp", style: "display:none", onchange: function (e) { uploadPhoto(e.target.files[0]); } });
+    return el("div", { class: "ph" }, [img, el("div", {}, [
+      el("div", { class: "btns" }, [
+        el("button", { class: "btn plain", type: "button", text: edit.hasPhoto ? "Replace photo" : "Add photo", onclick: function () { file.click(); } }), file,
+        edit.hasPhoto ? el("button", { class: "btn plain", type: "button", text: "Remove", onclick: removePhoto }) : null,
+      ]),
+      el("p", { class: "note", text: "Saves right away. Best when the candidate adds their own." }),
+    ])]);
+  }
+
+  function shrink(fileObj) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image(), url = URL.createObjectURL(fileObj);
+      img.onload = function () {
+        var k = Math.min(1, 900 / Math.max(img.naturalWidth, img.naturalHeight));
+        var cv = document.createElement("canvas"); cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+        cv.toBlob(function (b) { b ? resolve(b) : reject(new Error("That photo couldn't be read.")); }, "image/jpeg", 0.86);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("Use a JPG, PNG or WebP photo.")); };
+      img.src = url;
+    });
+  }
+  function uploadPhoto(f) {
+    if (!f) return;
+    setEditStatus("Saving photo…");
+    shrink(f).then(function (blob) { return fetch("/api/cards/candidate/" + edit.candidateId + "/photo", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob }); })
+      .then(function (r) { if (!r.ok) throw new Error("Photo not saved."); edit.hasPhoto = true; data.card.hasPhoto = true; refreshPhotos(); setEditStatus("Photo saved"); })
+      .catch(function (e) { setEditStatus(e.message, true); });
+  }
+  function removePhoto() {
+    fetch("/api/cards/candidate/" + edit.candidateId + "/photo", { method: "DELETE" }).then(function (r) {
+      if (!r.ok) throw new Error("Photo not removed.");
+      edit.hasPhoto = false; data.card.hasPhoto = false; refreshPhotos(); setEditStatus("Photo removed");
+    }).catch(function (e) { setEditStatus(e.message, true); });
+  }
+  function refreshPhotos() {
+    // Bust the cached photo in the page, then redraw both.
+    var me = data.candidates.filter(function (x) { return x.id === data.card.id; })[0];
+    if (me) me.hasPhoto = edit.hasPhoto;
+    api = api.split("?")[0];
+    photoBust = Date.now();
+    syncPreview(); buildEditor();
+  }
+
+  function buildEditor() {
+    var box = document.getElementById("editor");
+    if (!box) { box = el("aside", { class: "editor", id: "editor", "aria-label": "Edit this Card" }); document.body.appendChild(box); }
+    var p = edit.profile, first = (data.card.name || "").split(/\s+/)[0] || "them";
+    var fields = function (keys) {
+      return (edit.schema || []).filter(function (f) { return keys(f); }).map(function (f) {
+        return field(f.label, p[f.key], function (v) { p[f.key] = v; }, { area: f.max > 90, rows: f.max > 400 ? 5 : 3, max: f.max });
+      });
+    };
+    var refs = edit.references.map(function (r, i) {
+      return el("div", { class: "ref" }, [
+        el("div", { class: "row" }, [el("b", { text: "Reference " + (i + 1) }), el("button", { class: "linkish", type: "button", text: "Remove", onclick: function () {
+          if (!window.confirm("Take this reference off the Card?")) return;
+          edit.references.splice(i, 1); editDirty = true; setEditStatus("Unsaved changes"); syncPreview(); buildEditor();
+        } })]),
+        field("Their title", r.role, function (v) { r.role = v; }, { max: 120 }),
+        field("Organization", r.organization, function (v) { r.organization = v; }, { max: 120 }),
+        field("What they said", r.text, function (v) { r.text = v; }, { area: true, rows: 6, max: 2400 }),
+      ]);
+    });
+    box.innerHTML = "";
+    box.appendChild(el("header", {}, [el("h2", { text: "Edit " + first + "'s Card" }), el("button", { class: "x", type: "button", "aria-label": "Close", text: "×", onclick: closeEditor })]));
+    box.appendChild(el("div", { class: "body" }, [
+      el("fieldset", {}, [el("legend", { text: "Photo" }), photoBlock()]),
+      el("fieldset", {}, [el("legend", { text: "Headline and intro" })].concat(fields(function (f) { return !f.culture; }))),
+      el("fieldset", {}, [
+        el("legend", { text: "For this role" }),
+        field("Why " + first, edit.whyMe, function (v) { edit.whyMe = v; }, { area: true, rows: 7, max: 3000 }),
+        field("Available", edit.availability, function (v) { edit.availability = v; }, { max: 80 }),
+        field("Location", edit.location, function (v) { edit.location = v; }, { max: 120 }),
+        el("p", { class: "locked", text: "Bill rate, Epic role and certifications come from Bullhorn. Change them there and the Card follows." }),
+      ]),
+      el("fieldset", {}, [el("legend", { text: "Culture corner" })].concat(fields(function (f) { return f.culture; }))),
+      el("fieldset", {}, [el("legend", { text: "References" })].concat(refs.length ? refs : [el("p", { class: "note", text: "No references on this Card. They come from Bullhorn when Forge drafts the email." })])),
+    ]));
+    box.appendChild(el("footer", {}, [
+      el("span", { class: "status", id: "edit-status", "aria-live": "polite", text: editDirty ? "Unsaved changes" : "Changes show on the client's Card when you save." }),
+      el("button", { class: "btn plain", type: "button", text: "Cancel", onclick: function () { editDirty = false; closeEditor(); load(); } }),
+      el("button", { class: "btn primary", type: "button", text: "Save", onclick: saveEdits }),
+    ]));
+  }
+
+  function openEditor() {
+    if (!data.editable) return;
+    edit = JSON.parse(JSON.stringify(data.editable));
+    editDirty = false;
+    buildEditor();
+    requestAnimationFrame(function () { document.body.classList.add("editing"); });
+  }
+  function closeEditor() {
+    if (editDirty && !window.confirm("Discard your unsaved changes?")) return;
+    document.body.classList.remove("editing");
+    if (editDirty) { editDirty = false; load(); }
+  }
+
+  function saveEdits() {
+    setEditStatus("Saving…");
+    var profile = {}; (edit.schema || []).forEach(function (f) { profile[f.key] = edit.profile[f.key] || ""; });
+    var put = function (url, body) {
+      return fetch(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then(function (r) { return r.json().then(function (b) { if (!r.ok) { var e = new Error(b.error || "Not saved."); e.errors = b.errors; throw e; } return b; }); });
+    };
+    put("/api/cards/links/" + edit.linkId + "/content", { whyMe: edit.whyMe, availability: edit.availability, location: edit.location, references: edit.references })
+      .then(function () { return put("/api/cards/candidate/" + edit.candidateId + "/live", profile); })
+      .then(function () { editDirty = false; setEditStatus("Saved. The client's Card shows this now."); data.editable = JSON.parse(JSON.stringify(edit)); })
+      .catch(function (e) {
+        var msg = e.message;
+        if (Array.isArray(e.errors)) msg = e.errors[0];
+        else if (e.errors) {
+          var k = Object.keys(e.errors)[0];
+          var f = (edit.schema || []).filter(function (x) { return x.key === k; })[0];
+          msg = (f ? f.label.replace(/…$/, "") + ": " : "") + String(e.errors[k]).replace(/\s*Your recruiter[^.]*\./, "");
+        }
+        setEditStatus(msg || e.message, true);
+      });
+  }
+
+  window.addEventListener("beforeunload", function (e) { if (editDirty) { e.preventDefault(); e.returnValue = ""; } });
+
   function shared() {
     var s = document.getElementById("shared");
     s.innerHTML = "";
@@ -332,11 +535,13 @@ main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
     fetch(url, { headers: { Accept: "application/json" } }).then(function (r) {
       return r.json().then(function (body) { return { status: r.status, body: body }; });
     }).then(function (res) {
+      if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return; }
       if (res.status === 429) { app.innerHTML = '<p class="loading">Too many requests. Try again in a minute.</p>'; return; }
       if (res.body.state !== "active") { data = res.body; shared(); closedPage(res.body); return; }
       data = res.body;
       shared();
       render();
+      if (previewId) recruiterBar();
       seen(location.hash === "#compare" ? "compare" : (other ? "card:" + other : "card"));
     }).catch(function () {
       app.innerHTML = '<p class="loading">This page didn\'t load. Check your connection and refresh.</p>';

@@ -533,6 +533,52 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       }
     });
 
+    await t.test("K25 recruiter preview: same view as the client, no open counted, no alerts, same scope", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      const link = await h.db.getOne("SELECT id, view_count FROM card_links WHERE submission_id = 11 AND revoked_at IS NULL ORDER BY id LIMIT 1");
+      h.sent.length = 0;
+      let r = await req(h.port, "GET", "/api/cards/preview/" + link.id, { headers: rec });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.preview, true);
+      assert.equal(r.json.card.name, "Jack Corbell");
+      r = await req(h.port, "POST", "/api/cards/preview/" + link.id + "/seen", { headers: rec, body: { page: "card" } });
+      assert.equal(r.json.counted, false);
+      const after = await h.db.getOne("SELECT view_count FROM card_links WHERE id = $1", [link.id]);
+      assert.equal(after.view_count, link.view_count, "preview never counts as an open");
+      assert.equal(h.sent.length, 0, "preview sends no alerts");
+      assert.equal((await req(h.port, "GET", "/api/cards/preview/" + link.id + "/c/" + other.publicId, { headers: rec })).status, 404);
+      assert.equal((await req(h.port, "GET", "/api/cards/preview/" + link.id + "/resume/" + jack.publicId, { headers: rec })).status, 200);
+      const page = await req(h.port, "GET", "/cards/preview/" + link.id, { headers: rec });
+      assert.equal(page.status, 200);
+      const st = await h.api.profileStatus(1);
+      assert.equal(st.hasPhoto, true);
+      assert.equal(st.hasStory, true);
+      const blank = await h.api.profileStatus(3);
+      assert.deepEqual([blank.hasPhoto, blank.hasStory], [false, false]);
+    });
+
+    await t.test("K27 recruiter edits Why, availability, location and reference wording; pay and contact details refused", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      const link = await h.db.getOne("SELECT id FROM card_links WHERE submission_id = 11 AND revoked_at IS NULL ORDER BY id LIMIT 1");
+      await h.db.query("UPDATE card_links SET refs = $1::jsonb WHERE submission_id = 11", [JSON.stringify([{ id: "note:1", role: "Director", organization: "Riverside Health", text: "Strongest Beaker analyst I have managed." }])]);
+      let pv = await req(h.port, "GET", "/api/cards/preview/" + link.id, { headers: rec });
+      assert.equal(pv.json.editable.references.length, 1);
+      assert.equal(pv.json.editable.candidateId, 1);
+      let r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { whyMe: "Two Beaker go-lives, both early.", availability: "Dec 1", location: "Remote", references: [{ text: "Best Beaker analyst I've managed.", role: "Director", organization: "Riverside Health" }] } });
+      assert.equal(r.status, 200, r.text);
+      const pub = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(pub.json.card.whyMe, "Two Beaker go-lives, both early.");
+      assert.equal(pub.json.card.availability, "Dec 1");
+      assert.equal(pub.json.card.references[0].text, "Best Beaker analyst I've managed.");
+      for (const bad of [{ whyMe: "Happy at 95/hr on W2" }, { whyMe: "Pay rate is flexible" }, { location: "Call 608-555-1212" }, { whyMe: "email jack@x.com" }]) {
+        r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: bad });
+        assert.equal(r.status, 400, JSON.stringify(bad));
+      }
+      r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { references: [{ text: "a" + "b".repeat(30) }, { text: "invented reference text here" }] } });
+      assert.equal(r.status, 400, "can't add references by hand");
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J)).json.card.whyMe, "Two Beaker go-lives, both early.", "refused edits change nothing");
+    });
+
     await t.test("K17 a new draft for the same submission refreshes older links", async function () {
       await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell", whyMe: "Updated Why Me." });
       const r = await req(h.port, "GET", "/api/card-public/" + J);
@@ -579,7 +625,7 @@ test("K19 server: Card paths are public, the recruiter page is not", function ()
   const m = src.match(/const PUBLIC_PREFIX = (\[[^\]]*\])/);
   const prefixes = JSON.parse(m[1]);
   ["/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/"].forEach(function (p) { assert.ok(prefixes.indexOf(p) >= 0, p); });
-  ["/cards", "/api/cards/overview", "/api/cards/candidate/1/approve"].forEach(function (p) {
+  ["/cards", "/cards/preview/12", "/api/cards/preview/12", "/api/cards/overview", "/api/cards/candidate/1/approve", "/api/cards/links/1/content"].forEach(function (p) {
     assert.ok(!prefixes.some(function (x) { return p.startsWith(x); }), p + " must stay behind login");
   });
 });

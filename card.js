@@ -30,6 +30,7 @@ const PUBLIC_ID_LENGTH = 12;
 const EDIT_LINK_DAYS = 14;
 const RATE_CACHE_MS = 2 * 60 * 1000;
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+const CARD_TEXT_MAX = 2400;
 
 /** Fields a candidate may edit. Everything else on the Card comes from the recruiter's submittal. */
 const CANDIDATE_FIELDS = [
@@ -269,6 +270,7 @@ function registerCard(app, deps) {
   const verifyBill = deps.verifyBill || null; // (submissionId) → { amount, source }; throws when Bullhorn can't be read
   const getFile = deps.getFile || null; // (entity, entityId, fileId) → { buffer, name, contentType }
   const pagesDir = deps.pagesDir || path.join(__dirname, "public");
+  const leakCheck = deps.findInternalLeak || require("./forge").findInternalLeak;
   const rateCache = new Map();
   let ready = null;
 
@@ -361,7 +363,16 @@ function registerCard(app, deps) {
   /** { state: "active"|"expired"|"revoked"|"missing", link, job } */
   async function resolveClientLink(token) {
     await needDb();
-    const link = await linkByToken(token);
+    return judgeLink(await linkByToken(token));
+  }
+
+  /** Recruiter preview: the same rules a client link goes through, looked up by id behind the login. */
+  async function resolveLinkById(id) {
+    await needDb();
+    return judgeLink(await db.getOne("SELECT * FROM card_links WHERE id = $1", [id]));
+  }
+
+  async function judgeLink(link) {
     if (!link) return { state: "missing" };
     if (link.revoked_at) return { state: "revoked", link: link };
     const job = await db.getOne("SELECT id, title, status, is_open, is_deleted FROM jobs WHERE id = $1", [link.job_id]);
@@ -465,9 +476,9 @@ function registerCard(app, deps) {
     };
   }
 
-  async function fullCard(row) {
+  async function fullCard(row, opts) {
     const rate = await shownRate(row);
-    await rateAlert(row, rate);
+    if (!(opts && opts.preview)) await rateAlert(row, rate);
     const pf = profileFields(row);
     const culture = CANDIDATE_FIELDS.filter(function (f) { return f.culture && pf[f.key]; })
       .map(function (f) { return { prompt: f.label, text: pf[f.key] }; });
@@ -489,8 +500,12 @@ function registerCard(app, deps) {
     return { name: r.name || "Anura Connect", title: r.title || "", phone: r.phone || "", email: r.email || "" };
   }
 
-  async function publicView(token, otherId) {
-    const r = await resolveClientLink(token);
+  async function publicView(token, otherId, opts) {
+    return viewFor(await resolveClientLink(token), otherId, opts);
+  }
+
+  async function viewFor(r, otherId, opts) {
+    const preview = !!(opts && opts.preview);
     if (r.state === "missing") return { status: 404, body: { state: "missing" } };
     const contact = contactOf(r.link);
     const job = { title: r.link.job_title || "", clientName: r.link.client_name || "" };
@@ -507,7 +522,7 @@ function registerCard(app, deps) {
     const summaries = [];
     for (const row of rows) {
       const rate = await shownRate(row);
-      await rateAlert(row, rate);
+      if (!preview) await rateAlert(row, rate);
       summaries.push(await summaryFor(row, rate));
     }
     return {
@@ -518,14 +533,18 @@ function registerCard(app, deps) {
         job: job,
         sent: current.public_id,
         candidates: summaries,
-        card: await fullCard(focus),
+        card: await fullCard(focus, { preview: preview }),
+        preview: preview || undefined,
       },
     };
   }
 
   /** Same scope check every public sub-resource uses: the target must be in this link's job. */
   async function scopedRow(token, pid) {
-    const r = await resolveClientLink(token);
+    return scopedFor(await resolveClientLink(token), pid);
+  }
+
+  async function scopedFor(r, pid) {
     if (r.state !== "active") return null;
     if (!validPublicId(pid)) return null;
     const rows = await siblings(r.link);
@@ -631,6 +650,15 @@ function registerCard(app, deps) {
     return { buffer: buf, type: type };
   }
 
+  async function sendResume(req, res, row) {
+    const f = await getFile("Candidate", row.candidate_id, parseInt(row.resume_file_id, 10));
+    const name = String(row.resume_name || "Resume.pdf").replace(/[^\w.\- ]+/g, "_").slice(0, 120);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+    res.setHeader("Content-Disposition", (req.query.download ? "attachment" : "inline") + "; filename=\"" + name + "\"");
+    res.send(f.buffer);
+  }
+
   function fail(res, e) {
     const status = e.status || 500;
     if (status >= 500) log("[Card] " + e.message);
@@ -685,12 +713,7 @@ function registerCard(app, deps) {
     try {
       const row = await scopedRow(req.params.token, req.params.pid);
       if (!row || !row.resume_file_id || !getFile) return res.status(404).json({ error: "Résumé not available." });
-      const f = await getFile("Candidate", row.candidate_id, parseInt(row.resume_file_id, 10));
-      const name = String(row.resume_name || "Resume.pdf").replace(/[^\w.\- ]+/g, "_").slice(0, 120);
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
-      res.setHeader("Content-Disposition", (req.query.download ? "attachment" : "inline") + "; filename=\"" + name + "\"");
-      res.send(f.buffer);
+      await sendResume(req, res, row);
     } catch (e) { fail(res, e); }
   });
 
@@ -1129,15 +1152,113 @@ function registerCard(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
-  /** Preview any Card as the client would see it, without minting a link or counting a view. */
-  app.get("/api/cards/links/:linkId/preview", async function (req, res) {
+  /* Preview any client link exactly as the client sees it, behind the login: same page, same scope
+     and rate rules, no view counted, no alerts. /cards/preview/:linkId → card.html in preview mode. */
+  app.get("/cards/preview/:linkId", function (req, res) {
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(path.join(pagesDir, "card.html"));
+  });
+
+  app.get("/api/cards/preview/:linkId", async function (req, res) {
+    try {
+      const id = digitsId(req.params.linkId);
+      const r = await resolveLinkById(id);
+      const v = await viewFor(r, null, { preview: true });
+      if (r.link) v.body.editable = await editableFor(r.link);
+      res.status(v.status).json(v.body);
+    } catch (e) { fail(res, e); }
+  });
+
+  /** Everything a recruiter may change on this Card, raw. Rate, Epic role and certs stay with Bullhorn. */
+  async function editableFor(link) {
+    const live = await profileFor(link.candidate_id);
+    const refs = Array.isArray(link.refs) ? link.refs : (link.refs ? JSON.parse(link.refs) : []);
+    return {
+      linkId: link.id,
+      candidateId: link.candidate_id,
+      whyMe: link.why_me || "",
+      availability: link.availability || "",
+      location: link.location || "",
+      references: refs.map(function (r) { return { role: r.role || "", organization: r.organization || "", relationship: r.relationship || "", rehire: r.rehire || "", text: r.text || "" }; }),
+      profile: jsonField(live && live.fields),
+      hasPhoto: !!(live && live.has_photo),
+      schema: CANDIDATE_FIELDS.map(function (f) { return { key: f.key, label: f.label, max: f.max, culture: !!f.culture }; }),
+    };
+  }
+
+  /** Recruiter text that goes to a client: no contact details, no pay or employment terms. */
+  function recruiterTextError(label, text, max) {
+    const t = String(text == null ? "" : text);
+    if (t.length > max) return label + ": keep it under " + max + " characters.";
+    if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(t)) return label + ": take out the email address.";
+    if (/(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]\d{4}\b/.test(t)) return label + ": take out the phone number.";
+    if (/https?:\/\/|\bwww\./i.test(t)) return label + ": take out the link.";
+    const leak = leakCheck ? leakCheck([t], [], {}) : null;
+    if (leak && leak.rule !== "references" && leak.rule !== "other client" && leak.rule !== "internal note") return label + ": remove \"" + leak.snippet + "\" (" + leak.rule + ").";
+    return "";
+  }
+
+  /** Recruiter edits to the submission's Card content: applies to every live link for that submission. */
+  app.put("/api/cards/links/:linkId/content", async function (req, res) {
     try {
       await needDb();
       const link = await db.getOne("SELECT * FROM card_links WHERE id = $1", [digitsId(req.params.linkId)]);
       if (!link) return res.status(404).json({ error: "Link not found." });
-      const rows = await siblings(link);
-      const row = rows.filter(function (x) { return x.id === link.id || x.candidate_id === link.candidate_id; })[0] || link;
-      res.json({ card: await fullCard(row), contact: contactOf(link), job: { title: link.job_title, clientName: link.client_name } });
+      const b = req.body || {};
+      const errors = [];
+      const whyMe = cleanFieldValue(b.whyMe != null ? b.whyMe : link.why_me);
+      const availability = cleanFieldValue(b.availability != null ? b.availability : link.availability);
+      const location = cleanFieldValue(b.location != null ? b.location : link.location);
+      [["Why", whyMe, 3000], ["Available", availability, 80], ["Location", location, 120]].forEach(function (x) {
+        const err = recruiterTextError(x[0], x[1], x[2]); if (err) errors.push(err);
+      });
+      const current = Array.isArray(link.refs) ? link.refs : [];
+      let refs = current;
+      if (Array.isArray(b.references)) {
+        if (b.references.length > current.length) errors.push("References can be edited or removed here, not added. New ones come from Bullhorn through Forge.");
+        refs = b.references.slice(0, current.length).map(function (r, i) {
+          const base = current[i] || {};
+          const out = Object.assign({}, base, {
+            text: cleanFieldValue(r && r.text != null ? r.text : base.text),
+            role: cleanFieldValue(r && r.role != null ? r.role : base.role),
+            organization: cleanFieldValue(r && r.organization != null ? r.organization : base.organization),
+          });
+          [["Reference " + (i + 1), out.text, CARD_TEXT_MAX], ["Reference " + (i + 1) + " title", out.role, 120], ["Reference " + (i + 1) + " organization", out.organization, 120]].forEach(function (x) {
+            const err = recruiterTextError(x[0], x[1], x[2]); if (err) errors.push(err);
+          });
+          if (!out.text) errors.push("Reference " + (i + 1) + " is empty. Remove it instead.");
+          return out;
+        });
+      }
+      if (errors.length) return res.status(400).json({ error: errors[0], errors: errors });
+      await db.query("UPDATE card_links SET why_me = $2, availability = $3, location = $4, refs = $5::jsonb WHERE submission_id = $1 AND revoked_at IS NULL",
+        [link.submission_id, whyMe, availability, location, JSON.stringify(refs)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/cards/preview/:linkId/c/:pid", async function (req, res) {
+    try {
+      const v = await viewFor(await resolveLinkById(digitsId(req.params.linkId)), req.params.pid, { preview: true });
+      res.status(v.status).json(v.body);
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/cards/preview/:linkId/seen", function (req, res) { res.json({ counted: false, reason: "preview" }); });
+
+  app.get("/api/cards/preview/:linkId/photo/:pid", async function (req, res) {
+    try {
+      const row = await scopedFor(await resolveLinkById(digitsId(req.params.linkId)), req.params.pid);
+      if (!row) return res.status(404).end();
+      sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [row.candidate_id]));
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/cards/preview/:linkId/resume/:pid", async function (req, res) {
+    try {
+      const row = await scopedFor(await resolveLinkById(digitsId(req.params.linkId)), req.params.pid);
+      if (!row || !row.resume_file_id || !getFile) return res.status(404).json({ error: "Résumé not available." });
+      await sendResume(req, res, row);
     } catch (e) { fail(res, e); }
   });
 
@@ -1148,7 +1269,23 @@ function registerCard(app, deps) {
     await db.query("UPDATE card_links SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL", [id, reason || "draft failed"]);
   }
 
-  return { mintClientLink: mintClientLink, revokeLink: revokeLink, ensureTables: ensureTables, _rateCache: rateCache };
+  /** What's missing from a candidate's approved Card, so Forge can nudge the recruiter to send the edit link. */
+  async function profileStatus(candidateId) {
+    await needDb();
+    const live = await profileFor(candidateId);
+    const draft = await draftFor(candidateId);
+    const f = jsonField(live && live.fields);
+    const hasStory = !!(f.headline || f.intro || CANDIDATE_FIELDS.some(function (x) { return x.culture && f[x.key]; }));
+    const pendingLink = await db.getOne("SELECT id FROM card_edit_links WHERE candidate_id = $1 AND revoked_at IS NULL AND expires_at > now() LIMIT 1", [candidateId]);
+    return {
+      hasPhoto: !!(live && live.has_photo),
+      hasStory: hasStory,
+      waitingOnCandidate: !!pendingLink && !(draft && draft.status === "submitted"),
+      waitingOnReview: !!(draft && draft.status === "submitted"),
+    };
+  }
+
+  return { mintClientLink: mintClientLink, revokeLink: revokeLink, profileStatus: profileStatus, ensureTables: ensureTables, _rateCache: rateCache };
 }
 
 module.exports = registerCard;

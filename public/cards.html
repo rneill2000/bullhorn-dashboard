@@ -5,51 +5,65 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Anura Connect Cards</title>
 <link rel="icon" type="image/jpeg" href="/fulllogo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
 <style>
+:root{--navy:#0E2E47;--blue:#176087;--sky:#53A2BE;--ink:#102331;--muted:#566B7A;--line:#D7E1E8;--fog:#EEF3F6;--paper:#fff;--ok:#1F7A55;--bad:#B42318;--warn:#8A5300;
+  --serif:"Source Serif 4",Georgia,serif;--sans:"Public Sans",-apple-system,"Segoe UI",Roboto,sans-serif}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc;color:#334155;font-size:14px}
-a{color:#176087}
-header{background:#0E2E47;color:#fff;padding:14px 24px;display:flex;align-items:center;gap:14px}
-header img{height:30px;border-radius:6px}
-header h1{font-size:17px;font-weight:700}
-header a{color:#53A2BE;margin-left:auto;font-size:13px}
-.wrap{max-width:1200px;margin:0 auto;padding:22px 24px 60px;display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start}
-.panel{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px}
-.panel+.panel{margin-top:16px}
-h2{font-size:15px;color:#0f172a;margin-bottom:10px}
-h3{font-size:13px;color:#176087;margin:18px 0 8px}
-input[type=search],input[type=text],textarea{width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font:inherit;color:#334155}
-textarea{resize:vertical}
-.list{list-style:none}
-.list li{padding:8px 0;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;gap:8px;align-items:center}
+body{font-family:var(--sans);background:var(--fog);color:var(--ink);font-size:14px;line-height:1.45}
+a{color:var(--blue)}
+:focus-visible{outline:3px solid var(--sky);outline-offset:2px}
+header{background:var(--navy);color:#fff;padding:14px 28px;display:flex;align-items:center;gap:14px}
+header img{height:32px;border-radius:6px;background:#fff}
+header h1{font-family:var(--serif);font-weight:400;font-size:21px;letter-spacing:-.01em}
+header a{color:#C9DCE6;margin-left:auto;font-size:13px;text-decoration:none}
+header a:hover{color:#fff}
+.wrap{max-width:1240px;margin:0 auto;padding:26px 28px 70px;display:grid;grid-template-columns:320px 1fr;gap:26px;align-items:start}
+.panel{background:var(--paper);border-radius:14px;padding:20px 22px;box-shadow:0 1px 0 var(--line),0 10px 28px -24px rgba(14,46,71,.5)}
+.panel+.panel{margin-top:18px}
+h2{font-family:var(--serif);font-weight:600;font-size:19px;color:var(--ink);margin-bottom:12px;letter-spacing:-.01em}
+h3{font-size:13px;font-weight:700;color:var(--blue);margin:26px 0 10px;padding-top:20px;border-top:1px solid var(--line)}
+input[type=search],input[type=text],textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px;color:var(--ink);background:#fff}
+textarea{resize:vertical;font-family:var(--serif);font-size:15px}
+input:focus,textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(23,96,135,.15)}
+.list{list-style:none;margin-top:6px}
+.list li{padding:10px 0;border-bottom:1px solid var(--fog);display:flex;justify-content:space-between;gap:8px;align-items:center}
 .list li:last-child{border-bottom:0}
-.list button.pick{background:none;border:0;font:inherit;color:#176087;font-weight:600;cursor:pointer;text-align:left;padding:0}
-.muted{color:#64748b;font-size:12px}
-.pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:#eef2f7;color:#475569}
-.pill.active{background:#dcfce7;color:#166534}.pill.expired{background:#f1f5f9;color:#64748b}.pill.revoked{background:#fee2e2;color:#991b1b}.pill.submitted{background:#fef3c7;color:#92400e}
-.btn{font:inherit;font-weight:600;font-size:13px;padding:7px 12px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;color:#176087;cursor:pointer}
-.btn:hover{border-color:#53A2BE}
-.btn.primary{background:#176087;border-color:#176087;color:#fff}
-.btn.danger{color:#b91c1c}
+.list button.pick{background:none;border:0;font:inherit;font-size:15px;color:var(--blue);font-weight:600;cursor:pointer;text-align:left;padding:0}
+.muted{color:var(--muted);font-size:12.5px}
+.pill{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--fog);color:var(--muted)}
+.pill.active{background:#E3F4EB;color:var(--ok)}.pill.expired{background:var(--fog);color:var(--muted)}.pill.revoked{background:#FDECEA;color:var(--bad)}.pill.submitted{background:#FFF1D6;color:var(--warn)}
+.btn{display:inline-block;font:inherit;font-weight:600;font-size:13px;padding:8px 13px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--blue);cursor:pointer;text-decoration:none}
+.btn:hover{border-color:var(--sky)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.primary:hover{background:var(--navy)}
+.btn.danger{color:var(--bad)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.fieldbox{margin-bottom:12px}
-.fieldbox label{font-weight:600;font-size:13px;display:block;margin-bottom:4px}
-.fieldbox .err{color:#b91c1c;font-size:12px;margin-top:3px}
-.diff{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;white-space:pre-wrap}
-.same{color:#94a3b8;font-size:12px}
-.photo{width:96px;height:114px;border-radius:8px;object-fit:cover;border:1px solid #e2e8f0;background:#f1f5f9}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.fieldbox{margin-bottom:14px}
+.fieldbox label{font-weight:600;font-size:13px;display:block;margin-bottom:5px}
+.fieldbox .err{color:var(--bad);font-size:12.5px;margin-top:4px}
+.same{color:var(--muted);font-size:12.5px;margin-top:4px}
+.photo{width:96px;height:114px;border-radius:10px;object-fit:cover;border:1px solid var(--line);background:var(--fog)}
+.who{display:flex;gap:18px;align-items:center;margin-bottom:4px}
+.who .photo{width:84px;height:100px}
+.who .initials{width:84px;height:100px;border-radius:10px;background:var(--fog);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:32px;color:var(--blue)}
+.who h2{font-size:28px;margin:0}
+.who .sub{color:var(--muted);font-size:14px;margin-top:2px}
+.who .acts{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 table{width:100%;border-collapse:collapse}
-th{text-align:left;font-size:12px;color:#64748b;font-weight:600;padding:6px 8px;border-bottom:1px solid #e2e8f0}
-td{padding:8px;border-bottom:1px solid #f1f5f9;vertical-align:top}
-.linkbox{background:#f1f5f9;border-radius:8px;padding:10px;word-break:break-all;font-size:13px;margin:8px 0}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0E2E47;color:#fff;padding:10px 18px;border-radius:8px;display:none}
-.empty{color:#94a3b8;padding:6px 0}
-@media (max-width:900px){.wrap{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
+th{text-align:left;font-size:12.5px;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);background:#F7FAFB}
+td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
+.linkbox{background:var(--fog);border-radius:8px;padding:10px 12px;word-break:break-all;font-size:13px;margin:8px 0}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:11px 20px;border-radius:10px;display:none;box-shadow:0 10px 30px -10px rgba(0,0,0,.4)}
+.empty{color:var(--muted);padding:8px 0}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;padding:18px 16px 60px}.grid2{grid-template-columns:1fr}.who{flex-wrap:wrap}.who .acts{margin-left:0}}
 </style>
 </head>
 <body>
-<header><img src="/fulllogo.jpg" alt=""><h1>Anura Connect Cards</h1><a href="/">Back to dashboard</a></header>
+<header><img src="/fulllogo.jpg" alt=""><h1>Candidate Cards</h1><a href="/">Back to dashboard</a></header>
 <div class="wrap">
   <div>
     <div class="panel">
@@ -95,7 +109,7 @@ td{padding:8px;border-bottom:1px solid #f1f5f9;vertical-align:top}
           '<td>' + (l.views || 0) + (l.lastViewedAt ? '<div class="muted">last ' + esc(when(l.lastViewedAt)) + '</div>' : '') + '</td>' +
           '<td>' + esc(l.billDisplay || "—") + '</td>' +
           '<td><span class="pill ' + l.state + '">' + l.state + '</span>' +
-          (l.state === "active" ? '<div class="row" style="margin-top:6px"><button class="btn" data-rate="' + l.id + '">Use Bullhorn rate</button><button class="btn danger" title="Pulls this candidate from the client\'s Card and comparison" data-revoke="' + l.id + '">Turn off</button></div>' : '') +
+          (l.state === "active" ? '<div class="row" style="margin-top:6px"><a class="btn" href="/cards/preview/' + l.id + '" target="_blank" rel="noopener">Preview as client</a><button class="btn" data-rate="' + l.id + '">Use Bullhorn rate</button><button class="btn danger" title="Pulls this candidate from the client\'s Card and comparison" data-revoke="' + l.id + '">Turn off</button></div>' : '') +
           '</td></tr>' +
           (!withCandidate && l.references && l.references.length && l.state === "active" ? '<tr><td colspan="5" style="background:#f8fafc"><div class="muted" style="margin-bottom:4px">References on this Card</div>' +
             l.references.map(function (r, i) {
@@ -178,8 +192,11 @@ td{padding:8px;border-bottom:1px solid #f1f5f9;vertical-align:top}
       schema = d.schema;
       var c = d.candidate, live = d.live, draft = d.draft;
       var pendingReview = draft && draft.status === "submitted";
-      var h = '<div class="row" style="justify-content:space-between"><h2>' + esc(c.name) + '</h2><button class="btn" id="back">All links</button></div>' +
-        '<div class="muted">' + esc(c.epicRole) + (c.certs.length ? " &middot; " + esc(c.certs.join(", ")) : "") + '</div>';
+      var activeLink = d.links.filter(function (l) { return l.state === "active"; })[0];
+      var h = '<div class="who">' + (live.hasPhoto ? '<img class="photo" src="/api/cards/candidate/' + id + '/photo?v=' + Date.now() + '" alt="">' : '<div class="initials">' + esc((c.name || "?").split(/\s+/).map(function (x) { return x[0] || ""; }).slice(0, 2).join("")) + '</div>') +
+        '<div><h2>' + esc(c.name) + '</h2><div class="sub">' + esc(c.epicRole) + (c.certs.length ? ", " + esc(c.certs.join(", ")) : "") + '</div></div>' +
+        '<div class="acts">' + (activeLink ? '<a class="btn primary" href="/cards/preview/' + activeLink.id + '" target="_blank" rel="noopener">Open and edit Card</a>' : '') + '<button class="btn" id="back">All links</button></div></div>' +
+        (activeLink ? '' : '<p class="muted" style="margin-top:8px">No live client link yet. The Card opens for editing once Forge sends this candidate to a client. You can still set their photo and story below.</p>');
 
       if (pendingReview) {
         h += '<h3>Candidate sent changes ' + esc(when(draft.submittedAt)) + '</h3><div class="grid2"><div>' +

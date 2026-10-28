@@ -2869,6 +2869,22 @@ function registerForge(app, deps) {
           card = null;
         }
       }
+      let cardSetup = null;
+      if (card && cards && typeof cards.profileStatus === "function") {
+        try {
+          const st = await cards.profileStatus(base.candidate.id);
+          if (!st.hasPhoto || !st.hasStory) {
+            cardSetup = {
+              candidateId: base.candidate.id,
+              firstName: String(candidateName || base.candidate.name || "").split(/\s+/)[0] || "",
+              needsPhoto: !st.hasPhoto,
+              needsStory: !st.hasStory,
+              waitingOnCandidate: !!st.waitingOnCandidate,
+              waitingOnReview: !!st.waitingOnReview,
+            };
+          }
+        } catch (e) { /* the nudge is optional */ }
+      }
 
       const boxes = await mailboxes();
       const mailbox = matchMailbox(boxes, body.mailbox) || matchMailbox(boxes, user && user.email) || boxes[0] || "";
@@ -2901,6 +2917,7 @@ function registerForge(app, deps) {
           resume: { attached: false, status: resumeStatus, filename: attachName },
           card: card ? { url: card.url } : null,
           cardNote: cardNote,
+          cardSetup: cardSetup,
         });
       }
 
@@ -2929,6 +2946,7 @@ function registerForge(app, deps) {
             resume: { attached: false, status: resumeStatus, filename: attachName },
             card: card ? { url: card.url } : null,
             cardNote: cardNote,
+            cardSetup: cardSetup,
           });
         }
         await writeAudit(Object.assign({}, auditBase, { mailbox: mailbox, draftStatus: "failed", note: e.message }));
@@ -2979,6 +2997,7 @@ function registerForge(app, deps) {
         attachNote: attachNote,
         card: card ? { url: card.url } : null,
         cardNote: cardNote,
+        cardSetup: cardSetup,
         instructions: "Draft saved in " + mailbox + ". Open it in Outlook, confirm the résumé, and send it yourself.",
       });
     } catch (e) {
