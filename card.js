@@ -28,7 +28,7 @@ const TOKEN_ALPHABET = "bcdfghjkmnpqrstvwxz"; // 19 letters, 32 chars ≈ 136 bi
 const TOKEN_LENGTH = 32;
 const PUBLIC_ID_LENGTH = 12;
 const EDIT_LINK_DAYS = 14;
-const RATE_CACHE_MS = 10 * 60 * 1000;
+const RATE_CACHE_MS = 2 * 60 * 1000;
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 
 /** Fields a candidate may edit. Everything else on the Card comes from the recruiter's submittal. */
@@ -73,10 +73,17 @@ function jobIsActive(job) {
   return true;
 }
 
-/** Submissions the client already passed on, or that were pulled, drop out of the comparison. */
-function submissionHidden(status) {
-  return /reject|withdr|declin|not\s+submitted|dnu/i.test(String(status || ""));
+/**
+ * Other candidates appear in the comparison only once they are actually in front of this client:
+ * marked Client Submission (or further along) in Bullhorn. A Forge draft that was never sent, a
+ * failed draft, a dismissed submission, or one the client rejected stays out.
+ */
+const SHOWN_STATUSES = ["client submission", "first interview", "second interview", "third interview", "interview",
+  "offer out", "offer extended", "offer accepted", "placed"];
+function submissionShown(status) {
+  return SHOWN_STATUSES.indexOf(String(status || "").trim().toLowerCase()) >= 0;
 }
+function submissionHidden(status) { return !submissionShown(status); }
 
 const CONTACT_RES = [
   { re: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, msg: "Leave out email addresses. Your recruiter handles introductions." },
@@ -171,15 +178,30 @@ function setPublicHeaders(res, opts) {
   }
 }
 
+function clientIp(req) {
+  const parts = String(req.headers["x-forwarded-for"] || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(req.ip || (req.socket && req.socket.remoteAddress) || "?");
+}
+
+function digitsId(value) {
+  const s = String(value == null ? "" : value);
+  if (!/^\d{1,10}$/.test(s)) throw Object.assign(new Error("Not found."), { status: 404 });
+  return parseInt(s, 10);
+}
+
 function makeLimiter(perMinute) {
   const hits = new Map();
   return function (req, res, next) {
-    const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim() || "?";
+    // The last X-Forwarded-For hop is the one Railway's proxy appended; earlier ones are client-supplied.
+    const ip = clientIp(req);
     const now = Date.now();
+    if (hits.size > 5000) {
+      for (const [k, v] of hits) { if (v.reset < now) hits.delete(k); }
+      if (hits.size > 5000) hits.clear();
+    }
     let row = hits.get(ip);
     if (!row || row.reset < now) { row = { n: 0, reset: now + 60000 }; hits.set(ip, row); }
     row.n += 1;
-    if (hits.size > 5000) { for (const [k, v] of hits) { if (v.reset < now) hits.delete(k); } }
     if (row.n > perMinute) {
       res.setHeader("Retry-After", "60");
       return res.status(429).json({ error: "Too many requests. Try again in a minute." });
@@ -300,7 +322,7 @@ function registerCard(app, deps) {
       "WHERE l.job_id = $1 AND l.client_id = $2 AND l.revoked_at IS NULL " +
       "ORDER BY l.candidate_id, l.created_at DESC", [link.job_id, link.client_id]);
     return rows.filter(function (r) {
-      return r.candidate_id === link.candidate_id || !submissionHidden(r.sub_status);
+      return r.candidate_id === link.candidate_id || submissionShown(r.sub_status);
     }).sort(function (a, b) { return Number(a.sub_added || 0) - Number(b.sub_added || 0); });
   }
 
@@ -332,7 +354,7 @@ function registerCard(app, deps) {
     if (live.amount == null || Math.abs(live.amount - snap) >= 0.01) {
       return { display: null, reason: "mismatch", live: live.amount, snap: snap };
     }
-    return { display: link.bill_display || formatMoney(snap), reason: "verified" };
+    return { display: formatMoney(snap), reason: "verified" };
   }
 
   async function rateAlert(link, rate) {
@@ -460,7 +482,7 @@ function registerCard(app, deps) {
     const r = await resolveClientLink(token);
     if (r.state !== "active") return { counted: false, reason: r.state };
     const link = r.link;
-    const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+    const ip = clientIp(req);
     const ipHash = crypto.createHash("sha256").update(ip + "|" + new Date(now()).toISOString().slice(0, 10)).digest("hex").slice(0, 16);
     await db.query("INSERT INTO card_views (link_id, page, ip_hash, user_agent) VALUES ($1,$2,$3,$4)", [link.id, String(page || "card").slice(0, 40), ipHash, ua.slice(0, 200)]);
     const updated = await db.getOne(
@@ -499,7 +521,8 @@ function registerCard(app, deps) {
   }
 
   async function draftFor(candidateId) {
-    return db.getOne("SELECT candidate_id, fields, photo_type, (photo IS NOT NULL) AS has_photo, photo_changed, status, submitted_at, review_note, reviewed_at, updated_at FROM card_drafts WHERE candidate_id = $1", [candidateId]);
+    return db.getOne("SELECT candidate_id, fields, photo_type, (photo IS NOT NULL) AS has_photo, photo_changed, status, submitted_at, review_note, reviewed_at, updated_at, " +
+      "to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS version FROM card_drafts WHERE candidate_id = $1", [candidateId]);
   }
 
   async function profileFor(candidateId) {
@@ -744,7 +767,7 @@ function registerCard(app, deps) {
         "SELECT d.candidate_id, d.submitted_at, d.photo_changed, c.first_name, c.last_name, c.name FROM card_drafts d " +
         "LEFT JOIN candidates c ON c.id = d.candidate_id WHERE d.status = 'submitted' ORDER BY d.submitted_at ASC LIMIT 100");
       const links = await db.getAll(
-        "SELECT l.id, l.candidate_id, l.candidate_name, l.job_id, l.job_title, l.client_name, l.contact_email, l.created_by, l.created_at, " +
+        "SELECT l.id, l.candidate_id, l.candidate_name, l.job_id, l.job_title, l.client_name, l.contact_email, l.created_by, l.created_at, l.bill_display, l.refs, " +
         "l.view_count, l.last_viewed_at, l.revoked_at, j.status AS job_status, j.is_open, j.is_deleted FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id " +
         "ORDER BY COALESCE(l.last_viewed_at, l.created_at) DESC LIMIT 60");
       res.json({
@@ -755,7 +778,9 @@ function registerCard(app, deps) {
   });
 
   function linkOut(l) {
+    const refs = Array.isArray(l.refs) ? l.refs : (l.refs ? JSON.parse(l.refs) : []);
     return {
+      references: refs.map(function (r) { return { role: r.role || "", organization: r.organization || "", text: r.text || "" }; }),
       id: l.id, candidateId: l.candidate_id, candidateName: l.candidate_name, jobId: l.job_id, jobTitle: l.job_title, clientName: l.client_name,
       contactEmail: l.contact_email, createdBy: l.created_by, createdAt: l.created_at, views: l.view_count, lastViewedAt: l.last_viewed_at,
       billDisplay: l.bill_display || "",
@@ -778,7 +803,7 @@ function registerCard(app, deps) {
   app.get("/api/cards/candidate/:id", async function (req, res) {
     try {
       await needDb();
-      const id = parseInt(req.params.id, 10);
+      const id = digitsId(req.params.id);
       const cand = await candidateRow(id);
       if (!cand) return res.status(404).json({ error: "Candidate not found." });
       const live = await profileFor(id);
@@ -792,7 +817,7 @@ function registerCard(app, deps) {
         candidate: { id: id, name: [cand.first_name, cand.last_name].filter(Boolean).join(" ") || cand.name, firstName: cand.first_name || "", email: cand.email || "", epicRole: cand.custom_text5 || "", certs: certList(cand) },
         schema: CANDIDATE_FIELDS,
         live: { fields: liveFields, hasPhoto: !!(live && live.has_photo), photoSource: live && live.photo_source || "", approvedBy: live && live.approved_by || "", approvedAt: live && live.approved_at || null, errors: errorsFor(liveFields) },
-        draft: draft ? { fields: draftFields, hasPhoto: !!draft.has_photo, photoChanged: !!draft.photo_changed, status: draft.status, submittedAt: draft.submitted_at, reviewNote: draft.review_note || "", errors: errorsFor(draftFields) } : null,
+        draft: draft ? { fields: draftFields, hasPhoto: !!draft.has_photo, photoChanged: !!draft.photo_changed, status: draft.status, submittedAt: draft.submitted_at, reviewNote: draft.review_note || "", errors: errorsFor(draftFields), version: draft.version } : null,
         editLinks: edits.map(function (e) { return { id: e.id, createdBy: e.created_by, createdAt: e.created_at, expiresAt: e.expires_at, revoked: !!e.revoked_at, lastUsedAt: e.last_used_at }; }),
         links: links.map(linkOut),
       });
@@ -802,7 +827,7 @@ function registerCard(app, deps) {
   app.post("/api/cards/candidate/:id/edit-link", async function (req, res) {
     try {
       await needDb();
-      const id = parseInt(req.params.id, 10);
+      const id = digitsId(req.params.id);
       const cand = await candidateRow(id);
       if (!cand) return res.status(404).json({ error: "Candidate not found." });
       const u = getUser(req);
@@ -817,7 +842,7 @@ function registerCard(app, deps) {
   app.post("/api/cards/edit-links/:linkId/revoke", async function (req, res) {
     try {
       await needDb();
-      await db.query("UPDATE card_edit_links SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL", [parseInt(req.params.linkId, 10)]);
+      await db.query("UPDATE card_edit_links SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL", [digitsId(req.params.linkId)]);
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
@@ -825,9 +850,13 @@ function registerCard(app, deps) {
   app.post("/api/cards/candidate/:id/approve", async function (req, res) {
     try {
       await needDb();
-      const id = parseInt(req.params.id, 10);
-      const d = await db.getOne("SELECT fields, photo, photo_type, photo_changed FROM card_drafts WHERE candidate_id = $1", [id]);
-      if (!d) return res.status(404).json({ error: "Nothing to approve." });
+      const id = digitsId(req.params.id);
+      const d = await db.getOne("SELECT fields, photo, photo_type, photo_changed, status, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS version FROM card_drafts WHERE candidate_id = $1", [id]);
+      if (!d || d.status !== "submitted") return res.status(409).json({ error: "There's nothing waiting for approval. Reload the page." });
+      // Approve exactly the version the recruiter looked at. A photo or edit that arrived since then waits for another review.
+      if (!req.body || req.body.version !== d.version) {
+        return res.status(409).json({ error: "The candidate changed their Card while you were reviewing it. Reload and review the latest version." });
+      }
       // The reviewer may tidy wording while approving; the same rules apply to their edits.
       const parsed = readCandidateFields(req.body && req.body.fields);
       const fields = Object.assign({}, jsonField(d.fields), parsed.fields);
@@ -850,7 +879,7 @@ function registerCard(app, deps) {
   app.post("/api/cards/candidate/:id/send-back", async function (req, res) {
     try {
       await needDb();
-      const id = parseInt(req.params.id, 10);
+      const id = digitsId(req.params.id);
       const note = String(req.body && req.body.note || "").trim().slice(0, 500);
       if (!note) return res.status(400).json({ error: "Tell the candidate what to change." });
       await db.query("UPDATE card_drafts SET status = 'editing', review_note = $2, reviewed_by = $3, reviewed_at = now() WHERE candidate_id = $1", [id, note, who(req)]);
@@ -861,7 +890,7 @@ function registerCard(app, deps) {
   app.put("/api/cards/candidate/:id/live", async function (req, res) {
     try {
       await needDb();
-      const id = parseInt(req.params.id, 10);
+      const id = digitsId(req.params.id);
       const live = await profileFor(id);
       const parsed = readCandidateFields(req.body);
       const fields = Object.assign({}, jsonField(live && live.fields), parsed.fields);
@@ -878,7 +907,7 @@ function registerCard(app, deps) {
   app.get("/api/cards/candidate/:id/photo", async function (req, res) {
     try {
       await needDb();
-      const id = parseInt(req.params.id, 10);
+      const id = digitsId(req.params.id);
       res.setHeader("Cache-Control", "no-store");
       if (req.query.draft) return sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_drafts WHERE candidate_id = $1", [id]));
       sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [id]));
@@ -888,7 +917,7 @@ function registerCard(app, deps) {
   app.post("/api/cards/candidate/:id/photo", rawImage, async function (req, res) {
     try {
       await needDb();
-      const id = parseInt(req.params.id, 10);
+      const id = digitsId(req.params.id);
       const img = readPhoto(req);
       await db.query(
         "INSERT INTO card_profiles (candidate_id, photo, photo_type, photo_source, photo_updated_at, updated_at) VALUES ($1,$2,$3,'recruiter',now(),now()) " +
@@ -901,7 +930,7 @@ function registerCard(app, deps) {
   app.delete("/api/cards/candidate/:id/photo", async function (req, res) {
     try {
       await needDb();
-      await db.query("UPDATE card_profiles SET photo = NULL, photo_type = NULL, photo_source = NULL, photo_updated_at = now() WHERE candidate_id = $1", [parseInt(req.params.id, 10)]);
+      await db.query("UPDATE card_profiles SET photo = NULL, photo_type = NULL, photo_source = NULL, photo_updated_at = now() WHERE candidate_id = $1", [digitsId(req.params.id)]);
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
@@ -909,7 +938,11 @@ function registerCard(app, deps) {
   app.post("/api/cards/links/:linkId/revoke", async function (req, res) {
     try {
       await needDb();
-      await db.query("UPDATE card_links SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL", [parseInt(req.params.linkId, 10), who(req)]);
+      const link = await db.getOne("SELECT submission_id FROM card_links WHERE id = $1", [digitsId(req.params.linkId)]);
+      if (!link) return res.status(404).json({ error: "Link not found." });
+      // Every link for this submission: a candidate pulled from one hiring manager's view is pulled from the comparison too.
+      await db.query("UPDATE card_links SET revoked_at = now(), revoked_by = $2 WHERE submission_id = $1 AND revoked_at IS NULL", [link.submission_id, who(req)]);
+      rateCache.delete(String(link.submission_id));
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
@@ -918,7 +951,7 @@ function registerCard(app, deps) {
   app.post("/api/cards/links/:linkId/use-bullhorn-rate", async function (req, res) {
     try {
       await needDb();
-      const link = await db.getOne("SELECT * FROM card_links WHERE id = $1", [parseInt(req.params.linkId, 10)]);
+      const link = await db.getOne("SELECT * FROM card_links WHERE id = $1", [digitsId(req.params.linkId)]);
       if (!link) return res.status(404).json({ error: "Link not found." });
       rateCache.delete(String(link.submission_id));
       const live = await liveRate(link.submission_id);
@@ -930,10 +963,25 @@ function registerCard(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
+  /** Take one reference off this candidate's Card for this submission (every link). */
+  app.post("/api/cards/links/:linkId/references/:index/remove", async function (req, res) {
+    try {
+      await needDb();
+      const link = await db.getOne("SELECT submission_id, refs FROM card_links WHERE id = $1", [digitsId(req.params.linkId)]);
+      if (!link) return res.status(404).json({ error: "Link not found." });
+      const refs = Array.isArray(link.refs) ? link.refs.slice() : [];
+      const i = digitsId(req.params.index);
+      if (i >= refs.length) return res.status(404).json({ error: "Reference not found." });
+      refs.splice(i, 1);
+      await db.query("UPDATE card_links SET refs = $2::jsonb WHERE submission_id = $1", [link.submission_id, JSON.stringify(refs)]);
+      res.json({ ok: true, references: refs.length });
+    } catch (e) { fail(res, e); }
+  });
+
   app.get("/api/cards/links/:linkId/views", async function (req, res) {
     try {
       await needDb();
-      const rows = await db.getAll("SELECT viewed_at, page FROM card_views WHERE link_id = $1 ORDER BY viewed_at DESC LIMIT 100", [parseInt(req.params.linkId, 10)]);
+      const rows = await db.getAll("SELECT viewed_at, page FROM card_views WHERE link_id = $1 ORDER BY viewed_at DESC LIMIT 100", [digitsId(req.params.linkId)]);
       res.json({ data: rows });
     } catch (e) { fail(res, e); }
   });
@@ -942,7 +990,7 @@ function registerCard(app, deps) {
   app.get("/api/cards/links/:linkId/preview", async function (req, res) {
     try {
       await needDb();
-      const link = await db.getOne("SELECT * FROM card_links WHERE id = $1", [parseInt(req.params.linkId, 10)]);
+      const link = await db.getOne("SELECT * FROM card_links WHERE id = $1", [digitsId(req.params.linkId)]);
       if (!link) return res.status(404).json({ error: "Link not found." });
       const rows = await siblings(link);
       const row = rows.filter(function (x) { return x.id === link.id || x.candidate_id === link.candidate_id; })[0] || link;
@@ -950,7 +998,14 @@ function registerCard(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
-  return { mintClientLink: mintClientLink, ensureTables: ensureTables, _rateCache: rateCache };
+  /** Forge calls this when the Outlook draft fails, so a link that never reached anyone can't surface later. */
+  async function revokeLink(id, reason) {
+    if (!id) return;
+    await needDb();
+    await db.query("UPDATE card_links SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL", [id, reason || "draft failed"]);
+  }
+
+  return { mintClientLink: mintClientLink, revokeLink: revokeLink, ensureTables: ensureTables, _rateCache: rateCache };
 }
 
 module.exports = registerCard;
@@ -959,6 +1014,7 @@ module.exports.hashToken = hashToken;
 module.exports.validToken = validToken;
 module.exports.jobIsActive = jobIsActive;
 module.exports.submissionHidden = submissionHidden;
+module.exports.submissionShown = submissionShown;
 module.exports.checkCandidateText = checkCandidateText;
 module.exports.readCandidateFields = readCandidateFields;
 module.exports.sniffImage = sniffImage;

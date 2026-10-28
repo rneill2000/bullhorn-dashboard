@@ -270,11 +270,12 @@ app.get("/auth/logout", async (req, res) => {
 const PUBLIC_EXACT = new Set(["/login", "/health", "/portal", "/api/portal/config", "/api/portal/submit", "/favicon.ico"]);
 // /card/ and /card-edit/ are the Anura Connect Card: unguessable token links for clients and candidates (card.js).
 const PUBLIC_PREFIX = ["/auth/", "/api/dux-webhook/", "/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/"];
-const PUBLIC_ASSET = /\.(js|css|png|jpg|jpeg|gif|svg|ico|webp|woff2?|ttf|map)$/i;
+// Only real files in public/ (never /api/, never .html). See makePublicAssetCheck.
+const isPublicAsset = publicHost.makePublicAssetCheck(path.join(__dirname, "public"));
 function isPublicPath(p) {
   if (PUBLIC_EXACT.has(p)) return true;
   if (PUBLIC_PREFIX.some(function (x) { return p.startsWith(x); })) return true;
-  if (PUBLIC_ASSET.test(p) && !/\.html$/i.test(p)) return true;
+  if (isPublicAsset(p)) return true;
   return false;
 }
 app.get("/login", function (req, res) { res.setHeader("Cache-Control", "no-store"); res.sendFile(path.join(__dirname, "public", "login.html")); });

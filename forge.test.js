@@ -2349,3 +2349,33 @@ test("K20b a Card failure never blocks the submittal", async function () {
     assert.doesNotMatch(JSON.parse(calls[0].body).body.content, /Anura Connect Card/);
   } finally { server.close(); }
 });
+
+test("K20c a failed Outlook draft turns its Card link off", async function () {
+  const revoked = [];
+  const app = express();
+  app.use(express.json());
+  const row = fixtureRow();
+  forge(app, {
+    db: { ready: true, query: async function () { return { rows: [] }; }, getOne: async function () { return row; }, getAll: async function () { return []; } },
+    graphFetch: async function () { throw new Error("Graph 500"); },
+    bhFetch: async function (endpoint) {
+      if (String(endpoint).indexOf("fileAttachments") >= 0) return { data: [{ id: 9, name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", fileExtension: "pdf", dateAdded: 3 }] };
+      if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: { id: 42, customText10: "185", billRate: 185 } };
+      if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { id: 9, clientBillRate: 185 } };
+      return { data: {} };
+    },
+    downloadCandidateFile: async function () { return { name: "a.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF") }; },
+    outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
+    getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
+    cards: {
+      mintClientLink: async function () { return { id: 77, url: "https://dashboard.anuraconnect.com/card/bcdfghjkmnpqrstvwxzbcdfghjkmnpqr" }; },
+      revokeLink: async function (id, why) { revoked.push([id, why]); },
+    },
+  });
+  const server = await listen(app);
+  try {
+    const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", CARD_DRAFT_BODY);
+    assert.equal(draft.status, 502);
+    assert.deepEqual(revoked, [[77, "outlook draft failed"]]);
+  } finally { server.close(); }
+});

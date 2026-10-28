@@ -109,7 +109,33 @@ function sweepSessionHandoffs(now) {
   }
 }
 
+/**
+ * Static assets anyone may load: only files that really exist under the public folder, and never
+ * anything under /api/. A bare extension check let "/api/cards/candidate/42.png" or
+ * "/tearsheet/5.js" skip the login gate and reach a route that ignores the extension.
+ */
+function makePublicAssetCheck(dir) {
+  const fs = require("fs");
+  const path = require("path");
+  const files = new Set();
+  (function walk(d, prefix) {
+    let entries = [];
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return; }
+    entries.forEach(function (ent) {
+      const rel = prefix + "/" + ent.name;
+      if (ent.isDirectory()) walk(path.join(d, ent.name), rel);
+      else if (!/\.html?$/i.test(ent.name)) files.add(rel);
+    });
+  })(dir, "");
+  return function isPublicAsset(p) {
+    const s = String(p || "");
+    if (s.startsWith("/api/")) return false;
+    return files.has(s);
+  };
+}
+
 module.exports = {
+  makePublicAssetCheck,
   RAILWAY_HOST,
   CUSTOM_ORIGIN,
   canonicalPublicOrigin,

@@ -2932,6 +2932,9 @@ function registerForge(app, deps) {
           });
         }
         await writeAudit(Object.assign({}, auditBase, { mailbox: mailbox, draftStatus: "failed", note: e.message }));
+        if (card && cards && typeof cards.revokeLink === "function") {
+          try { await cards.revokeLink(card.id, "outlook draft failed"); } catch (rErr) { console.log("[Forge] card revoke failed:", rErr.message); }
+        }
         return res.status(502).json({ error: e.message, subject: email.subject, bodyText: email.text, bodyHtml: email.html });
       }
 
