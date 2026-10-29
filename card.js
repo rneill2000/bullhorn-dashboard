@@ -1085,11 +1085,21 @@ function registerCard(app, deps) {
     }).map(function (p) { return { name: niceName(p.candidate_name || ""), role: p.job_title || "", since: monthYear(p.date_begin) }; });
   }
 
+  /** A teammate's phone: Bullhorn first, else the phone they saved in their Submittal Forge signature. */
+  async function forgePhone(userId, email) {
+    try {
+      const r = await db.getOne("SELECT phone FROM submittal_forge_profiles WHERE user_key = ANY($1::text[]) AND COALESCE(phone, '') <> '' ORDER BY updated_at DESC NULLS LAST LIMIT 1",
+        [[userId != null ? "bh:" + userId : "", email ? "email:" + String(email).toLowerCase() : ""].filter(Boolean)]);
+      return r ? r.phone : "";
+    } catch (e) { return ""; }
+  }
+
   async function accountLead(clientId) {
-    const c = await db.getOne("SELECT cl.owner_name, cl.owner_email, cu.email AS cu_email, cu.phone, cu.mobile, cu.name AS cu_name, cu.occupation FROM clients cl LEFT JOIN corporate_users cu ON cu.id = cl.owner_id WHERE cl.id = $1", [clientId]);
+    const c = await db.getOne("SELECT cl.owner_id, cl.owner_name, cl.owner_email, cu.email AS cu_email, cu.phone, cu.mobile, cu.name AS cu_name, cu.occupation FROM clients cl LEFT JOIN corporate_users cu ON cu.id = cl.owner_id WHERE cl.id = $1", [clientId]);
     if (c && (c.cu_email || c.owner_email)) {
       const n = niceName(c.cu_name || c.owner_name || "");
-      return { name: n, title: c.occupation || "", phone: c.phone || c.mobile || "", email: c.cu_email || c.owner_email || "", photoUrl: teamPhoto(n) };
+      const email = c.cu_email || c.owner_email || "";
+      return { name: n, title: c.occupation || "", phone: c.phone || c.mobile || await forgePhone(c.owner_id, email), email: email, photoUrl: teamPhoto(n) };
     }
     const l = await db.getOne("SELECT recruiter FROM card_links WHERE client_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1", [clientId]);
     return l ? contactOf(l) : { name: "Anura Connect", title: "", phone: "", email: "" };

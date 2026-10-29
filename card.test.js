@@ -885,6 +885,18 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.deepEqual(v.card.skills, ["Beaker AP", "Beaker CP"]);
     });
 
+    await t.test("K43 account manager's phone: Bullhorn first, else their Submittal Forge signature", async function () {
+      await h.db.query("CREATE TABLE IF NOT EXISTS submittal_forge_profiles (user_key TEXT PRIMARY KEY, name TEXT, title TEXT, phone TEXT, updated_at TIMESTAMPTZ)");
+      await h.db.query("INSERT INTO submittal_forge_profiles VALUES ('bh:6', 'Peter Oppermann', 'VP, Client Success', '(608) 555-7777', now()) ON CONFLICT (user_key) DO UPDATE SET phone = EXCLUDED.phone");
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      let v = await req(h.port, "GET", "/api/cards/systems/900/view", { headers: rec });
+      assert.equal(v.json.contact.phone, "608-555-0199", "Bullhorn number wins");
+      await h.db.query("UPDATE corporate_users SET phone = NULL WHERE id = 6");
+      v = await req(h.port, "GET", "/api/cards/systems/900/view", { headers: rec });
+      assert.equal(v.json.contact.phone, "(608) 555-7777", "falls back to the Forge signature");
+      await h.db.query("UPDATE corporate_users SET phone = '608-555-0199' WHERE id = 6");
+    });
+
     await t.test("K36 a manager's link: their roles only, greeted by name, Cards outside their roles unreachable", async function () {
       const rec = { "x-test-user": "ben@anuraconnect.com" };
       let r = await req(h.port, "POST", "/api/cards/systems/900/link", { headers: rec, body: { contactId: "601" } });

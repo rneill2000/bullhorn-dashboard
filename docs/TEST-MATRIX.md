@@ -166,3 +166,4 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K40 | Anura contact photo URL from anuraconnect.com/about by name (aliases; none for "Anura Connect") | card.test.js |
 | K41 | Career: health systems from Bullhorn work history + Anura placements (merged, newest first, consulting firms left out); Former Epic only from Epic itself | card.test.js |
 | K42 | LinkedIn (from Bullhorn only when clearly theirs; candidate/recruiter entry wins, profile links only) and Epic skills chips | card.test.js |
+| K43 | Account manager phone: Bullhorn, else their Submittal Forge signature | card.test.js |

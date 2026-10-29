@@ -52,7 +52,7 @@ const PEOPLE = [
     healthSystems: [{ name: "Riverside Health", role: "Beaker Analyst", from: 2023, to: "Present", viaAnura: true }, { name: "Northfield Medical Center", role: "Beaker CP Analyst", from: 2020, to: 2023 }, { name: "St. Agnes Regional", role: "Lab Systems Analyst", from: 2017, to: 2020 }], formerEpic: false,
     name: "Jack Corbell", headline: "Beaker analyst who's happiest at the lab bench",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology", "Beaker Anatomic Pathology"],
-    availability: "Nov 18", location: "Madison, WI (hybrid)", rate: "$185/hr", isNew: false,
+    availability: "Nov 18", location: "Madison, WI (hybrid)", rate: "$155/hr", isNew: false,
     photo: portrait({ bg: "#CFE3EC", skin: "#F1C7A5", skinShade: "#DFAA86", hair: "#6B4A2F", style: "short", shirt: "#176087" }),
     whyMe: "Jack has led two Beaker CP go-lives in the last four years, most recently at Riverside Health, where he rebuilt specimen tracking six weeks ahead of cutover.\n\nHe's strongest where your project is riskiest: lab workflow redesign with pathologists in the room. He holds both CP and AP certifications and can be on site for kickoff.",
     intro: "I build Beaker the way lab people actually work. Most of my best fixes came from an afternoon standing next to a tech, not from a design session.",
@@ -80,7 +80,7 @@ const PEOPLE = [
     healthSystems: [{ name: "Prairie State Health", role: "Beaker CP Build Lead", from: 2022, to: "Present" }, { name: "Gulf Coast Medical", role: "Beaker Analyst", from: 2019, to: 2022 }, { name: "Lakeview Academic Medical Center", role: "Go-live support (with Epic)", from: 2018, to: 2018 }], formerEpic: true,
     name: "Mia Lopez", headline: "CP build lead for a nine-hospital system",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology"],
-    availability: "Dec 2", location: "Remote (Central)", rate: "$172/hr", isNew: true,
+    availability: "Dec 2", location: "Remote (Central)", rate: "$149/hr", isNew: true,
     photo: portrait({ bg: "#F3E1D6", skin: "#C98E64", skinShade: "#B07650", hair: "#2B1D17", style: "long", shirt: "#2E8B83" }),
     whyMe: "Mia spent three years at Epic in Technical Services, then ran CP build for a nine-hospital system on a single Beaker instance, including the standardization work most teams put off until after go-live.\n\nShe's the person you want if your labs do things nine different ways today. Her references call out how she gets lab directors to agree.",
     intro: "Standardizing a lab is mostly listening. I like the meeting where everyone finally agrees on one way to do it.",
@@ -102,7 +102,7 @@ const PEOPLE = [
     healthSystems: [{ name: "Lakeview Academic Medical Center", role: "Senior Clinical Systems Analyst", from: 2019, to: "Present" }, { name: "Metro West Hospital", role: "Lab Systems Analyst", from: 2016, to: 2019 }], formerEpic: false,
     name: "Darnell Price", headline: "Beaker plus Cupid, comfortable in both labs",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology", "Cupid"],
-    availability: "2 weeks", location: "Chicago, IL", rate: "$165/hr", isNew: true,
+    availability: "2 weeks", location: "Chicago, IL", rate: "$145/hr", isNew: true,
     photo: portrait({ bg: "#DCE5EC", skin: "#8A5A3C", skinShade: "#734A30", hair: "#1B1412", style: "crop", shirt: "#4A5866", beard: true, glasses: true }),
     whyMe: "Darnell pairs Beaker CP with Cupid, which matters if your cath lab and core lab share instruments or staff. He's supported both through upgrades at a 600-bed academic center.\n\nHe's available in two weeks and can be on site for kickoff.",
     intro: "I like the problems that sit between two applications. That's usually where the real issue is.",
@@ -191,9 +191,17 @@ function registerDemo(app, deps) {
   async function contactFor() {
     if (!db) return CONTACT;
     try {
-      const u = await db.getOne("SELECT name, email, phone, mobile, occupation FROM corporate_users WHERE LOWER(email) = $1 LIMIT 1", [CONTACT.email]);
-      if (!u) return CONTACT;
-      return Object.assign({}, CONTACT, { title: u.occupation || CONTACT.title, phone: u.phone || u.mobile || "" });
+      const u = await db.getOne("SELECT id, name, email, phone, mobile, occupation FROM corporate_users WHERE LOWER(email) = $1 LIMIT 1", [CONTACT.email]);
+      let phone = u ? (u.phone || u.mobile || "") : "";
+      if (!phone) {
+        // The phone Peter saved in his Submittal Forge signature.
+        const keys = ["email:" + CONTACT.email].concat(u && u.id != null ? ["bh:" + u.id] : []);
+        try {
+          const f = await db.getOne("SELECT phone FROM submittal_forge_profiles WHERE user_key = ANY($1::text[]) AND COALESCE(phone, '') <> '' ORDER BY updated_at DESC NULLS LAST LIMIT 1", [keys]);
+          phone = f ? f.phone : "";
+        } catch (e) { phone = ""; }
+      }
+      return Object.assign({}, CONTACT, { title: (u && u.occupation) || CONTACT.title, phone: phone });
     } catch (e) { return CONTACT; }
   }
 
