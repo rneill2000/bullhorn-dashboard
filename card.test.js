@@ -804,6 +804,98 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal(audit.status, 200, audit.text);
       assert.equal(audit.json.mode, "enforce");
     });
+
+    await t.test("K36 a manager's link: their roles only, greeted by name, Cards outside their roles unreachable", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      let r = await req(h.port, "POST", "/api/cards/systems/900/link", { headers: rec, body: { contactId: "601" } });
+      assert.equal(r.status, 400, "a contact at another client");
+      r = await req(h.port, "POST", "/api/cards/systems/900/link", { headers: rec, body: { contactId: "501" } });
+      assert.equal(r.status, 200, r.text);
+      const T = r.json.url.split("/h/")[1];
+      const v = await req(h.port, "GET", "/api/hs-public/" + T);
+      assert.equal(v.status, 200, v.text);
+      assert.equal(v.json.viewer.name, "Dana Ruiz");
+      assert.equal(v.json.viewer.known, true);
+      assert.deepEqual(v.json.roles.map(function (x) { return x.title; }), ["Beaker Analyst"]);
+      assert.deepEqual(v.json.sourcing, ["Willow Analyst"], "her open role with nobody sent yet");
+      assert.deepEqual(v.json.managers, [], "no team roster on a personal page");
+      // Sam is on Lee's HB role: not reachable from Dana's link.
+      assert.equal((await req(h.port, "GET", "/api/hs-public/" + T + "/card/" + other.publicId)).status, 404);
+      const pid = v.json.roles[0].candidates[0].href.split("/c/")[1];
+      assert.equal((await req(h.port, "GET", "/api/hs-public/" + T + "/card/" + pid)).status, 200);
+      const admin = await req(h.port, "GET", "/api/cards/systems/900", { headers: rec });
+      assert.equal(admin.json.links[0].forName, "Dana Ruiz");
+      const pv = await req(h.port, "GET", "/api/cards/systems/900/view?contact=501", { headers: rec });
+      assert.deepEqual(pv.json.roles.map(function (x) { return x.title; }), ["Beaker Analyst"]);
+      h.sent.length = 0;
+      await req(h.port, "POST", "/api/hs-public/" + T + "/seen", { body: {} });
+      await new Promise(function (res) { setTimeout(res, 50); });
+      assert.match(h.sent[0].subject, /^Dana Ruiz \(UNIVERSITY OF WISCONSIN HOSPITALS\) opened/);
+    });
+
+    await t.test("K37 interview or pass from the Card: saved, shown to the client, recruiter and account lead told", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      const view = (await req(h.port, "GET", "/api/card-public/" + J)).json;
+      assert.deepEqual(view.viewer, { name: "Dana Ruiz", known: true }, "the person the Card was emailed to");
+      assert.equal(view.card.feedback, null);
+      const pid = view.card.id;
+      const soon = new Date(Date.now() + 3 * 86400000).toISOString();
+      h.sent.length = 0;
+      let r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "hire" } });
+      assert.equal(r.status, 400);
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "interview", slots: ["2001-01-01T10:00:00Z"] } });
+      assert.equal(r.status, 400, "past times refused");
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { headers: rec, body: { action: "interview", slots: [soon] } });
+      assert.equal(r.json.preview, true, "a recruiter clicking through never records a decision");
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "interview", slots: [soon], tz: "America/Chicago", note: "Mornings are best." } });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.feedback.action, "interview");
+      assert.equal(r.json.feedback.by, "Dana Ruiz");
+      await new Promise(function (res) { setTimeout(res, 50); });
+      const mail = h.sent.filter(function (m) { return /^Interview request: Jack Corbell/.test(m.subject); });
+      assert.equal(mail.length, 1);
+      assert.deepEqual(mail[0].to.map(function (x) { return x.email; }).sort(), ["ben@anuraconnect.com", "peter@anuraconnect.com"]);
+      assert.match(mail[0].html, /Mornings are best/);
+      assert.match(mail[0].html, /C[DS]T/, "times in the client's time zone");
+      const again = (await req(h.port, "GET", "/api/card-public/" + J)).json;
+      assert.equal(again.card.feedback.action, "interview");
+      assert.equal(again.candidates.filter(function (c) { return c.id === pid; })[0].feedback.action, "interview");
+      // Seen on the health system page and the recruiter's Cards page too.
+      const overview = await req(h.port, "GET", "/api/cards/overview", { headers: rec });
+      assert.equal(overview.json.decisions[0].action, "interview");
+      assert.equal(overview.json.decisions[0].by, "Dana Ruiz");
+      // A double click doesn't record twice.
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "interview" } });
+      assert.equal(r.status, 409);
+      await h.db.query("UPDATE card_feedback SET created_at = created_at - interval '1 minute'");
+      // Pass needs a reason from the list.
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "pass", reason: "Too expensive!!" } });
+      assert.equal(r.status, 400);
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "pass", reason: "Rate" } });
+      assert.equal(r.status, 200, r.text);
+      await h.db.query("UPDATE card_feedback SET created_at = created_at - interval '1 minute'");
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "reopen" } });
+      assert.equal(r.json.feedback, null);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J)).json.card.feedback, null, "undo puts them back under review");
+      await h.db.query("UPDATE card_feedback SET created_at = created_at - interval '1 minute'");
+      // A team link has no name to go on: it asks.
+      r = await req(h.port, "POST", "/api/cards/systems/900/link", { headers: rec, body: {} });
+      const T = r.json.url.split("/h/")[1];
+      const hv = await req(h.port, "GET", "/api/hs-public/" + T);
+      const hpid = hv.json.roles.filter(function (x) { return x.title === "Beaker Analyst"; })[0].candidates.filter(function (c) { return c.name === "Jack Corbell"; })[0].href.split("/c/")[1];
+      r = await req(h.port, "POST", "/api/hs-public/" + T + "/card/" + hpid + "/feedback/" + hpid, { body: { action: "interview" } });
+      assert.equal(r.status, 400);
+      assert.match(r.json.error, /Add your name/);
+      r = await req(h.port, "POST", "/api/hs-public/" + T + "/card/" + hpid + "/feedback/" + hpid, { body: { action: "interview", name: "Chris Lab" } });
+      assert.equal(r.status, 200, r.text);
+      const hv2 = await req(h.port, "GET", "/api/hs-public/" + T);
+      const jackCol = hv2.json.roles.filter(function (x) { return x.title === "Beaker Analyst"; })[0].candidates.filter(function (c) { return c.name === "Jack Corbell"; })[0];
+      assert.equal(jackCol.feedback.by, "Chris Lab");
+      assert.equal(hv2.json.stats.interviews, 1);
+      // Recruiter's candidate view shows it on the link.
+      const cand = await req(h.port, "GET", "/api/cards/candidate/1", { headers: rec });
+      assert.equal(cand.json.links.filter(function (l) { return l.state === "active"; })[0].feedback.action, "interview");
+    });
   } finally {
     await h.close();
   }

@@ -138,6 +138,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
           '<td>' + (l.views || 0) + (l.lastViewedAt ? '<div class="muted">last ' + esc(when(l.lastViewedAt)) + '</div>' : '') + '</td>' +
           '<td>' + esc(l.billDisplay || "—") + '</td>' +
           '<td><span class="pill ' + l.state + '">' + l.state + '</span>' +
+          (l.feedback ? '<div style="margin-top:4px;font-size:13px">' + fbText(l.feedback) + '</div>' : '') +
           (l.held && l.held.length && l.state === "active" ? '<div class="muted" style="color:#9a3412;margin-top:4px">Held back from the client: ' + esc(l.held.join(", ")) + '. It has contact info or is a scan. Upload a clean PDF to Bullhorn.</div>' : '') +
           (l.state === "active" ? '<div class="row" style="margin-top:6px"><a class="btn" href="/cards/preview/' + l.id + '" target="_blank" rel="noopener">Preview as client</a><button class="btn" data-rate="' + l.id + '">Use Bullhorn rate</button><button class="btn danger" title="Pulls this candidate from the client\'s Card and comparison" data-revoke="' + l.id + '">Turn off</button></div>' : '') +
           '</td></tr>' +
@@ -170,6 +171,21 @@ header a{display:inline-flex;align-items:center;min-height:32px}
     });
   }
 
+  function fbText(f) {
+    if (!f) return "";
+    var who = f.by ? " by " + esc(f.by) : "";
+    if (f.action === "interview") return '<b style="color:#14532D">Interview requested</b>' + who + (f.times && f.times.length ? ': ' + f.times.map(esc).join("; ") : ". No times picked: reach out to schedule.");
+    return '<b>Passed</b>' + who + (f.reason ? " (" + esc(f.reason) + ")" : "");
+  }
+  function decisionsBlock(list) {
+    if (!list.length) return "";
+    return '<h2>Client decisions <span class="muted" style="font-weight:400;font-size:14px">last 14 days</span></h2><ul class="list" style="margin-bottom:22px">' + list.map(function (f) {
+      return '<li style="display:block"><button class="btn" data-cand="' + f.candidateId + '">' + esc(f.candidateName) + '</button> <span class="muted">' + esc(f.jobTitle) + ', ' + esc(f.clientName) + ' &middot; ' + esc(when(f.at)) + '</span>' +
+        '<div style="margin-top:4px">' + fbText(f) + (f.note ? '<div class="muted">“' + esc(f.note) + '”</div>' : '') + '</div></li>';
+    }).join("") + '</ul>';
+  }
+
+  var freshLink = null;
   function overview() {
     call("GET", "/api/cards/overview").then(function (o) {
       $("pending").innerHTML = o.pending.length ? o.pending.map(function (p) {
@@ -177,7 +193,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
       }).join("") : '<li class="empty">Nothing waiting.</li>';
       bindLinkButtons($("pending"), overview);
       if (!new URLSearchParams(location.search).get("candidate") && !new URLSearchParams(location.search).get("system")) {
-        $("detail").innerHTML = '<h2>Recent Card links</h2>' + linksTable(o.links, true);
+        $("detail").innerHTML = decisionsBlock(o.decisions || []) + '<h2>Recent Card links</h2>' + linksTable(o.links, true);
         bindLinkButtons($("detail"), overview);
       }
     }).catch(function (e) { $("pending").innerHTML = '<li class="empty">' + esc(e.message) + '</li>'; });
@@ -399,10 +415,16 @@ header a{display:inline-flex;align-items:center;min-height:32px}
         '<div class="row" style="margin-top:8px"><select id="mgrAdd" aria-label="Add a manager" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px"><option value="">Add someone else from ' + esc(name) + '…</option>' +
         d.contacts.filter(function (c) { return shownIds.indexOf(c.id) < 0; }).map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.name) + (c.title ? " (" + esc(c.title) + ")" : "") + (c.hidden ? " [hidden]" : "") + '</option>'; }).join("") + '</select></div>';
       h += '<div class="row" style="margin-top:18px"><button class="btn primary" id="sysSave">Save</button><span class="muted" id="sysStatus"></span></div>';
-      h += '<h3>Client link</h3><p class="muted">One link for everyone at ' + esc(name) + '. It shows open roles here, nothing from other clients. Turn it off anytime.</p><div id="sysLinkOut"></div>' +
-        (st.vms ? '<p class="empty">Off: this client reviews candidates in their VMS.</p>' : '<div class="row" style="margin-top:8px"><button class="btn primary" id="sysMk">Create link</button></div>') +
+      h += '<h3>Client link</h3><p class="muted">One link for everyone at ' + esc(name) + ', or one per manager. Either way it shows this client only. Turn any link off anytime.</p><div id="sysLinkOut">' + (freshLink && freshLink.id === String(id) ? '<div class="linkbox">' + esc(freshLink.url) + '</div><button class="btn" id="sysCopy">Copy link</button>' : '') + '</div>' +
+        (st.vms ? '<p class="empty">Off: this client reviews candidates in their VMS.</p>' :
+          '<div class="row" style="margin-top:8px"><label for="sysFor" class="sr-only">Link for</label><select id="sysFor" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px;min-height:36px">' +
+          '<option value="">Everyone at ' + esc(name) + ' (all open roles)</option>' +
+          d.managers.map(function (m) { return '<option value="' + esc(m.id) + '">' + esc(m.name) + ' only' + (m.hiringFor.length ? ' (' + esc(m.hiringFor.join(", ")) + ')' : '') + '</option>'; }).join("") +
+          '</select><button class="btn primary" id="sysMk">Create link</button></div>' +
+          '<p class="muted" style="margin-top:6px">A manager\'s link shows only their roles and greets them by name, so you know who opened it and who asked for an interview.</p>') +
         (d.links.length ? '<ul class="list" style="margin-top:8px">' + d.links.map(function (l) {
-          return '<li><span>Created ' + esc(when(l.createdAt)) + ' by ' + esc(l.createdBy) + ' <span class="muted">' + (l.views || 0) + ' opens' + (l.lastViewedAt ? ", last " + esc(when(l.lastViewedAt)) : "") + '</span></span>' +
+          return '<li><span><b>' + esc(l.forName || "Everyone") + '</b> &middot; created ' + esc(when(l.createdAt)) + ' by ' + esc(l.createdBy) + ' <span class="muted">' + (l.views || 0) + ' opens' + (l.lastViewedAt ? ", last " + esc(when(l.lastViewedAt)) : "") + '</span>' +
+            ' <a style="display:inline-flex;align-items:center;min-height:28px;padding:0 6px" href="/cards/system/' + id + '/preview' + (l.contactId ? '?contact=' + esc(l.contactId) : '') + '" target="_blank" rel="noopener">Preview</a></span>' +
             (l.revoked ? '<span class="pill revoked">off</span>' : '<button class="btn danger" data-sysrevoke="' + l.id + '">Turn off</button>') + '</li>';
         }).join("") + '</ul>' : '');
       $("detail").innerHTML = h;
@@ -444,10 +466,11 @@ header a{display:inline-flex;align-items:center;min-height:32px}
           hidden: hidden, added: order, order: order, titles: titles,
         }).then(function () { toast("Saved"); openSystem(id); }).catch(function (e) { $("sysStatus").textContent = errorText(e); });
       };
+      if ($("sysCopy")) $("sysCopy").onclick = function () { navigator.clipboard.writeText(freshLink.url).then(function () { toast("Copied"); }); };
       if ($("sysMk")) $("sysMk").onclick = function () {
-        call("POST", "/api/cards/systems/" + id + "/link").then(function (r) {
-          $("sysLinkOut").innerHTML = '<div class="linkbox">' + esc(r.url) + '</div><button class="btn" id="sysCopy">Copy link</button>';
-          $("sysCopy").onclick = function () { navigator.clipboard.writeText(r.url).then(function () { toast("Copied"); }); };
+        call("POST", "/api/cards/systems/" + id + "/link", { contactId: $("sysFor").value }).then(function (r) {
+          freshLink = { id: String(id), url: r.url };
+          openSystem(id);
         }).catch(function (e) { toast(e.message); });
       };
       $("detail").querySelectorAll("[data-sysrevoke]").forEach(function (b) {

@@ -395,6 +395,13 @@ function registerCard(app, deps) {
         "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS hold_alert_at TIMESTAMPTZ",
         // null = decide from the client name (VMS rules); true/false = a recruiter set it.
         "ALTER TABLE card_systems ADD COLUMN IF NOT EXISTS vms BOOLEAN",
+        // A system link can be for one manager: their roles only, greeted by name.
+        "ALTER TABLE card_system_links ADD COLUMN IF NOT EXISTS contact_id INTEGER",
+        // Client decisions on a candidate: interview (with times) or pass. Latest per submission wins.
+        "CREATE TABLE IF NOT EXISTS card_feedback (id BIGSERIAL PRIMARY KEY, submission_id INTEGER NOT NULL, candidate_id INTEGER NOT NULL, job_id INTEGER, client_id INTEGER, " +
+          "via TEXT, link_id INTEGER, contact_id INTEGER, by_name TEXT, by_email TEXT, action TEXT NOT NULL, slots JSONB NOT NULL DEFAULT '[]'::jsonb, tz TEXT, reason TEXT, note TEXT, " +
+          "created_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+        "CREATE INDEX IF NOT EXISTS card_feedback_sub ON card_feedback (submission_id, created_at)",
       ];
       ready = stmts.reduce(function (p, sql) { return p.then(function () { return db.query(sql); }); }, Promise.resolve())
         .then(function () { return true; })
@@ -464,6 +471,114 @@ function registerCard(app, deps) {
       ], publicOrigin() + "/cards?candidate=" + row.candidate_id, "Open Cards");
       await notifier.send({ to: [{ email: to }], subject: "Résumé held back: " + row.candidate_name + " (" + row.client_name + ")", html: html, fromEmail: to });
     } catch (e) { log("[Card] hold alert failed: " + e.message); }
+  }
+
+  /* ── client feedback: interview or pass ── */
+  const PASS_REASONS = ["Experience isn't the right fit", "Rate", "Availability", "Location", "We went another direction", "Something else"];
+  const FEEDBACK_ACTIONS = ["interview", "pass", "reopen"];
+
+  async function latestFeedback(submissionIds) {
+    const ids = (submissionIds || []).map(Number).filter(function (n) { return n > 0; });
+    const out = {};
+    if (!ids.length) return out;
+    const rows = await db.getAll("SELECT DISTINCT ON (submission_id) * FROM card_feedback WHERE submission_id = ANY($1::int[]) ORDER BY submission_id, created_at DESC, id DESC", [ids]);
+    rows.forEach(function (f) { if (f.action !== "reopen") out[String(f.submission_id)] = f; });
+    return out;
+  }
+
+  function feedbackOut(f) {
+    if (!f) return null;
+    return { action: f.action, at: f.created_at, by: f.by_name || "", slots: Array.isArray(f.slots) ? f.slots : [], tz: f.tz || "", reason: f.reason || "", note: f.note || "" };
+  }
+
+  /** Who is looking: the person a Card was emailed to, or the manager a system link is for. */
+  async function viewerFor(clientId, opts) {
+    if (opts && opts.contactId) {
+      const c = await db.getOne("SELECT id, first_name, last_name, name, email FROM client_contacts WHERE id = $1 AND client_id = $2", [opts.contactId, clientId]);
+      if (c) return { name: personName(c), email: c.email || "", contactId: c.id, known: true };
+    }
+    if (opts && opts.email) {
+      const c = await db.getOne("SELECT id, first_name, last_name, name, email FROM client_contacts WHERE client_id = $1 AND LOWER(email) = LOWER($2) AND is_deleted IS NOT TRUE LIMIT 1", [clientId, opts.email]);
+      if (c) return { name: personName(c), email: c.email || opts.email, contactId: c.id, known: true };
+      return { name: "", email: opts.email, contactId: null, known: false };
+    }
+    return { name: "", email: "", contactId: null, known: false };
+  }
+
+  function fmtSlot(iso, tz) {
+    const d = new Date(iso);
+    if (!isFinite(d.getTime())) return "";
+    let zone = tz;
+    try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); } catch (e) { zone = "America/Chicago"; }
+    return d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: zone || "America/Chicago", timeZoneName: "short" });
+  }
+
+  /** Validate, save, and tell the recruiter and account lead. row = the candidate's card_links row (scoped). */
+  async function saveFeedback(req, row, ctx) {
+    const b = req.body || {};
+    const action = String(b.action || "");
+    if (FEEDBACK_ACTIONS.indexOf(action) < 0) throw Object.assign(new Error("Pick interview or pass."), { status: 400 });
+    const viewer = ctx.viewer || { known: false };
+    const name = viewer.known ? viewer.name : cleanFieldValue(b.name).slice(0, 80);
+    if (!name && action !== "reopen") throw Object.assign(new Error("Add your name so " + (contactOf(row).name || "Anura") + " knows who to follow up with."), { status: 400 });
+    const tz = String(b.tz || "").slice(0, 60);
+    let slots = [];
+    if (action === "interview") {
+      const t = now();
+      slots = (Array.isArray(b.slots) ? b.slots : []).slice(0, 3).map(String).filter(Boolean);
+      for (const x of slots) {
+        const ms2 = Date.parse(x);
+        if (!isFinite(ms2)) throw Object.assign(new Error("One of the times isn't a date."), { status: 400 });
+        if (ms2 < t - 3600000) throw Object.assign(new Error("Pick times that haven't passed yet."), { status: 400 });
+        if (ms2 > t + 180 * 86400000) throw Object.assign(new Error("Pick times in the next few months."), { status: 400 });
+      }
+      slots = slots.map(function (x) { return new Date(Date.parse(x)).toISOString(); });
+    }
+    const reason = action === "pass" ? (PASS_REASONS.indexOf(String(b.reason || "")) >= 0 ? String(b.reason) : "") : "";
+    if (action === "pass" && !reason) throw Object.assign(new Error("Pick a reason. It helps us send better matches."), { status: 400 });
+    const note = cleanFieldValue(b.note).slice(0, 800);
+    if (ctx.preview) return { saved: false, preview: true };
+    const recent = await db.getOne("SELECT id FROM card_feedback WHERE submission_id = $1 AND created_at > now() - interval '5 seconds'", [row.submission_id]);
+    if (recent) throw Object.assign(new Error("Already saved."), { status: 409 });
+    const f = await db.getOne(
+      "INSERT INTO card_feedback (submission_id, candidate_id, job_id, client_id, via, link_id, contact_id, by_name, by_email, action, slots, tz, reason, note) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14) RETURNING *",
+      [row.submission_id, row.candidate_id, row.job_id, row.client_id, ctx.via, ctx.linkId || null, viewer.contactId || null, name || viewer.name || "", viewer.email || "",
+        action, JSON.stringify(slots), tz, reason, note]);
+    notifyFeedback(row, f).catch(function (e) { log("[Card] feedback alert failed: " + e.message); });
+    return { saved: true, feedback: action === "reopen" ? null : feedbackOut(f) };
+  }
+
+  async function notifyFeedback(row, f) {
+    if (!notifier) return;
+    const rec = contactOf(row);
+    const lead = await accountLead(row.client_id);
+    const to = [];
+    [row.created_by && /@/.test(row.created_by) ? row.created_by : rec.email, lead.email].forEach(function (e) {
+      const x = String(e || "").toLowerCase();
+      if (x && to.indexOf(x) < 0) to.push(x);
+    });
+    if (!to.length) return;
+    const who = f.by_name || "Someone at " + (row.client_name || "the client");
+    const cand = row.candidate_name || "the candidate";
+    const times = (Array.isArray(f.slots) ? f.slots : []).map(function (x) { return fmtSlot(x, f.tz); }).filter(Boolean).join("\n");
+    let title, subject, rows;
+    if (f.action === "interview") {
+      title = who + " wants to interview " + cand;
+      subject = "Interview request: " + cand + " (" + (row.client_name || "") + ")";
+      rows = [["Job", row.job_title], ["Client", row.client_name], ["Times", times || "None picked. Reach out to schedule."], ["Note", f.note], ["From", who + (f.by_email ? " <" + f.by_email + ">" : "")],
+        ["Next step", "Confirm a time with the candidate and the client, then update the submission in Bullhorn."]];
+    } else if (f.action === "pass") {
+      title = who + " passed on " + cand;
+      subject = "Passed: " + cand + " (" + (row.client_name || "") + ")";
+      rows = [["Job", row.job_title], ["Client", row.client_name], ["Reason", f.reason], ["Note", f.note], ["From", who + (f.by_email ? " <" + f.by_email + ">" : "")],
+        ["Next step", "Update the submission in Bullhorn and let the candidate know."]];
+    } else {
+      title = who + " reopened " + cand;
+      subject = "Reopened: " + cand + " (" + (row.client_name || "") + ")";
+      rows = [["Job", row.job_title], ["Client", row.client_name], ["What changed", "They took back their earlier decision. The candidate is back under review."]];
+    }
+    await notifier.send({ to: to.map(function (e) { return { email: e }; }), subject: subject, html: notifier.card(title, rows, publicOrigin() + "/cards?candidate=" + row.candidate_id, "Open Cards"), fromEmail: to[0] });
   }
 
   function heldIds(row) { return (Array.isArray(row && row.held_docs) ? row.held_docs : []).map(String); }
@@ -705,6 +820,11 @@ function registerCard(app, deps) {
       summaries.push(await summaryFor(row, rate));
     }
     const sys = await brandFor(r.link.client_id, opts && opts.system);
+    const fb = await latestFeedback(rows.map(function (x) { return x.submission_id; }).concat([focus.submission_id]));
+    summaries.forEach(function (sum, i) { sum.feedback = feedbackOut(fb[String(rows[i].submission_id)]); });
+    const card = await fullCard(focus, { preview: preview });
+    card.feedback = feedbackOut(fb[String(focus.submission_id)]);
+    const viewer = await viewerFor(r.link.client_id, (opts && opts.viewer) || { email: r.link.contact_email });
     return {
       status: 200,
       body: {
@@ -713,7 +833,9 @@ function registerCard(app, deps) {
         job: job,
         sent: current.public_id,
         candidates: summaries,
-        card: await fullCard(focus, { preview: preview }),
+        card: card,
+        viewer: { name: viewer.name, known: viewer.known },
+        passReasons: PASS_REASONS,
         preview: preview || undefined,
         system: sys || undefined,
       },
@@ -828,7 +950,8 @@ function registerCard(app, deps) {
     const jobs = await db.getAll(
       "SELECT id, title, status, is_open, is_deleted, address_city, address_state, raw_json->'clientContact'->>'id' AS contact_id, " +
       "COALESCE(raw_json->'clientContact'->>'firstName','') || ' ' || COALESCE(raw_json->'clientContact'->>'lastName','') AS contact_name FROM jobs WHERE client_id = $1 AND is_deleted IS NOT TRUE", [clientId]);
-    const openJobs = jobs.filter(jobIsActive);
+    const mine = ctx.contactId ? String(ctx.contactId) : "";
+    const openJobs = jobs.filter(jobIsActive).filter(function (j) { return !mine || String(j.contact_id || "") === mine; });
     const links = await db.getAll(
       "SELECT DISTINCT ON (l.job_id, l.candidate_id) l.*, s.status AS sub_status, s.date_added AS sub_added, " +
       "c.first_name, c.last_name, c.custom_text1, c.custom_text2, c.custom_text5, p.fields AS profile_fields, (p.photo IS NOT NULL) AS has_photo " +
@@ -841,7 +964,8 @@ function registerCard(app, deps) {
     const managerById = {};
     managers.forEach(function (m) { managerById[m.id] = m; });
     const roles = [], sourcing = [];
-    let candidateCount = 0, newCount = 0, lastAddedMs = 0;
+    let candidateCount = 0, newCount = 0, lastAddedMs = 0, interviewCount = 0;
+    const fbAll = await latestFeedback(links.map(function (l) { return l.submission_id; }));
     for (const j of openJobs) {
       const rows = (byJob[j.id] || []).sort(function (a, b) { return Number(a.sub_added || 0) - Number(b.sub_added || 0); });
       if (!rows.length) { sourcing.push(j.title); continue; }
@@ -851,6 +975,8 @@ function registerCard(app, deps) {
         const sum = await summaryFor(row, rate);
         sum.href = ctx.href(row);
         sum.photoUrl = sum.hasPhoto ? ctx.photo(row) : "";
+        sum.feedback = feedbackOut(fbAll[String(row.submission_id)]);
+        if (sum.feedback && sum.feedback.action === "interview") interviewCount++;
         cands.push(sum);
       }
       candidateCount += cands.length;
@@ -866,6 +992,7 @@ function registerCard(app, deps) {
       });
     }
     const consultants = settings && settings.show_consultants === false ? [] : await systemConsultants(clientId);
+    const viewer = mine ? await viewerFor(clientId, { contactId: Number(mine) }) : { name: "", known: false };
     const lastAdded = lastAddedMs ? new Date(lastAddedMs).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" }) : "";
     return {
       status: 200,
@@ -878,10 +1005,11 @@ function registerCard(app, deps) {
           logoUrl: settings && settings.has_logo ? ctx.logoUrl : "",
           intro: (settings && settings.intro) || "",
         },
-        stats: { roles: roles.length, candidates: candidateCount, consultants: consultants.length, newCount: newCount, lastAdded: lastAdded },
+        stats: { roles: roles.length, candidates: candidateCount, consultants: consultants.length, newCount: newCount, lastAdded: lastAdded, interviews: interviewCount },
         roles: roles,
         sourcing: sourcing,
-        managers: managers.map(function (m) { return { name: m.name, title: m.title, department: m.department, hiringFor: m.hiringFor }; }),
+        viewer: { name: viewer.name, known: viewer.known },
+        managers: mine ? [] : managers.map(function (m) { return { name: m.name, title: m.title, department: m.department, hiringFor: m.hiringFor }; }),
         consultants: consultants,
         contact: await accountLead(clientId),
       },
@@ -897,10 +1025,14 @@ function registerCard(app, deps) {
   }
 
   /** A Card reached from a health system page: must belong to that client, be live, and be in front of the client. */
-  async function systemCard(clientId, pid) {
+  async function systemCard(clientId, pid, contactId) {
     if (!validPublicId(pid)) return null;
     const link = await db.getOne("SELECT * FROM card_links WHERE public_id = $1 AND client_id = $2", [pid, clientId]);
     if (!link) return null;
+    if (contactId) {
+      const j = await db.getOne("SELECT raw_json->'clientContact'->>'id' AS contact_id FROM jobs WHERE id = $1", [link.job_id]);
+      if (!j || String(j.contact_id || "") !== String(contactId)) return null;
+    }
     const r = await judgeLink(link);
     if (r.state !== "active") return null;
     const sub = await db.getOne("SELECT status FROM submissions WHERE id = $1", [link.submission_id]);
@@ -1103,6 +1235,18 @@ function registerCard(app, deps) {
       const row = await scopedRow(req.params.token, req.params.pid);
       if (!row) return res.status(404).json({ error: "Document not available." });
       await sendDoc(req, res, row, digitsId(req.params.index));
+    } catch (e) { fail(res, e); }
+  });
+
+  const feedbackLimiter = makeLimiter(20);
+  app.post("/api/card-public/:token/feedback/:pid", feedbackLimiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const r = await resolveClientLink(req.params.token);
+      const row = await scopedFor(r, req.params.pid);
+      if (!row) return res.status(404).json({ error: "This Card is closed." });
+      const viewer = await viewerFor(r.link.client_id, { email: r.link.contact_email });
+      res.json(await saveFeedback(req, row, { via: "card", linkId: r.link.id, viewer: viewer, preview: !!getUser(req) }));
     } catch (e) { fail(res, e); }
   });
 
@@ -1333,11 +1477,20 @@ function registerCard(app, deps) {
         "LEFT JOIN candidates c ON c.id = d.candidate_id WHERE d.status = 'submitted' ORDER BY d.submitted_at ASC LIMIT 100");
       const links = await db.getAll(
         "SELECT l.id, l.candidate_id, l.candidate_name, l.job_id, l.job_title, l.client_name, l.contact_email, l.created_by, l.created_at, l.bill_display, l.refs, " +
-        "l.view_count, l.last_viewed_at, l.revoked_at, j.status AS job_status, j.is_open, j.is_deleted FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id " +
+        "l.view_count, l.last_viewed_at, l.revoked_at, l.submission_id, j.status AS job_status, j.is_open, j.is_deleted, fb.* FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id " +
+        "LEFT JOIN LATERAL (SELECT action AS fb_action, by_name AS fb_by, created_at AS fb_at, reason AS fb_reason, slots AS fb_slots, tz AS fb_tz FROM card_feedback f WHERE f.submission_id = l.submission_id ORDER BY f.created_at DESC, f.id DESC LIMIT 1) fb ON true " +
         "ORDER BY COALESCE(l.last_viewed_at, l.created_at) DESC LIMIT 60");
       res.json({
         pending: pending.map(function (p) { return { candidateId: p.candidate_id, name: personName(p) || ("#" + p.candidate_id), submittedAt: p.submitted_at, photoChanged: p.photo_changed }; }),
         links: links.map(linkOut),
+        decisions: (await db.getAll(
+          "SELECT DISTINCT ON (f.submission_id) f.*, l.candidate_name, l.job_title, l.client_name FROM card_feedback f " +
+          "JOIN LATERAL (SELECT candidate_name, job_title, client_name FROM card_links WHERE submission_id = f.submission_id ORDER BY id DESC LIMIT 1) l ON true " +
+          "WHERE f.created_at > now() - interval '14 days' ORDER BY f.submission_id, f.created_at DESC, f.id DESC")).filter(function (f) { return f.action !== "reopen"; })
+          .sort(function (a, b) { return ms(b.created_at) - ms(a.created_at); }).slice(0, 30).map(function (f) {
+            return { candidateId: f.candidate_id, candidateName: f.candidate_name, jobTitle: f.job_title, clientName: f.client_name, action: f.action, by: f.by_name, at: f.created_at,
+              reason: f.reason || "", note: f.note || "", times: (Array.isArray(f.slots) ? f.slots : []).map(function (x) { return fmtSlot(x, f.tz); }) };
+          }),
       });
     } catch (e) { fail(res, e); }
   });
@@ -1387,6 +1540,7 @@ function registerCard(app, deps) {
       id: l.id, candidateId: l.candidate_id, candidateName: l.candidate_name, jobId: l.job_id, jobTitle: l.job_title, clientName: l.client_name,
       contactEmail: l.contact_email, createdBy: l.created_by, createdAt: l.created_at, views: l.view_count, lastViewedAt: l.last_viewed_at,
       billDisplay: l.bill_display || "",
+      feedback: l.fb_action && l.fb_action !== "reopen" ? { action: l.fb_action, by: l.fb_by || "", at: l.fb_at, reason: l.fb_reason || "", times: (Array.isArray(l.fb_slots) ? l.fb_slots : []).map(function (x) { return fmtSlot(x, l.fb_tz); }) } : null,
       held: (Array.isArray(l.docs) ? l.docs : []).filter(function (d) { return heldIds(l).indexOf(String(d.fileId)) >= 0; }).map(function (d) { return d.name || "Document"; }),
       state: l.revoked_at ? "revoked" : (jobIsActive({ status: l.job_status, is_open: l.is_open, is_deleted: l.is_deleted }) ? "active" : "expired"),
     };
@@ -1414,7 +1568,7 @@ function registerCard(app, deps) {
       const draft = await draftFor(id);
       const edits = await db.getAll("SELECT id, created_by, created_at, expires_at, revoked_at, last_used_at FROM card_edit_links WHERE candidate_id = $1 ORDER BY created_at DESC LIMIT 10", [id]);
       const links = await db.getAll(
-        "SELECT l.*, j.status AS job_status, j.is_open, j.is_deleted FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id WHERE l.candidate_id = $1 ORDER BY l.created_at DESC LIMIT 40", [id]);
+        "SELECT l.*, j.status AS job_status, j.is_open, j.is_deleted, fb.* FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id LEFT JOIN LATERAL (SELECT action AS fb_action, by_name AS fb_by, created_at AS fb_at, reason AS fb_reason, slots AS fb_slots, tz AS fb_tz FROM card_feedback f WHERE f.submission_id = l.submission_id ORDER BY f.created_at DESC, f.id DESC LIMIT 1) fb ON true WHERE l.candidate_id = $1 ORDER BY l.created_at DESC LIMIT 40", [id]);
       const liveFields = jsonField(live && live.fields);
       const draftFields = jsonField(draft && draft.fields);
       res.json({
@@ -1764,6 +1918,15 @@ function registerCard(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
+  app.post("/api/cards/preview/:linkId/feedback/:pid", async function (req, res) {
+    try {
+      const r = await resolveLinkById(digitsId(req.params.linkId));
+      const row = await scopedFor(r, req.params.pid);
+      if (!row) return res.status(404).json({ error: "Not found." });
+      res.json(await saveFeedback(req, row, { via: "preview", viewer: { name: "Preview", known: true }, preview: true }));
+    } catch (e) { fail(res, e); }
+  });
+
   app.get("/api/cards/preview/:linkId/resume/:pid", async function (req, res) {
     try {
       const row = await scopedFor(await resolveLinkById(digitsId(req.params.linkId)), req.params.pid);
@@ -1797,7 +1960,7 @@ function registerCard(app, deps) {
       await needDb();
       const sl = await systemLinkByToken(req.params.token);
       if (!sl) return res.status(404).json({ state: "missing" });
-      const v = await systemView(sl.client_id, sysCtxPublic(req.params.token));
+      const v = await systemView(sl.client_id, Object.assign(sysCtxPublic(req.params.token), { contactId: sl.contact_id || null }));
       res.status(v.status).json(v.body);
     } catch (e) { fail(res, e); }
   });
@@ -1817,7 +1980,7 @@ function registerCard(app, deps) {
     try {
       await needDb();
       const sl = await systemLinkByToken(req.params.token);
-      const r = sl ? await systemCard(sl.client_id, req.params.pid) : null;
+      const r = sl ? await systemCard(sl.client_id, req.params.pid, sl.contact_id) : null;
       if (!r) return res.status(404).end();
       sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [r.link.candidate_id]));
     } catch (e) { fail(res, e); }
@@ -1837,10 +2000,11 @@ function registerCard(app, deps) {
       if (claimed && notifier) {
         const lead = await accountLead(sl.client_id);
         const client = await db.getOne("SELECT name FROM clients WHERE id = $1", [sl.client_id]);
+        const who = sl.contact_id ? (await viewerFor(sl.client_id, { contactId: sl.contact_id })).name : "";
         const to = lead.email || (sl.created_by && /@/.test(sl.created_by) ? sl.created_by : "");
         if (to) {
-          notifier.send({ to: [{ email: to }], subject: (client && client.name || "A client") + " opened their Anura page",
-            html: notifier.card("Client opened their health system page", [["Client", client && client.name || ""], ["Next step", "Good moment to check in."]], publicOrigin() + "/cards?system=" + sl.client_id, "Open Cards"),
+          notifier.send({ to: [{ email: to }], subject: (who ? who + " (" + (client && client.name || "") + ")" : (client && client.name || "A client")) + " opened their Anura page",
+            html: notifier.card("Client opened their health system page", [["Client", client && client.name || ""], ["Who", who || "Team link (anyone at the client)"], ["Next step", "Good moment to check in."]], publicOrigin() + "/cards?system=" + sl.client_id, "Open Cards"),
             fromEmail: to }).catch(function (e) { log("[Card] system view alert failed: " + e.message); });
         }
       }
@@ -1859,9 +2023,9 @@ function registerCard(app, deps) {
     setPublicHeaders(res);
     try {
       const c = await sysCardCtx(req);
-      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid, c.sl.contact_id) : null;
       if (!r) return res.status(404).json({ state: "missing" });
-      const v = await viewFor(r, null, { system: { logoUrl: c.base + "/logo", homeUrl: "/h/" + req.params.token } });
+      const v = await viewFor(r, null, { system: { logoUrl: c.base + "/logo", homeUrl: "/h/" + req.params.token }, viewer: { contactId: c.sl.contact_id || null } });
       res.status(v.status).json(v.body);
     } catch (e) { fail(res, e); }
   });
@@ -1869,9 +2033,9 @@ function registerCard(app, deps) {
     setPublicHeaders(res);
     try {
       const c = await sysCardCtx(req);
-      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid, c.sl.contact_id) : null;
       if (!r) return res.status(404).json({ state: "missing" });
-      const v = await viewFor(r, req.params.other, { system: { logoUrl: c.base + "/logo", homeUrl: "/h/" + req.params.token } });
+      const v = await viewFor(r, req.params.other, { system: { logoUrl: c.base + "/logo", homeUrl: "/h/" + req.params.token }, viewer: { contactId: c.sl.contact_id || null } });
       res.status(v.status).json(v.body);
     } catch (e) { fail(res, e); }
   });
@@ -1883,17 +2047,29 @@ function registerCard(app, deps) {
     setPublicHeaders(res);
     try {
       const c = await sysCardCtx(req);
-      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid, c.sl.contact_id) : null;
       const row = r ? await scopedFor(r, req.params.p) : null;
       if (!row) return res.status(404).end();
       sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [row.candidate_id]));
     } catch (e) { fail(res, e); }
   });
+  app.post("/api/hs-public/:token/card/:pid/feedback/:p", feedbackLimiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const c = await sysCardCtx(req);
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid, c.sl.contact_id) : null;
+      const row = r ? await scopedFor(r, req.params.p) : null;
+      if (!row) return res.status(404).json({ error: "This page is closed." });
+      const viewer = await viewerFor(c.sl.client_id, { contactId: c.sl.contact_id || null });
+      res.json(await saveFeedback(req, row, { via: c.sl.contact_id ? "manager" : "team", linkId: c.sl.id, viewer: viewer, preview: !!getUser(req) }));
+    } catch (e) { fail(res, e); }
+  });
+
   app.get("/api/hs-public/:token/card/:pid/resume/:p", limiter, async function (req, res) {
     setPublicHeaders(res);
     try {
       const c = await sysCardCtx(req);
-      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid, c.sl.contact_id) : null;
       const row = r ? await scopedFor(r, req.params.p) : null;
       if (!row || !row.resume_file_id || !getFile) return res.status(404).json({ error: "Résumé not available." });
       await sendResume(req, res, row);
@@ -1903,7 +2079,7 @@ function registerCard(app, deps) {
     setPublicHeaders(res);
     try {
       const c = await sysCardCtx(req);
-      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid, c.sl.contact_id) : null;
       const row = r ? await scopedFor(r, req.params.p) : null;
       if (!row) return res.status(404).json({ error: "Document not available." });
       await sendDoc(req, res, row, digitsId(req.params.index));
@@ -1948,7 +2124,8 @@ function registerCard(app, deps) {
       const jobs = await db.getAll("SELECT id, title, status, is_open, is_deleted, raw_json->'clientContact'->>'id' AS contact_id FROM jobs WHERE client_id = $1 AND is_deleted IS NOT TRUE", [id]);
       const shown = await systemManagers(id, settings, jobs.filter(jobIsActive));
       const shownIds = shown.map(function (m) { return m.id; });
-      const links = await db.getAll("SELECT id, created_by, created_at, revoked_at, view_count, last_viewed_at FROM card_system_links WHERE client_id = $1 ORDER BY created_at DESC LIMIT 10", [id]);
+      const links = await db.getAll("SELECT l.id, l.created_by, l.created_at, l.revoked_at, l.view_count, l.last_viewed_at, l.contact_id, cc.first_name, cc.last_name, cc.name " +
+        "FROM card_system_links l LEFT JOIN client_contacts cc ON cc.id = l.contact_id WHERE l.client_id = $1 ORDER BY l.created_at DESC LIMIT 20", [id]);
       res.json({
         client: { id: id, name: client.name },
         settings: {
@@ -1966,7 +2143,8 @@ function registerCard(app, deps) {
             hidden: (cfg.hidden || []).map(String).indexOf(String(c.id)) >= 0 };
         }),
         titles: cfg.titles || {},
-        links: links.map(function (l) { return { id: l.id, createdBy: l.created_by, createdAt: l.created_at, revoked: !!l.revoked_at, views: l.view_count, lastViewedAt: l.last_viewed_at }; }),
+        links: links.map(function (l) { return { id: l.id, createdBy: l.created_by, createdAt: l.created_at, revoked: !!l.revoked_at, views: l.view_count, lastViewedAt: l.last_viewed_at,
+          contactId: l.contact_id ? String(l.contact_id) : "", forName: l.contact_id ? personName(l) : "" }; }),
       });
     } catch (e) { fail(res, e); }
   });
@@ -2034,6 +2212,7 @@ function registerCard(app, deps) {
       const id = digitsId(req.params.clientId);
       const v = await systemView(id, {
         preview: true,
+        contactId: /^\d{1,9}$/.test(String(req.query.contact || "")) ? Number(req.query.contact) : null,
         href: function (row) { return "/cards/preview/" + row.id; },
         photo: function (row) { return "/api/cards/candidate/" + row.candidate_id + "/photo"; },
         logoUrl: "/api/cards/systems/" + id + "/logo",
@@ -2051,8 +2230,14 @@ function registerCard(app, deps) {
       if (!client) return res.status(404).json({ error: "Client not found." });
       const vms = await vmsFor(id);
       if (vms) return res.status(409).json({ error: "This client takes candidates through their VMS (" + vms.label + "), so there's no client link. Untick VMS if that's wrong.", code: "vms" });
+      let contactId = null;
+      if (req.body && req.body.contactId != null && String(req.body.contactId) !== "") {
+        contactId = digitsId(req.body.contactId);
+        const c = await db.getOne("SELECT id FROM client_contacts WHERE id = $1 AND client_id = $2 AND is_deleted IS NOT TRUE", [contactId, id]);
+        if (!c) return res.status(400).json({ error: "That manager isn't a contact at this client." });
+      }
       const token = makeToken();
-      await db.query("INSERT INTO card_system_links (token_hash, client_id, created_by) VALUES ($1,$2,$3)", [hashToken(token), id, who(req)]);
+      await db.query("INSERT INTO card_system_links (token_hash, client_id, created_by, contact_id) VALUES ($1,$2,$3,$4)", [hashToken(token), id, who(req), contactId]);
       res.json({ url: publicOrigin().replace(/\/$/, "") + "/h/" + token });
     } catch (e) { fail(res, e); }
   });
