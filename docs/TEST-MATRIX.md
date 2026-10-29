@@ -162,3 +162,5 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K36 | Manager link: only their roles, greeted by name, no team roster, Cards on other managers' roles unreachable, open alert names them | card.test.js |
 | K37 | Interview/pass from a Card: validation (action, future times, listed reasons), recruiter clicks never recorded, double-click guard, recruiter + account lead emailed with times in the client's zone, undo, team link asks for a name, shown on Card, compare, health page and Cards page | card.test.js |
 | K38 | Logo from a web link: https only, public addresses only (re-checked on redirects), images only | card.test.js |
+| K39 | Demo link in a client's branding: their name/logo/color, made-up candidates, no consultants, nothing real, revocable | card.test.js |
+| K40 | Anura contact photo URL from anuraconnect.com/about by name (aliases; none for "Anura Connect") | card.test.js |

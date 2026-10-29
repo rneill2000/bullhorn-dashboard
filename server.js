@@ -11801,7 +11801,6 @@ require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bh
 const filesArchive = require("./files").registerFiles(app, { db: db, bhFetch: bhFetch, authenticate: authenticate, getUser: getUser });
 const notifier = require("./notify").makeNotifier({ graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; } });
 let forgeApi = null;
-require("./card-demo")(app, { pagesDir: path.join(__dirname, "public") });
 const cardsApi = require("./card")(app, {
   db: db,
   getUser: getUser,
@@ -11810,6 +11809,7 @@ const cardsApi = require("./card")(app, {
   verifyBill: function (submissionId) { return forgeApi.verifyBillForSubmission(submissionId); },
   publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; },
 });
+require("./card-demo")(app, { pagesDir: path.join(__dirname, "public"), db: db, ready: function () { return cardsApi.ensureTables(); } });
 forgeApi = require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate, notifier: notifier, cards: cardsApi, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; } });
 
 app.use(function (err, req, res, next) {

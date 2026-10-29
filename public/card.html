@@ -135,6 +135,12 @@ img{display:block}
 .contact .reach{display:flex;flex-wrap:wrap;gap:4px 18px}
 .contact .reach a{white-space:nowrap;display:inline-flex;align-items:center;min-height:32px}
 .contact .btn.primary{background:#fff;color:var(--navy)}
+.contact-who{display:flex;gap:18px;align-items:center}
+.contact-face{width:72px;height:72px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.25);flex-shrink:0;background:#1d3a55}
+.contact-face.ini{display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:24px;color:#fff;background:var(--blue)}
+.top .shared .by{display:inline-flex;align-items:center;gap:10px}
+.mug{width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid var(--line)}
+.mug.ini{display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;background:var(--blue)}
 .contact .btn.primary:hover{background:var(--fog)}
 
 /* Decisions: interview or pass, right on the Card */
@@ -259,8 +265,8 @@ body.editing .editor{transform:none}
   var token = (location.pathname.match(/^\/card\/([a-z]+)/) || [])[1] || "";
   var previewId = (location.pathname.match(/^\/cards\/preview\/(\d+)/) || [])[1] || "";
   var sysPath = location.pathname.match(/^\/h\/([a-z]+)\/c\/([a-z]+)/);
-  var demoPath = location.pathname.match(/^\/demo\/c\/([a-z]+)/);
-  var api = previewId ? "/api/cards/preview/" + previewId : (sysPath ? "/api/hs-public/" + sysPath[1] + "/card/" + sysPath[2] : (demoPath ? "/api/demo/card/" + demoPath[1] : "/api/card-public/" + token));
+  var demoPath = location.pathname.match(/^\/demo(\/b\/[a-z]+)?\/c\/([a-z]+)/);
+  var api = previewId ? "/api/cards/preview/" + previewId : (sysPath ? "/api/hs-public/" + sysPath[1] + "/card/" + sysPath[2] : (demoPath ? "/api/demo" + (demoPath[1] || "") + "/card/" + demoPath[2] : "/api/card-public/" + token));
   var app = document.getElementById("app");
   var data = null, photoBust = 0;
 
@@ -290,6 +296,14 @@ body.editing .editor{transform:none}
     return el("div", { class: cls + " initials", "aria-hidden": "true", text: initials(c.name) });
   }
   function contactFirst() { return first(data.contact.name); }
+  /* The Anura contact's real headshot (anuraconnect.com/about), initials if there isn't one. */
+  function face(ct, cls) {
+    var fallback = el("span", { class: cls + " ini", "aria-hidden": "true", text: initials(ct.name) });
+    if (!ct.photoUrl) return fallback;
+    var img = el("img", { class: cls, src: ct.photoUrl, alt: "", loading: "lazy" });
+    img.addEventListener("error", function () { img.replaceWith(fallback); });
+    return img;
+  }
   /* ── decisions: interview (with times) or pass ── */
   function when(iso, opts) {
     var d = new Date(iso);
@@ -568,14 +582,14 @@ body.editing .editor{transform:none}
     app.appendChild(main);
     var ct = data.contact;
     app.appendChild(el("div", { class: "contact" }, [el("div", { class: "contact-inner" }, [
-      el("div", {}, [
+      el("div", { class: "contact-who" }, [face(ct, "contact-face"), el("div", {}, [
         el("h2", { text: "Questions about " + (view === "compare" ? "any of them" : first(c.name)) + "?" }),
         el("p", { text: ct.name + (ct.title ? ", " + ct.title : "") }),
         el("p", { class: "reach" }, [
           ct.phone ? el("a", { href: "tel:" + ct.phone.replace(/[^\d+]/g, ""), text: ct.phone }) : null,
           ct.email ? el("a", { href: "mailto:" + ct.email, text: ct.email }) : null,
         ]),
-      ]),
+      ])]),
       view === "compare" || c.feedback ? null : el("button", { class: "btn primary", type: "button", text: "Interview " + first(c.name), onclick: function () { decide(c, "interview"); } }),
     ])]));
     document.title = (view === "compare" ? "Candidates for " + job : c.name) + " | Anura Connect";
@@ -603,7 +617,7 @@ body.editing .editor{transform:none}
     if (document.querySelector(".preview-bar")) return;
     document.body.insertBefore(el("div", { class: "preview-bar", role: "region", "aria-label": "Demo" }, [
       el("span", {}, [el("b", { text: "Demo" }), " Made-up health system and candidates. Try Interview or Pass: nothing is sent."]),
-      el("span", { class: "acts" }, [el("a", { class: "btn plain", href: "/demo", text: "See the health system page" })]),
+      el("span", { class: "acts" }, [el("a", { class: "btn plain", href: (data.system && data.system.homeUrl) || "/demo", text: "See the health system page" })]),
     ]), document.body.firstChild);
   }
 
@@ -849,7 +863,7 @@ body.editing .editor{transform:none}
   function shared() {
     var s = document.getElementById("shared");
     s.innerHTML = "";
-    if (data && data.contact && data.contact.name) s.appendChild(el("span", {}, ["Shared by ", el("b", { text: data.contact.name })]));
+    if (data && data.contact && data.contact.name) s.appendChild(el("span", { class: "by" }, [data.contact.photoUrl ? face(data.contact, "mug") : null, el("span", {}, ["Shared by ", el("b", { text: data.contact.name })])]));
   }
 
   function load() {

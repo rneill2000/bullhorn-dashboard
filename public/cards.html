@@ -185,7 +185,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
     }).join("") + '</ul>';
   }
 
-  var freshLink = null;
+  var freshLink = null, freshDemo = null;
   function overview() {
     call("GET", "/api/cards/overview").then(function (o) {
       $("pending").innerHTML = o.pending.length ? o.pending.map(function (p) {
@@ -457,7 +457,21 @@ header a{display:inline-flex;align-items:center;min-height:32px}
             ' <a style="display:inline-flex;align-items:center;min-height:28px;padding:0 6px" href="/cards/system/' + id + '/preview' + (l.contactId ? '?contact=' + esc(l.contactId) : '') + '" target="_blank" rel="noopener">Preview</a></span>' +
             (l.revoked ? '<span class="pill revoked">off</span>' : '<button class="btn danger" data-sysrevoke="' + l.id + '">Turn off</button>') + '</li>';
         }).join("") + '</ul>' : '');
+      h += '<h3>Demo link</h3><p class="muted">Show ' + esc(name) + ' what their page will look like before any Cards go out: their logo and color, three made-up candidates. Nothing real is on it, and Interview or Pass clicks aren\'t sent.</p>' +
+        '<div id="demoOut">' + (freshDemo && freshDemo.id === String(id) ? '<div class="linkbox">' + esc(freshDemo.url) + '</div><button class="btn" id="demoCopy">Copy link</button> <a class="btn" href="' + esc(freshDemo.url) + '" target="_blank" rel="noopener">Open</a>' : '') + '</div>' +
+        '<div class="row" style="margin-top:8px"><button class="btn primary" id="demoMk">Create demo link</button></div>' +
+        ((d.demos || []).length ? '<ul class="list" style="margin-top:8px">' + d.demos.map(function (x) {
+          return '<li><span>Demo link &middot; created ' + esc(when(x.createdAt)) + ' by ' + esc(x.createdBy) + '</span><button class="btn danger" data-demorevoke="' + x.id + '">Turn off</button></li>';
+        }).join("") + '</ul>' : '');
       $("detail").innerHTML = h;
+
+      $("demoMk").onclick = function () {
+        call("POST", "/api/cards/systems/" + id + "/demo-link").then(function (r) { freshDemo = { id: String(id), url: r.url }; openSystem(id); }).catch(function (e) { toast(e.message); });
+      };
+      if ($("demoCopy")) $("demoCopy").onclick = function () { navigator.clipboard.writeText(freshDemo.url).then(function () { toast("Copied"); }); };
+      $("detail").querySelectorAll("[data-demorevoke]").forEach(function (b) {
+        b.onclick = function () { call("POST", "/api/cards/demo-links/" + b.getAttribute("data-demorevoke") + "/revoke").then(function () { toast("Demo link turned off"); openSystem(id); }); };
+      });
 
       $("sysColor").oninput = function () { $("sysColorHex").textContent = this.value; this.dataset.touched = "1"; };
       $("sysLogoBtn").onclick = function () { $("sysLogo").click(); };

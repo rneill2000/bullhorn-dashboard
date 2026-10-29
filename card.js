@@ -296,10 +296,23 @@ function setPublicHeaders(res, opts) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   if (opts && opts.page) {
     res.setHeader("Content-Security-Policy",
-      "default-src 'self'; img-src 'self' data: blob: https://images.squarespace-cdn.com; " +
+      "default-src 'self'; img-src 'self' data: blob: https://images.squarespace-cdn.com https://www.anuraconnect.com; " +
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; " +
       "script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   }
+}
+
+/* Anura team headshots live on anuraconnect.com/about: /assets/team/first-last.jpg. A name with no
+   photo there just falls back to initials on the page. */
+const TEAM_PHOTO_BASE = "https://www.anuraconnect.com/assets/team/";
+const TEAM_PHOTO_ALIASES = { "jen-hemming": "jennifer-hemming" };
+function teamPhoto(name) {
+  const n = String(name || "").trim();
+  if (!n || /^anura connect$/i.test(n)) return "";
+  const parts = n.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z\s-]/g, "").split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return "";
+  const key = parts[0] + "-" + parts[parts.length - 1];
+  return TEAM_PHOTO_BASE + (TEAM_PHOTO_ALIASES[key] || key) + ".jpg";
 }
 
 function clientIp(req) {
@@ -402,6 +415,9 @@ function registerCard(app, deps) {
           "via TEXT, link_id INTEGER, contact_id INTEGER, by_name TEXT, by_email TEXT, action TEXT NOT NULL, slots JSONB NOT NULL DEFAULT '[]'::jsonb, tz TEXT, reason TEXT, note TEXT, " +
           "created_at TIMESTAMPTZ NOT NULL DEFAULT now())",
         "CREATE INDEX IF NOT EXISTS card_feedback_sub ON card_feedback (submission_id, created_at)",
+        // Demo links in a client's branding with made-up candidates (card-demo.js).
+        "CREATE TABLE IF NOT EXISTS card_system_demos (id SERIAL PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, client_id INTEGER NOT NULL, created_by TEXT, " +
+          "created_at TIMESTAMPTZ NOT NULL DEFAULT now(), revoked_at TIMESTAMPTZ)",
       ];
       ready = stmts.reduce(function (p, sql) { return p.then(function () { return db.query(sql); }); }, Promise.resolve())
         .then(function () { return true; })
@@ -791,7 +807,7 @@ function registerCard(app, deps) {
 
   function contactOf(link) {
     const r = link && link.recruiter ? (typeof link.recruiter === "string" ? JSON.parse(link.recruiter) : link.recruiter) : {};
-    return { name: r.name || "Anura Connect", title: r.title || "", phone: r.phone || "", email: r.email || "" };
+    return { name: r.name || "Anura Connect", title: r.title || "", phone: r.phone || "", email: r.email || "", photoUrl: teamPhoto(r.name) };
   }
 
   async function publicView(token, otherId, opts) {
@@ -934,7 +950,8 @@ function registerCard(app, deps) {
   async function accountLead(clientId) {
     const c = await db.getOne("SELECT cl.owner_name, cl.owner_email, cu.email AS cu_email, cu.phone, cu.mobile, cu.name AS cu_name, cu.occupation FROM clients cl LEFT JOIN corporate_users cu ON cu.id = cl.owner_id WHERE cl.id = $1", [clientId]);
     if (c && (c.cu_email || c.owner_email)) {
-      return { name: niceName(c.cu_name || c.owner_name || ""), title: c.occupation || "", phone: c.phone || c.mobile || "", email: c.cu_email || c.owner_email || "" };
+      const n = niceName(c.cu_name || c.owner_name || "");
+      return { name: n, title: c.occupation || "", phone: c.phone || c.mobile || "", email: c.cu_email || c.owner_email || "", photoUrl: teamPhoto(n) };
     }
     const l = await db.getOne("SELECT recruiter FROM card_links WHERE client_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1", [clientId]);
     return l ? contactOf(l) : { name: "Anura Connect", title: "", phone: "", email: "" };
@@ -2143,6 +2160,8 @@ function registerCard(app, deps) {
             hidden: (cfg.hidden || []).map(String).indexOf(String(c.id)) >= 0 };
         }),
         titles: cfg.titles || {},
+        demos: (await db.getAll("SELECT id, created_by, created_at FROM card_system_demos WHERE client_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 10", [id]))
+          .map(function (x) { return { id: x.id, createdBy: x.created_by, createdAt: x.created_at }; }),
         links: links.map(function (l) { return { id: l.id, createdBy: l.created_by, createdAt: l.created_at, revoked: !!l.revoked_at, views: l.view_count, lastViewedAt: l.last_viewed_at,
           contactId: l.contact_id ? String(l.contact_id) : "", forName: l.contact_id ? personName(l) : "" }; }),
       });
@@ -2288,6 +2307,25 @@ function registerCard(app, deps) {
       res.json({ url: publicOrigin().replace(/\/$/, "") + "/h/" + token });
     } catch (e) { fail(res, e); }
   });
+  app.post("/api/cards/systems/:clientId/demo-link", async function (req, res) {
+    try {
+      await needDb();
+      const id = digitsId(req.params.clientId);
+      const client = await db.getOne("SELECT id FROM clients WHERE id = $1", [id]);
+      if (!client) return res.status(404).json({ error: "Client not found." });
+      const token = makeToken();
+      await db.query("INSERT INTO card_system_demos (token_hash, client_id, created_by) VALUES ($1,$2,$3)", [hashToken(token), id, who(req)]);
+      res.json({ url: publicOrigin().replace(/\/$/, "") + "/demo/b/" + token });
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/cards/demo-links/:id/revoke", async function (req, res) {
+    try {
+      await needDb();
+      await db.query("UPDATE card_system_demos SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL", [digitsId(req.params.id)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
   app.post("/api/cards/system-links/:linkId/revoke", async function (req, res) {
     try {
       await needDb();
@@ -2324,6 +2362,7 @@ function registerCard(app, deps) {
 
 module.exports = registerCard;
 module.exports.makeToken = makeToken;
+module.exports.teamPhoto = teamPhoto;
 module.exports.hashToken = hashToken;
 module.exports.validToken = validToken;
 module.exports.jobIsActive = jobIsActive;

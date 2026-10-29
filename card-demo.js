@@ -6,7 +6,7 @@
  */
 const path = require("path");
 
-const CONTACT = { name: "Peter Oppermann", title: "VP, Client Success", phone: "", email: "peter@anuraconnect.com" };
+const CONTACT = { name: "Peter Oppermann", title: "VP, Client Success", phone: "", email: "peter@anuraconnect.com", photoUrl: "https://www.anuraconnect.com/assets/team/peter-oppermann.jpg" };
 const SYSTEM = { name: "Lakeshore Health", accent: "#007A5E", intro: "" };
 const JOB = { title: "Epic Beaker Analyst", clientName: "Lakeshore Health", location: "Milwaukee, WI" };
 const MANAGER = { name: "Dana Ruiz", title: "Director, Lab Applications" };
@@ -98,7 +98,7 @@ const PEOPLE = [
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology", "Cupid"],
     availability: "2 weeks", location: "Chicago, IL", rate: "$165/hr", isNew: true,
     photo: portrait({ bg: "#DCE5EC", skin: "#8A5A3C", skinShade: "#734A30", hair: "#1B1412", style: "crop", shirt: "#4A5866", beard: true, glasses: true }),
-    whyMe: "Darnell pairs Beaker CP with Cupid, which matters if your cath lab and core lab share instruments or staff. He's supported both through upgrades at a 600-bed academic center.\n\nHe's available in two weeks and lives a short drive from Milwaukee.",
+    whyMe: "Darnell pairs Beaker CP with Cupid, which matters if your cath lab and core lab share instruments or staff. He's supported both through upgrades at a 600-bed academic center.\n\nHe's available in two weeks and can be on site for kickoff.",
     intro: "I like the problems that sit between two applications. That's usually where the real issue is.",
     culture: [
       { prompt: "My most memorable go-live", text: "A cath lab upgrade during a snowstorm. Half the team slept at the hospital. Zero downtime." },
@@ -164,7 +164,7 @@ function headers(res, page) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   if (page) {
     res.setHeader("Content-Security-Policy",
-      "default-src 'self'; img-src 'self' data: blob: https://images.squarespace-cdn.com; " +
+      "default-src 'self'; img-src 'self' data: blob: https://images.squarespace-cdn.com https://www.anuraconnect.com; " +
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; " +
       "script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   }
@@ -172,70 +172,141 @@ function headers(res, page) {
 
 function registerDemo(app, deps) {
   const pagesDir = (deps && deps.pagesDir) || path.join(__dirname, "public");
-  const base = "/api/demo";
+  const db = deps && deps.db;
 
-  function cardView(pid) {
-    const p = BY_ID[pid] || PEOPLE[0];
-    return {
-      state: "active", demo: true, contact: CONTACT, job: { title: JOB.title, clientName: JOB.clientName }, sent: p.id,
-      candidates: PEOPLE.map(summary), card: full(p), viewer: { name: MANAGER.name, known: true }, passReasons: PASS_REASONS,
-      system: { name: SYSTEM.name, accent: SYSTEM.accent, logoUrl: base + "/logo", homeUrl: "/demo" },
-    };
-  }
+  /**
+   * Routes for one flavor of the demo. page = "/demo" or "/demo/b/:token"; api = "/api/demo" or "/api/demo/b/:token".
+   * brandFor(req) → { name, accent, logo: () => {type, buffer}|null, location, consultants } or null (closed).
+   */
+  function mount(page, api, brandFor) {
+    function paths(req) {
+      const t = req.params.token ? "/b/" + req.params.token : "";
+      return { page: "/demo" + t, api: "/api/demo" + t };
+    }
+    async function brand(req, res) {
+      const b = await brandFor(req);
+      if (!b) { res.status(404).json({ state: "missing" }); return null; }
+      return b;
+    }
+    function cardView(req, b, pid) {
+      const p = BY_ID[pid] || PEOPLE[0];
+      const ps = paths(req);
+      return {
+        state: "active", demo: true, contact: CONTACT, job: { title: JOB.title, clientName: b.name }, sent: p.id,
+        candidates: PEOPLE.map(summary), card: full(p), viewer: { name: MANAGER.name, known: true }, passReasons: PASS_REASONS,
+        system: { name: b.name, accent: b.accent, logoUrl: b.hasLogo ? ps.api + "/logo" : "", homeUrl: ps.page },
+      };
+    }
 
-  app.get("/demo", function (req, res) { headers(res, true); res.sendFile(path.join(pagesDir, "health.html")); });
-  app.get("/demo/c/:pid", function (req, res) { headers(res, true); res.sendFile(path.join(pagesDir, "card.html")); });
+    app.get(page, function (req, res) { headers(res, true); res.sendFile(path.join(pagesDir, "health.html")); });
+    app.get(page + "/c/:pid", function (req, res) { headers(res, true); res.sendFile(path.join(pagesDir, "card.html")); });
 
-  app.get(base, function (req, res) {
-    headers(res);
-    const cands = PEOPLE.map(function (p) { return Object.assign(summary(p), { href: "/demo/c/" + p.id, photoUrl: base + "/photo/" + p.id }); });
-    res.json({
-      state: "active", demo: true,
-      system: { name: SYSTEM.name, accent: SYSTEM.accent, logoUrl: base + "/logo", intro: SYSTEM.intro },
-      stats: { roles: 1, candidates: 3, consultants: 2, newCount: 2, lastAdded: new Date(Date.now() - 86400000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" }), interviews: 0 },
-      roles: [{ title: JOB.title, location: JOB.location, manager: MANAGER, compareHref: "/demo/c/" + PEOPLE[0].id + "#compare", candidates: cands }],
-      sourcing: ["Willow Ambulatory Analyst"],
-      viewer: { name: MANAGER.name, known: true },
-      managers: [],
-      consultants: [{ name: "Teresa Holm", role: "Willow Inpatient Analyst", since: "Apr 2026" }, { name: "Omar Haddad", role: "Cadence Principal Trainer", since: "Aug 2026" }],
-      contact: CONTACT,
+    app.get(api, async function (req, res) {
+      headers(res);
+      try {
+        const b = await brand(req, res); if (!b) return;
+        const ps = paths(req);
+        const cands = PEOPLE.map(function (p) { return Object.assign(summary(p), { href: ps.page + "/c/" + p.id, photoUrl: ps.api + "/photo/" + p.id }); });
+        res.json({
+          state: "active", demo: true,
+          system: { name: b.name, accent: b.accent, logoUrl: b.hasLogo ? ps.api + "/logo" : "", intro: "" },
+          stats: { roles: 1, candidates: 3, consultants: b.consultants.length, newCount: 2, lastAdded: new Date(Date.now() - 86400000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" }), interviews: 0 },
+          roles: [{ title: JOB.title, location: b.location, manager: MANAGER, compareHref: ps.page + "/c/" + PEOPLE[0].id + "#compare", candidates: cands }],
+          sourcing: ["Willow Ambulatory Analyst"],
+          viewer: { name: MANAGER.name, known: true },
+          managers: [],
+          consultants: b.consultants,
+          contact: CONTACT,
+        });
+      } catch (e) { res.status(500).json({ error: "The demo didn't load." }); }
     });
-  });
-  app.get(base + "/logo", function (req, res) { headers(res); res.type("image/svg+xml").send(LOGO); });
-  app.get(base + "/photo/:pid", function (req, res) {
-    headers(res);
-    const p = BY_ID[req.params.pid];
-    if (!p) return res.status(404).end();
-    res.type("image/svg+xml").send(p.photo);
-  });
-  app.post(base + "/seen", function (req, res) { headers(res); res.json({ counted: false, reason: "demo" }); });
+    app.get(api + "/logo", async function (req, res) {
+      headers(res);
+      try {
+        const b = await brand(req, res); if (!b) return;
+        const l = await b.logo();
+        if (!l) return res.status(404).end();
+        res.type(l.type).send(l.buffer);
+      } catch (e) { res.status(500).end(); }
+    });
+    app.get(api + "/photo/:pid", function (req, res) {
+      headers(res);
+      const p = BY_ID[req.params.pid];
+      if (!p) return res.status(404).end();
+      res.type("image/svg+xml").send(p.photo);
+    });
+    app.post(api + "/seen", function (req, res) { headers(res); res.json({ counted: false, reason: "demo" }); });
 
-  // The Card pages: api = /api/demo/card/:pid (same shape as a real Card).
-  app.get(base + "/card/:pid", function (req, res) { headers(res); if (!BY_ID[req.params.pid]) return res.status(404).json({ state: "missing" }); res.json(cardView(req.params.pid)); });
-  app.get(base + "/card/:pid/c/:other", function (req, res) { headers(res); if (!BY_ID[req.params.other]) return res.status(404).json({ state: "missing" }); const v = cardView(req.params.other); v.sent = req.params.pid; res.json(v); });
-  app.get(base + "/card/:pid/photo/:p", function (req, res) { headers(res); const p = BY_ID[req.params.p]; if (!p) return res.status(404).end(); res.type("image/svg+xml").send(p.photo); });
-  app.get(base + "/card/:pid/system-logo", function (req, res) { headers(res); res.type("image/svg+xml").send(LOGO); });
-  function sendResume(req, res) {
-    headers(res);
-    const p = BY_ID[req.params.p];
-    if (!p) return res.status(404).json({ error: "Résumé not available." });
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
-    res.setHeader("Content-Disposition", (req.query.download ? "attachment" : "inline") + "; filename=\"" + p.name.replace(/[^\w ]/g, "") + " Resume.pdf\"");
-    res.send(resumePdf(p.resume));
+    // Card pages: api/card/:pid, the same shape as a real Card.
+    app.get(api + "/card/:pid", async function (req, res) {
+      headers(res);
+      const b = await brand(req, res); if (!b) return;
+      if (!BY_ID[req.params.pid]) return res.status(404).json({ state: "missing" });
+      res.json(cardView(req, b, req.params.pid));
+    });
+    app.get(api + "/card/:pid/c/:other", async function (req, res) {
+      headers(res);
+      const b = await brand(req, res); if (!b) return;
+      if (!BY_ID[req.params.other]) return res.status(404).json({ state: "missing" });
+      const v = cardView(req, b, req.params.other); v.sent = req.params.pid; res.json(v);
+    });
+    app.get(api + "/card/:pid/photo/:p", function (req, res) { headers(res); const p = BY_ID[req.params.p]; if (!p) return res.status(404).end(); res.type("image/svg+xml").send(p.photo); });
+    function sendResume(req, res) {
+      headers(res);
+      const p = BY_ID[req.params.p];
+      if (!p) return res.status(404).json({ error: "Résumé not available." });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+      res.setHeader("Content-Disposition", (req.query.download ? "attachment" : "inline") + "; filename=\"" + p.name.replace(/[^\w ]/g, "") + " Resume.pdf\"");
+      res.send(resumePdf(p.resume));
+    }
+    app.get(api + "/card/:pid/resume/:p", sendResume);
+    app.get(api + "/card/:pid/doc/:p/:index", sendResume);
+    app.post(api + "/card/:pid/seen", function (req, res) { headers(res); res.json({ counted: false, reason: "demo" }); });
+    app.post(api + "/card/:pid/feedback/:p", function (req, res) {
+      headers(res);
+      const b = req.body || {};
+      if (["interview", "pass", "reopen"].indexOf(b.action) < 0) return res.status(400).json({ error: "Pick interview or pass." });
+      if (b.action === "pass" && PASS_REASONS.indexOf(b.reason) < 0) return res.status(400).json({ error: "Pick a reason." });
+      if (b.action === "reopen") return res.json({ saved: false, demo: true, feedback: null });
+      const slots = (Array.isArray(b.slots) ? b.slots : []).slice(0, 3).filter(function (x) { return isFinite(Date.parse(x)); });
+      res.json({ saved: false, demo: true, feedback: { action: b.action, at: new Date().toISOString(), by: MANAGER.name, slots: b.action === "interview" ? slots : [], tz: String(b.tz || ""), reason: b.reason || "", note: String(b.note || "").slice(0, 800) } });
+    });
   }
-  app.get(base + "/card/:pid/resume/:p", sendResume);
-  app.get(base + "/card/:pid/doc/:p/:index", sendResume);
-  app.post(base + "/card/:pid/seen", function (req, res) { headers(res); res.json({ counted: false, reason: "demo" }); });
-  app.post(base + "/card/:pid/feedback/:p", function (req, res) {
-    headers(res);
-    const b = req.body || {};
-    if (["interview", "pass", "reopen"].indexOf(b.action) < 0) return res.status(400).json({ error: "Pick interview or pass." });
-    if (b.action === "pass" && PASS_REASONS.indexOf(b.reason) < 0) return res.status(400).json({ error: "Pick a reason." });
-    if (b.action === "reopen") return res.json({ saved: false, demo: true, feedback: null });
-    const slots = (Array.isArray(b.slots) ? b.slots : []).slice(0, 3).filter(function (x) { return isFinite(Date.parse(x)); });
-    res.json({ saved: false, demo: true, feedback: { action: b.action, at: new Date().toISOString(), by: MANAGER.name, slots: b.action === "interview" ? slots : [], tz: String(b.tz || ""), reason: b.reason || "", note: String(b.note || "").slice(0, 800) } });
-  });
+
+  // The open demo: Lakeshore Health, made up end to end.
+  const LAKESHORE = {
+    name: SYSTEM.name, accent: SYSTEM.accent, hasLogo: true, location: JOB.location,
+    logo: async function () { return { type: "image/svg+xml", buffer: Buffer.from(LOGO) }; },
+    consultants: [{ name: "Teresa Holm", role: "Willow Inpatient Analyst", since: "Apr 2026" }, { name: "Omar Haddad", role: "Cadence Principal Trainer", since: "Aug 2026" }],
+  };
+  mount("/demo", "/api/demo", async function () { return LAKESHORE; });
+
+  // A demo in a real client's branding (logo, name, color), made-up candidates. Private token link, made on the Cards page.
+  if (db) {
+    const card = require("./card");
+    const ready = (deps && deps.ready) || function () { return Promise.resolve(true); };
+    mount("/demo/b/:token", "/api/demo/b/:token", async function (req) {
+      const tok = req.params.token;
+      if (!card.validToken(tok)) return null;
+      await ready();
+      const row = await db.getOne(
+        "SELECT d.client_id, s.display_name, s.accent, (s.logo IS NOT NULL) AS has_logo, c.name, c.address_city, c.address_state FROM card_system_demos d " +
+        "JOIN clients c ON c.id = d.client_id LEFT JOIN card_systems s ON s.client_id = d.client_id WHERE d.token_hash = $1 AND d.revoked_at IS NULL", [card.hashToken(tok)]);
+      if (!row) return null;
+      return {
+        name: row.display_name || row.name || "Your health system",
+        accent: /^#[0-9a-f]{6}$/i.test(row.accent || "") ? row.accent : "",
+        hasLogo: !!row.has_logo,
+        location: [row.address_city, row.address_state].filter(Boolean).join(", "),
+        consultants: [],
+        logo: async function () {
+          const l = await db.getOne("SELECT logo, logo_type FROM card_systems WHERE client_id = $1", [row.client_id]);
+          return l && l.logo ? { type: l.logo_type || "image/png", buffer: l.logo } : null;
+        },
+      };
+    });
+  }
 }
 
 module.exports = registerDemo;

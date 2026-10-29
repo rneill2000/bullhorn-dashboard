@@ -235,6 +235,7 @@ async function harness() {
     pagesDir: path.join(__dirname, "public"),
     log: function () {},
   });
+  require("./card-demo")(app, { db: db, ready: api.ensureTables, pagesDir: path.join(__dirname, "public") });
   const server = await listen(app);
   const port = server.address().port;
   function mint(o) {
@@ -831,6 +832,33 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.match(r.json.error, /isn't a PNG, JPG or WebP/);
     });
 
+    await t.test("K39 a demo in a client's branding: their name, logo and color, made-up candidates, nothing real", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      let r = await req(h.port, "POST", "/api/cards/systems/900/demo-link", { headers: rec, body: {} });
+      assert.equal(r.status, 200, r.text);
+      const T = r.json.url.split("/demo/b/")[1];
+      assert.ok(card.validToken(T));
+      const v = await req(h.port, "GET", "/api/demo/b/" + T);
+      assert.equal(v.status, 200, v.text);
+      assert.equal(v.json.demo, true);
+      assert.equal(v.json.system.name, "UW Health");
+      assert.equal(v.json.system.logoUrl, "/api/demo/b/" + T + "/logo");
+      assert.deepEqual(v.json.consultants, [], "no made-up people 'on site' at a real client");
+      assert.deepEqual(v.json.roles[0].candidates.map(function (c) { return c.name; }), ["Jack Corbell", "Mia Lopez", "Darnell Price"]);
+      assert.doesNotMatch(v.text, /Ana Ito|Sam Reed|dana@uw/, "nothing real");
+      assert.equal((await req(h.port, "GET", "/api/demo/b/" + T + "/logo")).status, 200);
+      const cardv = await req(h.port, "GET", "/api/demo/b/" + T + "/card/mialopezdemo");
+      assert.equal(cardv.json.system.homeUrl, "/demo/b/" + T);
+      assert.equal(cardv.json.contact.photoUrl, "https://www.anuraconnect.com/assets/team/peter-oppermann.jpg");
+      const fb = await req(h.port, "POST", "/api/demo/b/" + T + "/card/mialopezdemo/feedback/mialopezdemo", { body: { action: "interview" } });
+      assert.equal(fb.json.demo, true);
+      assert.equal((await req(h.port, "GET", "/api/demo/b/bcdfghjkmnpqrstvwxzbcdfghjkmnpq")).status, 404, "unknown token");
+      const admin = await req(h.port, "GET", "/api/cards/systems/900", { headers: rec });
+      await req(h.port, "POST", "/api/cards/demo-links/" + admin.json.demos[0].id + "/revoke", { headers: rec, body: {} });
+      assert.equal((await req(h.port, "GET", "/api/demo/b/" + T)).status, 404, "turned off");
+      assert.equal((await req(h.port, "GET", "/demo/b/" + T)).status, 200, "page shell; data says closed");
+    });
+
     await t.test("K36 a manager's link: their roles only, greeted by name, Cards outside their roles unreachable", async function () {
       const rec = { "x-test-user": "ben@anuraconnect.com" };
       let r = await req(h.port, "POST", "/api/cards/systems/900/link", { headers: rec, body: { contactId: "601" } });
@@ -925,6 +953,13 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
   } finally {
     await h.close();
   }
+});
+
+test("K40 Anura contact photos come from anuraconnect.com/about", function () {
+  assert.equal(card.teamPhoto("Peter Oppermann"), "https://www.anuraconnect.com/assets/team/peter-oppermann.jpg");
+  assert.equal(card.teamPhoto("Jen Hemming"), "https://www.anuraconnect.com/assets/team/jennifer-hemming.jpg");
+  assert.equal(card.teamPhoto("Anura Connect"), "");
+  assert.equal(card.teamPhoto("Ben"), "");
 });
 
 test("K24 photo size and LinkedIn name matching", function () {

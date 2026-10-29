@@ -38,6 +38,7 @@ a{color:var(--blue)}
 .contact{background:var(--navy);color:#fff;border-radius:18px;padding:22px 22px 20px;box-shadow:0 28px 60px -28px rgba(7,24,42,.6)}
 .contact .who{display:flex;gap:14px;align-items:center}
 .avatar{width:54px;height:54px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:19px;flex-shrink:0}
+.avatar.face{width:64px;height:64px;object-fit:cover;border:3px solid rgba(255,255,255,.25);background:#1d3a55}
 .contact .k{font-size:13px;color:#A9C7D6}
 .contact .n{font-family:var(--display);font-weight:700;font-size:19px;line-height:1.2}
 .contact .t{font-size:14px;color:#C9DCE6}
@@ -139,8 +140,8 @@ a{color:var(--blue)}
   "use strict";
   var tok = (location.pathname.match(/^\/h\/([a-z]+)/) || [])[1] || "";
   var prev = (location.pathname.match(/^\/cards\/system\/(\d+)\/preview/) || [])[1] || "";
-  var demo = /^\/demo\/?$/.test(location.pathname);
-  var api = prev ? "/api/cards/systems/" + prev + "/view" + location.search : (demo ? "/api/demo" : "/api/hs-public/" + tok);
+  var demoM = location.pathname.match(/^\/demo(\/b\/[a-z]+)?\/?$/);
+  var api = prev ? "/api/cards/systems/" + prev + "/view" + location.search : (demoM ? "/api/demo" + (demoM[1] || "") : "/api/hs-public/" + tok);
   var ANURA = "https://images.squarespace-cdn.com/content/v1/671fb0d9fec6997ddc5025cd/79107203-ad2e-4d39-96a6-5faa3f2f70bf/fulllogo_transparent_nobuffer.png";
   var app = document.getElementById("app");
 
@@ -166,10 +167,19 @@ a{color:var(--blue)}
     document.documentElement.style.setProperty("--accent-soft", "rgb(" + soft.join(",") + ")");
   }
 
+  /* The Anura contact's real headshot from anuraconnect.com/about, initials if there isn't one. */
+  function avatar(c) {
+    var fallback = el("div", { class: "avatar", "aria-hidden": "true", text: ini(c.name) });
+    if (!c.photoUrl) return fallback;
+    var img = el("img", { class: "avatar face", src: c.photoUrl, alt: "" });
+    img.addEventListener("error", function () { img.replaceWith(fallback); });
+    return img;
+  }
+
   function contactCard(c) {
     var tel = c.phone ? "tel:" + c.phone.replace(/[^\d+]/g, "") : "";
     return el("aside", { class: "contact", "aria-label": "Your Anura Connect contact" }, [
-      el("div", { class: "who" }, [el("div", { class: "avatar", "aria-hidden": "true", text: ini(c.name) }), el("div", {}, [
+      el("div", { class: "who" }, [avatar(c), el("div", {}, [
         el("div", { class: "k", text: "Your Anura contact" }),
         el("div", { class: "n", text: c.name }),
         c.title ? el("div", { class: "t", text: c.title }) : null,
@@ -232,7 +242,7 @@ a{color:var(--blue)}
     if (s.accent) applyAccent(s.accent);
     document.title = s.name + " | Your Epic candidates";
     app.innerHTML = "";
-    if (d.demo) app.appendChild(el("div", { class: "preview-bar", role: "region", "aria-label": "Demo" }, [el("b", { text: "Demo. " }), "A made-up health system with made-up candidates, exactly as a hiring manager would see it.", el("a", { href: "/demo/c/jackcorbelld", text: "Open a candidate's Card" })]));
+    if (d.demo) app.appendChild(el("div", { class: "preview-bar", role: "region", "aria-label": "Demo" }, [el("b", { text: "Demo. " }), "A made-up health system with made-up candidates, exactly as a hiring manager would see it.", el("a", { href: d.roles[0] && d.roles[0].candidates[0] ? d.roles[0].candidates[0].href : "/demo/c/jackcorbelld", text: "Open a candidate's Card" })]));
     if (prev) app.appendChild(el("div", { class: "preview-bar", role: "region", "aria-label": "Recruiter preview" }, [el("b", { text: "Preview. " }), "This is what " + (d.viewer && d.viewer.known ? d.viewer.name : s.name) + " sees. Your visits don't count as opens.", el("a", { href: "/cards?system=" + prev, text: "Back to settings" })]));
     app.appendChild(el("header", { class: "top" }, [el("div", { class: "wrap" }, [
       s.logoUrl ? el("img", { class: "sys-logo", src: s.logoUrl, alt: s.name }) : el("span", { class: "sys-word", text: s.name }),
