@@ -242,7 +242,7 @@ a{color:var(--blue)}
     if (s.accent) applyAccent(s.accent);
     document.title = s.name + " | Your Epic candidates";
     app.innerHTML = "";
-    if (d.demo) app.appendChild(el("div", { class: "preview-bar", role: "region", "aria-label": "Demo" }, [el("b", { text: "Demo. " }), "A made-up health system with made-up candidates, exactly as a hiring manager would see it.", el("a", { href: d.roles[0] && d.roles[0].candidates[0] ? d.roles[0].candidates[0].href : "/demo/c/jackcorbelld", text: "Open a candidate's Card" })]));
+    if (d.demo) app.appendChild(el("div", { class: "preview-bar", role: "region", "aria-label": "Demo" }, [el("b", { text: "Demo. " }), (demoM && demoM[1] ? "Made-up candidates on your page, exactly as a hiring manager would see it." : "A made-up health system with made-up candidates, exactly as a hiring manager would see it."), el("a", { href: d.roles[0] && d.roles[0].candidates[0] ? d.roles[0].candidates[0].href : "/demo/c/jackcorbelld", text: "Open a candidate's Card" })]));
     if (prev) app.appendChild(el("div", { class: "preview-bar", role: "region", "aria-label": "Recruiter preview" }, [el("b", { text: "Preview. " }), "This is what " + (d.viewer && d.viewer.known ? d.viewer.name : s.name) + " sees. Your visits don't count as opens.", el("a", { href: "/cards?system=" + prev, text: "Back to settings" })]));
     app.appendChild(el("header", { class: "top" }, [el("div", { class: "wrap" }, [
       s.logoUrl ? el("img", { class: "sys-logo", src: s.logoUrl, alt: s.name }) : el("span", { class: "sys-word", text: s.name }),

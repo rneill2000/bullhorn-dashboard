@@ -616,7 +616,7 @@ body.editing .editor{transform:none}
   function demoBar() {
     if (document.querySelector(".preview-bar")) return;
     document.body.insertBefore(el("div", { class: "preview-bar", role: "region", "aria-label": "Demo" }, [
-      el("span", {}, [el("b", { text: "Demo" }), " Made-up health system and candidates. Try Interview or Pass: nothing is sent."]),
+      el("span", {}, [el("b", { text: "Demo" }), (demoPath && demoPath[1] ? " Made-up candidates, shown the way your hiring managers would see them. Try Interview or Pass: nothing is sent." : " Made-up health system and candidates. Try Interview or Pass: nothing is sent.")]),
       el("span", { class: "acts" }, [el("a", { class: "btn plain", href: (data.system && data.system.homeUrl) || "/demo", text: "See the health system page" })]),
     ]), document.body.firstChild);
   }
