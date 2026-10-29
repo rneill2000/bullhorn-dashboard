@@ -259,7 +259,8 @@ body.editing .editor{transform:none}
   var token = (location.pathname.match(/^\/card\/([a-z]+)/) || [])[1] || "";
   var previewId = (location.pathname.match(/^\/cards\/preview\/(\d+)/) || [])[1] || "";
   var sysPath = location.pathname.match(/^\/h\/([a-z]+)\/c\/([a-z]+)/);
-  var api = previewId ? "/api/cards/preview/" + previewId : (sysPath ? "/api/hs-public/" + sysPath[1] + "/card/" + sysPath[2] : "/api/card-public/" + token);
+  var demoPath = location.pathname.match(/^\/demo\/c\/([a-z]+)/);
+  var api = previewId ? "/api/cards/preview/" + previewId : (sysPath ? "/api/hs-public/" + sysPath[1] + "/card/" + sysPath[2] : (demoPath ? "/api/demo/card/" + demoPath[1] : "/api/card-public/" + token));
   var app = document.getElementById("app");
   var data = null, photoBust = 0;
 
@@ -370,11 +371,11 @@ body.editing .editor{transform:none}
       }
       submit.disabled = true; submit.textContent = "Sending…";
       post(c, body).then(function (res) {
-        if (!res.preview) setFeedback(c, res.feedback);
+        if (!res.preview || res.demo) setFeedback(c, res.feedback);
         dlg.replaceChildren(el("div", { class: "done", role: "status" }, [
           el("div", { class: "tick", "aria-hidden": "true", text: "✓" }),
           el("h2", { text: res.preview ? "Preview: nothing was sent" : (mode === "interview" ? "Sent to " + contact : "Got it") }),
-          el("p", { class: "lede", text: res.preview ? "Clients see this confirmation. Recruiters' clicks are never recorded."
+          el("p", { class: "lede", text: res.demo ? "This is a demo, so nothing was sent. On a real Card, " + contact + " gets this right away." : res.preview ? "Clients see this confirmation. Recruiters' clicks are never recorded."
             : (mode === "interview" ? contact + " will confirm a time with you and " + name + "." : contact + " will keep looking. You can undo this anytime.") }),
           el("div", { class: "row", style: "justify-content:center" }, [el("button", { class: "btn primary", type: "button", text: "Done", onclick: function () { dlg.close(); render(); } })]),
         ]));
@@ -402,7 +403,7 @@ body.editing .editor{transform:none}
     return el("div", { class: "status pass", role: "status" }, [
       el("b", { text: "Passed" + (by ? " by " + by : "") + (fb.reason ? ": " + fb.reason : "") }),
       el("button", { class: "again", type: "button", text: "Undo, keep " + name + " in the running", onclick: function () {
-        post(c, { action: "reopen" }).then(function (res) { if (!res.preview) setFeedback(c, null); render(); }).catch(function (e) { alertBar(e.message); });
+        post(c, { action: "reopen" }).then(function (res) { if (!res.preview || res.demo) setFeedback(c, null); render(); }).catch(function (e) { alertBar(e.message); });
       } }),
     ]);
   }
@@ -596,6 +597,14 @@ body.editing .editor{transform:none}
     b.appendChild(el("span", { class: "x", "aria-hidden": "true" }));
     b.appendChild(anura);
     if (sysb.accent && /^#[0-9a-f]{6}$/i.test(sysb.accent)) document.documentElement.style.setProperty("--sky", sysb.accent);
+  }
+
+  function demoBar() {
+    if (document.querySelector(".preview-bar")) return;
+    document.body.insertBefore(el("div", { class: "preview-bar", role: "region", "aria-label": "Demo" }, [
+      el("span", {}, [el("b", { text: "Demo" }), " Made-up health system and candidates. Try Interview or Pass: nothing is sent."]),
+      el("span", { class: "acts" }, [el("a", { class: "btn plain", href: "/demo", text: "See the health system page" })]),
+    ]), document.body.firstChild);
   }
 
   /* ── recruiter edit mode (preview pages only) ── */
@@ -858,6 +867,7 @@ body.editing .editor{transform:none}
       brandHeader();
       render();
       if (previewId) recruiterBar();
+      if (data.demo) demoBar();
       seen(location.hash === "#compare" ? "compare" : (other ? "card:" + other : "card"));
     }).catch(function () {
       app.innerHTML = '<p class="loading">This page didn\'t load. Check your connection and refresh.</p>';
