@@ -63,6 +63,12 @@ a{color:var(--blue)}
 .lineup::-webkit-scrollbar{height:8px}.lineup::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
 .cand{padding:22px 24px 22px;border-right:1px solid var(--fog);scroll-snap-align:start;display:flex;flex-direction:column}
 .cand:last-child{border-right:0}
+/* Several candidates: one shared row grid (subgrid), so every column's rows line up. */
+.role:not(.single) .lineup{grid-template-rows:repeat(8,auto)}
+.role:not(.single) .cand{display:grid;grid-row:1 / span 8;grid-template-rows:subgrid;row-gap:0;align-items:start}
+.role:not(.single) .cand .go{margin-top:0;align-self:end}
+.role:not(.single) .cand .ask{justify-self:center}
+.noquote{margin:0}
 .cand .ph{width:84px;height:100px;border-radius:12px;object-fit:cover;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:26px;color:var(--blue)}
 .cand h4{font-family:var(--display);font-weight:700;font-size:18px;color:var(--navy);margin-top:12px;line-height:1.2}
 .cand .hl{font-size:15px;color:var(--muted);margin-top:2px}
@@ -200,29 +206,32 @@ a{color:var(--blue)}
 
   function day(iso) { var d = new Date(iso); return isNaN(d) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
 
-  function candCol(c, d) {
+  function candCol(c, d, many) {
     var ph = c.photoUrl ? el("img", { class: "ph", src: c.photoUrl, alt: "Photo of " + c.name, loading: "lazy" }) : el("div", { class: "ph", "aria-hidden": "true", text: ini(c.name) });
     var ask = "Ask " + first(d.contact.name);
     var body = [
       el("h4", {}, [c.name, c.feedback ? el("span", { class: "pill " + c.feedback.action, text: c.feedback.action === "interview" ? "Interview requested" : "Passed" }) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]),
-      c.headline ? el("p", { class: "hl", text: c.headline }) : null,
-      (c.certs.length || c.formerEpic) ? el("div", { class: "creds", "aria-label": "Credentials" }, (c.formerEpic ? [el("span", { class: "exepic", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "cert", text: certified(x) }); }))) : null,
+      c.headline ? el("p", { class: "hl", text: c.headline }) : el("p", { class: "hl", "aria-hidden": "true" }),
+      (c.certs.length || c.formerEpic) ? el("div", { class: "creds", "aria-label": "Credentials" }, (c.formerEpic ? [el("span", { class: "exepic", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "cert", text: certified(x) }); }))) : el("div", { class: "creds", "aria-hidden": "true" }),
       el("dl", { class: "facts" }, [
         el("dt", { text: "Epic" }), el("dd", { class: c.epicRole || c.certs.length ? "" : "q", text: c.epicRole || c.certs[0] || "See résumé" }),
-        c.systemsCount ? el("dt", { text: "Worked at" }) : null, c.systemsCount ? el("dd", { text: c.systemsCount + (c.systemsCount === 1 ? " health system" : " health systems") }) : null,
+        el("dt", { text: "Worked at" }), el("dd", { class: c.systemsCount ? "" : "q", text: c.systemsCount ? c.systemsCount + (c.systemsCount === 1 ? " health system" : " health systems") : "See résumé" }),
         el("dt", { text: "Available" }), el("dd", { class: c.availability ? "" : "q", text: c.availability || ask }),
         el("dt", { text: "Location" }), el("dd", { class: c.location ? "" : "q", text: c.location || ask }),
         el("dt", { text: "Rate" }), el("dd", { class: c.rate ? "" : "q", text: c.rate || ask }),
       ]),
-      c.highlight && !c.feedback ? el("p", { class: "quote", text: "“" + c.highlight + "”" }) : null,
-      c.feedback ? el("p", { class: "fbline", text: (c.feedback.action === "interview" ? "Interview requested" : "Passed") + (c.feedback.by ? " by " + first(c.feedback.by) : "") + (c.feedback.at ? ", " + day(c.feedback.at) : "") + "." }) : null,
+      c.feedback ? el("p", { class: "fbline", text: (c.feedback.action === "interview" ? "Interview requested" : "Passed") + (c.feedback.by ? " by " + first(c.feedback.by) : "") + (c.feedback.at ? ", " + day(c.feedback.at) : "") + "." })
+        : (c.highlight ? el("p", { class: "quote", text: "“" + c.highlight + "”" }) : el("p", { class: "noquote", "aria-hidden": "true" })),
     ];
     var go = el("div", { class: "go" }, [
       c.hasResume ? el("a", { class: "btn", href: c.href + "#resume", text: "Résumé" }) : null,
       el("a", { class: "btn p", href: c.href, text: "Open Card" }),
     ]);
-    var ask2 = c.feedback ? null : el("a", { class: "ask", href: c.href + "#interview", text: "Interview " + first(c.name) });
-    return el("div", { class: "cand" + (c.feedback && c.feedback.action === "pass" ? " passed" : "") }, [ph, el("div", { class: "body" }, body), go, ask2]);
+    var ask2 = c.feedback ? el("span", { class: "ask", "aria-hidden": "true" }) : el("a", { class: "ask", href: c.href + "#interview", text: "Interview " + first(c.name) });
+    var cls = "cand" + (c.feedback && c.feedback.action === "pass" ? " passed" : "");
+    // Side by side: every piece is its own row on a shared grid, so names, badges, details and buttons line up across candidates.
+    if (many) return el("div", { class: cls }, [ph].concat(body, [go, ask2]));
+    return el("div", { class: cls }, [ph, el("div", { class: "body" }, body), go, ask2]);
   }
 
   function roleCard(r, d) {
@@ -233,7 +242,7 @@ a{color:var(--blue)}
         el("div", {}, [el("h3", { text: r.title }), meta ? el("p", { class: "meta", text: meta }) : null]),
         el("span", { class: "count", text: many ? plural(r.candidates.length, "candidate") + ", side by side" : "1 candidate" }),
       ]),
-      el("div", { class: "lineup" }, r.candidates.map(function (c) { c.roleTitle = r.title; return candCol(c, d); })),
+      el("div", { class: "lineup" }, r.candidates.map(function (c) { c.roleTitle = r.title; return candCol(c, d, many); })),
       many ? el("p", { class: "swipe", text: "Swipe to see all " + r.candidates.length }) : null,
     ]);
   }
