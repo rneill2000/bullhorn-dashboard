@@ -228,6 +228,20 @@ function sameName(li, cand) {
   return !!lf && !!cf && (lf === cf || lf[0] === cf[0]);
 }
 
+/** Larger sizes of a LinkedIn profile photo URL, biggest first, ending with the original. */
+function linkedinSizes(url) {
+  const out = [];
+  const m = String(url).match(/shrink_(\d+)_(\d+)/);
+  if (m) {
+    ["800_800", "400_400", "200_200"].forEach(function (sz) {
+      const n = Number(sz.split("_")[0]);
+      if (n > Number(m[1])) out.push(String(url).replace(/shrink_\d+_\d+/, "shrink_" + sz));
+    });
+  }
+  out.push(String(url));
+  return out;
+}
+
 function linkedinConfigured() {
   return !!(process.env.LINKEDIN_CLIENT_ID && process.env.LINKEDIN_CLIENT_SECRET);
 }
@@ -866,12 +880,21 @@ function registerCard(app, deps) {
       if (!pic) return backToEdit(res, token, "nophoto");
       // Only LinkedIn's own image host. The URL comes from LinkedIn, but never fetch an arbitrary address.
       if (pic.protocol !== "https:" || !/(^|\.)licdn\.com$/i.test(pic.hostname)) throw new Error("unexpected photo host " + pic.hostname);
-      const imgRes = await fetchImpl(pic.toString(), { signal: AbortSignal.timeout(15000) });
-      if (!imgRes.ok) throw new Error("LinkedIn photo " + imgRes.status);
-      const buf = Buffer.from(await imgRes.arrayBuffer());
-      if (buf.length > MAX_PHOTO_BYTES) throw new Error("photo too large");
-      const type = sniffImage(buf);
-      if (!type) throw new Error("photo is not a JPG, PNG or WebP");
+      // LinkedIn's sign-in hands out the 100px thumbnail. The same image usually exists at larger sizes
+      // under the same signed path; try those first and fall back to what LinkedIn gave us.
+      const tries = linkedinSizes(pic.toString());
+      let buf = null, type = "";
+      for (let i = 0; i < tries.length && !type; i++) {
+        try {
+          const imgRes = await fetchImpl(tries[i], { signal: AbortSignal.timeout(15000) });
+          if (!imgRes.ok) continue;
+          const b = Buffer.from(await imgRes.arrayBuffer());
+          if (!b.length || b.length > MAX_PHOTO_BYTES) continue;
+          const t = sniffImage(b);
+          if (t) { buf = b; type = t; }
+        } catch (e) { /* try the next size */ }
+      }
+      if (!type) throw new Error("LinkedIn photo could not be downloaded");
       const cand = await candidateRow(link.candidate_id);
       const liName = [info.given_name, info.family_name].filter(Boolean).join(" ") || info.name || "";
       const mismatch = !sameName(info, cand) ? "From a LinkedIn account named " + (liName || "(no name)") + ", which doesn't match the candidate." : "From LinkedIn.";
@@ -1469,6 +1492,7 @@ module.exports.niceName = niceName;
 module.exports.cleanRole = cleanRole;
 module.exports.imageSize = imageSize;
 module.exports.sameName = sameName;
+module.exports.linkedinSizes = linkedinSizes;
 module.exports.CANDIDATE_FIELDS = CANDIDATE_FIELDS;
 module.exports.MAX_PROMPTS = MAX_PROMPTS;
 module.exports.highlightAllowed = highlightAllowed;

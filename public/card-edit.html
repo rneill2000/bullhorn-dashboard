@@ -279,6 +279,7 @@ input[type=file]{position:absolute;left:-9999px}
           ]),
         ]),
         mismatch ? el("div", { class: "notice warn", text: "That photo came from a LinkedIn account with a different name. If it isn't you, remove it and try again." }) : null,
+        S.photoNote && /Small photo/.test(S.photoNote) ? el("div", { class: "notice warn", text: "LinkedIn only sent us a small version, so it may look blurry. If you have a sharper headshot on your phone or computer, upload that instead." }) : null,
       ]),
     ];
   }
