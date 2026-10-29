@@ -182,6 +182,8 @@ input[type=file]{position:absolute;left:-9999px}
   var EX = {
     headline: "e.g. Beaker analyst who's happiest at the lab bench",
     intro: "e.g. I build Epic the way the people using it actually work. My best fixes usually come from an afternoon next to a nurse or a tech, not a design session.",
+    skills: "e.g. Beaker CP build, specimen tracking, instrument interfaces, go-live support",
+    linkedin: "e.g. linkedin.com/in/your-name",
   };
 
   function el(tag, attrs, kids) {
@@ -234,9 +236,9 @@ input[type=file]{position:absolute;left:-9999px}
   function field(f, opts) {
     opts = opts || {};
     var v = S.fields[f.key] || "";
-    var input = f.max > 90
+    var input = f.max > 90 && f.key !== "linkedin"
       ? el("textarea", { id: "i-" + f.key, rows: opts.rows || (f.max > 400 ? "5" : "3"), maxlength: String(f.max), placeholder: opts.placeholder || "", "aria-label": opts.aria || null }, [v])
-      : el("input", { id: "i-" + f.key, type: "text", maxlength: String(f.max), value: v, placeholder: opts.placeholder || "", "aria-label": opts.aria || null });
+      : el("input", { id: "i-" + f.key, type: f.key === "linkedin" ? "url" : "text", inputmode: f.key === "linkedin" ? "url" : null, autocomplete: f.key === "linkedin" ? "url" : null, maxlength: String(f.max), value: v, placeholder: opts.placeholder || "", "aria-label": opts.aria || null });
     var count = el("span", { class: "count", text: v.length + " / " + f.max });
     function upd() { count.textContent = input.value.length + " / " + f.max; count.classList.toggle("near", input.value.length > f.max * 0.8); }
     upd();

@@ -55,6 +55,11 @@ img{display:block}
 .badge .certs{list-style:none;margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
 .badge .certs li{display:inline-flex;align-items:center;gap:6px;background:#E8F5EE;color:#14532D;border-radius:999px;padding:4px 10px 4px 6px;font-size:12.5px;font-weight:700;line-height:1.25;text-align:left}
 .badge .certs li::before{content:"✓";display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#1F7A55;color:#fff;font-size:10px;flex-shrink:0}
+.skills{list-style:none;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px}
+.skills li{background:#E7F1F6;color:var(--blue);border-radius:8px;padding:4px 9px;font-size:12.5px;font-weight:600;line-height:1.25}
+.badge .lbl{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:16px}
+.btn.li{display:flex;align-items:center;justify-content:center;gap:8px}
+.btn.li::before{content:"in";display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:4px;background:#0A66C2;color:#fff;font-family:Arial,sans-serif;font-weight:700;font-size:13px;line-height:1}
 .ribbon{display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:var(--navy);color:#fff;font-family:var(--display);font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;padding:5px 12px;border-radius:999px}
 .ribbon::before{content:"★";color:#F5C451}
 /* Selling points: a quick strip of proof, then where they've worked */
@@ -479,6 +484,7 @@ body.editing .editor{transform:none}
     var facts = el("dl", { class: "facts" }, [
       el("dt", { text: "Available" }), el("dd", { class: c.availability ? "" : "quiet", text: c.availability || "Ask " + contactFirst() }),
       el("dt", { text: "Location" }), el("dd", { class: c.location ? "" : "quiet", text: c.location || "Ask " + contactFirst() }),
+      c.systemsCount ? el("dt", { text: "Worked at" }) : null, c.systemsCount ? el("dd", { text: c.systemsCount + (c.systemsCount === 1 ? " health system" : " health systems") }) : null,
       el("dt", { text: "Bill rate" }), el("dd", { class: c.rate ? "" : "quiet", text: c.rate || "Ask " + contactFirst() }),
     ]);
     var actions = el("div", { class: "actions" }, [
@@ -488,6 +494,7 @@ body.editing .editor{transform:none}
         c.resumeName ? el("a", { class: "btn plain", href: api + "/resume/" + c.id + "?download=1", text: "Résumé" }) : null,
       ]),
       c.feedback && c.resumeName ? el("a", { class: "btn plain", href: api + "/resume/" + c.id + "?download=1", text: "Download résumé" }) : null,
+      c.linkedin ? el("a", { class: "btn plain li", href: c.linkedin, target: "_blank", rel: "noopener noreferrer", text: "LinkedIn profile", "aria-label": c.name + " on LinkedIn (opens in a new tab)" }) : null,
     ]);
     return el("aside", { class: "badge", "aria-label": c.name + " at a glance" }, [
       el("div", { class: "slot", "aria-hidden": "true" }),
@@ -498,6 +505,8 @@ body.editing .editor{transform:none}
         c.formerEpic ? el("span", { class: "ribbon", text: "Former Epic" }) : null,
         c.epicRole ? el("p", { class: "role", text: c.epicRole }) : null,
         c.certs.length ? el("ul", { class: "certs", "aria-label": "Epic certifications" }, c.certs.map(function (x) { return el("li", { text: certified(x) }); })) : null,
+        (c.skills || []).length ? el("p", { class: "lbl", text: "Epic skills" }) : null,
+        (c.skills || []).length ? el("ul", { class: "skills", "aria-label": "Epic skills" }, c.skills.slice(0, 8).map(function (x) { return el("li", { text: x }); })) : null,
       ]),
       facts,
       actions,
@@ -587,6 +596,7 @@ body.editing .editor{transform:none}
       return el("tr", {}, [
         el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name" }, [c.name, c.feedback ? pill(c.feedback) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]), c.headline ? el("div", { class: "sub", text: c.headline }) : null, c.highlight ? el("div", { class: "standout", text: "“" + c.highlight + "”" }) : null])])]),
         el("td", {}, [el("div", { text: c.epicRole || "—" }),
+          (c.skills || []).length ? el("div", { class: "sub", text: c.skills.slice(0, 4).join(" · ") + (c.skills.length > 4 ? " +" + (c.skills.length - 4) : "") }) : null,
           (c.certs.length || c.formerEpic) ? el("div", { class: "chips" }, (c.formerEpic ? [el("span", { class: "chip-e", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "chip-c", text: "✓ " + certified(x) }); }))) : null,
           c.systemsCount ? el("div", { class: "sub", text: c.systemsCount + (c.systemsCount === 1 ? " health system" : " health systems") }) : null]),
         el("td", { class: "nowrap", "data-label": "Available", text: c.availability || "Ask " + contactFirst() }),

@@ -859,6 +859,30 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal((await req(h.port, "GET", "/demo/b/" + T)).status, 200, "page shell; data says closed");
     });
 
+    await t.test("K42 LinkedIn and Epic skills: from Bullhorn unless the candidate or recruiter set them", async function () {
+      await h.db.query("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS skill_list TEXT, ADD COLUMN IF NOT EXISTS raw_json JSONB, ADD COLUMN IF NOT EXISTS description TEXT");
+      await h.db.query("UPDATE candidates SET skill_list = 'Epic Beaker CP; Cupid, epic beaker cp', raw_json = $1::jsonb, description = 'Refs: linkedin.com/in/dana-ruiz-uw' WHERE id = 1",
+        [JSON.stringify({ customText12: "https://www.linkedin.com/in/jack-corbell-4b2/" })]);
+      let v = (await req(h.port, "GET", "/api/card-public/" + J)).json;
+      assert.equal(v.card.linkedin, "https://www.linkedin.com/in/jack-corbell-4b2", "his own link (his name is in it), not a referee's");
+      assert.deepEqual(v.card.skills, ["Beaker CP", "Cupid"]);
+      assert.equal(v.candidates.filter(function (c) { return c.id === v.card.id; })[0].linkedin, "https://www.linkedin.com/in/jack-corbell-4b2");
+      await h.db.query("UPDATE candidates SET raw_json = $1::jsonb WHERE id = 1", [JSON.stringify({ a: "linkedin.com/in/someone-else", b: "linkedin.com/in/another-person" })]);
+      await h.db.query("UPDATE card_profiles SET fields = fields - 'linkedin' WHERE candidate_id = 1");
+      v = (await req(h.port, "GET", "/api/card-public/" + J)).json;
+      assert.equal(v.card.linkedin, "", "two links, neither with his name: show none rather than guess");
+      // The candidate's own entry wins, and must be a real profile link.
+      const parsed = card.readCandidateFields({ linkedin: "linkedin.com/in/jack-c/?trk=public", skills: "Beaker AP, Beaker CP" });
+      assert.equal(parsed.fields.linkedin, "https://www.linkedin.com/in/jack-c");
+      assert.deepEqual(parsed.errors, {});
+      assert.ok(card.readCandidateFields({ linkedin: "https://evil.example/in/jack" }).errors.linkedin);
+      assert.ok(card.readCandidateFields({ skills: "call me 608-555-0101" }).errors.skills, "no contact details in skills");
+      await h.db.query("UPDATE card_profiles SET fields = fields || $1::jsonb WHERE candidate_id = 1", [JSON.stringify(parsed.fields)]);
+      v = (await req(h.port, "GET", "/api/card-public/" + J)).json;
+      assert.equal(v.card.linkedin, "https://www.linkedin.com/in/jack-c");
+      assert.deepEqual(v.card.skills, ["Beaker AP", "Beaker CP"]);
+    });
+
     await t.test("K36 a manager's link: their roles only, greeted by name, Cards outside their roles unreachable", async function () {
       const rec = { "x-test-user": "ben@anuraconnect.com" };
       let r = await req(h.port, "POST", "/api/cards/systems/900/link", { headers: rec, body: { contactId: "601" } });

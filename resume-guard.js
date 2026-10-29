@@ -4,7 +4,7 @@
  * must not carry a way to reach the candidate, or a referee, directly.
  *
  * Blocks: any email address not on an internal domain, the candidate's own phone numbers from
- * Bullhorn, any other phone number that isn't an Anura number, and LinkedIn profile URLs.
+ * Bullhorn, and any other phone number that isn't an Anura number. LinkedIn links are allowed (Cards show them).
  * A PDF with no readable text (a scan) can't be checked, so it's reported as unreadable.
  */
 
@@ -28,7 +28,6 @@ const EMAIL_RE = /[A-Z0-9._%+-]+\s?@\s?[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 // US-style numbers: (608) 555-0101, 608-555-0101, 608.555.0101, +1 608 555 0101. Needs separators,
 // so years, IDs and "2019-2021" don't match.
 const PHONE_RE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]{1,2}\d{3}[\s.-]\d{4}\b/g;
-const LINKEDIN_RE = /(?:https?:\/\/)?(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[A-Za-z0-9_\-%]+/gi;
 
 /**
  * text: résumé text. who: { emails, phones } for the candidate. allow: { phones, domains } internal.
@@ -74,7 +73,7 @@ function contactHits(text, who, allow) {
     }
   });
 
-  (t.match(LINKEDIN_RE) || []).forEach(function (raw) { add("linkedin", raw.trim(), false); });
+  // LinkedIn profile links are fine: Cards show the candidate's LinkedIn on purpose.
 
   // Own contact details first: those are the ones a client would use to go around us.
   return hits.sort(function (a, b) { return (b.own ? 1 : 0) - (a.own ? 1 : 0); }).slice(0, 5);

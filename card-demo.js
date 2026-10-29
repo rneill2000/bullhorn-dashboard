@@ -48,7 +48,8 @@ const LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" width
 
 const PEOPLE = [
   {
-    id: "jackcorbelld", healthSystems: [{ name: "Riverside Health", role: "Beaker Analyst", from: 2023, to: "Present", viaAnura: true }, { name: "Northfield Medical Center", role: "Beaker CP Analyst", from: 2020, to: 2023 }, { name: "St. Agnes Regional", role: "Lab Systems Analyst", from: 2017, to: 2020 }], formerEpic: false,
+    id: "jackcorbelld", skills: ["Beaker CP build", "Specimen tracking", "AP workflow", "Instrument interfaces", "Validation & testing", "Super-user training", "Go-live command center"], linkedin: "https://www.linkedin.com/",
+    healthSystems: [{ name: "Riverside Health", role: "Beaker Analyst", from: 2023, to: "Present", viaAnura: true }, { name: "Northfield Medical Center", role: "Beaker CP Analyst", from: 2020, to: 2023 }, { name: "St. Agnes Regional", role: "Lab Systems Analyst", from: 2017, to: 2020 }], formerEpic: false,
     name: "Jack Corbell", headline: "Beaker analyst who's happiest at the lab bench",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology", "Beaker Anatomic Pathology"],
     availability: "Nov 18", location: "Madison, WI (hybrid)", rate: "$185/hr", isNew: false,
@@ -75,7 +76,8 @@ const PEOPLE = [
     resume: ["JACK CORBELL", "Epic Beaker Analyst | Beaker CP and AP certified", "", "SUMMARY", "Eight years building and supporting Epic Beaker for academic and community labs.", "Two CP go-lives as build lead; AP optimization; specimen tracking redesign.", "", "EXPERIENCE", "Riverside Health, Beaker Analyst (Anura Connect consultant), 2023-2026", "  Rebuilt specimen tracking six weeks ahead of cutover; trained 40 super users.", "Northfield Medical Center, Beaker CP Analyst, 2020-2023", "  Led CP validation, finished two weeks early; built 300+ result components.", "St. Agnes Regional, Lab Systems Analyst, 2017-2020", "  Sunquest to Beaker conversion; instrument interfaces.", "", "CERTIFICATIONS", "Epic Beaker Clinical Pathology; Epic Beaker Anatomic Pathology", "", "Presented by Anura Connect"],
   },
   {
-    id: "mialopezdemo", healthSystems: [{ name: "Prairie State Health", role: "Beaker CP Build Lead", from: 2022, to: "Present" }, { name: "Gulf Coast Medical", role: "Beaker Analyst", from: 2019, to: 2022 }, { name: "Lakeview Academic Medical Center", role: "Go-live support (with Epic)", from: 2018, to: 2018 }], formerEpic: true,
+    id: "mialopezdemo", skills: ["Multi-site standardization", "Beaker CP build", "Microbiology", "Blood bank", "Reference lab interfaces", "Design sessions"], linkedin: "https://www.linkedin.com/",
+    healthSystems: [{ name: "Prairie State Health", role: "Beaker CP Build Lead", from: 2022, to: "Present" }, { name: "Gulf Coast Medical", role: "Beaker Analyst", from: 2019, to: 2022 }, { name: "Lakeview Academic Medical Center", role: "Go-live support (with Epic)", from: 2018, to: 2018 }], formerEpic: true,
     name: "Mia Lopez", headline: "CP build lead for a nine-hospital system",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology"],
     availability: "Dec 2", location: "Remote (Central)", rate: "$172/hr", isNew: true,
@@ -96,7 +98,8 @@ const PEOPLE = [
     resume: ["MIA LOPEZ", "Epic Beaker CP Build Lead", "", "SUMMARY", "Seven years of Beaker CP build; multi-site standardization on one instance.", "", "EXPERIENCE", "Prairie State Health, Beaker CP Build Lead, 2022-2026", "  Standardized CP build across nine hospitals; 1,200 tests consolidated to 640.", "Gulf Coast Medical, Beaker Analyst, 2019-2022", "  Microbiology and blood bank build; reference lab interfaces.", "", "CERTIFICATIONS", "Epic Beaker Clinical Pathology", "", "Presented by Anura Connect"],
   },
   {
-    id: "darnellprice", healthSystems: [{ name: "Lakeview Academic Medical Center", role: "Senior Clinical Systems Analyst", from: 2019, to: "Present" }, { name: "Metro West Hospital", role: "Lab Systems Analyst", from: 2016, to: 2019 }], formerEpic: false,
+    id: "darnellprice", skills: ["Beaker CP", "Cupid", "Shared instruments", "Upgrades", "Downtime planning", "Post-live support"], linkedin: "https://www.linkedin.com/",
+    healthSystems: [{ name: "Lakeview Academic Medical Center", role: "Senior Clinical Systems Analyst", from: 2019, to: "Present" }, { name: "Metro West Hospital", role: "Lab Systems Analyst", from: 2016, to: 2019 }], formerEpic: false,
     name: "Darnell Price", headline: "Beaker plus Cupid, comfortable in both labs",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology", "Cupid"],
     availability: "2 weeks", location: "Chicago, IL", rate: "$165/hr", isNew: true,
@@ -122,7 +125,7 @@ PEOPLE.forEach(function (p) { BY_ID[p.id] = p; });
 function summary(p) {
   return { id: p.id, name: p.name, headline: p.headline, epicRole: p.epicRole, certs: p.certs, availability: p.availability, location: p.location, rate: p.rate,
     hasPhoto: true, hasResume: true, highlight: p.highlights[0] ? p.highlights[0].quote : "", isNew: p.isNew, feedback: null,
-    formerEpic: !!p.formerEpic, systemsCount: p.healthSystems.length };
+    formerEpic: !!p.formerEpic, systemsCount: p.healthSystems.length, skills: p.skills, linkedin: p.linkedin };
 }
 function full(p) {
   return Object.assign(summary(p), {

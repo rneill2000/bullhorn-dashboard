@@ -41,6 +41,8 @@ const MAX_PROMPTS = 4;
 const CANDIDATE_FIELDS = [
   { key: "headline", kind: "about", label: "Your headline", max: 90, hint: "One line a hiring manager reads first." },
   { key: "intro", kind: "about", label: "In your own words", max: 700, hint: "A few sentences about the work you do best." },
+  { key: "skills", kind: "about", label: "Your Epic skills", max: 300, hint: "Separate with commas: modules, build areas, the work you're known for." },
+  { key: "linkedin", kind: "about", label: "Your LinkedIn profile", max: 160, hint: "Paste your profile link, like linkedin.com/in/your-name." },
   { key: "outside", kind: "prompt", label: "Outside of work, you'll find me…", max: 280 },
   { key: "team", kind: "prompt", label: "On a team, I'm the one who…", max: 280 },
   { key: "why", kind: "prompt", label: "What I like about Epic work", max: 280 },
@@ -114,11 +116,30 @@ const CONTACT_RES = [
 const PAY_RE = /\$\s*\d|\b\d{2,3}(?:\.\d+)?\s*(?:\/\s*|per\s+|an?\s+)(?:hr|hour)\b|\bhourly\b|\bmy\s+rate\b|\bbill\s*rate\b|\bpay\s*(?:rate|range|is|of)\b|\bsalary\b|\b1099\b|\bw-?2\b|\bc2c\b|corp(?:orate)?\s*to\s*corp/i;
 
 /** "" when the text can go on a Card, else a message the candidate can act on. */
+/** "linkedin.com/in/jane-doe/?trk=x" → "https://www.linkedin.com/in/jane-doe". "" if it isn't a profile link. */
+function normalizeLinkedIn(v) {
+  const m = String(v || "").trim().match(/^(?:https?:\/\/)?(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([A-Za-z0-9\-_%\u00C0-\u024F]{2,100})\/?(?:[?#].*)?$/i);
+  return m ? "https://www.linkedin.com/in/" + m[1] : "";
+}
+
+/** Bullhorn skills (or a recruiter's / candidate's list) → up to 10 clean chips. */
+function skillChips(v) {
+  const out = [];
+  String(v || "").split(/[,;|\n•]+/).forEach(function (x) {
+    const t = x.replace(/\s+/g, " ").trim().replace(/^epic\s+(?=\S)/i, "");
+    if (t.length < 2 || t.length > 40) return;
+    if (out.some(function (o) { return o.toLowerCase() === t.toLowerCase(); })) return;
+    out.push(t);
+  });
+  return out.slice(0, 10);
+}
+
 function checkCandidateText(key, value) {
   const field = FIELD_BY_KEY[key];
   if (!field) return "Unknown field.";
   const text = String(value == null ? "" : value);
   if (text.length > field.max) return "Keep this under " + field.max + " characters.";
+  if (key === "linkedin") return !text || normalizeLinkedIn(text) ? "" : "Paste your LinkedIn profile link, like linkedin.com/in/your-name.";
   for (let i = 0; i < CONTACT_RES.length; i++) {
     if (CONTACT_RES[i].re.test(text)) return CONTACT_RES[i].msg;
   }
@@ -137,7 +158,8 @@ function readCandidateFields(body) {
   const errors = {};
   CANDIDATE_FIELDS.forEach(function (f) {
     if (!Object.prototype.hasOwnProperty.call(src, f.key)) return;
-    const v = cleanFieldValue(src[f.key]);
+    let v = cleanFieldValue(src[f.key]);
+    if (f.key === "linkedin" && v && normalizeLinkedIn(v)) v = normalizeLinkedIn(v);
     fields[f.key] = v;
     const err = checkCandidateText(f.key, v);
     if (err) errors[f.key] = err;
@@ -808,10 +830,34 @@ function registerCard(app, deps) {
     return n || row.candidate_name || "Candidate";
   }
 
+  /** LinkedIn and Epic skills: the candidate's or recruiter's own entry first, else the Bullhorn record. */
+  async function extrasFor(row, pf) {
+    let c = null;
+    try {
+      c = await db.getOne("SELECT first_name, last_name, skill_list, " +
+        "(SELECT string_agg(DISTINCT m[1], ' ') FROM regexp_matches(COALESCE(raw_json::text, '') || ' ' || COALESCE(description, ''), 'linkedin\\.com/in/([A-Za-z0-9_%-]{2,100})', 'gi') AS m) AS li " +
+        "FROM candidates WHERE id = $1", [row.candidate_id]);
+    } catch (e) { c = null; }
+    let linkedin = normalizeLinkedIn(pf.linkedin);
+    if (!linkedin && c && c.li) {
+      // Use the Bullhorn link only when it's clearly theirs: their name is in it, or it's the only one on the record.
+      const slugs = String(c.li).split(/\s+/).filter(Boolean);
+      const last = String(c.last_name || "").toLowerCase().replace(/[^a-z]/g, "");
+      const mine = slugs.filter(function (x) { return last && x.toLowerCase().replace(/[^a-z]/g, "").indexOf(last) >= 0; });
+      const pick = mine.length ? mine[0] : (slugs.length === 1 ? slugs[0] : "");
+      if (pick) linkedin = normalizeLinkedIn("linkedin.com/in/" + pick);
+    }
+    const skills = skillChips(pf.skills || (c && c.skill_list) || "");
+    return { linkedin: linkedin, skills: skills };
+  }
+
   async function summaryFor(row, rate) {
     const pf = profileFields(row);
     const career = await careerFor(row.candidate_id);
+    const extras = await extrasFor(row, pf);
     return {
+      linkedin: extras.linkedin,
+      skills: extras.skills,
       formerEpic: career.formerEpic,
       systemsCount: career.healthSystems.length,
       id: row.public_id,
@@ -2456,6 +2502,8 @@ module.exports = registerCard;
 module.exports.makeToken = makeToken;
 module.exports.teamPhoto = teamPhoto;
 module.exports.careerFrom = careerFrom;
+module.exports.normalizeLinkedIn = normalizeLinkedIn;
+module.exports.skillChips = skillChips;
 module.exports.hashToken = hashToken;
 module.exports.validToken = validToken;
 module.exports.jobIsActive = jobIsActive;

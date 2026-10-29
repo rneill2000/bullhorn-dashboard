@@ -8,9 +8,9 @@ const { textPdf } = require("./test-pdf");
 const WHO = { emails: ["jack.corbell@gmail.com"], phones: ["608-555-0101"] };
 const ALLOW = { phones: ["(608) 555-9999"] };
 
-test("RG1 the candidate's own email, phone and LinkedIn are caught, own ones first", function () {
+test("RG1 the candidate's own email and phone are caught; a LinkedIn link is allowed (Cards show it)", function () {
   const hits = g.contactHits("linkedin.com/in/jackcorbell\nJack Corbell | Jack.Corbell@Gmail.com | +1 608.555.0101", WHO, ALLOW);
-  assert.deepEqual(hits.map(function (h) { return [h.kind, h.own]; }), [["email", true], ["phone", true], ["linkedin", false]]);
+  assert.deepEqual(hits.map(function (h) { return [h.kind, h.own]; }), [["email", true], ["phone", true]]);
 });
 
 test("RG2 Anura's own email and numbers pass; dates, years and IDs don't look like phones", function () {

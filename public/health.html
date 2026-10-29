@@ -64,8 +64,8 @@ a{color:var(--blue)}
 .cand{padding:22px 24px 22px;border-right:1px solid var(--fog);scroll-snap-align:start;display:flex;flex-direction:column}
 .cand:last-child{border-right:0}
 /* Several candidates: one shared row grid (subgrid), so every column's rows line up. */
-.role:not(.single) .lineup{grid-template-rows:repeat(8,auto)}
-.role:not(.single) .cand{display:grid;grid-row:1 / span 8;grid-template-rows:subgrid;row-gap:0;align-items:start}
+.role:not(.single) .lineup{grid-template-rows:repeat(9,auto)}
+.role:not(.single) .cand{display:grid;grid-row:1 / span 9;grid-template-rows:subgrid;row-gap:0;align-items:start}
 .role:not(.single) .cand .go{margin-top:0;align-self:end}
 .role:not(.single) .cand .ask{justify-self:center}
 .noquote{margin:0}
@@ -76,6 +76,11 @@ a{color:var(--blue)}
 .facts dt{color:var(--muted)}
 .facts dd{font-weight:700;text-align:right}
 .facts dd.q{font-weight:400;color:var(--muted)}
+.skl{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.skl span{background:var(--accent-soft);color:var(--navy);border-radius:7px;padding:3px 8px;font-size:12.5px;font-weight:600}
+.skl .more{background:none;color:var(--muted);padding-left:2px}
+.lin{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;margin-left:8px;border-radius:5px;background:#0A66C2;color:#fff;font-family:Arial,sans-serif;font-weight:700;font-size:14px;text-decoration:none;vertical-align:middle;line-height:1}
+.lin:hover{background:#004182}
 .creds{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .cert{display:inline-flex;align-items:center;gap:5px;background:#E8F5EE;color:#14532D;border-radius:999px;padding:3px 10px 3px 5px;font-size:13px;font-weight:700}
 .cert::before{content:"✓";display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#1F7A55;color:#fff;font-size:10px}
@@ -210,9 +215,10 @@ a{color:var(--blue)}
     var ph = c.photoUrl ? el("img", { class: "ph", src: c.photoUrl, alt: "Photo of " + c.name, loading: "lazy" }) : el("div", { class: "ph", "aria-hidden": "true", text: ini(c.name) });
     var ask = "Ask " + first(d.contact.name);
     var body = [
-      el("h4", {}, [c.name, c.feedback ? el("span", { class: "pill " + c.feedback.action, text: c.feedback.action === "interview" ? "Interview requested" : "Passed" }) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]),
+      el("h4", {}, [c.name, c.linkedin ? el("a", { class: "lin", href: c.linkedin, target: "_blank", rel: "noopener noreferrer", text: "in", "aria-label": c.name + " on LinkedIn (opens in a new tab)", title: "LinkedIn profile" }) : null, c.feedback ? el("span", { class: "pill " + c.feedback.action, text: c.feedback.action === "interview" ? "Interview requested" : "Passed" }) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]),
       c.headline ? el("p", { class: "hl", text: c.headline }) : el("p", { class: "hl", "aria-hidden": "true" }),
       (c.certs.length || c.formerEpic) ? el("div", { class: "creds", "aria-label": "Credentials" }, (c.formerEpic ? [el("span", { class: "exepic", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "cert", text: certified(x) }); }))) : el("div", { class: "creds", "aria-hidden": "true" }),
+      (c.skills || []).length ? el("div", { class: "skl", "aria-label": "Epic skills" }, c.skills.slice(0, 4).map(function (x) { return el("span", { text: x }); }).concat(c.skills.length > 4 ? [el("span", { class: "more", text: "+" + (c.skills.length - 4) + " more" })] : [])) : el("div", { class: "skl", "aria-hidden": "true" }),
       el("dl", { class: "facts" }, [
         el("dt", { text: "Epic" }), el("dd", { class: c.epicRole || c.certs.length ? "" : "q", text: c.epicRole || c.certs[0] || "See résumé" }),
         el("dt", { text: "Worked at" }), el("dd", { class: c.systemsCount ? "" : "q", text: c.systemsCount ? c.systemsCount + (c.systemsCount === 1 ? " health system" : " health systems") : "See résumé" }),
