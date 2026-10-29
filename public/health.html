@@ -161,6 +161,8 @@ a{color:var(--blue)}
     return n;
   }
   function ini(n) { return String(n || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(function (p) { return p[0].toUpperCase(); }).join(""); }
+  /* "Beaker Clinical Pathology" → "Beaker Clinical Pathology Certified" (unless it already says so). */
+  function certified(x) { return /certif/i.test(x) ? x : x + " Certified"; }
   function first(n) { return String(n || "").split(/\s+/)[0] || ""; }
   function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
 
@@ -204,7 +206,7 @@ a{color:var(--blue)}
     var body = [
       el("h4", {}, [c.name, c.feedback ? el("span", { class: "pill " + c.feedback.action, text: c.feedback.action === "interview" ? "Interview requested" : "Passed" }) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]),
       c.headline ? el("p", { class: "hl", text: c.headline }) : null,
-      (c.certs.length || c.formerEpic) ? el("div", { class: "creds", "aria-label": "Credentials" }, (c.formerEpic ? [el("span", { class: "exepic", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "cert", text: x }); }))) : null,
+      (c.certs.length || c.formerEpic) ? el("div", { class: "creds", "aria-label": "Credentials" }, (c.formerEpic ? [el("span", { class: "exepic", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "cert", text: certified(x) }); }))) : null,
       el("dl", { class: "facts" }, [
         el("dt", { text: "Epic" }), el("dd", { class: c.epicRole || c.certs.length ? "" : "q", text: c.epicRole || c.certs[0] || "See résumé" }),
         c.systemsCount ? el("dt", { text: "Worked at" }) : null, c.systemsCount ? el("dd", { text: c.systemsCount + (c.systemsCount === 1 ? " health system" : " health systems") }) : null,

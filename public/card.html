@@ -316,6 +316,8 @@ body.editing .editor{transform:none}
     if (c.hasPhoto) return el("img", { class: cls, src: api + "/photo/" + c.id + (photoBust ? "?v=" + photoBust : ""), alt: "Photo of " + c.name, loading: "lazy" });
     return el("div", { class: cls + " initials", "aria-hidden": "true", text: initials(c.name) });
   }
+  /* "Beaker Clinical Pathology" → "Beaker Clinical Pathology Certified" (unless it already says so). */
+  function certified(x) { return /certif/i.test(x) ? x : x + " Certified"; }
   function contactFirst() { return first(data.contact.name); }
   /* The Anura contact's real headshot (anuraconnect.com/about), initials if there isn't one. */
   function face(ct, cls) {
@@ -495,7 +497,7 @@ body.editing .editor{transform:none}
         c.headline ? el("p", { class: "headline", text: c.headline }) : null,
         c.formerEpic ? el("span", { class: "ribbon", text: "Former Epic" }) : null,
         c.epicRole ? el("p", { class: "role", text: c.epicRole }) : null,
-        c.certs.length ? el("ul", { class: "certs", "aria-label": "Epic certifications" }, c.certs.map(function (x) { return el("li", { text: x }); })) : null,
+        c.certs.length ? el("ul", { class: "certs", "aria-label": "Epic certifications" }, c.certs.map(function (x) { return el("li", { text: certified(x) }); })) : null,
       ]),
       facts,
       actions,
@@ -507,7 +509,7 @@ body.editing .editor{transform:none}
     var name = first(c.name);
     var parts = [];
     var proof = [];
-    if (c.certs.length) proof.push([String(c.certs.length), "Epic " + (c.certs.length === 1 ? "certification" : "certifications")]);
+    if (c.certs.length) proof.push([String(c.certs.length), "Epic " + (c.certs.length === 1 ? "certification" : "certifications") + " held"]);
     if ((c.healthSystems || []).length) proof.push([String(c.healthSystems.length), (c.healthSystems.length === 1 ? "health system" : "health systems") + " worked at"]);
     if (c.formerEpic) proof.push(["★", "Former Epic employee", true]);
     if ((c.references || []).length && c.wouldRehire) proof.push([c.wouldRehire + " of " + c.references.length, (c.references.length === 1 ? "reference" : "references") + " would rehire"]);
@@ -585,7 +587,7 @@ body.editing .editor{transform:none}
       return el("tr", {}, [
         el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name" }, [c.name, c.feedback ? pill(c.feedback) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]), c.headline ? el("div", { class: "sub", text: c.headline }) : null, c.highlight ? el("div", { class: "standout", text: "“" + c.highlight + "”" }) : null])])]),
         el("td", {}, [el("div", { text: c.epicRole || "—" }),
-          (c.certs.length || c.formerEpic) ? el("div", { class: "chips" }, (c.formerEpic ? [el("span", { class: "chip-e", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "chip-c", text: "✓ " + x }); }))) : null,
+          (c.certs.length || c.formerEpic) ? el("div", { class: "chips" }, (c.formerEpic ? [el("span", { class: "chip-e", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "chip-c", text: "✓ " + certified(x) }); }))) : null,
           c.systemsCount ? el("div", { class: "sub", text: c.systemsCount + (c.systemsCount === 1 ? " health system" : " health systems") }) : null]),
         el("td", { class: "nowrap", "data-label": "Available", text: c.availability || "Ask " + contactFirst() }),
         el("td", { "data-label": "Location", text: c.location || "Ask " + contactFirst() }),
