@@ -218,6 +218,11 @@ async function harness() {
   const api = card(app, {
     fetch: async function (url, opts) { net.calls.push(String(url)); return net.handler(String(url), opts || {}); },
     db: db,
+    lookup: async function (host) {
+      if (host === "www.client.example") return [{ address: "93.184.216.34" }];
+      if (host === "intranet.example") return [{ address: "10.1.2.3" }];
+      throw new Error("ENOTFOUND");
+    },
     notifier: notifier,
     getUser: function (r) { return r.headers["x-test-user"] ? { email: r.headers["x-test-user"], firstName: "Ben", lastName: "Gray" } : null; },
     verifyBill: async function (id) {
@@ -803,6 +808,27 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       const audit = await req(h.port, "GET", "/api/cards/resume-audit", { headers: rec });
       assert.equal(audit.status, 200, audit.text);
       assert.equal(audit.json.mode, "enforce");
+    });
+
+    await t.test("K38 a logo from a web link: public https images only, redirects re-checked", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      const png = Buffer.alloc(40); Buffer.from([0x89, 0x50, 0x4e, 0x47]).copy(png);
+      h.net.handler = async function (url) {
+        if (url === "https://www.client.example/logo.png") return { ok: true, status: 200, headers: { get: function (k) { return k === "content-length" ? "40" : null; } }, arrayBuffer: async function () { return png; } };
+        if (url === "https://www.client.example/old.png") return { ok: false, status: 301, headers: { get: function (k) { return k === "location" ? "https://intranet.example/logo.png" : null; } } };
+        if (url === "https://www.client.example/page.html") return { ok: true, status: 200, headers: { get: function () { return null; } }, arrayBuffer: async function () { return Buffer.from("<html>not an image</html>"); } };
+        throw new Error("unexpected " + url);
+      };
+      const get = function (u, hd) { return req(h.port, "GET", "/api/cards/logo-fetch?url=" + encodeURIComponent(u), { headers: hd }); };
+      let r = await get("https://www.client.example/logo.png", rec);
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.headers["content-type"], "image/png");
+      assert.equal((await get("http://www.client.example/logo.png", rec)).status, 400, "https only");
+      assert.equal((await get("https://intranet.example/logo.png", rec)).status, 400, "private address");
+      assert.equal((await get("https://www.client.example/old.png", rec)).status, 400, "a redirect to a private address");
+      r = await get("https://www.client.example/page.html", rec);
+      assert.equal(r.status, 400);
+      assert.match(r.json.error, /isn't a PNG, JPG or WebP/);
     });
 
     await t.test("K36 a manager's link: their roles only, greeted by name, Cards outside their roles unreachable", async function () {

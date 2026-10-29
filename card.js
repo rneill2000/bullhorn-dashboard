@@ -2191,6 +2191,53 @@ function registerCard(app, deps) {
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
+  /* Fetch a logo from a public https link (the client's own website) so a recruiter can use it.
+     Recruiter-only (behind login). Public hosts only, images only, 10 MB cap, re-checked on each redirect. */
+  const lookupHost = deps.lookup || function (host) { return require("dns").promises.lookup(host, { all: true }); };
+  function privateIp(ip) {
+    const v = String(ip || "").toLowerCase();
+    if (require("net").isIPv4(v)) {
+      const o = v.split(".").map(Number);
+      return o[0] === 10 || o[0] === 127 || o[0] === 0 || (o[0] === 169 && o[1] === 254) || (o[0] === 172 && o[1] >= 16 && o[1] <= 31) ||
+        (o[0] === 192 && o[1] === 168) || (o[0] === 100 && o[1] >= 64 && o[1] <= 127) || o[0] >= 224;
+    }
+    if (v.startsWith("::ffff:")) return privateIp(v.slice(7));
+    return v === "::1" || v === "::" || v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe8") || v.startsWith("fe9") || v.startsWith("fea") || v.startsWith("feb");
+  }
+  async function fetchPublicImage(raw) {
+    const bad = function (m) { return Object.assign(new Error(m), { status: 400 }); };
+    let url;
+    try { url = new URL(String(raw || "").trim()); } catch (e) { throw bad("Paste the full link to the logo image, starting with https://"); }
+    const fetchFn = deps.fetch || fetch;
+    for (let hop = 0; hop < 4; hop++) {
+      if (url.protocol !== "https:") throw bad("Use an https link.");
+      if (url.username || url.password) throw bad("That link can't be used.");
+      let addrs = [];
+      try { addrs = await lookupHost(url.hostname); } catch (e) { throw bad("Couldn't find that website."); }
+      if (!addrs.length || addrs.some(function (a) { return privateIp(a.address); })) throw bad("That link isn't on a public website.");
+      const r = await fetchFn(url.toString(), { redirect: "manual", headers: { "User-Agent": "AnuraConnect-Cards/1.0", Accept: "image/png,image/jpeg,image/webp,image/*" }, signal: AbortSignal.timeout(10000) });
+      const loc = r.headers && r.headers.get ? r.headers.get("location") : null;
+      if (r.status >= 300 && r.status < 400 && loc) { url = new URL(loc, url); continue; }
+      if (!r.ok) throw bad("That link didn't return an image (HTTP " + r.status + ").");
+      if (Number(r.headers.get("content-length") || 0) > 10 * 1024 * 1024) throw bad("That image is over 10 MB.");
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > 10 * 1024 * 1024) throw bad("That image is over 10 MB.");
+      const type = sniffImage(buf);
+      if (!type) throw bad("That link isn't a PNG, JPG or WebP image. On the client's site, right-click the logo and copy the image address.");
+      return { buffer: buf, type: type };
+    }
+    throw bad("That link redirects too many times.");
+  }
+  app.get("/api/cards/logo-fetch", async function (req, res) {
+    try {
+      const img = await fetchPublicImage(req.query.url);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Type", img.type);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(img.buffer);
+    } catch (e) { fail(res, e); }
+  });
+
   app.delete("/api/cards/systems/:clientId/logo", async function (req, res) {
     try {
       await needDb();

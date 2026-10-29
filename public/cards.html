@@ -355,6 +355,35 @@ header a{display:inline-flex;align-items:center;min-height:32px}
     }, 250);
   });
 
+  /* Logos are shown about 46px tall: store them at most 160px tall, trimmed of empty margins, transparency kept. */
+  function shrinkLogo(blob) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image(), url = URL.createObjectURL(blob);
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var a = document.createElement("canvas"); a.width = img.naturalWidth; a.height = img.naturalHeight;
+        var ax = a.getContext("2d"); ax.drawImage(img, 0, 0);
+        var x0 = 0, y0 = 0, x1 = a.width - 1, y1 = a.height - 1;
+        try {
+          var d = ax.getImageData(0, 0, a.width, a.height).data, W = a.width;
+          var ink = function (x, y) { var i = (y * W + x) * 4; return d[i + 3] > 24 && !(d[i] > 245 && d[i + 1] > 245 && d[i + 2] > 245); };
+          var found = false; x0 = a.width; y0 = a.height; x1 = 0; y1 = 0;
+          for (var y = 0; y < a.height; y += 2) for (var x = 0; x < a.width; x += 2) if (ink(x, y)) { found = true; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+          if (!found) { x0 = 0; y0 = 0; x1 = a.width - 1; y1 = a.height - 1; }
+        } catch (e) { /* keep the whole image */ }
+        var pad = Math.round((y1 - y0) * 0.04), sx = Math.max(0, x0 - pad), sy = Math.max(0, y0 - pad);
+        var sw = Math.min(a.width - sx, x1 - x0 + 1 + pad * 2), sh = Math.min(a.height - sy, y1 - y0 + 1 + pad * 2);
+        var H = Math.min(160, sh), Wd = Math.max(1, Math.round(sw * H / sh));
+        if (Wd > 900) { Wd = 900; H = Math.max(1, Math.round(sh * 900 / sw)); }
+        var c = document.createElement("canvas"); c.width = Wd; c.height = H;
+        var cx = c.getContext("2d"); cx.imageSmoothingQuality = "high"; cx.drawImage(a, sx, sy, sw, sh, 0, 0, Wd, H);
+        c.toBlob(function (b) { b ? resolve(b) : reject(new Error("Couldn't read that image.")); }, "image/png");
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("Couldn't read that image.")); };
+      img.src = url;
+    });
+  }
+
   /* Pick a brand color from a logo: the most common saturated color, ignoring white, black and grays. */
   function logoAccent(blob) {
     return new Promise(function (resolve) {
@@ -398,6 +427,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
       h += '<h3>Branding</h3><div class="grid2"><div>' +
         '<div class="fieldbox"><label>Logo</label><input type="file" id="sysLogo" accept="image/png,image/jpeg,image/webp" style="display:none">' +
         '<div class="row"><button class="btn" id="sysLogoBtn">' + (st.hasLogo ? "Replace logo" : "Upload logo") + '</button>' + (st.hasLogo ? '<button class="btn danger" id="sysLogoRm">Remove</button>' : '') + '</div>' +
+        '<div class="row" style="margin-top:8px"><label for="sysLogoUrl" class="sr-only">Logo link</label><input type="url" id="sysLogoUrl" placeholder="Or paste a link to their logo image" style="flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px;min-height:36px"><button class="btn" id="sysLogoUrlBtn">Use link</button></div>' +
         '<div class="muted" style="margin-top:6px">PNG with a transparent background looks best. We pick the brand color from it.</div></div>' +
         '<div class="fieldbox"><label for="sysColor">Accent color</label><div class="swatch"><input type="color" id="sysColor" value="' + esc(st.accent || "#53A2BE") + '"><span class="muted" id="sysColorHex">' + esc(st.accent || "Anura blue (default)") + '</span></div></div>' +
         '</div><div>' +
@@ -431,13 +461,26 @@ header a{display:inline-flex;align-items:center;min-height:32px}
 
       $("sysColor").oninput = function () { $("sysColorHex").textContent = this.value; this.dataset.touched = "1"; };
       $("sysLogoBtn").onclick = function () { $("sysLogo").click(); };
+      function saveLogo(blob) {
+        return shrinkLogo(blob).then(function (small) {
+          return logoAccent(small).then(function (hex) {
+            if (hex && !$("sysColor").dataset.touched) { $("sysColor").value = hex; $("sysColorHex").textContent = hex + " (from the logo)"; $("sysColor").dataset.touched = "1"; }
+            return call("POST", "/api/cards/systems/" + id + "/logo", null, small);
+          });
+        }).then(function () { $("sysSave").click(); }).catch(function (e) { toast(errorText(e)); }); // saving keeps the color picked from the logo
+      }
       $("sysLogo").onchange = function () {
         var f = this.files[0]; if (!f) return;
-        if (f.size > 5 * 1024 * 1024) { toast("Use a logo under 5 MB."); return; }
-        logoAccent(f).then(function (hex) {
-          if (hex && !$("sysColor").dataset.touched) { $("sysColor").value = hex; $("sysColorHex").textContent = hex + " (from the logo)"; $("sysColor").dataset.touched = "1"; }
-          return call("POST", "/api/cards/systems/" + id + "/logo", null, f);
-        }).then(function () { toast("Logo saved. Save to keep the color."); }).catch(function (e) { toast(e.message); });
+        if (f.size > 10 * 1024 * 1024) { toast("Use a logo under 10 MB."); return; }
+        saveLogo(f);
+      };
+      $("sysLogoUrlBtn").onclick = function () {
+        var u = $("sysLogoUrl").value.trim(); if (!u) { $("sysLogoUrl").focus(); return; }
+        var btn = this; btn.disabled = true; btn.textContent = "Getting it…";
+        fetch("/api/cards/logo-fetch?url=" + encodeURIComponent(u)).then(function (r) {
+          if (!r.ok) return r.json().then(function (b) { throw new Error(b.error || "Couldn't get that image."); });
+          return r.blob();
+        }).then(saveLogo).catch(function (e) { toast(e.message); }).then(function () { btn.disabled = false; btn.textContent = "Use link"; });
       };
       if ($("sysLogoRm")) $("sysLogoRm").onclick = function () { call("DELETE", "/api/cards/systems/" + id + "/logo").then(function () { toast("Logo removed"); openSystem(id); }); };
       $("mgrAdd").onchange = function () {
