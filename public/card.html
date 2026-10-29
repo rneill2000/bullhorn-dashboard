@@ -24,6 +24,12 @@ img{display:block}
 .top{background:var(--paper);border-bottom:1px solid var(--line)}
 .top-inner{max-width:1120px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
 .top img{height:34px;width:auto}
+.brand{display:flex;align-items:center;gap:14px}
+.brand .sys{max-height:40px;max-width:200px;object-fit:contain}
+.brand .x{width:1px;height:28px;background:var(--line)}
+.brand .anura{height:28px}
+.back{display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:600;text-decoration:none;margin-bottom:12px}
+.back::before{content:"←"}
 .top .shared{font-size:14px;color:var(--muted);text-align:right}
 .top .shared b{color:var(--ink);font-weight:600}
 
@@ -205,7 +211,7 @@ body.editing .editor{transform:none}
 <body>
 <header class="top">
   <div class="top-inner">
-    <img src="https://images.squarespace-cdn.com/content/v1/671fb0d9fec6997ddc5025cd/79107203-ad2e-4d39-96a6-5faa3f2f70bf/fulllogo_transparent_nobuffer.png" alt="Anura Connect">
+    <div class="brand" id="brand"><img class="anura" src="https://images.squarespace-cdn.com/content/v1/671fb0d9fec6997ddc5025cd/79107203-ad2e-4d39-96a6-5faa3f2f70bf/fulllogo_transparent_nobuffer.png" alt="Anura Connect"></div>
     <div class="shared" id="shared"></div>
   </div>
 </header>
@@ -216,7 +222,8 @@ body.editing .editor{transform:none}
   "use strict";
   var token = (location.pathname.match(/^\/card\/([a-z]+)/) || [])[1] || "";
   var previewId = (location.pathname.match(/^\/cards\/preview\/(\d+)/) || [])[1] || "";
-  var api = previewId ? "/api/cards/preview/" + previewId : "/api/card-public/" + token;
+  var sysPath = location.pathname.match(/^\/h\/([a-z]+)\/c\/([a-z]+)/);
+  var api = previewId ? "/api/cards/preview/" + previewId : (sysPath ? "/api/hs-public/" + sysPath[1] + "/card/" + sysPath[2] : "/api/card-public/" + token);
   var app = document.getElementById("app");
   var data = null, photoBust = 0;
 
@@ -326,8 +333,8 @@ body.editing .editor{transform:none}
     var docs = c.documents || [];
     if (docs.length) {
       var resumeIdx = docs.filter(function (d) { return d.kind === "Résumé"; })[0];
-      parts.push(el("section", {}, [
-        el("h3", { text: "Documents" }),
+      parts.push(el("section", { id: "resume" }, [
+        el("h3", { text: "Résumé and documents" }),
         el("ul", { class: "docs" }, docs.map(function (d) {
           var href = api + "/doc/" + c.id + "/" + d.index;
           return el("li", {}, [
@@ -392,7 +399,10 @@ body.editing .editor{transform:none}
       el("button", { role: "tab", "aria-selected": String(view === "card"), text: first(c.name) + "'s Card", onclick: function () { location.hash = c.id === data.sent ? "" : "c=" + c.id; } }),
       data.candidates.length > 1 ? el("button", { role: "tab", "aria-selected": String(view === "compare"), text: "Compare all " + data.candidates.length, onclick: function () { location.hash = "compare"; } }) : null,
     ]);
-    app.appendChild(el("div", { class: "context" }, [h1, tabs]));
+    var sysb = data.system;
+    app.appendChild(el("div", { class: "context" }, [
+      sysb && sysb.homeUrl ? el("a", { class: "back", href: sysb.homeUrl, text: "All roles at " + sysb.name }) : null,
+      h1, tabs]));
     var main = el("main");
     if (view === "compare") main.appendChild(compareView());
     else main.appendChild(el("div", { class: "layout" }, [badge(c), story(c)]));
@@ -410,7 +420,23 @@ body.editing .editor{transform:none}
       ct.email ? el("a", { class: "btn primary", href: interviewHref(c), text: "Request an interview" }) : null,
     ])]));
     document.title = (view === "compare" ? "Candidates for " + job : c.name) + " | Anura Connect";
+    if (hash === "resume") {
+      var target = document.getElementById("resume");
+      if (target) { setTimeout(function () { target.scrollIntoView({ block: "start" }); }, 50); return; }
+    }
     window.scrollTo(0, 0);
+  }
+
+  function brandHeader() {
+    var b = document.getElementById("brand"), sysb = data && data.system;
+    if (!b || !sysb) return;
+    var anura = b.querySelector(".anura");
+    b.innerHTML = "";
+    if (sysb.logoUrl) b.appendChild(el("img", { class: "sys", src: sysb.logoUrl, alt: sysb.name }));
+    else b.appendChild(el("span", { style: "font-family:var(--display);font-weight:800;font-size:19px;color:var(--navy)", text: sysb.name }));
+    b.appendChild(el("span", { class: "x", "aria-hidden": "true" }));
+    b.appendChild(anura);
+    if (sysb.accent && /^#[0-9a-f]{6}$/i.test(sysb.accent)) document.documentElement.style.setProperty("--sky", sysb.accent);
   }
 
   /* ── recruiter edit mode (preview pages only) ── */
@@ -669,6 +695,7 @@ body.editing .editor{transform:none}
       if (res.body.state !== "active") { data = res.body; shared(); closedPage(res.body); return; }
       data = res.body;
       shared();
+      brandHeader();
       render();
       if (previewId) recruiterBar();
       seen(location.hash === "#compare" ? "compare" : (other ? "card:" + other : "card"));
@@ -681,6 +708,7 @@ body.editing .editor{transform:none}
     if (!data || data.state !== "active") return load();
     var hash = location.hash.slice(1);
     if (hash === "compare") { render(); seen("compare"); return; }
+    if (hash === "resume") { render(); return; }
     var other = (hash.match(/^c=([a-z]+)$/) || [])[1];
     if ((other || data.sent) !== data.card.id) load(); else render();
   });

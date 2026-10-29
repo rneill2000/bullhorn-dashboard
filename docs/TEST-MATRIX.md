@@ -153,3 +153,4 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K19 | Public path allowlist | Recruiter pages exposed without login | K19 |
 | K20 | Forge draft with Cards | Card minted for a blocked draft; Card failure blocks a submittal | forge.test.js K20, K20b |
 | KM1 | Manual smoke after deploy: Forge draft on a real submission, open the Card logged out on a phone, check rate and résumé | Real data differs from fakes | Record date + result in the PR |
+| K31 | Health system page (one client): roles, managers, consultants, Cards opened from it | Another client's candidates, unsent drafts, or manager contact details reach a client | card.test.js K31 |

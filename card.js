@@ -379,6 +379,10 @@ function registerCard(app, deps) {
         "ALTER TABLE card_drafts ADD COLUMN IF NOT EXISTS photo_source TEXT",
         "ALTER TABLE card_drafts ADD COLUMN IF NOT EXISTS photo_note TEXT",
         "CREATE INDEX IF NOT EXISTS card_links_job ON card_links (job_id, client_id)",
+        "CREATE TABLE IF NOT EXISTS card_systems (client_id INTEGER PRIMARY KEY, display_name TEXT, accent TEXT, logo BYTEA, logo_type TEXT, intro TEXT, " +
+          "show_consultants BOOLEAN NOT NULL DEFAULT true, contacts JSONB NOT NULL DEFAULT '{}'::jsonb, updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+        "CREATE TABLE IF NOT EXISTS card_system_links (id SERIAL PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, client_id INTEGER NOT NULL, created_by TEXT, " +
+          "created_at TIMESTAMPTZ NOT NULL DEFAULT now(), revoked_at TIMESTAMPTZ, view_count INTEGER NOT NULL DEFAULT 0, last_viewed_at TIMESTAMPTZ, last_alert_at TIMESTAMPTZ)",
         "CREATE INDEX IF NOT EXISTS card_links_candidate ON card_links (candidate_id)",
         "CREATE TABLE IF NOT EXISTS card_views (id BIGSERIAL PRIMARY KEY, link_id INTEGER NOT NULL, viewed_at TIMESTAMPTZ NOT NULL DEFAULT now(), " +
           "page TEXT, ip_hash TEXT, user_agent TEXT)",
@@ -625,6 +629,7 @@ function registerCard(app, deps) {
       if (!preview) await rateAlert(row, rate);
       summaries.push(await summaryFor(row, rate));
     }
+    const sys = await brandFor(r.link.client_id, opts && opts.system);
     return {
       status: 200,
       body: {
@@ -635,8 +640,193 @@ function registerCard(app, deps) {
         candidates: summaries,
         card: await fullCard(focus, { preview: preview }),
         preview: preview || undefined,
+        system: sys || undefined,
       },
     };
+  }
+
+  /* ══ Health system pages ═══════════════════════════════════════════════
+     One page per client: their logo and color, open roles with the candidates Anura has sent,
+     the managers we work with, and Anura consultants on site. Its own token link, scoped to one
+     client. Cards opened from it are the same Cards, scoped to that client. */
+
+  const ACCENT_RE = /^#[0-9a-f]{6}$/i;
+
+  async function systemRow(clientId) {
+    return db.getOne("SELECT client_id, display_name, accent, logo_type, (logo IS NOT NULL) AS has_logo, intro, show_consultants, contacts, updated_by, updated_at FROM card_systems WHERE client_id = $1", [clientId]);
+  }
+
+  /** Branding a Card shows. ctx (optional) = { logoUrl, homeUrl } from the page that opened it. */
+  async function brandFor(clientId, ctx) {
+    if (!clientId) return null;
+    let row = null;
+    try { row = await systemRow(clientId); } catch (e) { row = null; }
+    if (!row && !(ctx && ctx.homeUrl)) return null;
+    const client = await db.getOne("SELECT name FROM clients WHERE id = $1", [clientId]);
+    return {
+      name: (row && row.display_name) || (client && client.name) || "",
+      accent: row && ACCENT_RE.test(row.accent || "") ? row.accent : "",
+      logoUrl: row && row.has_logo && ctx && ctx.logoUrl ? ctx.logoUrl : "",
+      homeUrl: (ctx && ctx.homeUrl) || "",
+    };
+  }
+
+  function ms(v) {
+    if (v == null || v === "") return 0;
+    if (typeof v === "number") return v;
+    const n = Number(v);
+    if (isFinite(n)) return n;
+    const d = Date.parse(v);
+    return isFinite(d) ? d : 0;
+  }
+
+  function monthYear(v) {
+    const t = ms(v);
+    if (!t) return "";
+    return new Date(t).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "America/Chicago" });
+  }
+
+  /** Contacts at this client who are hiring managers on Anura jobs (last two years or open), plus recruiter edits. */
+  async function systemManagers(clientId, settings, openJobs) {
+    const cfg = (settings && settings.contacts) || {};
+    const hidden = (cfg.hidden || []).map(String), added = (cfg.added || []).map(String), titles = cfg.titles || {}, order = (cfg.order || []).map(String);
+    const since = now() - 730 * 86400000;
+    const fromJobs = await db.getAll(
+      "SELECT DISTINCT (raw_json->'clientContact'->>'id') AS id FROM jobs WHERE client_id = $1 AND (is_deleted IS NOT TRUE) AND raw_json->'clientContact'->>'id' IS NOT NULL " +
+      "AND (is_open IS TRUE OR COALESCE(date_added, 0) >= $2 OR COALESCE(date_last_modified, 0) >= $2)", [clientId, since]);
+    const ids = fromJobs.map(function (r) { return String(r.id); }).concat(added).filter(function (id, i, a) { return id && a.indexOf(id) === i && hidden.indexOf(id) < 0; });
+    if (!ids.length) return [];
+    const rows = await db.getAll(
+      "SELECT id, first_name, last_name, name, occupation, division, status FROM client_contacts WHERE client_id = $1 AND id = ANY($2::int[]) AND is_deleted IS NOT TRUE",
+      [clientId, ids.map(Number).filter(function (n) { return n > 0; })]);
+    const hiringFor = {};
+    openJobs.forEach(function (j) { if (j.contact_id) (hiringFor[String(j.contact_id)] = hiringFor[String(j.contact_id)] || []).push(j.title); });
+    return rows.filter(function (c) { return !/inactive|archiv|left|no longer|former|do not/i.test(String(c.status || "")); })
+      .map(function (c) {
+        return {
+          id: String(c.id),
+          name: personName(c),
+          title: titles[String(c.id)] != null ? String(titles[String(c.id)]) : (c.occupation || ""),
+          department: c.division || "",
+          hiringFor: hiringFor[String(c.id)] || [],
+        };
+      })
+      .sort(function (a, b) {
+        const ai = order.indexOf(a.id), bi = order.indexOf(b.id);
+        if (ai >= 0 || bi >= 0) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+        if (!!b.hiringFor.length - !!a.hiringFor.length) return !!b.hiringFor.length - !!a.hiringFor.length;
+        return a.name.localeCompare(b.name);
+      });
+  }
+
+  async function systemConsultants(clientId) {
+    const rows = await db.getAll(
+      "SELECT candidate_id, candidate_name, job_title, status, date_begin, date_end FROM placements WHERE client_id = $1 AND is_deleted IS NOT TRUE ORDER BY date_begin DESC NULLS LAST LIMIT 200", [clientId]);
+    const t = now(), seen = {};
+    return rows.filter(function (p) {
+      if (/terminat|complete|cancel|ended|fell|declin|withdr/i.test(String(p.status || ""))) return false;
+      const b = ms(p.date_begin), e = ms(p.date_end);
+      if (b && b > t + 30 * 86400000) return false;
+      if (e && e < t) return false;
+      if (seen[p.candidate_id]) return false;
+      seen[p.candidate_id] = true;
+      return true;
+    }).map(function (p) { return { name: niceName(p.candidate_name || ""), role: p.job_title || "", since: monthYear(p.date_begin) }; });
+  }
+
+  async function accountLead(clientId) {
+    const c = await db.getOne("SELECT cl.owner_name, cl.owner_email, cu.email AS cu_email, cu.phone, cu.mobile, cu.name AS cu_name, cu.occupation FROM clients cl LEFT JOIN corporate_users cu ON cu.id = cl.owner_id WHERE cl.id = $1", [clientId]);
+    if (c && (c.cu_email || c.owner_email)) {
+      return { name: niceName(c.cu_name || c.owner_name || ""), title: c.occupation || "", phone: c.phone || c.mobile || "", email: c.cu_email || c.owner_email || "" };
+    }
+    const l = await db.getOne("SELECT recruiter FROM card_links WHERE client_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1", [clientId]);
+    return l ? contactOf(l) : { name: "Anura Connect", title: "", phone: "", email: "" };
+  }
+
+  /**
+   * The whole page. hrefs(row) → the URL a candidate opens in this context; photo(row) → its photo URL.
+   */
+  async function systemView(clientId, ctx) {
+    const client = await db.getOne("SELECT id, name, address_city, address_state FROM clients WHERE id = $1", [clientId]);
+    if (!client) return { status: 404, body: { state: "missing" } };
+    const settings = await systemRow(clientId);
+    const jobs = await db.getAll(
+      "SELECT id, title, status, is_open, is_deleted, address_city, address_state, raw_json->'clientContact'->>'id' AS contact_id, " +
+      "COALESCE(raw_json->'clientContact'->>'firstName','') || ' ' || COALESCE(raw_json->'clientContact'->>'lastName','') AS contact_name FROM jobs WHERE client_id = $1 AND is_deleted IS NOT TRUE", [clientId]);
+    const openJobs = jobs.filter(jobIsActive);
+    const links = await db.getAll(
+      "SELECT DISTINCT ON (l.job_id, l.candidate_id) l.*, s.status AS sub_status, s.date_added AS sub_added, " +
+      "c.first_name, c.last_name, c.custom_text1, c.custom_text2, c.custom_text5, p.fields AS profile_fields, (p.photo IS NOT NULL) AS has_photo " +
+      "FROM card_links l JOIN submissions s ON s.id = l.submission_id AND s.is_deleted IS NOT TRUE " +
+      "LEFT JOIN candidates c ON c.id = l.candidate_id LEFT JOIN card_profiles p ON p.candidate_id = l.candidate_id " +
+      "WHERE l.client_id = $1 AND l.revoked_at IS NULL ORDER BY l.job_id, l.candidate_id, l.created_at DESC", [clientId]);
+    const byJob = {};
+    links.filter(function (l) { return submissionShown(l.sub_status); }).forEach(function (l) { (byJob[l.job_id] = byJob[l.job_id] || []).push(l); });
+    const managers = await systemManagers(clientId, settings, openJobs);
+    const managerById = {};
+    managers.forEach(function (m) { managerById[m.id] = m; });
+    const roles = [], sourcing = [];
+    let candidateCount = 0;
+    for (const j of openJobs) {
+      const rows = (byJob[j.id] || []).sort(function (a, b) { return Number(a.sub_added || 0) - Number(b.sub_added || 0); });
+      if (!rows.length) { sourcing.push(j.title); continue; }
+      const cands = [];
+      for (const row of rows) {
+        const rate = await shownRate(row);
+        const sum = await summaryFor(row, rate);
+        sum.href = ctx.href(row);
+        sum.photoUrl = sum.hasPhoto ? ctx.photo(row) : "";
+        cands.push(sum);
+      }
+      candidateCount += cands.length;
+      const m = j.contact_id ? managerById[String(j.contact_id)] : null;
+      roles.push({
+        title: j.title || "Open role",
+        location: [j.address_city, j.address_state].filter(Boolean).join(", "),
+        manager: m ? { name: m.name, title: m.title } : (String(j.contact_name || "").trim() ? { name: niceName(j.contact_name), title: "" } : null),
+        compareHref: cands.length > 1 ? cands[0].href + "#compare" : "",
+        candidates: cands,
+      });
+    }
+    const consultants = settings && settings.show_consultants === false ? [] : await systemConsultants(clientId);
+    return {
+      status: 200,
+      body: {
+        state: "active",
+        preview: ctx.preview || undefined,
+        system: {
+          name: (settings && settings.display_name) || client.name || "",
+          accent: settings && ACCENT_RE.test(settings.accent || "") ? settings.accent : "",
+          logoUrl: settings && settings.has_logo ? ctx.logoUrl : "",
+          intro: (settings && settings.intro) || "",
+        },
+        stats: { roles: roles.length, candidates: candidateCount, consultants: consultants.length },
+        roles: roles,
+        sourcing: sourcing,
+        managers: managers.map(function (m) { return { name: m.name, title: m.title, department: m.department, hiringFor: m.hiringFor }; }),
+        consultants: consultants,
+        contact: await accountLead(clientId),
+      },
+    };
+  }
+
+  async function systemLinkByToken(token) {
+    if (!validToken(token)) return null;
+    const row = await db.getOne("SELECT * FROM card_system_links WHERE token_hash = $1", [hashToken(token)]);
+    if (!row || row.revoked_at) return null;
+    return row;
+  }
+
+  /** A Card reached from a health system page: must belong to that client, be live, and be in front of the client. */
+  async function systemCard(clientId, pid) {
+    if (!validPublicId(pid)) return null;
+    const link = await db.getOne("SELECT * FROM card_links WHERE public_id = $1 AND client_id = $2", [pid, clientId]);
+    if (!link) return null;
+    const r = await judgeLink(link);
+    if (r.state !== "active") return null;
+    const sub = await db.getOne("SELECT status FROM submissions WHERE id = $1", [link.submission_id]);
+    if (!sub || !submissionShown(sub.status)) return null;
+    return r;
   }
 
   /** Same scope check every public sub-resource uses: the target must be in this link's job. */
@@ -790,7 +980,7 @@ function registerCard(app, deps) {
   app.get("/api/card-public/:token", limiter, async function (req, res) {
     setPublicHeaders(res);
     try {
-      const v = await publicView(req.params.token, null);
+      const v = await publicView(req.params.token, null, { system: { logoUrl: "/api/card-public/" + req.params.token + "/system-logo" } });
       res.status(v.status).json(v.body);
     } catch (e) { fail(res, e); }
   });
@@ -798,7 +988,7 @@ function registerCard(app, deps) {
   app.get("/api/card-public/:token/c/:pid", limiter, async function (req, res) {
     setPublicHeaders(res);
     try {
-      const v = await publicView(req.params.token, req.params.pid);
+      const v = await publicView(req.params.token, req.params.pid, { system: { logoUrl: "/api/card-public/" + req.params.token + "/system-logo" } });
       res.status(v.status).json(v.body);
     } catch (e) { fail(res, e); }
   });
@@ -1448,6 +1638,294 @@ function registerCard(app, deps) {
       const row = await scopedFor(await resolveLinkById(digitsId(req.params.linkId)), req.params.pid);
       if (!row || !row.resume_file_id || !getFile) return res.status(404).json({ error: "Résumé not available." });
       await sendResume(req, res, row);
+    } catch (e) { fail(res, e); }
+  });
+
+  /* ── health system: public ── */
+  function sysCtxPublic(token) {
+    const base = "/api/hs-public/" + token;
+    return {
+      href: function (row) { return "/h/" + token + "/c/" + row.public_id; },
+      photo: function (row) { return base + "/photo/" + row.public_id; },
+      logoUrl: base + "/logo",
+    };
+  }
+
+  app.get("/h/:token", limiter, function (req, res) {
+    setPublicHeaders(res, { page: true });
+    res.sendFile(path.join(pagesDir, "health.html"));
+  });
+  app.get("/h/:token/c/:pid", limiter, function (req, res) {
+    setPublicHeaders(res, { page: true });
+    res.sendFile(path.join(pagesDir, "card.html"));
+  });
+
+  app.get("/api/hs-public/:token", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      await needDb();
+      const sl = await systemLinkByToken(req.params.token);
+      if (!sl) return res.status(404).json({ state: "missing" });
+      const v = await systemView(sl.client_id, sysCtxPublic(req.params.token));
+      res.status(v.status).json(v.body);
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/hs-public/:token/logo", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      await needDb();
+      const sl = await systemLinkByToken(req.params.token);
+      if (!sl) return res.status(404).end();
+      sendPhoto(res, await db.getOne("SELECT logo AS photo, logo_type AS photo_type FROM card_systems WHERE client_id = $1", [sl.client_id]));
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/hs-public/:token/photo/:pid", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      await needDb();
+      const sl = await systemLinkByToken(req.params.token);
+      const r = sl ? await systemCard(sl.client_id, req.params.pid) : null;
+      if (!r) return res.status(404).end();
+      sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [r.link.candidate_id]));
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/hs-public/:token/seen", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      await needDb();
+      if (getUser(req)) return res.json({ counted: false, reason: "internal" });
+      const ua = String(req.headers["user-agent"] || "");
+      if (!ua || BOT_UA.test(ua)) return res.json({ counted: false, reason: "bot" });
+      const sl = await systemLinkByToken(req.params.token);
+      if (!sl) return res.json({ counted: false });
+      await db.query("UPDATE card_system_links SET view_count = view_count + 1, last_viewed_at = now() WHERE id = $1", [sl.id]);
+      const claimed = await db.getOne("UPDATE card_system_links SET last_alert_at = now() WHERE id = $1 AND (last_alert_at IS NULL OR last_alert_at < now() - interval '24 hours') RETURNING id", [sl.id]);
+      if (claimed && notifier) {
+        const lead = await accountLead(sl.client_id);
+        const client = await db.getOne("SELECT name FROM clients WHERE id = $1", [sl.client_id]);
+        const to = lead.email || (sl.created_by && /@/.test(sl.created_by) ? sl.created_by : "");
+        if (to) {
+          notifier.send({ to: [{ email: to }], subject: (client && client.name || "A client") + " opened their Anura page",
+            html: notifier.card("Client opened their health system page", [["Client", client && client.name || ""], ["Next step", "Good moment to check in."]], publicOrigin() + "/cards?system=" + sl.client_id, "Open Cards"),
+            fromEmail: to }).catch(function (e) { log("[Card] system view alert failed: " + e.message); });
+        }
+      }
+      res.json({ counted: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  // Cards opened from a health system page.
+  async function sysCardCtx(req) {
+    await needDb();
+    const sl = await systemLinkByToken(req.params.token);
+    if (!sl) return null;
+    return { sl: sl, base: "/api/hs-public/" + req.params.token };
+  }
+  app.get("/api/hs-public/:token/card/:pid", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const c = await sysCardCtx(req);
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      if (!r) return res.status(404).json({ state: "missing" });
+      const v = await viewFor(r, null, { system: { logoUrl: c.base + "/logo", homeUrl: "/h/" + req.params.token } });
+      res.status(v.status).json(v.body);
+    } catch (e) { fail(res, e); }
+  });
+  app.get("/api/hs-public/:token/card/:pid/c/:other", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const c = await sysCardCtx(req);
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      if (!r) return res.status(404).json({ state: "missing" });
+      const v = await viewFor(r, req.params.other, { system: { logoUrl: c.base + "/logo", homeUrl: "/h/" + req.params.token } });
+      res.status(v.status).json(v.body);
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/hs-public/:token/card/:pid/seen", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    res.json({ counted: false, reason: "counted on the system page" });
+  });
+  app.get("/api/hs-public/:token/card/:pid/photo/:p", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const c = await sysCardCtx(req);
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      const row = r ? await scopedFor(r, req.params.p) : null;
+      if (!row) return res.status(404).end();
+      sendPhoto(res, await db.getOne("SELECT photo, photo_type FROM card_profiles WHERE candidate_id = $1", [row.candidate_id]));
+    } catch (e) { fail(res, e); }
+  });
+  app.get("/api/hs-public/:token/card/:pid/resume/:p", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const c = await sysCardCtx(req);
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      const row = r ? await scopedFor(r, req.params.p) : null;
+      if (!row || !row.resume_file_id || !getFile) return res.status(404).json({ error: "Résumé not available." });
+      await sendResume(req, res, row);
+    } catch (e) { fail(res, e); }
+  });
+  app.get("/api/hs-public/:token/card/:pid/doc/:p/:index", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const c = await sysCardCtx(req);
+      const r = c ? await systemCard(c.sl.client_id, req.params.pid) : null;
+      const row = r ? await scopedFor(r, req.params.p) : null;
+      if (!row) return res.status(404).json({ error: "Document not available." });
+      await sendDoc(req, res, row, digitsId(req.params.index));
+    } catch (e) { fail(res, e); }
+  });
+
+  // A Card link sent to one manager shows the system's logo once it's branded.
+  app.get("/api/card-public/:token/system-logo", limiter, async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const r = await resolveClientLink(req.params.token);
+      if (r.state !== "active") return res.status(404).end();
+      sendPhoto(res, await db.getOne("SELECT logo AS photo, logo_type AS photo_type FROM card_systems WHERE client_id = $1", [r.link.client_id]));
+    } catch (e) { fail(res, e); }
+  });
+
+  /* ── health system: recruiter ── */
+  app.get("/cards/system/:clientId/preview", function (req, res) {
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(path.join(pagesDir, "health.html"));
+  });
+
+  app.get("/api/cards/systems/search", async function (req, res) {
+    try {
+      await needDb();
+      const q = String(req.query.q || "").trim();
+      if (q.length < 2) return res.json({ data: [] });
+      const rows = await db.getAll("SELECT id, name, address_city, address_state, status FROM clients WHERE name ILIKE $1 ORDER BY date_last_modified DESC NULLS LAST LIMIT 15", ["%" + q.replace(/[%_]/g, "") + "%"]);
+      res.json({ data: rows.map(function (r) { return { id: r.id, name: r.name, place: [r.address_city, r.address_state].filter(Boolean).join(", ") }; }) });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/cards/systems/:clientId", async function (req, res) {
+    try {
+      await needDb();
+      const id = digitsId(req.params.clientId);
+      const client = await db.getOne("SELECT id, name FROM clients WHERE id = $1", [id]);
+      if (!client) return res.status(404).json({ error: "Client not found." });
+      const settings = await systemRow(id);
+      const cfg = (settings && settings.contacts) || {};
+      const all = await db.getAll("SELECT id, first_name, last_name, name, occupation, division, status FROM client_contacts WHERE client_id = $1 AND is_deleted IS NOT TRUE ORDER BY last_name NULLS LAST LIMIT 500", [id]);
+      const jobs = await db.getAll("SELECT id, title, status, is_open, is_deleted, raw_json->'clientContact'->>'id' AS contact_id FROM jobs WHERE client_id = $1 AND is_deleted IS NOT TRUE", [id]);
+      const shown = await systemManagers(id, settings, jobs.filter(jobIsActive));
+      const shownIds = shown.map(function (m) { return m.id; });
+      const links = await db.getAll("SELECT id, created_by, created_at, revoked_at, view_count, last_viewed_at FROM card_system_links WHERE client_id = $1 ORDER BY created_at DESC LIMIT 10", [id]);
+      res.json({
+        client: { id: id, name: client.name },
+        settings: {
+          displayName: (settings && settings.display_name) || "",
+          accent: (settings && settings.accent) || "",
+          hasLogo: !!(settings && settings.has_logo),
+          intro: (settings && settings.intro) || "",
+          showConsultants: !(settings && settings.show_consultants === false),
+        },
+        managers: shown,
+        contacts: all.map(function (c) {
+          return { id: String(c.id), name: personName(c), title: c.occupation || "", department: c.division || "", shown: shownIds.indexOf(String(c.id)) >= 0,
+            hidden: (cfg.hidden || []).map(String).indexOf(String(c.id)) >= 0 };
+        }),
+        titles: cfg.titles || {},
+        links: links.map(function (l) { return { id: l.id, createdBy: l.created_by, createdAt: l.created_at, revoked: !!l.revoked_at, views: l.view_count, lastViewedAt: l.last_viewed_at }; }),
+      });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.put("/api/cards/systems/:clientId", async function (req, res) {
+    try {
+      await needDb();
+      const id = digitsId(req.params.clientId);
+      const client = await db.getOne("SELECT id FROM clients WHERE id = $1", [id]);
+      if (!client) return res.status(404).json({ error: "Client not found." });
+      const b = req.body || {};
+      const errors = [];
+      const displayName = cleanFieldValue(b.displayName).slice(0, 120);
+      const intro = cleanFieldValue(b.intro);
+      const accent = String(b.accent || "").trim();
+      if (accent && !ACCENT_RE.test(accent)) errors.push("Pick a color like #1A6B8F.");
+      [["Name", displayName, 120], ["Intro", intro, 600]].forEach(function (x) { const err = recruiterTextError(x[0], x[1], x[2]); if (err) errors.push(err); });
+      const titles = {};
+      Object.keys(b.titles || {}).slice(0, 300).forEach(function (k) {
+        if (!/^\d{1,9}$/.test(k)) return;
+        const t = cleanFieldValue(b.titles[k]).slice(0, 120);
+        const err = recruiterTextError("Title", t, 120); if (err) errors.push(err);
+        titles[k] = t;
+      });
+      const ids = function (a) { return (Array.isArray(a) ? a : []).map(String).filter(function (x) { return /^\d{1,9}$/.test(x); }).slice(0, 300); };
+      const contacts = { hidden: ids(b.hidden), added: ids(b.added), order: ids(b.order), titles: titles };
+      if (errors.length) return res.status(400).json({ error: errors[0], errors: errors });
+      await db.query(
+        "INSERT INTO card_systems (client_id, display_name, accent, intro, show_consultants, contacts, updated_by, updated_at) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,now()) " +
+        "ON CONFLICT (client_id) DO UPDATE SET display_name = EXCLUDED.display_name, accent = EXCLUDED.accent, intro = EXCLUDED.intro, show_consultants = EXCLUDED.show_consultants, " +
+        "contacts = EXCLUDED.contacts, updated_by = EXCLUDED.updated_by, updated_at = now()",
+        [id, displayName || null, accent || null, intro || null, b.showConsultants !== false, JSON.stringify(contacts), who(req)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/cards/systems/:clientId/logo", rawImage, async function (req, res) {
+    try {
+      await needDb();
+      const id = digitsId(req.params.clientId);
+      const img = readPhoto(req);
+      await db.query("INSERT INTO card_systems (client_id, logo, logo_type, updated_by) VALUES ($1,$2,$3,$4) ON CONFLICT (client_id) DO UPDATE SET logo = EXCLUDED.logo, logo_type = EXCLUDED.logo_type, updated_by = EXCLUDED.updated_by, updated_at = now()",
+        [id, img.buffer, img.type, who(req)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+  app.delete("/api/cards/systems/:clientId/logo", async function (req, res) {
+    try {
+      await needDb();
+      await db.query("UPDATE card_systems SET logo = NULL, logo_type = NULL, updated_at = now() WHERE client_id = $1", [digitsId(req.params.clientId)]);
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+  app.get("/api/cards/systems/:clientId/logo", async function (req, res) {
+    try {
+      await needDb();
+      res.setHeader("Cache-Control", "no-store");
+      sendPhoto(res, await db.getOne("SELECT logo AS photo, logo_type AS photo_type FROM card_systems WHERE client_id = $1", [digitsId(req.params.clientId)]));
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/cards/systems/:clientId/view", async function (req, res) {
+    try {
+      await needDb();
+      const id = digitsId(req.params.clientId);
+      const v = await systemView(id, {
+        preview: true,
+        href: function (row) { return "/cards/preview/" + row.id; },
+        photo: function (row) { return "/api/cards/candidate/" + row.candidate_id + "/photo"; },
+        logoUrl: "/api/cards/systems/" + id + "/logo",
+      });
+      res.status(v.status).json(v.body);
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/cards/systems/:clientId/view/seen", function (req, res) { res.json({ counted: false, reason: "preview" }); });
+
+  app.post("/api/cards/systems/:clientId/link", async function (req, res) {
+    try {
+      await needDb();
+      const id = digitsId(req.params.clientId);
+      const client = await db.getOne("SELECT id FROM clients WHERE id = $1", [id]);
+      if (!client) return res.status(404).json({ error: "Client not found." });
+      const token = makeToken();
+      await db.query("INSERT INTO card_system_links (token_hash, client_id, created_by) VALUES ($1,$2,$3)", [hashToken(token), id, who(req)]);
+      res.json({ url: publicOrigin().replace(/\/$/, "") + "/h/" + token });
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/cards/system-links/:linkId/revoke", async function (req, res) {
+    try {
+      await needDb();
+      await db.query("UPDATE card_system_links SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL", [digitsId(req.params.linkId)]);
+      res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
 

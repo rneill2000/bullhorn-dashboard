@@ -168,16 +168,32 @@ async function harness() {
     getOne: async function (t, p) { const r = await pool.query(t, p); return r.rows[0] || null; },
     getAll: async function (t, p) { const r = await pool.query(t, p); return r.rows; },
   };
-  await db.query("CREATE TABLE jobs (id INTEGER PRIMARY KEY, title TEXT, status TEXT, is_open BOOLEAN, is_deleted BOOLEAN)");
+  await db.query("CREATE TABLE jobs (id INTEGER PRIMARY KEY, title TEXT, status TEXT, is_open BOOLEAN, is_deleted BOOLEAN, client_id INTEGER, raw_json JSONB, date_added BIGINT, date_last_modified BIGINT, address_city TEXT, address_state TEXT)");
+  await db.query("CREATE TABLE clients (id INTEGER PRIMARY KEY, name TEXT, address_city TEXT, address_state TEXT, owner_id INTEGER, owner_name TEXT, owner_email TEXT, status TEXT, date_last_modified BIGINT)");
+  await db.query("CREATE TABLE client_contacts (id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, name TEXT, email TEXT, phone TEXT, occupation TEXT, division TEXT, status TEXT, client_id INTEGER, is_deleted BOOLEAN)");
+  await db.query("CREATE TABLE placements (id INTEGER PRIMARY KEY, candidate_id INTEGER, candidate_name TEXT, job_title TEXT, client_id INTEGER, status TEXT, date_begin BIGINT, date_end BIGINT, is_deleted BOOLEAN)");
   await db.query("CREATE TABLE submissions (id INTEGER PRIMARY KEY, status TEXT, date_added BIGINT, is_deleted BOOLEAN)");
   await db.query("CREATE TABLE candidates (id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, name TEXT, email TEXT, custom_text1 TEXT, custom_text2 TEXT, custom_text5 TEXT, owner_id INTEGER, date_last_modified BIGINT)");
-  await db.query("CREATE TABLE corporate_users (id INTEGER PRIMARY KEY, email TEXT, name TEXT)");
+  await db.query("CREATE TABLE corporate_users (id INTEGER PRIMARY KEY, email TEXT, name TEXT, phone TEXT, mobile TEXT, occupation TEXT)");
   await db.query("CREATE SCHEMA IF NOT EXISTS crm");
   await db.query("CREATE TABLE IF NOT EXISTS crm.file_attachment (id INTEGER NOT NULL, entity TEXT NOT NULL, entity_id INTEGER NOT NULL, name TEXT, type TEXT, content_type TEXT, date_added TIMESTAMPTZ, is_deleted BOOLEAN, PRIMARY KEY (entity, id))");
   await db.query("DELETE FROM crm.file_attachment WHERE entity = 'Candidate' AND entity_id = 1");
   await db.query("INSERT INTO crm.file_attachment (id, entity, entity_id, name, type) VALUES (9, 'Candidate', 1, 'Jack.pdf', 'Resume'), (21, 'Candidate', 1, 'Beaker CP Certification.pdf', 'Certification'), (22, 'Candidate', 1, 'Reference - Patricia.pdf', 'Reference'), (23, 'Candidate', 1, 'Drivers License.jpg', '')");
-  await db.query("INSERT INTO corporate_users VALUES (5, 'ben@anuraconnect.com', 'Ben Gray')");
-  await db.query("INSERT INTO jobs VALUES (100, 'Beaker Analyst', 'Accepting Candidates', true, false), (200, 'HB Analyst', 'Accepting Candidates', true, false), (300, 'Old Role', 'Accepting Candidates', true, false)");
+  await db.query("INSERT INTO corporate_users VALUES (5, 'ben@anuraconnect.com', 'Ben Gray', '608-555-0142', null, 'Head of Recruiting'), (6, 'peter@anuraconnect.com', 'Peter Oppermann', '608-555-0199', null, 'VP, Client Success')");
+  await db.query("INSERT INTO jobs (id, title, status, is_open, is_deleted, client_id, raw_json, date_added) VALUES " +
+    "(100, 'Beaker Analyst', 'Accepting Candidates', true, false, 900, '{\"clientContact\":{\"id\":501,\"firstName\":\"DANA\",\"lastName\":\"RUIZ\"}}', 1), " +
+    "(200, 'HB Analyst', 'Accepting Candidates', true, false, 900, '{\"clientContact\":{\"id\":502}}', 1), " +
+    "(300, 'Old Role', 'Accepting Candidates', true, false, 900, null, 1), " +
+    "(400, 'Willow Analyst', 'Accepting Candidates', true, false, 900, '{\"clientContact\":{\"id\":501}}', 1)");
+  await db.query("INSERT INTO clients VALUES (900, 'UNIVERSITY OF WISCONSIN HOSPITALS', 'Madison', 'WI', 6, 'Peter Oppermann', 'peter@anuraconnect.com', 'Active', 1), (901, 'Mercy Health', 'Janesville', 'WI', 5, 'Ben Gray', 'ben@anuraconnect.com', 'Active', 1)");
+  await db.query("INSERT INTO client_contacts VALUES (501, 'DANA', 'RUIZ', 'Dana Ruiz', 'dana@uw.example', '608-555-3333', 'Director, Lab Applications', 'Clinical Apps', 'Active', 900, false), " +
+    "(502, 'Lee', 'Wong', 'Lee Wong', 'lee@uw.example', '', 'Revenue Cycle Manager', 'Rev Cycle', 'Active', 900, false), " +
+    "(503, 'Old', 'Boss', 'Old Boss', 'old@uw.example', '', 'Manager', '', 'Inactive', 900, false), " +
+    "(504, 'Pat', 'Kim', 'Pat Kim', 'pat@uw.example', '', 'CIO', 'IT', 'Active', 900, false), " +
+    "(601, 'Mercy', 'Person', 'Mercy Person', 'm@mercy.example', '', 'Director', '', 'Active', 901, false)");
+  const nowMs = Date.now();
+  await db.query("INSERT INTO placements VALUES (1, 3, 'SAM REED', 'HB Analyst', 900, 'Approved', $1, $2, false), (2, 2, 'Mia Lopez', 'Beaker Analyst', 900, 'Approved', $3, $4, false), (3, 4, 'Ana Ito', 'Analyst', 901, 'Approved', $1, $2, false)",
+    [nowMs - 90 * 86400000, nowMs + 90 * 86400000, nowMs - 400 * 86400000, nowMs - 30 * 86400000]);
   await db.query("INSERT INTO candidates VALUES " +
     "(1, 'Jack', 'Corbell', 'Jack Corbell', 'jack@x.com', 'Beaker Clinical Pathology', 'Beaker AP', 'Beaker Analyst', 5, 1)," +
     "(2, 'Mia', 'Lopez', 'Mia Lopez', 'mia@x.com', 'Beaker CP', '', 'Beaker Analyst', 5, 1)," +
@@ -634,6 +650,88 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.deepEqual(again.json.card.documents.map(function (d) { return d.kind; }), ["Résumé", "Certification"]);
     });
 
+    await t.test("K31 health system page: one client, branded, managers and consultants, Cards scoped to that client", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      let r = await req(h.port, "PUT", "/api/cards/systems/900", { headers: rec, body: { displayName: "UW Health", accent: "#C5050C", intro: "", hidden: ["502"], added: ["504"], order: [], titles: { "504": "Chief Information Officer" } } });
+      assert.equal(r.status, 200, r.text);
+      r = await req(h.port, "PUT", "/api/cards/systems/900", { headers: rec, body: { accent: "red" } });
+      assert.equal(r.status, 400);
+      r = await req(h.port, "PUT", "/api/cards/systems/900", { headers: rec, body: { displayName: "UW Health", accent: "#C5050C", intro: "Call 608-555-1212", hidden: ["502"], added: ["504"], titles: { "504": "Chief Information Officer" } } });
+      assert.equal(r.status, 400, "no phone numbers in the intro");
+      r = await req(h.port, "POST", "/api/cards/systems/900/logo", { headers: rec, raw: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), type: "image/png" });
+      assert.equal(r.status, 200, r.text);
+      r = await req(h.port, "POST", "/api/cards/systems/900/link", { headers: rec, body: {} });
+      assert.equal(r.status, 200, r.text);
+      const T = r.json.url.split("/h/")[1];
+      assert.ok(card.validToken(T));
+      const v = await req(h.port, "GET", "/api/hs-public/" + T);
+      assert.equal(v.status, 200, v.text);
+      const d = v.json;
+      assert.equal(d.system.name, "UW Health");
+      assert.equal(d.system.accent, "#C5050C");
+      assert.match(d.system.logoUrl, new RegExp("^/api/hs-public/" + T + "/logo$"));
+      // Roles: only open jobs at this client with candidates in front of the client.
+      const names = [].concat.apply([], d.roles.map(function (x) { return x.candidates.map(function (c) { return c.name; }); }));
+      assert.ok(names.indexOf("Jack Corbell") >= 0);
+      assert.equal(names.indexOf("Ana Ito"), -1, "other client's submission");
+      assert.equal(names.indexOf("Kim Novak"), -1, "internally submitted only");
+      assert.equal(names.indexOf("Lee Park"), -1, "client rejected / closed job");
+      d.roles.forEach(function (role) { role.candidates.forEach(function (c) { assert.match(c.href, new RegExp("^/h/" + T + "/c/[a-z]{12}$")); }); });
+      const beaker = d.roles.filter(function (x) { return x.title === "Beaker Analyst"; })[0];
+      assert.equal(beaker.manager.name, "Dana Ruiz", "Bullhorn caps cleaned");
+      assert.equal(beaker.manager.title, "Director, Lab Applications");
+      assert.deepEqual(d.sourcing, ["Willow Analyst"], "open role with nobody sent yet");
+      // Managers: from our jobs, minus hidden, plus added, never inactive, never contact details.
+      const mgr = d.managers.map(function (m) { return m.name; }).sort();
+      assert.deepEqual(mgr, ["Dana Ruiz", "Pat Kim"]);
+      assert.equal(d.managers.filter(function (m) { return m.name === "Pat Kim"; })[0].title, "Chief Information Officer");
+      assert.deepEqual(d.managers.filter(function (m) { return m.name === "Dana Ruiz"; })[0].hiringFor.sort(), ["Beaker Analyst", "Willow Analyst"]);
+      // Consultants on site: current placements here only.
+      assert.deepEqual(d.consultants.map(function (c) { return c.name; }), ["Sam Reed"]);
+      // Account lead is the client owner.
+      assert.equal(d.contact.email, "peter@anuraconnect.com");
+      assert.equal(d.contact.title, "VP, Client Success");
+      // Nothing internal.
+      ["dana@uw.example", "608-555-3333", "candidate_id", "submission_id", "Mercy", "client_id"].forEach(function (k) { assert.equal(v.text.indexOf(k), -1, k + " leaked"); });
+      assert.doesNotMatch(v.text, /"id":\s*"?\d/, "no numeric Bullhorn ids");
+      // Logo + photos + Cards through the system link stay inside this client.
+      assert.equal((await req(h.port, "GET", "/api/hs-public/" + T + "/logo")).status, 200);
+      const jackHref = beaker.candidates.filter(function (c) { return c.name === "Jack Corbell"; })[0].href;
+      const pid = jackHref.split("/c/")[1];
+      const cv = await req(h.port, "GET", "/api/hs-public/" + T + "/card/" + pid);
+      assert.equal(cv.status, 200, cv.text);
+      assert.equal(cv.json.card.name, "Jack Corbell");
+      assert.equal(cv.json.system.homeUrl, "/h/" + T);
+      assert.equal(cv.json.system.name, "UW Health");
+      assert.equal((await req(h.port, "GET", "/api/hs-public/" + T + "/card/" + otherClient.publicId)).status, 404, "other client's Card");
+      assert.equal((await req(h.port, "GET", "/api/hs-public/" + T + "/card/" + neverSent.publicId)).status, 404, "not yet sent to the client");
+      assert.equal((await req(h.port, "GET", "/api/hs-public/" + T + "/card/" + pid + "/resume/" + pid)).status, 200);
+      assert.equal((await req(h.port, "GET", "/api/hs-public/" + T + "/card/" + pid + "/resume/" + otherClient.publicId)).status, 404);
+      // A single-job Card link shows the system's logo but no way up to every role.
+      const single = await req(h.port, "GET", "/api/card-public/" + J);
+      assert.equal(single.json.system.name, "UW Health");
+      assert.equal(single.json.system.homeUrl, "");
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/system-logo")).status, 200);
+      // Opens: recruiters don't count; a client open alerts the account lead once.
+      h.sent.length = 0;
+      assert.equal((await req(h.port, "POST", "/api/hs-public/" + T + "/seen", { headers: rec, body: {} })).json.counted, false);
+      assert.equal((await req(h.port, "POST", "/api/hs-public/" + T + "/seen", { body: {} })).json.counted, true);
+      await req(h.port, "POST", "/api/hs-public/" + T + "/seen", { body: {} });
+      await new Promise(function (res) { setTimeout(res, 50); });
+      const alerts = h.sent.filter(function (m) { return /opened their Anura page/.test(m.subject); });
+      assert.equal(alerts.length, 1);
+      assert.equal(alerts[0].to[0].email, "peter@anuraconnect.com");
+      // Preview behind login; turning the link off closes it.
+      const pv = await req(h.port, "GET", "/api/cards/systems/900/view", { headers: rec });
+      assert.equal(pv.status, 200);
+      assert.equal(pv.json.preview, true);
+      const admin = await req(h.port, "GET", "/api/cards/systems/900", { headers: rec });
+      await req(h.port, "POST", "/api/cards/system-links/" + admin.json.links[0].id + "/revoke", { headers: rec, body: {} });
+      assert.equal((await req(h.port, "GET", "/api/hs-public/" + T)).status, 404);
+      assert.equal((await req(h.port, "GET", "/api/hs-public/" + T + "/card/" + pid)).status, 404);
+      assert.equal((await req(h.port, "GET", "/h/" + T)).status, 200, "page shell loads; data says closed");
+    });
+
     await t.test("K17 a new draft for the same submission refreshes older links", async function () {
       await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell", whyMe: "Updated Why Me." });
       const r = await req(h.port, "GET", "/api/card-public/" + J);
@@ -708,8 +806,8 @@ test("K19 server: Card paths are public, the recruiter page is not", function ()
   const src = require("fs").readFileSync(path.join(__dirname, "server.js"), "utf8");
   const m = src.match(/const PUBLIC_PREFIX = (\[[^\]]*\])/);
   const prefixes = JSON.parse(m[1]);
-  ["/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/"].forEach(function (p) { assert.ok(prefixes.indexOf(p) >= 0, p); });
-  ["/cards", "/cards/preview/12", "/api/cards/preview/12", "/api/cards/overview", "/api/cards/candidate/1/approve", "/api/cards/links/1/content"].forEach(function (p) {
+  ["/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/", "/h/", "/api/hs-public/"].forEach(function (p) { assert.ok(prefixes.indexOf(p) >= 0, p); });
+  ["/cards", "/cards/preview/12", "/api/cards/preview/12", "/cards/system/900/preview", "/api/cards/systems/900", "/api/cards/systems/900/view", "/api/cards/overview", "/api/cards/candidate/1/approve", "/api/cards/links/1/content"].forEach(function (p) {
     assert.ok(!prefixes.some(function (x) { return p.startsWith(x); }), p + " must stay behind login");
   });
 });

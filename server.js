@@ -269,7 +269,8 @@ app.get("/auth/logout", async (req, res) => {
  * check, and non-HTML static assets. Pages redirect to /login; API calls get a 401. */
 const PUBLIC_EXACT = new Set(["/login", "/health", "/portal", "/api/portal/config", "/api/portal/submit", "/favicon.ico"]);
 // /card/ and /card-edit/ are the Anura Connect Card: unguessable token links for clients and candidates (card.js).
-const PUBLIC_PREFIX = ["/auth/", "/api/dux-webhook/", "/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/"];
+// /h/ is a health system page (card.js): one client, unguessable token.
+const PUBLIC_PREFIX = ["/auth/", "/api/dux-webhook/", "/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/", "/h/", "/api/hs-public/"];
 // Only real files in public/ (never /api/, never .html). See makePublicAssetCheck.
 const isPublicAsset = publicHost.makePublicAssetCheck(path.join(__dirname, "public"));
 function isPublicPath(p) {

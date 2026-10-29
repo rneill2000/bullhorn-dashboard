@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Your Epic candidates | Anura Connect</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--navy:#0A2239;--blue:#176087;--sky:#53A2BE;--ink:#1A2533;--muted:#5B6E7D;--line:#DCE5EC;--fog:#F2F6F9;--paper:#fff;--accent:#53A2BE;--accent-soft:#E6F2F7;
+  --display:Poppins,"Trebuchet MS",system-ui,sans-serif;--sans:"Source Sans 3","Segoe UI",system-ui,-apple-system,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--ink);background:var(--fog);font-size:17px;line-height:1.5}
+a{color:var(--blue)}
+:focus-visible{outline:3px solid var(--sky);outline-offset:2px}
+.wrap{max-width:1160px;margin:0 auto;padding:0 24px}
+
+.top{background:var(--paper);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;height:76px}
+.sys-logo{max-height:46px;max-width:240px;object-fit:contain}
+.sys-word{font-family:var(--display);font-weight:800;font-size:22px;color:var(--navy);letter-spacing:-.02em}
+.with{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.with img{height:30px}
+
+.hero{background:var(--paper);border-bottom:1px solid var(--line);position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0 0 auto 0;height:6px;background:var(--accent)}
+.hero .wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:40px;padding-top:44px;padding-bottom:40px;align-items:center}
+.hello{font-size:15px;font-weight:700;color:var(--muted)}
+.hero h1{font-family:var(--display);font-weight:800;font-size:clamp(30px,4vw,44px);line-height:1.08;letter-spacing:-.03em;color:var(--navy);margin-top:6px}
+.hero p.lead{color:var(--muted);margin-top:12px;max-width:54ch}
+.tally{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+.tally span{background:var(--fog);border-radius:999px;padding:7px 14px;font-size:15px}
+.tally b{font-family:var(--display);font-weight:700;color:var(--navy)}
+
+.contact{background:var(--navy);color:#fff;border-radius:18px;padding:22px 22px 20px;box-shadow:0 28px 60px -28px rgba(7,24,42,.6)}
+.contact .who{display:flex;gap:14px;align-items:center}
+.avatar{width:54px;height:54px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:19px;flex-shrink:0}
+.contact .k{font-size:13px;color:#A9C7D6}
+.contact .n{font-family:var(--display);font-weight:700;font-size:19px;line-height:1.2}
+.contact .t{font-size:14px;color:#C9DCE6}
+.contact .acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
+.contact .acts a{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px}
+.contact .acts a.p{background:#fff;color:var(--navy)}
+.contact .acts a.s{background:rgba(255,255,255,.1);color:#fff}
+.contact .acts a:only-child{grid-column:1/-1}
+
+main{padding:36px 0 70px}
+.sec{margin-bottom:44px}
+.sec > h2{font-family:var(--display);font-weight:800;font-size:25px;letter-spacing:-.02em;color:var(--navy);margin-bottom:4px}
+.sec > .sub{color:var(--muted);margin-bottom:18px}
+
+.role{background:var(--paper);border-radius:18px;box-shadow:0 1px 0 var(--line),0 24px 50px -36px rgba(7,24,42,.45);margin-bottom:20px;overflow:hidden}
+.role-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;padding:20px 24px 16px;border-bottom:1px solid var(--fog);flex-wrap:wrap}
+.role-head h3{font-family:var(--display);font-weight:700;font-size:21px;color:var(--navy);letter-spacing:-.01em}
+.role-head .meta{font-size:15px;color:var(--muted);margin-top:2px}
+.count{font-size:14px;font-weight:700;color:var(--blue);background:var(--accent-soft);padding:5px 12px;border-radius:999px;white-space:nowrap}
+
+.lineup{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(250px,1fr);gap:0;overflow-x:auto;scroll-snap-type:x mandatory}
+.lineup::-webkit-scrollbar{height:8px}.lineup::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+.cand{padding:22px 24px 22px;border-right:1px solid var(--fog);scroll-snap-align:start;display:flex;flex-direction:column}
+.cand:last-child{border-right:0}
+.cand .ph{width:84px;height:100px;border-radius:12px;object-fit:cover;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:26px;color:var(--blue)}
+.cand h4{font-family:var(--display);font-weight:700;font-size:18px;color:var(--navy);margin-top:12px;line-height:1.2}
+.cand .hl{font-size:15px;color:var(--muted);margin-top:2px}
+.facts{margin:14px 0 0;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:15px}
+.facts dt{color:var(--muted)}
+.facts dd{font-weight:700;text-align:right}
+.facts dd.q{font-weight:400;color:var(--muted)}
+.quote{margin-top:14px;font-size:15px;font-style:italic;color:var(--navy);border-left:3px solid var(--accent);padding-left:10px}
+.cand .go{display:flex;gap:8px;margin-top:auto;padding-top:18px}
+.btn{flex:1;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:10px;font-weight:700;font-size:15px;text-decoration:none;border:1px solid var(--line);color:var(--blue);background:var(--paper)}
+.btn:hover{border-color:var(--sky)}
+.btn.p{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.p:hover{background:var(--navy)}
+.single .cand{flex-direction:row;gap:22px;align-items:flex-start;flex-wrap:wrap}
+.single .cand .body{flex:1;min-width:220px;max-width:460px}
+.single .cand .go{margin-top:16px;max-width:320px;flex:0 0 100%}
+.swipe{display:none;font-size:13px;color:var(--muted);padding:0 24px 14px}
+.also{color:var(--muted);font-size:15px;margin-top:-4px}
+
+.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.person{background:var(--paper);border-radius:16px;padding:18px;display:flex;gap:14px;box-shadow:0 1px 0 var(--line)}
+.person .avatar{width:46px;height:46px;font-size:16px;background:var(--accent-soft);color:var(--blue)}
+.person b{font-family:var(--display);font-weight:700;font-size:16px;color:var(--navy);display:block;line-height:1.25}
+.person .t{font-size:15px}
+.person .d{font-size:14px;color:var(--muted)}
+.person .hire{font-size:13px;font-weight:700;color:var(--blue);margin-top:6px}
+
+.onsite{background:var(--paper);border-radius:16px;box-shadow:0 1px 0 var(--line);overflow:hidden}
+.onsite li{list-style:none;display:flex;justify-content:space-between;gap:12px;padding:13px 20px;border-bottom:1px solid var(--fog);font-size:16px}
+.onsite li:last-child{border-bottom:0}
+.onsite .r{color:var(--muted)}
+
+.empty-state{background:var(--paper);border-radius:18px;padding:34px;text-align:center;color:var(--muted)}
+.empty-state b{display:block;font-family:var(--display);color:var(--navy);font-size:19px;margin-bottom:4px}
+.foot{text-align:center;color:var(--muted);font-size:14px;padding:10px 0 40px}
+.foot img{height:26px;vertical-align:middle;margin-left:6px}
+.closed{max-width:520px;margin:80px auto;background:var(--paper);border-radius:18px;padding:36px;text-align:center}
+.closed h1{font-family:var(--display);font-weight:800;color:var(--navy);font-size:24px;margin-bottom:8px}
+.loading{text-align:center;color:var(--muted);padding:120px 0}
+.preview-bar{background:var(--navy);color:#C9DCE6;font-size:14px;padding:10px 24px;text-align:center}
+.preview-bar b{color:#fff}.preview-bar a{color:#fff;font-weight:700;margin-left:10px}
+
+@media (prefers-reduced-motion:no-preference){
+  .cand{animation:rise .5s cubic-bezier(.2,.7,.2,1) both}
+  .cand:nth-child(2){animation-delay:.07s}.cand:nth-child(3){animation-delay:.14s}.cand:nth-child(4){animation-delay:.21s}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+}
+@media (max-width:900px){
+  .hero .wrap{grid-template-columns:1fr;gap:24px;padding-top:30px}
+  .wrap{padding:0 16px}
+  .lineup{grid-auto-columns:82%}
+  .swipe{display:block}
+  .onsite li{flex-direction:column;gap:0}
+  .with span{display:none}
+}
+</style>
+</head>
+<body>
+<div id="app"><p class="loading">Loading…</p></div>
+<script>
+(function () {
+  "use strict";
+  var tok = (location.pathname.match(/^\/h\/([a-z]+)/) || [])[1] || "";
+  var prev = (location.pathname.match(/^\/cards\/system\/(\d+)\/preview/) || [])[1] || "";
+  var api = prev ? "/api/cards/systems/" + prev + "/view" : "/api/hs-public/" + tok;
+  var ANURA = "https://images.squarespace-cdn.com/content/v1/671fb0d9fec6997ddc5025cd/79107203-ad2e-4d39-96a6-5faa3f2f70bf/fulllogo_transparent_nobuffer.png";
+  var app = document.getElementById("app");
+
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k]; if (v == null || v === false) return;
+      if (k === "class") n.className = v; else if (k === "text") n.textContent = v;
+      else if (k.indexOf("on") === 0) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v);
+    });
+    (kids || []).forEach(function (c) { if (c != null && c !== false) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function ini(n) { return String(n || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(function (p) { return p[0].toUpperCase(); }).join(""); }
+  function first(n) { return String(n || "").split(/\s+/)[0] || ""; }
+  function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
+
+  function hexToRgb(h) { var m = /^#?([0-9a-f]{6})$/i.exec(h || ""); if (!m) return null; var n = parseInt(m[1], 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+  function applyAccent(hex) {
+    var rgb = hexToRgb(hex); if (!rgb) return;
+    document.documentElement.style.setProperty("--accent", hex);
+    var soft = rgb.map(function (c) { return Math.round(c + (255 - c) * 0.88); });
+    document.documentElement.style.setProperty("--accent-soft", "rgb(" + soft.join(",") + ")");
+  }
+
+  function contactCard(c) {
+    var tel = c.phone ? "tel:" + c.phone.replace(/[^\d+]/g, "") : "";
+    return el("aside", { class: "contact", "aria-label": "Your Anura Connect contact" }, [
+      el("div", { class: "who" }, [el("div", { class: "avatar", "aria-hidden": "true", text: ini(c.name) }), el("div", {}, [
+        el("div", { class: "k", text: "Your Anura contact" }),
+        el("div", { class: "n", text: c.name }),
+        c.title ? el("div", { class: "t", text: c.title }) : null,
+      ])]),
+      el("div", { class: "acts" }, [
+        c.email ? el("a", { class: "p", href: "mailto:" + c.email, text: "Email " + first(c.name) }) : null,
+        tel ? el("a", { class: "s", href: tel, text: "Call" }) : null,
+      ]),
+    ]);
+  }
+
+  function candCol(c, d) {
+    var ph = c.photoUrl ? el("img", { class: "ph", src: c.photoUrl, alt: "Photo of " + c.name, loading: "lazy" }) : el("div", { class: "ph", "aria-hidden": "true", text: ini(c.name) });
+    var ask = "Ask " + first(d.contact.name);
+    var body = [
+      el("h4", { text: c.name }),
+      c.headline ? el("p", { class: "hl", text: c.headline }) : null,
+      el("dl", { class: "facts" }, [
+        el("dt", { text: "Epic" }), el("dd", { class: c.epicRole || c.certs.length ? "" : "q", text: c.epicRole || c.certs[0] || "See résumé" }),
+        el("dt", { text: "Available" }), el("dd", { class: c.availability ? "" : "q", text: c.availability || ask }),
+        el("dt", { text: "Location" }), el("dd", { class: c.location ? "" : "q", text: c.location || ask }),
+        el("dt", { text: "Rate" }), el("dd", { class: c.rate ? "" : "q", text: c.rate || ask }),
+      ]),
+      c.highlight ? el("p", { class: "quote", text: "“" + c.highlight + "”" }) : null,
+    ];
+    var go = el("div", { class: "go" }, [
+      c.hasResume ? el("a", { class: "btn", href: c.href + "#resume", text: "Résumé" }) : null,
+      el("a", { class: "btn p", href: c.href, text: "Open Card" }),
+    ]);
+    return el("div", { class: "cand" }, [ph, el("div", { class: "body" }, body), go]);
+  }
+
+  function roleCard(r, d) {
+    var many = r.candidates.length > 1;
+    var meta = [r.manager ? "Hiring manager: " + r.manager.name + (r.manager.title ? ", " + r.manager.title : "") : null, r.location || null].filter(Boolean).join(". ");
+    return el("article", { class: "role" + (many ? "" : " single") }, [
+      el("div", { class: "role-head" }, [
+        el("div", {}, [el("h3", { text: r.title }), meta ? el("p", { class: "meta", text: meta }) : null]),
+        el("span", { class: "count", text: many ? plural(r.candidates.length, "candidate") + ", side by side" : "1 candidate" }),
+      ]),
+      el("div", { class: "lineup" }, r.candidates.map(function (c) { return candCol(c, d); })),
+      many ? el("p", { class: "swipe", text: "Swipe to see all " + r.candidates.length }) : null,
+    ]);
+  }
+
+  function seen() {
+    if (prev) return;
+    setTimeout(function () {
+      if (document.visibilityState !== "visible") return;
+      fetch(api + "/seen", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", keepalive: true }).catch(function () {});
+    }, 3000);
+  }
+
+  function render(d) {
+    var s = d.system;
+    if (s.accent) applyAccent(s.accent);
+    document.title = s.name + " | Your Epic candidates";
+    app.innerHTML = "";
+    if (prev) app.appendChild(el("div", { class: "preview-bar" }, [el("b", { text: "Preview. " }), "This is what " + s.name + " sees. Your visits don't count as opens.", el("a", { href: "/cards?system=" + prev, text: "Back to settings" })]));
+    app.appendChild(el("header", { class: "top" }, [el("div", { class: "wrap" }, [
+      s.logoUrl ? el("img", { class: "sys-logo", src: s.logoUrl, alt: s.name }) : el("span", { class: "sys-word", text: s.name }),
+      el("span", { class: "with" }, [el("span", { text: "with" }), el("img", { src: ANURA, alt: "Anura Connect" })]),
+    ])]));
+    var st = d.stats, bits = [];
+    if (st.roles) bits.push(el("span", {}, [el("b", { text: String(st.roles) }), " open " + (st.roles === 1 ? "role" : "roles")]));
+    if (st.candidates) bits.push(el("span", {}, [el("b", { text: String(st.candidates) }), " " + (st.candidates === 1 ? "candidate" : "candidates") + " to review"]));
+    if (st.consultants) bits.push(el("span", {}, [el("b", { text: String(st.consultants) }), " Anura " + (st.consultants === 1 ? "consultant" : "consultants") + " on site"]));
+    app.appendChild(el("section", { class: "hero" }, [el("div", { class: "wrap" }, [
+      el("div", {}, [
+        el("p", { class: "hello", text: "Hi, " + s.name + " team" }),
+        el("h1", { text: st.candidates ? "Your Epic candidates, all in one place." : "Your Anura Connect page." }),
+        el("p", { class: "lead", text: s.intro || "Everyone we've put forward for your open roles, side by side, with résumés and references a click away. It updates as we send new people." }),
+        bits.length ? el("div", { class: "tally" }, bits) : null,
+      ]),
+      contactCard(d.contact),
+    ])]));
+
+    var main = el("main", {}, []);
+    var wrap = el("div", { class: "wrap" });
+    var rolesSec = el("section", { class: "sec", "aria-labelledby": "h-roles" }, [
+      el("h2", { id: "h-roles", text: "Open roles" }),
+      el("p", { class: "sub", text: "Tap a Card for the full story: why we picked them, references, and the résumé." }),
+    ]);
+    if (d.roles.length) d.roles.forEach(function (r) { rolesSec.appendChild(roleCard(r, d)); });
+    else rolesSec.appendChild(el("div", { class: "empty-state" }, [el("b", { text: "Candidates are on the way" }), "We'll add them here as soon as they're ready. " + first(d.contact.name) + " will let you know."]));
+    if (d.sourcing.length) rolesSec.appendChild(el("p", { class: "also", text: "Also working on: " + d.sourcing.join(", ") + "." }));
+    wrap.appendChild(rolesSec);
+
+    if (d.managers.length) wrap.appendChild(el("section", { class: "sec", "aria-labelledby": "h-team" }, [
+      el("h2", { id: "h-team", text: "Your team we work with" }),
+      el("p", { class: "sub", text: "The " + s.name + " leaders we're hiring alongside." }),
+      el("div", { class: "people" }, d.managers.map(function (m) {
+        return el("div", { class: "person" }, [el("div", { class: "avatar", "aria-hidden": "true", text: ini(m.name) }), el("div", {}, [
+          el("b", { text: m.name }),
+          m.title ? el("div", { class: "t", text: m.title }) : null,
+          m.department ? el("div", { class: "d", text: m.department }) : null,
+          m.hiringFor.length ? el("div", { class: "hire", text: "Hiring: " + m.hiringFor.join(", ") }) : null,
+        ])]);
+      })),
+    ]));
+
+    if (d.consultants.length) wrap.appendChild(el("section", { class: "sec", "aria-labelledby": "h-onsite" }, [
+      el("h2", { id: "h-onsite", text: "Anura consultants at " + s.name }),
+      el("p", { class: "sub", text: "Already on your projects today." }),
+      el("ul", { class: "onsite" }, d.consultants.map(function (c) {
+        return el("li", {}, [el("span", {}, [el("b", { text: c.name }), c.role ? el("span", { class: "r", text: ", " + c.role }) : null]), c.since ? el("span", { class: "r", text: "Since " + c.since }) : null]);
+      })),
+    ]));
+
+    main.appendChild(wrap);
+    app.appendChild(main);
+    app.appendChild(el("p", { class: "foot" }, ["Prepared for " + s.name + " by", el("img", { src: ANURA, alt: "Anura Connect" })]));
+  }
+
+  fetch(api, { headers: { Accept: "application/json" } }).then(function (r) {
+    if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return null; }
+    return r.json().then(function (b) { return { r: r, b: b }; });
+  }).then(function (x) {
+    if (!x) return;
+    if (x.b.state !== "active") {
+      app.innerHTML = "";
+      app.appendChild(el("div", { class: "closed" }, [el("h1", { text: "This link isn't active" }), el("p", { text: "Ask your Anura Connect contact for a fresh one." })]));
+      return;
+    }
+    render(x.b); seen();
+  }).catch(function () { app.innerHTML = '<p class="loading">This page didn\'t load. Check your connection and refresh.</p>'; });
+})();
+</script>
+</body>
+</html>

@@ -59,6 +59,16 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
 .linkbox{background:var(--fog);border-radius:8px;padding:10px 12px;word-break:break-all;font-size:13px;margin:8px 0}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:11px 20px;border-radius:10px;display:none;box-shadow:0 10px 30px -10px rgba(0,0,0,.4)}
 .empty{color:var(--muted);padding:8px 0}
+.sys-head{display:flex;align-items:center;gap:16px;margin-bottom:6px}
+.sys-head .logo{height:54px;max-width:200px;object-fit:contain}
+.sys-head .ph{width:54px;height:54px;border-radius:12px;background:var(--fog);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;color:var(--blue)}
+.swatch{display:flex;align-items:center;gap:10px}
+.swatch input[type=color]{width:44px;height:36px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:2px}
+.mgr{display:grid;grid-template-columns:auto 1fr 1fr;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--fog)}
+.mgr:last-child{border-bottom:0}
+.mgr .n b{display:block}
+.mgr input[type=text]{padding:7px 9px;font-size:14px}
+.check{display:flex;gap:8px;align-items:center;font-size:14px}
 .liveform{margin-top:6px}
 .liveform > summary{list-style:none;display:inline-block}
 .liveform > summary::-webkit-details-marker{display:none}
@@ -79,6 +89,11 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
       <h2>Find a candidate</h2>
       <input type="search" id="q" placeholder="Name" aria-label="Search candidates">
       <ul class="list" id="results"></ul>
+    </div>
+    <div class="panel">
+      <h2>Health systems</h2>
+      <input type="search" id="sq" placeholder="Client name" aria-label="Search health systems">
+      <ul class="list" id="sresults"></ul>
     </div>
     <div class="panel">
       <h2>Waiting for your review</h2>
@@ -155,7 +170,7 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
         return '<li><button class="pick" data-cand="' + p.candidateId + '">' + esc(p.name) + '</button><span class="muted">' + esc(when(p.submittedAt)) + (p.photoChanged ? " &middot; new photo" : "") + '</span></li>';
       }).join("") : '<li class="empty">Nothing waiting.</li>';
       bindLinkButtons($("pending"), overview);
-      if (!new URLSearchParams(location.search).get("candidate")) {
+      if (!new URLSearchParams(location.search).get("candidate") && !new URLSearchParams(location.search).get("system")) {
         $("detail").innerHTML = '<h2>Recent Card links</h2>' + linksTable(o.links, true);
         bindLinkButtons($("detail"), overview);
       }
@@ -304,9 +319,140 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
     });
   }
 
+  /* ── Health systems ── */
+  var sysTimer;
+  $("sq").addEventListener("input", function () {
+    clearTimeout(sysTimer);
+    var q = this.value.trim();
+    sysTimer = setTimeout(function () {
+      if (q.length < 2) { $("sresults").innerHTML = ""; return; }
+      call("GET", "/api/cards/systems/search?q=" + encodeURIComponent(q)).then(function (r) {
+        $("sresults").innerHTML = r.data.length ? r.data.map(function (c) { return '<li><button class="pick" data-sys="' + c.id + '">' + esc(c.name) + '</button><span class="muted">' + esc(c.place) + '</span></li>'; }).join("") : '<li class="empty">No match.</li>';
+        $("sresults").querySelectorAll("[data-sys]").forEach(function (b) { b.onclick = function () { openSystem(b.getAttribute("data-sys")); }; });
+      });
+    }, 250);
+  });
+
+  /* Pick a brand color from a logo: the most common saturated color, ignoring white, black and grays. */
+  function logoAccent(blob) {
+    return new Promise(function (resolve) {
+      var img = new Image(), url = URL.createObjectURL(blob);
+      img.onload = function () {
+        var c = document.createElement("canvas"); c.width = 64; c.height = 64;
+        var g = c.getContext("2d"); g.drawImage(img, 0, 0, 64, 64);
+        var px = g.getImageData(0, 0, 64, 64).data, buckets = {};
+        for (var i = 0; i < px.length; i += 4) {
+          if (px[i + 3] < 200) continue;
+          var r = px[i], gg = px[i + 1], b = px[i + 2], mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+          if (mx < 40 || mn > 215 || (mx - mn) < 40) continue;
+          var key = (r >> 4) + "," + (gg >> 4) + "," + (b >> 4);
+          var e = buckets[key] || (buckets[key] = { n: 0, r: 0, g: 0, b: 0 });
+          e.n++; e.r += r; e.g += gg; e.b += b;
+        }
+        URL.revokeObjectURL(url);
+        var best = null; Object.keys(buckets).forEach(function (k) { if (!best || buckets[k].n > best.n) best = buckets[k]; });
+        if (!best) return resolve("");
+        var hex = "#" + [best.r, best.g, best.b].map(function (v) { return ("0" + Math.round(v / best.n).toString(16)).slice(-2); }).join("");
+        resolve(hex);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(""); };
+      img.src = url;
+    });
+  }
+
+  function openSystem(raw) {
+    var id = String(raw == null ? "" : raw);
+    if (!/^\d{1,9}$/.test(id)) return;
+    history.replaceState(null, "", "/cards?system=" + id);
+    $("detail").innerHTML = '<p class="empty">Loading…</p>';
+    call("GET", "/api/cards/systems/" + id).then(function (d) {
+      var st = d.settings, name = st.displayName || d.client.name;
+      var hiddenSet = {}; d.contacts.forEach(function (c) { if (c.hidden) hiddenSet[c.id] = true; });
+      var shownIds = d.managers.map(function (m) { return m.id; });
+      var addedIds = [];
+      var h = '<div class="sys-head">' + (st.hasLogo ? '<img class="logo" src="/api/cards/systems/' + id + '/logo?v=' + Date.now() + '" alt="">' : '<div class="ph">' + esc(name.slice(0, 2).toUpperCase()) + '</div>') +
+        '<div style="flex:1"><h2 style="margin:0">' + esc(name) + '</h2><div class="muted">Health system page</div></div>' +
+        '<a class="btn primary" href="/cards/system/' + id + '/preview" target="_blank" rel="noopener">Preview as client</a></div>';
+      h += '<h3>Branding</h3><div class="grid2"><div>' +
+        '<div class="fieldbox"><label>Logo</label><input type="file" id="sysLogo" accept="image/png,image/jpeg,image/webp" style="display:none">' +
+        '<div class="row"><button class="btn" id="sysLogoBtn">' + (st.hasLogo ? "Replace logo" : "Upload logo") + '</button>' + (st.hasLogo ? '<button class="btn danger" id="sysLogoRm">Remove</button>' : '') + '</div>' +
+        '<div class="muted" style="margin-top:6px">PNG with a transparent background looks best. We pick the brand color from it.</div></div>' +
+        '<div class="fieldbox"><label for="sysColor">Accent color</label><div class="swatch"><input type="color" id="sysColor" value="' + esc(st.accent || "#53A2BE") + '"><span class="muted" id="sysColorHex">' + esc(st.accent || "Anura blue (default)") + '</span></div></div>' +
+        '</div><div>' +
+        '<div class="fieldbox"><label for="sysName">Name on the page</label><input type="text" id="sysName" maxlength="120" value="' + esc(st.displayName) + '" placeholder="' + esc(d.client.name) + '"></div>' +
+        '<div class="fieldbox"><label for="sysIntro">Welcome line <span class="muted">(optional)</span></label><textarea id="sysIntro" rows="3" maxlength="600" placeholder="Everyone we\'ve put forward for your open roles, side by side.">' + esc(st.intro) + '</textarea></div>' +
+        '<label class="check"><input type="checkbox" id="sysOnsite"' + (st.showConsultants ? " checked" : "") + '> Show Anura consultants on site</label>' +
+        '</div></div>';
+      h += '<h3>Managers we work with</h3><p class="muted" style="margin-bottom:8px">Pulled from Bullhorn: contacts on our jobs here. Untick to hide, edit a title if Bullhorn\'s is wrong. Emails and phones never show.</p>' +
+        '<div id="mgrList">' + (d.managers.length ? d.managers.map(function (m) {
+          return '<div class="mgr"><input type="checkbox" data-mgr="' + esc(m.id) + '" checked aria-label="Show ' + esc(m.name) + '"><div class="n"><b>' + esc(m.name) + '</b><span class="muted">' + esc(m.department || "") + (m.hiringFor.length ? (m.department ? ", " : "") + "hiring " + esc(m.hiringFor.join(", ")) : "") + '</span></div>' +
+            '<input type="text" data-title="' + esc(m.id) + '" maxlength="120" value="' + esc(m.title) + '" aria-label="Title"></div>';
+        }).join("") : '<p class="empty">No hiring managers on Anura jobs here yet.</p>') + '</div>' +
+        '<div class="row" style="margin-top:8px"><select id="mgrAdd" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px"><option value="">Add someone else from ' + esc(name) + '…</option>' +
+        d.contacts.filter(function (c) { return shownIds.indexOf(c.id) < 0; }).map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.name) + (c.title ? " (" + esc(c.title) + ")" : "") + (c.hidden ? " [hidden]" : "") + '</option>'; }).join("") + '</select></div>';
+      h += '<div class="row" style="margin-top:18px"><button class="btn primary" id="sysSave">Save</button><span class="muted" id="sysStatus"></span></div>';
+      h += '<h3>Client link</h3><p class="muted">One link for everyone at ' + esc(name) + '. It shows open roles here, nothing from other clients. Turn it off anytime.</p><div id="sysLinkOut"></div>' +
+        '<div class="row" style="margin-top:8px"><button class="btn primary" id="sysMk">Create link</button></div>' +
+        (d.links.length ? '<ul class="list" style="margin-top:8px">' + d.links.map(function (l) {
+          return '<li><span>Created ' + esc(when(l.createdAt)) + ' by ' + esc(l.createdBy) + ' <span class="muted">' + (l.views || 0) + ' opens' + (l.lastViewedAt ? ", last " + esc(when(l.lastViewedAt)) : "") + '</span></span>' +
+            (l.revoked ? '<span class="pill revoked">off</span>' : '<button class="btn danger" data-sysrevoke="' + l.id + '">Turn off</button>') + '</li>';
+        }).join("") + '</ul>' : '');
+      $("detail").innerHTML = h;
+
+      $("sysColor").oninput = function () { $("sysColorHex").textContent = this.value; this.dataset.touched = "1"; };
+      $("sysLogoBtn").onclick = function () { $("sysLogo").click(); };
+      $("sysLogo").onchange = function () {
+        var f = this.files[0]; if (!f) return;
+        if (f.size > 5 * 1024 * 1024) { toast("Use a logo under 5 MB."); return; }
+        logoAccent(f).then(function (hex) {
+          if (hex && !$("sysColor").dataset.touched) { $("sysColor").value = hex; $("sysColorHex").textContent = hex + " (from the logo)"; $("sysColor").dataset.touched = "1"; }
+          return call("POST", "/api/cards/systems/" + id + "/logo", null, f);
+        }).then(function () { toast("Logo saved. Save to keep the color."); }).catch(function (e) { toast(e.message); });
+      };
+      if ($("sysLogoRm")) $("sysLogoRm").onclick = function () { call("DELETE", "/api/cards/systems/" + id + "/logo").then(function () { toast("Logo removed"); openSystem(id); }); };
+      $("mgrAdd").onchange = function () {
+        var cid = this.value; if (!cid) return;
+        var c = d.contacts.filter(function (x) { return x.id === cid; })[0];
+        addedIds.push(cid); delete hiddenSet[cid];
+        var row = document.createElement("div"); row.className = "mgr";
+        row.innerHTML = '<input type="checkbox" data-mgr="' + esc(cid) + '" checked><div class="n"><b>' + esc(c.name) + '</b><span class="muted">' + esc(c.department || "") + '</span></div><input type="text" data-title="' + esc(cid) + '" maxlength="120" value="' + esc(c.title) + '">';
+        var list = $("mgrList"); if (list.querySelector(".empty")) list.innerHTML = "";
+        list.appendChild(row);
+        this.querySelector('option[value="' + cid + '"]').remove(); this.value = "";
+      };
+      $("sysSave").onclick = function () {
+        var hidden = Object.keys(hiddenSet), order = [], titles = {};
+        document.querySelectorAll("[data-mgr]").forEach(function (cb) {
+          var cid = cb.getAttribute("data-mgr");
+          if (cb.checked) { order.push(cid); hidden = hidden.filter(function (x) { return x !== cid; }); }
+          else if (hidden.indexOf(cid) < 0) hidden.push(cid);
+          var t = document.querySelector('[data-title="' + cid + '"]');
+          var orig = (d.contacts.filter(function (x) { return x.id === cid; })[0] || {}).title || "";
+          if (t && t.value !== orig) titles[cid] = t.value;
+        });
+        call("PUT", "/api/cards/systems/" + id, {
+          displayName: $("sysName").value, intro: $("sysIntro").value, showConsultants: $("sysOnsite").checked,
+          accent: $("sysColor").dataset.touched || st.accent ? $("sysColor").value : "",
+          hidden: hidden, added: order, order: order, titles: titles,
+        }).then(function () { toast("Saved"); openSystem(id); }).catch(function (e) { $("sysStatus").textContent = errorText(e); });
+      };
+      $("sysMk").onclick = function () {
+        call("POST", "/api/cards/systems/" + id + "/link").then(function (r) {
+          $("sysLinkOut").innerHTML = '<div class="linkbox">' + esc(r.url) + '</div><button class="btn" id="sysCopy">Copy link</button>';
+          $("sysCopy").onclick = function () { navigator.clipboard.writeText(r.url).then(function () { toast("Copied"); }); };
+        }).catch(function (e) { toast(e.message); });
+      };
+      $("detail").querySelectorAll("[data-sysrevoke]").forEach(function (b) {
+        b.onclick = function () { call("POST", "/api/cards/system-links/" + b.getAttribute("data-sysrevoke") + "/revoke").then(function () { toast("Link turned off"); openSystem(id); }); };
+      });
+    }).catch(function (e) { $("detail").innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; });
+  }
+
   overview();
   var start = new URLSearchParams(location.search).get("candidate");
   if (start) openCandidate(start);
+  var startSys = new URLSearchParams(location.search).get("system");
+  if (startSys) openSystem(startSys);
 })();
 </script>
 </body>
