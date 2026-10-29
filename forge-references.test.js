@@ -1,4 +1,5 @@
 "use strict";
+const { textPdf } = require("./test-pdf");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
@@ -458,7 +459,7 @@ test("a reference is offered and left out until it is picked", async function ()
     },
     downloadCandidateFile: async function (_id, fileId) {
       if (String(fileId) === "44") return { name: "Reference check.txt", contentType: "text/plain", buffer: Buffer.from(untitledFileText()) };
-      return { name: "Memorial Hermann resume.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4") };
+      return { name: "Memorial Hermann resume.pdf", contentType: "application/pdf", buffer: textPdf("Consultant resume") };
     },
     outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
     getUser: function () { return { id: 5, firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },

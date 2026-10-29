@@ -4,6 +4,8 @@
  * Pure rules run everywhere. Route tests need Postgres: set CARD_TEST_DATABASE_URL
  * (CI starts a postgres service; locally any throwaway database works). Each run uses its own schema.
  */
+process.env.RESUME_GUARD = "enforce";
+const { textPdf } = require("./test-pdf");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("http");
@@ -178,7 +180,7 @@ async function harness() {
   await db.query("CREATE SCHEMA IF NOT EXISTS crm");
   await db.query("CREATE TABLE IF NOT EXISTS crm.file_attachment (id INTEGER NOT NULL, entity TEXT NOT NULL, entity_id INTEGER NOT NULL, name TEXT, type TEXT, content_type TEXT, date_added TIMESTAMPTZ, is_deleted BOOLEAN, PRIMARY KEY (entity, id))");
   await db.query("DELETE FROM crm.file_attachment WHERE entity = 'Candidate' AND entity_id = 1");
-  await db.query("INSERT INTO crm.file_attachment (id, entity, entity_id, name, type) VALUES (9, 'Candidate', 1, 'Jack.pdf', 'Resume'), (21, 'Candidate', 1, 'Beaker CP Certification.pdf', 'Certification'), (22, 'Candidate', 1, 'Reference - Patricia.pdf', 'Reference'), (23, 'Candidate', 1, 'Drivers License.jpg', '')");
+  await db.query("INSERT INTO crm.file_attachment (id, entity, entity_id, name, type) VALUES (9, 'Candidate', 1, 'Jack.pdf', 'Resume'), (21, 'Candidate', 1, 'Beaker CP Certification.pdf', 'Certification'), (22, 'Candidate', 1, 'Reference - Patricia.pdf', 'Reference'), (23, 'Candidate', 1, 'Drivers License.jpg', ''), (31, 'Candidate', 1, 'Cover letter.pdf', '')");
   await db.query("INSERT INTO corporate_users VALUES (5, 'ben@anuraconnect.com', 'Ben Gray', '608-555-0142', null, 'Head of Recruiting'), (6, 'peter@anuraconnect.com', 'Peter Oppermann', '608-555-0199', null, 'VP, Client Success')");
   await db.query("INSERT INTO jobs (id, title, status, is_open, is_deleted, client_id, raw_json, date_added) VALUES " +
     "(100, 'Beaker Analyst', 'Accepting Candidates', true, false, 900, '{\"clientContact\":{\"id\":501,\"firstName\":\"DANA\",\"lastName\":\"RUIZ\"}}', 1), " +
@@ -212,6 +214,7 @@ async function harness() {
   const app = express();
   app.use(express.json());
   const net = { calls: [], handler: null };
+  const files = {};
   const api = card(app, {
     fetch: async function (url, opts) { net.calls.push(String(url)); return net.handler(String(url), opts || {}); },
     db: db,
@@ -222,7 +225,7 @@ async function harness() {
       if (v && v.throws) throw new Error("Bullhorn down");
       return { amount: v ? v.amount : null, source: "from submission" };
     },
-    getFile: async function (entity, id, fileId) { return { buffer: Buffer.from("%PDF-1.4 resume " + id + ":" + fileId), name: "r.pdf", contentType: "application/pdf" }; },
+    getFile: async function (entity, id, fileId) { return { buffer: files[String(fileId)] || textPdf("Consultant resume " + id + ":" + fileId), name: "r.pdf", contentType: "application/pdf" }; },
     publicOrigin: function () { return "https://dash.test"; },
     pagesDir: path.join(__dirname, "public"),
     log: function () {},
@@ -244,7 +247,7 @@ async function harness() {
     await pool.query("DROP SCHEMA " + schema + " CASCADE");
     await pool.end();
   }
-  return { db: db, port: port, mint: mint, tok: tok, sent: sent, rates: rates, api: api, close: close, net: net };
+  return { db: db, port: port, mint: mint, tok: tok, sent: sent, rates: rates, api: api, close: close, net: net, files: files };
 }
 
 test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_URL to run" }, async function (t) {
@@ -617,7 +620,7 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       // Documents: Bullhorn files on this candidate only, no reference letters or IDs.
       const files = await req(h.port, "GET", "/api/cards/candidate/1/files", { headers: rec });
       const allowed = files.json.data.filter(function (f) { return f.allowed; }).map(function (f) { return f.name; }).sort();
-      assert.deepEqual(allowed, ["Beaker CP Certification.pdf", "Jack.pdf"]);
+      assert.deepEqual(allowed, ["Beaker CP Certification.pdf", "Cover letter.pdf", "Jack.pdf"]);
       r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { documents: [{ fileId: "22", kind: "Reference" }] } });
       assert.equal(r.status, 400);
       r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { documents: [{ fileId: "999", kind: "Doc" }] } });
@@ -746,6 +749,60 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.match(page.text, /Anura Connect Card/);
       const edit = await req(h.port, "GET", "/card-edit/" + J);
       assert.equal(edit.status, 200);
+    });
+
+    await t.test("K34 a résumé with contact info is held back from the client, and the recruiter hears once", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      h.sent.length = 0;
+      h.files["9"] = textPdf("Jack Corbell\njack.corbell@gmail.com\nEpic Beaker");
+      const jackPid = (await req(h.port, "GET", "/api/card-public/" + J)).json.card.id; // K17 redrafted, so the newest link's id
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/resume/" + jackPid)).status, 404);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/resume/" + jackPid)).status, 404);
+      const c = (await req(h.port, "GET", "/api/card-public/" + J)).json.card;
+      assert.equal(c.hasResume, false);
+      assert.equal(c.resumeName, "");
+      assert.equal(c.documents.filter(function (d) { return d.kind === "Résumé"; }).length, 0);
+      const held = h.sent.filter(function (m) { return /Résumé held back/.test(m.subject); });
+      assert.equal(held.length, 1, "one alert, not one per view");
+      assert.match(held[0].html, /jack\.corbell@gmail\.com/);
+      const mine = await req(h.port, "GET", "/api/cards/candidate/1", { headers: rec });
+      assert.deepEqual(mine.json.links.filter(function (l) { return l.state === "active"; })[0].held, ["Jack.pdf"]);
+      // A recruiter can't add a document with contact info either.
+      h.files["31"] = textPdf("Cover letter\nCall me at (312) 555-0144");
+      const lk = await h.db.getOne("SELECT id FROM card_links WHERE submission_id = 11 AND revoked_at IS NULL ORDER BY id DESC LIMIT 1");
+      const add = await req(h.port, "PUT", "/api/cards/links/" + lk.id + "/content", { headers: rec, body: { documents: [{ fileId: "31", kind: "Cover letter" }] } });
+      assert.equal(add.status, 400);
+      assert.match(add.json.error, /Cover letter\.pdf: it has contact info \(phone \(312\) 555-0144\)/);
+      // Forge sends a clean résumé: the Card shows it again.
+      await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell", resumeFileId: "12", resumeName: "Jack clean.pdf" });
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/resume/" + (await req(h.port, "GET", "/api/card-public/" + J)).json.card.id)).status, 200);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J)).json.card.hasResume, true);
+      // A scan a recruiter checked by eye in Forge is served.
+      const scan = Buffer.from("%PDF-1.4 scanned");
+      h.files["13"] = scan;
+      await h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell", resumeFileId: "13", resumeName: "Jack scan.pdf",
+        resumeConfirmed: { sha: require("./resume-guard").sha256(scan), by: "ben@anuraconnect.com" } });
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/resume/" + (await req(h.port, "GET", "/api/card-public/" + J)).json.card.id)).status, 200);
+    });
+
+    await t.test("K35 VMS clients: no Cards, no system link, and existing links close", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      await assert.rejects(h.mint({ submissionId: 14, candidateId: 4, candidateName: "Ana Ito", clientId: 901, clientName: "Lahey Hospital & Medical Center" }), function (e) { return e.code === "vms"; });
+      let r = await req(h.port, "GET", "/api/cards/systems/900", { headers: rec });
+      assert.equal(r.json.settings.vms, false);
+      r = await req(h.port, "PUT", "/api/cards/systems/900", { headers: rec, body: { displayName: "UW Health", vms: true } });
+      assert.equal(r.status, 200, r.text);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J)).status, 410);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J + "/resume/" + jack.publicId)).status, 404);
+      r = await req(h.port, "POST", "/api/cards/systems/900/link", { headers: rec, body: {} });
+      assert.equal(r.status, 409);
+      assert.equal(r.json.code, "vms");
+      await assert.rejects(h.mint({ submissionId: 11, candidateId: 1, candidateName: "Jack Corbell" }), function (e) { return e.code === "vms"; });
+      r = await req(h.port, "PUT", "/api/cards/systems/900", { headers: rec, body: { displayName: "UW Health", vms: false } });
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J)).status, 200, "unticking restores the links");
+      const audit = await req(h.port, "GET", "/api/cards/resume-audit", { headers: rec });
+      assert.equal(audit.status, 200, audit.text);
+      assert.equal(audit.json.mode, "enforce");
     });
   } finally {
     await h.close();

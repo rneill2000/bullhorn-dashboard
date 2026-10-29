@@ -18,6 +18,7 @@
 
 const { isAnuraTeammate } = require("./team");
 const referenceLib = require("./forge-references");
+const resumeGuard = require("./resume-guard");
 const { createReferencePicks } = require("./forge-reference-picks");
 
 const MODULES = [
@@ -2803,6 +2804,24 @@ function registerForge(app, deps) {
       const tooLarge = buf.length > MAX_RESUME_BYTES;
       const attachName = (downloaded && downloaded.name) || file.name || "resume.pdf";
 
+      // The résumé goes to the client: no way to reach the candidate (or a referee) around us.
+      let resumeConfirmed = null;
+      if (buf.length) {
+        const rctx = await resumeGuard.loadContext(db && db.ready ? db : null, base.candidate.id);
+        const rcheck = await resumeGuard.checkResume(buf, rctx.who, rctx.allow);
+        if (!rcheck.ok && !resumeGuard.enforcing()) {
+          console.log("[Forge] résumé check (audit) submission " + id + ": " + (rcheck.unreadable ? "unreadable" : resumeGuard.describeHits(rcheck.hits)));
+        } else if (!rcheck.ok && !rcheck.unreadable) {
+          return res.status(400).json({ error: rcheck.message, code: "resume_contact", snippet: resumeGuard.describeHits(rcheck.hits) });
+        }
+        else if (rcheck.unreadable) {
+          if (!body.confirmResumeChecked) {
+            return res.status(409).json({ error: rcheck.message + " Open it and check for an email, phone number or LinkedIn link first.", code: "resume_unreadable" });
+          }
+          resumeConfirmed = { sha: resumeGuard.sha256(buf), by: (user && (user.email || user.name)) || "recruiter" };
+        }
+      }
+
       const prior = await latestDraft(id);
       if (prior && !body.confirmAnother) {
         return res.status(409).json({
@@ -2853,6 +2872,7 @@ function registerForge(app, deps) {
             billAmount: moneyNumber(billRate),
             resumeFileId: resumeFileId,
             resumeName: attachName,
+            resumeConfirmed: resumeConfirmed,
             references: cardRefs,
             // The email's short, already-guarded quotes become the Card's pull quotes.
             highlights: chosenReferences.map(function (offer) {
@@ -2870,8 +2890,12 @@ function registerForge(app, deps) {
             email = withCard;
           }
         } catch (e) {
-          console.log("[Forge] card link failed for submission " + id + ": " + e.message);
-          cardNote = "Draft created without the Card link (" + e.message + ").";
+          if (e.code === "vms") {
+            cardNote = "No Card link: " + e.message + ".";
+          } else {
+            console.log("[Forge] card link failed for submission " + id + ": " + e.message);
+            cardNote = "Draft created without the Card link (" + e.message + ").";
+          }
           card = null;
         }
       }

@@ -154,3 +154,8 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K20 | Forge draft with Cards | Card minted for a blocked draft; Card failure blocks a submittal | forge.test.js K20, K20b |
 | KM1 | Manual smoke after deploy: Forge draft on a real submission, open the Card logged out on a phone, check rate and résumé | Real data differs from fakes | Record date + result in the PR |
 | K31 | Health system page (one client): roles, managers, consultants, Cards opened from it | Another client's candidates, unsent drafts, or manager contact details reach a client | card.test.js K31 |
+| K32 | Forge blocks a résumé with an email, phone or LinkedIn link; a scanned PDF needs the recruiter's confirmation | forge.test.js |
+| K33 | VMS client: draft goes out with no Card link and a note saying why | forge.test.js |
+| K34 | Card holds back a résumé/document with contact info, alerts the recruiter once, and shows it again when Forge sends a clean one; recruiters can't add one | card.test.js |
+| K35 | VMS clients (by name rule or recruiter toggle): no Cards, no system link, existing links close; unticking restores them | card.test.js |
+| RG1–RG6 | Résumé contact rules: own vs other contacts, Anura numbers allowed, scans unreadable | resume-guard.test.js |

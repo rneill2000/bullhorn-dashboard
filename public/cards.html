@@ -138,6 +138,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
           '<td>' + (l.views || 0) + (l.lastViewedAt ? '<div class="muted">last ' + esc(when(l.lastViewedAt)) + '</div>' : '') + '</td>' +
           '<td>' + esc(l.billDisplay || "—") + '</td>' +
           '<td><span class="pill ' + l.state + '">' + l.state + '</span>' +
+          (l.held && l.held.length && l.state === "active" ? '<div class="muted" style="color:#9a3412;margin-top:4px">Held back from the client: ' + esc(l.held.join(", ")) + '. It has contact info or is a scan. Upload a clean PDF to Bullhorn.</div>' : '') +
           (l.state === "active" ? '<div class="row" style="margin-top:6px"><a class="btn" href="/cards/preview/' + l.id + '" target="_blank" rel="noopener">Preview as client</a><button class="btn" data-rate="' + l.id + '">Use Bullhorn rate</button><button class="btn danger" title="Pulls this candidate from the client\'s Card and comparison" data-revoke="' + l.id + '">Turn off</button></div>' : '') +
           '</td></tr>' +
           (!withCandidate && l.references && l.references.length && l.state === "active" ? '<tr><td colspan="5" style="background:#f8fafc"><div class="muted" style="margin-bottom:4px">References on this Card</div>' +
@@ -387,6 +388,8 @@ header a{display:inline-flex;align-items:center;min-height:32px}
         '<div class="fieldbox"><label for="sysName">Name on the page</label><input type="text" id="sysName" maxlength="120" value="' + esc(st.displayName) + '" placeholder="' + esc(d.client.name) + '"></div>' +
         '<div class="fieldbox"><label for="sysIntro">Welcome line <span class="muted">(optional)</span></label><textarea id="sysIntro" rows="3" maxlength="600" placeholder="Everyone we\'ve put forward for your open roles, side by side.">' + esc(st.intro) + '</textarea></div>' +
         '<label class="check"><input type="checkbox" id="sysOnsite" style="width:24px;height:24px"' + (st.showConsultants ? " checked" : "") + '> Show Anura consultants on site</label>' +
+        '<label class="check" style="margin-top:8px"><input type="checkbox" id="sysVms" style="width:24px;height:24px"' + (st.vms ? " checked" : "") + '> Candidates go through their VMS' + (st.vmsRule ? ' <span class="muted">(' + esc(st.vmsRule) + ')</span>' : '') + '</label>' +
+        '<p class="muted" style="margin:4px 0 0 32px">When ticked, no Cards and no client link for this client. Existing links stop working.</p>' +
         '</div></div>';
       h += '<h3>Managers we work with</h3><p class="muted" style="margin-bottom:8px">Pulled from Bullhorn: contacts on our jobs here. Untick to hide, edit a title if Bullhorn\'s is wrong. Emails and phones never show.</p>' +
         '<div id="mgrList">' + (d.managers.length ? d.managers.map(function (m) {
@@ -397,7 +400,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
         d.contacts.filter(function (c) { return shownIds.indexOf(c.id) < 0; }).map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.name) + (c.title ? " (" + esc(c.title) + ")" : "") + (c.hidden ? " [hidden]" : "") + '</option>'; }).join("") + '</select></div>';
       h += '<div class="row" style="margin-top:18px"><button class="btn primary" id="sysSave">Save</button><span class="muted" id="sysStatus"></span></div>';
       h += '<h3>Client link</h3><p class="muted">One link for everyone at ' + esc(name) + '. It shows open roles here, nothing from other clients. Turn it off anytime.</p><div id="sysLinkOut"></div>' +
-        '<div class="row" style="margin-top:8px"><button class="btn primary" id="sysMk">Create link</button></div>' +
+        (st.vms ? '<p class="empty">Off: this client reviews candidates in their VMS.</p>' : '<div class="row" style="margin-top:8px"><button class="btn primary" id="sysMk">Create link</button></div>') +
         (d.links.length ? '<ul class="list" style="margin-top:8px">' + d.links.map(function (l) {
           return '<li><span>Created ' + esc(when(l.createdAt)) + ' by ' + esc(l.createdBy) + ' <span class="muted">' + (l.views || 0) + ' opens' + (l.lastViewedAt ? ", last " + esc(when(l.lastViewedAt)) : "") + '</span></span>' +
             (l.revoked ? '<span class="pill revoked">off</span>' : '<button class="btn danger" data-sysrevoke="' + l.id + '">Turn off</button>') + '</li>';
@@ -436,12 +439,12 @@ header a{display:inline-flex;align-items:center;min-height:32px}
           if (t && t.value !== orig) titles[cid] = t.value;
         });
         call("PUT", "/api/cards/systems/" + id, {
-          displayName: $("sysName").value, intro: $("sysIntro").value, showConsultants: $("sysOnsite").checked,
+          displayName: $("sysName").value, intro: $("sysIntro").value, showConsultants: $("sysOnsite").checked, vms: $("sysVms").checked,
           accent: $("sysColor").dataset.touched || st.accent ? $("sysColor").value : "",
           hidden: hidden, added: order, order: order, titles: titles,
         }).then(function () { toast("Saved"); openSystem(id); }).catch(function (e) { $("sysStatus").textContent = errorText(e); });
       };
-      $("sysMk").onclick = function () {
+      if ($("sysMk")) $("sysMk").onclick = function () {
         call("POST", "/api/cards/systems/" + id + "/link").then(function (r) {
           $("sysLinkOut").innerHTML = '<div class="linkbox">' + esc(r.url) + '</div><button class="btn" id="sysCopy">Copy link</button>';
           $("sysCopy").onclick = function () { navigator.clipboard.writeText(r.url).then(function () { toast("Copied"); }); };

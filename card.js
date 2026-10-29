@@ -351,6 +351,7 @@ function registerCard(app, deps) {
   const getFile = deps.getFile || null; // (entity, entityId, fileId) → { buffer, name, contentType }
   const pagesDir = deps.pagesDir || path.join(__dirname, "public");
   const leakCheck = deps.findInternalLeak || require("./forge").findInternalLeak;
+  const guard = require("./resume-guard");
   const rateCache = new Map();
   let ready = null;
 
@@ -387,6 +388,13 @@ function registerCard(app, deps) {
         "CREATE TABLE IF NOT EXISTS card_views (id BIGSERIAL PRIMARY KEY, link_id INTEGER NOT NULL, viewed_at TIMESTAMPTZ NOT NULL DEFAULT now(), " +
           "page TEXT, ip_hash TEXT, user_agent TEXT)",
         "CREATE INDEX IF NOT EXISTS card_views_link ON card_views (link_id, viewed_at)",
+        // Résumé/document contact check, per exact file contents. confirmed_by = a recruiter looked at a scan.
+        "CREATE TABLE IF NOT EXISTS card_file_checks (sha TEXT NOT NULL, candidate_id INTEGER NOT NULL, ok BOOLEAN NOT NULL, unreadable BOOLEAN NOT NULL DEFAULT false, " +
+          "hits JSONB NOT NULL DEFAULT '[]'::jsonb, confirmed_by TEXT, checked_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (sha, candidate_id))",
+        "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS held_docs JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS hold_alert_at TIMESTAMPTZ",
+        // null = decide from the client name (VMS rules); true/false = a recruiter set it.
+        "ALTER TABLE card_systems ADD COLUMN IF NOT EXISTS vms BOOLEAN",
       ];
       ready = stmts.reduce(function (p, sql) { return p.then(function () { return db.query(sql); }); }, Promise.resolve())
         .then(function () { return true; })
@@ -400,6 +408,66 @@ function registerCard(app, deps) {
     if (!ok) throw Object.assign(new Error("The Card database is not connected."), { status: 503 });
   }
 
+  /* ── VMS clients: candidates go through the client's vendor system, so no Cards or system pages ── */
+  async function vmsFor(clientId, clientName) {
+    let row = null;
+    try { row = clientId ? await db.getOne("SELECT vms FROM card_systems WHERE client_id = $1", [clientId]) : null; } catch (e) { row = null; }
+    if (row && row.vms != null) return row.vms ? { label: "VMS", set: true } : null;
+    let name = clientName;
+    if (!name && clientId) {
+      const c = await db.getOne("SELECT name FROM clients WHERE id = $1", [clientId]);
+      name = c && c.name;
+    }
+    const rule = require("./forge").matchVms(name || "");
+    return rule ? { label: rule.label, set: false } : null;
+  }
+
+  /* ── résumé and document contact check (resume-guard.js), cached per exact file contents ── */
+  async function fileVerdict(candidateId, buf, isPdf) {
+    if (!isPdf) return { ok: true };
+    const sha = guard.sha256(buf);
+    const prior = await db.getOne("SELECT ok, unreadable, hits, confirmed_by FROM card_file_checks WHERE sha = $1 AND candidate_id = $2", [sha, candidateId]);
+    if (prior) return { ok: !!(prior.ok || prior.confirmed_by) || !guard.enforcing(), unreadable: prior.unreadable, hits: prior.hits || [], sha: sha };
+    const ctx = await guard.loadContext(db, candidateId);
+    const v = await guard.checkResume(buf, ctx.who, ctx.allow);
+    if (!v.ok) log("[Card] résumé check" + (guard.enforcing() ? "" : " (audit)") + " candidate " + candidateId + ": " + (v.unreadable ? "unreadable" : guard.describeHits(v.hits)));
+    await db.query("INSERT INTO card_file_checks (sha, candidate_id, ok, unreadable, hits) VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT (sha, candidate_id) DO NOTHING",
+      [sha, candidateId, v.ok, !!v.unreadable, JSON.stringify(v.hits || [])]);
+    return Object.assign(v, { sha: sha, ok: v.ok || !guard.enforcing() });
+  }
+
+  /** Forge passes this when a recruiter confirmed a scanned résumé by eye. */
+  async function confirmFile(candidateId, sha, by) {
+    if (!sha) return;
+    await db.query("INSERT INTO card_file_checks (sha, candidate_id, ok, unreadable, confirmed_by) VALUES ($1,$2,true,true,$3) " +
+      "ON CONFLICT (sha, candidate_id) DO UPDATE SET confirmed_by = EXCLUDED.confirmed_by", [sha, candidateId, by || "recruiter"]);
+  }
+
+  /** Take a file off a submission's Cards and tell the recruiter once a day. */
+  async function holdDoc(row, fileId, verdict) {
+    await db.query("UPDATE card_links SET held_docs = (SELECT jsonb_agg(DISTINCT x) FROM jsonb_array_elements(held_docs || to_jsonb($2::text)) x) WHERE submission_id = $1",
+      [row.submission_id, String(fileId)]);
+    if (!notifier) return;
+    try {
+      const claimed = await db.getOne(
+        "UPDATE card_links SET hold_alert_at = now() WHERE id = $1 AND (hold_alert_at IS NULL OR hold_alert_at < now() - interval '24 hours') RETURNING id", [row.id]);
+      if (!claimed) return;
+      const rec = row.recruiter ? (typeof row.recruiter === "string" ? JSON.parse(row.recruiter) : row.recruiter) : {};
+      const to = row.created_by && /@/.test(row.created_by) ? row.created_by : rec.email;
+      if (!to) return;
+      const html = notifier.card("Résumé held back from a client's Card", [
+        ["Candidate", row.candidate_name],
+        ["Job", row.job_title],
+        ["Client", row.client_name],
+        ["Why", verdict.unreadable ? "The PDF is a scan, so the contact check couldn't read it." : "It still has contact info: " + guard.describeHits(verdict.hits)],
+        ["What to do", "Upload a clean PDF to Bullhorn and pick it on the Cards page. The client sees no résumé until then."],
+      ], publicOrigin() + "/cards?candidate=" + row.candidate_id, "Open Cards");
+      await notifier.send({ to: [{ email: to }], subject: "Résumé held back: " + row.candidate_name + " (" + row.client_name + ")", html: html, fromEmail: to });
+    } catch (e) { log("[Card] hold alert failed: " + e.message); }
+  }
+
+  function heldIds(row) { return (Array.isArray(row && row.held_docs) ? row.held_docs : []).map(String); }
+
   function cardUrl(token) { return publicOrigin().replace(/\/$/, "") + "/card/" + token; }
   function editUrl(token) { return publicOrigin().replace(/\/$/, "") + "/card-edit/" + token; }
 
@@ -409,6 +477,9 @@ function registerCard(app, deps) {
     if (!o || !o.submissionId || !o.candidateId || !o.jobId || !o.clientId) {
       throw Object.assign(new Error("A Card needs a submission, candidate, job and client."), { status: 400 });
     }
+    const vms = await vmsFor(o.clientId, o.clientName);
+    if (vms) throw Object.assign(new Error("no Card for " + vms.label + " clients; they review candidates in their VMS"), { status: 409, code: "vms" });
+    if (o.resumeConfirmed && o.resumeConfirmed.sha) await confirmFile(o.candidateId, o.resumeConfirmed.sha, o.resumeConfirmed.by);
     const token = makeToken();
     const publicId = makeToken(PUBLIC_ID_LENGTH);
     // A reference a recruiter took off this submission's Card stays off when Forge drafts it again.
@@ -436,8 +507,9 @@ function registerCard(app, deps) {
     // Keep documents a recruiter already added for this submission; refresh the résumé and highlights from Forge.
     const priorDocs = await db.getOne("SELECT docs FROM card_links WHERE submission_id = $1 AND id <> $2 AND revoked_at IS NULL ORDER BY id DESC LIMIT 1", [o.submissionId, row.id]);
     const extraDocs = (priorDocs && Array.isArray(priorDocs.docs) ? priorDocs.docs : []).filter(function (d) { return d.kind !== "Résumé"; });
-    await db.query("UPDATE card_links SET highlights = $2::jsonb, docs = $3::jsonb WHERE submission_id = $1 AND revoked_at IS NULL",
-      [o.submissionId, JSON.stringify(highlights), JSON.stringify(docs.concat(extraDocs))]);
+    await db.query("UPDATE card_links SET highlights = $2::jsonb, docs = $3::jsonb, held_docs = COALESCE((SELECT jsonb_agg(x) FROM jsonb_array_elements(held_docs) x WHERE x #>> '{}' <> $4), '[]'::jsonb) " +
+      "WHERE submission_id = $1 AND revoked_at IS NULL",
+      [o.submissionId, JSON.stringify(highlights), JSON.stringify(docs.concat(extraDocs)), o.resumeFileId != null ? String(o.resumeFileId) : ""]);
     // Earlier links for this submission show what was just approved, not an older draft.
     await db.query(
       "UPDATE card_links SET candidate_name=$2, job_title=$3, client_name=$4, why_me=$5, availability=$6, location=$7, bill_display=$8, " +
@@ -473,6 +545,7 @@ function registerCard(app, deps) {
     const sub = await db.getOne("SELECT id, status, is_deleted FROM submissions WHERE id = $1", [link.submission_id]);
     if (!sub || sub.is_deleted === true) return { state: "revoked", link: link, job: job };
     if (!jobIsActive(job)) return { state: "expired", link: link, job: job };
+    if (await vmsFor(link.client_id, link.client_name)) return { state: "revoked", link: link, job: job, vms: true };
     return { state: "active", link: link, job: job };
   }
 
@@ -566,7 +639,7 @@ function registerCard(app, deps) {
       location: row.location || "",
       rate: rate.display,
       hasPhoto: !!row.has_photo,
-      hasResume: !!row.resume_file_id,
+      hasResume: !!row.resume_file_id && heldIds(row).indexOf(String(row.resume_file_id)) < 0,
       highlight: (Array.isArray(row.highlights) && row.highlights[0] && row.highlights[0].quote) || "",
       isNew: !!(row.created_at && now() - new Date(row.created_at).getTime() < 7 * 86400000),
     };
@@ -582,9 +655,10 @@ function registerCard(app, deps) {
       .map(function (f) { return { label: f.label, value: pf[f.key] }; });
     const refs = Array.isArray(row.refs) ? row.refs : (row.refs ? JSON.parse(row.refs) : []);
     const highlights = (Array.isArray(row.highlights) ? row.highlights : []).map(function (h) { return { quote: h.quote || "", role: h.role || "", organization: h.organization || "" }; });
+    const held = heldIds(row);
     const docs = (Array.isArray(row.docs) ? row.docs : []).map(function (d, i) {
-      return { index: i, name: d.name || "Document", kind: d.kind || "", viewable: docExt(d.name) === "pdf" || !!DOC_TYPES[docExt(d.name)] };
-    });
+      return { index: i, fileId: String(d.fileId), name: d.name || "Document", kind: d.kind || "", viewable: docExt(d.name) === "pdf" || !!DOC_TYPES[docExt(d.name)] };
+    }).filter(function (d) { return held.indexOf(d.fileId) < 0; }).map(function (d) { delete d.fileId; return d; });
     const base = await summaryFor(row, rate);
     return Object.assign(base, {
       whyMe: row.why_me || "",
@@ -596,7 +670,7 @@ function registerCard(app, deps) {
       references: refs.map(function (r) {
         return { role: r.role || "", organization: r.organization || "", relationship: r.relationship || "", rehire: r.rehire || "", text: r.text || "" };
       }),
-      resumeName: row.resume_file_id ? (row.resume_name || "Résumé.pdf") : "",
+      resumeName: base.hasResume ? (row.resume_name || "Résumé.pdf") : "",
     });
   }
 
@@ -818,6 +892,7 @@ function registerCard(app, deps) {
     if (!validToken(token)) return null;
     const row = await db.getOne("SELECT * FROM card_system_links WHERE token_hash = $1", [hashToken(token)]);
     if (!row || row.revoked_at) return null;
+    if (await vmsFor(row.client_id)) return null;
     return row;
   }
 
@@ -950,7 +1025,10 @@ function registerCard(app, deps) {
     if (!d || !getFile) return res.status(404).json({ error: "Document not available." });
     const ext = docExt(d.name);
     if (!DOC_TYPES[ext]) return res.status(404).json({ error: "Document not available." });
+    if (heldIds(row).indexOf(String(d.fileId)) >= 0) return res.status(404).json({ error: "Document not available." });
     const f = await getFile("Candidate", row.candidate_id, parseInt(d.fileId, 10));
+    const v = await fileVerdict(row.candidate_id, f.buffer, ext === "pdf");
+    if (!v.ok) { await holdDoc(row, d.fileId, v); return res.status(404).json({ error: "Document not available." }); }
     const name = String(d.name || "Document").replace(/[^\w.\- ]+/g, "_").slice(0, 120);
     res.setHeader("Content-Type", DOC_TYPES[ext]);
     res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
@@ -959,7 +1037,10 @@ function registerCard(app, deps) {
   }
 
   async function sendResume(req, res, row) {
+    if (heldIds(row).indexOf(String(row.resume_file_id)) >= 0) return res.status(404).json({ error: "Résumé not available." });
     const f = await getFile("Candidate", row.candidate_id, parseInt(row.resume_file_id, 10));
+    const v = await fileVerdict(row.candidate_id, f.buffer, true);
+    if (!v.ok) { await holdDoc(row, row.resume_file_id, v); return res.status(404).json({ error: "Résumé not available." }); }
     const name = String(row.resume_name || "Resume.pdf").replace(/[^\w.\- ]+/g, "_").slice(0, 120);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
@@ -1261,6 +1342,36 @@ function registerCard(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
+  /** What the résumé check finds on recent Forge résumés and Card documents. Recruiter-only. */
+  app.get("/api/cards/resume-audit", async function (req, res) {
+    try {
+      await needDb();
+      if (!getFile) return res.status(503).json({ error: "Files aren't connected." });
+      const limit = Math.min(parseInt(req.query.limit, 10) || 30, 80);
+      let rows = [];
+      try {
+        rows = await db.getAll("SELECT DISTINCT ON (resume_file_id) candidate_id, candidate_name, client_name, resume_file_id, created_at FROM submittal_forge_drafts " +
+          "WHERE COALESCE(resume_file_id, '') <> '' AND candidate_id IS NOT NULL ORDER BY resume_file_id, created_at DESC", []);
+      } catch (e) { rows = []; }
+      rows = rows.sort(function (a, b) { return ms(b.created_at) - ms(a.created_at); }).slice(0, limit);
+      const out = [];
+      for (const r of rows) {
+        try {
+          const f = await getFile("Candidate", r.candidate_id, parseInt(r.resume_file_id, 10));
+          const ctx = await guard.loadContext(db, r.candidate_id);
+          const v = await guard.checkResume(f.buffer, ctx.who, ctx.allow);
+          out.push({ candidate: niceName(r.candidate_name || ""), client: r.client_name, file: f.name || r.resume_file_id, ok: v.ok, unreadable: !!v.unreadable,
+            hits: (v.hits || []).map(function (h) { return { kind: h.kind, value: h.value, own: h.own }; }) });
+        } catch (e) { out.push({ candidate: niceName(r.candidate_name || ""), client: r.client_name, file: r.resume_file_id, error: e.message }); }
+      }
+      const tally = { checked: out.length, clean: 0, contact: 0, unreadable: 0, errors: 0 };
+      out.forEach(function (x) { if (x.error) tally.errors++; else if (x.ok) tally.clean++; else if (x.unreadable) tally.unreadable++; else tally.contact++; });
+      const values = {};
+      out.forEach(function (x) { (x.hits || []).forEach(function (h) { if (!h.own) values[h.value] = (values[h.value] || 0) + 1; }); });
+      res.json({ mode: guard.mode(), tally: tally, repeated: Object.keys(values).filter(function (k) { return values[k] > 1; }).map(function (k) { return { value: k, count: values[k] }; }), results: out });
+    } catch (e) { fail(res, e); }
+  });
+
   function linkOut(l) {
     const refs = Array.isArray(l.refs) ? l.refs : (l.refs ? JSON.parse(l.refs) : []);
     return {
@@ -1268,6 +1379,7 @@ function registerCard(app, deps) {
       id: l.id, candidateId: l.candidate_id, candidateName: l.candidate_name, jobId: l.job_id, jobTitle: l.job_title, clientName: l.client_name,
       contactEmail: l.contact_email, createdBy: l.created_by, createdAt: l.created_at, views: l.view_count, lastViewedAt: l.last_viewed_at,
       billDisplay: l.bill_display || "",
+      held: (Array.isArray(l.docs) ? l.docs : []).filter(function (d) { return heldIds(l).indexOf(String(d.fileId)) >= 0; }).map(function (d) { return d.name || "Document"; }),
       state: l.revoked_at ? "revoked" : (jobIsActive({ status: l.job_status, is_open: l.is_open, is_deleted: l.is_deleted }) ? "active" : "expired"),
     };
   }
@@ -1603,6 +1715,13 @@ function registerCard(app, deps) {
           extra.push({ fileId: id, name: f.name, kind: cleanFieldValue(d.kind).slice(0, 40) || "Document" });
         });
         if (extra.length > 6) errors.push("Up to 6 documents besides the résumé.");
+        const before = docs.map(function (d) { return String(d.fileId); });
+        for (const d of extra.slice(0, 6)) {
+          if (before.indexOf(d.fileId) >= 0 || docExt(d.name) !== "pdf" || !getFile) continue;
+          const f = await getFile("Candidate", link.candidate_id, parseInt(d.fileId, 10));
+          const v = await fileVerdict(link.candidate_id, f.buffer, true);
+          if (!v.ok && guard.enforcing()) errors.push(d.name + ": " + (v.unreadable ? "it's a scanned PDF, so we can't check it for contact info. Use a text PDF." : "it has contact info (" + guard.describeHits(v.hits) + ")."));
+        }
         docs = resume.concat(extra.slice(0, 6));
       }
       if (errors.length) return res.status(400).json({ error: errors[0], errors: errors });
@@ -1830,6 +1949,8 @@ function registerCard(app, deps) {
           hasLogo: !!(settings && settings.has_logo),
           intro: (settings && settings.intro) || "",
           showConsultants: !(settings && settings.show_consultants === false),
+          vms: !!(await vmsFor(id, client.name)),
+          vmsRule: (function () { const r = require("./forge").matchVms(client.name); return r ? r.label : ""; })(),
         },
         managers: shown,
         contacts: all.map(function (c) {
@@ -1866,10 +1987,10 @@ function registerCard(app, deps) {
       const contacts = { hidden: ids(b.hidden), added: ids(b.added), order: ids(b.order), titles: titles };
       if (errors.length) return res.status(400).json({ error: errors[0], errors: errors });
       await db.query(
-        "INSERT INTO card_systems (client_id, display_name, accent, intro, show_consultants, contacts, updated_by, updated_at) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,now()) " +
+        "INSERT INTO card_systems (client_id, display_name, accent, intro, show_consultants, contacts, updated_by, updated_at, vms) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,now(),$8) " +
         "ON CONFLICT (client_id) DO UPDATE SET display_name = EXCLUDED.display_name, accent = EXCLUDED.accent, intro = EXCLUDED.intro, show_consultants = EXCLUDED.show_consultants, " +
-        "contacts = EXCLUDED.contacts, updated_by = EXCLUDED.updated_by, updated_at = now()",
-        [id, displayName || null, accent || null, intro || null, b.showConsultants !== false, JSON.stringify(contacts), who(req)]);
+        "contacts = EXCLUDED.contacts, updated_by = EXCLUDED.updated_by, updated_at = now(), vms = COALESCE(EXCLUDED.vms, card_systems.vms)",
+        [id, displayName || null, accent || null, intro || null, b.showConsultants !== false, JSON.stringify(contacts), who(req), typeof b.vms === "boolean" ? b.vms : null]);
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
@@ -1920,6 +2041,8 @@ function registerCard(app, deps) {
       const id = digitsId(req.params.clientId);
       const client = await db.getOne("SELECT id FROM clients WHERE id = $1", [id]);
       if (!client) return res.status(404).json({ error: "Client not found." });
+      const vms = await vmsFor(id);
+      if (vms) return res.status(409).json({ error: "This client takes candidates through their VMS (" + vms.label + "), so there's no client link. Untick VMS if that's wrong.", code: "vms" });
       const token = makeToken();
       await db.query("INSERT INTO card_system_links (token_hash, client_id, created_by) VALUES ($1,$2,$3)", [hashToken(token), id, who(req)]);
       res.json({ url: publicOrigin().replace(/\/$/, "") + "/h/" + token });
@@ -1956,7 +2079,7 @@ function registerCard(app, deps) {
     };
   }
 
-  return { mintClientLink: mintClientLink, revokeLink: revokeLink, profileStatus: profileStatus, ensureTables: ensureTables, _rateCache: rateCache };
+  return { mintClientLink: mintClientLink, revokeLink: revokeLink, vmsFor: vmsFor, profileStatus: profileStatus, ensureTables: ensureTables, _rateCache: rateCache };
 }
 
 module.exports = registerCard;

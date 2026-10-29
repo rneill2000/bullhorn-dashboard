@@ -1,4 +1,6 @@
 "use strict";
+process.env.RESUME_GUARD = "enforce";
+const { textPdf } = require("./test-pdf");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
@@ -431,7 +433,7 @@ test("draft route posts to Graph and never sends", async function () {
       return { data: {} };
     },
     downloadCandidateFile: async function () {
-      return { name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4 jack") };
+      return { name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", buffer: textPdf("Consultant resume") };
     },
     outlookUsers: function () { return { "rachel@anuraconnect.com": { name: "Rachel" } }; },
     getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
@@ -500,7 +502,7 @@ test("scope refusal returns the email instead of sending", async function () {
       return { data: {} };
     },
     downloadCandidateFile: async function () {
-      return { name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4 jack") };
+      return { name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", buffer: textPdf("Consultant resume") };
     },
     outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
     getUser: function () { return { firstName: "Rachel", email: "rachel@anuraconnect.com" }; },
@@ -766,7 +768,7 @@ test("resume default selection and draft file checks", async function () {
       if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: { customText10: "185" } };
       return { data: { clientBillRate: 185 } };
     },
-    downloadCandidateFile: async function () { return { name: "Skagit Regional Health - Frary.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF") }; },
+    downloadCandidateFile: async function () { return { name: "Skagit Regional Health - Frary.pdf", contentType: "application/pdf", buffer: textPdf("Consultant resume") }; },
     outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
     getUser: function () { return { firstName: "Rachel", email: "rachel@anuraconnect.com" }; },
   });
@@ -942,7 +944,7 @@ test("same candidate on two jobs at one client keeps the badge under Mine", asyn
       if (String(endpoint).indexOf("JobSubmission") >= 0) return { data: { customText10: "185" } };
       return { data: { clientBillRate: 185 } };
     },
-    downloadCandidateFile: async function () { return { name: "generic.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF") }; },
+    downloadCandidateFile: async function () { return { name: "generic.pdf", contentType: "application/pdf", buffer: textPdf("Consultant resume") }; },
     outlookUsers: function () { return {}; },
     getUser: function () { return { id: 5, firstName: "Rachel", lastName: "Neill", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
   });
@@ -2168,7 +2170,7 @@ test("F46: /bill-rate writes customText10 to the Bullhorn submission; the draft 
       return { data: [] };
     },
     bhWrite: async function (endpoint, body, method) { writes.push({ endpoint, body, method }); if (body.customText10) liveField = { customText10: body.customText10, billRate: null, comments: "" }; return { changedEntityId: 42 }; },
-    downloadCandidateFile: async function () { return { name: "Jack.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4 x") }; },
+    downloadCandidateFile: async function () { return { name: "Jack.pdf", contentType: "application/pdf", buffer: textPdf("Consultant resume") }; },
     outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
     getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
   });
@@ -2268,7 +2270,7 @@ test("F48: /return notes the candidate, emails the recruiter the reason, marks t
 });
 
 /* ── Anura Connect Card hook (K20) ─────────────────────────────── */
-function cardForgeApp(cards, calls) {
+function cardForgeApp(cards, calls, resumeBuf) {
   const app = express();
   app.use(express.json());
   const row = fixtureRow();
@@ -2294,7 +2296,7 @@ function cardForgeApp(cards, calls) {
       if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { id: 9, clientBillRate: 185 } };
       return { data: {} };
     },
-    downloadCandidateFile: async function () { return { name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF-1.4 jack") }; },
+    downloadCandidateFile: async function () { return { name: "Memorial Hermann Jack.pdf", contentType: "application/pdf", buffer: resumeBuf || textPdf("Consultant resume") }; },
     outlookUsers: function () { return { "rachel@anuraconnect.com": { name: "Rachel" } }; },
     getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
     cards: cards,
@@ -2364,7 +2366,7 @@ test("K20c a failed Outlook draft turns its Card link off", async function () {
       if (String(endpoint).indexOf("JobOrder") >= 0) return { data: { id: 9, clientBillRate: 185 } };
       return { data: {} };
     },
-    downloadCandidateFile: async function () { return { name: "a.pdf", contentType: "application/pdf", buffer: Buffer.from("%PDF") }; },
+    downloadCandidateFile: async function () { return { name: "a.pdf", contentType: "application/pdf", buffer: textPdf("Consultant resume") }; },
     outlookUsers: function () { return { "rachel@anuraconnect.com": {} }; },
     getUser: function () { return { firstName: "Rachel", name: "Rachel Neill", email: "rachel@anuraconnect.com" }; },
     cards: {
@@ -2393,5 +2395,46 @@ test("K26 Forge nudges the recruiter when the candidate's Card has no photo or s
     assert.equal(draft.json.cardSetup.needsPhoto, true);
     assert.equal(draft.json.cardSetup.needsStory, false);
     assert.equal(draft.json.cardSetup.firstName, "Jack");
+  } finally { server.close(); }
+});
+
+test("K32 Forge blocks a résumé that still has contact info; a scan needs the recruiter's OK", async function () {
+  const minted = [];
+  const calls = [];
+  const mintFn = { mintClientLink: async function (o) { minted.push(o); return { url: "https://dashboard.anuraconnect.com/card/bcdfghjkmnpqrstvwxzbcdfghjkmnpqr" }; } };
+  let server = await listen(cardForgeApp(mintFn, calls, textPdf("Jack Corbell\njack.corbell@gmail.com  (608) 555-0101\nEpic Beaker")));
+  try {
+    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", CARD_DRAFT_BODY);
+    assert.equal(r.status, 400, r.text);
+    assert.equal(r.json.code, "resume_contact");
+    assert.match(r.json.snippet, /jack\.corbell@gmail\.com/);
+    assert.match(r.json.snippet, /555-0101/);
+    assert.equal(calls.length, 0, "no Outlook draft");
+    assert.equal(minted.length, 0, "no Card");
+  } finally { server.close(); }
+
+  server = await listen(cardForgeApp(mintFn, calls, Buffer.from("%PDF-1.4 scanned image only")));
+  try {
+    const r = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", CARD_DRAFT_BODY);
+    assert.equal(r.status, 409);
+    assert.equal(r.json.code, "resume_unreadable");
+    const ok = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", Object.assign({}, CARD_DRAFT_BODY, { confirmResumeChecked: true }));
+    assert.equal(ok.status, 200, ok.text);
+    assert.equal(minted.length, 1);
+    assert.match(minted[0].resumeConfirmed.sha, /^[0-9a-f]{64}$/);
+    assert.equal(minted[0].resumeConfirmed.by, "rachel@anuraconnect.com");
+  } finally { server.close(); }
+});
+
+test("K33 a VMS client gets the email without a Card, and it says why", async function () {
+  const calls = [];
+  const err = Object.assign(new Error("no Card for Lahey/HWL clients; they review candidates in their VMS"), { code: "vms", status: 409 });
+  const server = await listen(cardForgeApp({ mintClientLink: async function () { throw err; } }, calls));
+  try {
+    const draft = await req(server.address().port, "POST", "/api/forge/submissions/42/draft", CARD_DRAFT_BODY);
+    assert.equal(draft.status, 200, draft.text);
+    assert.equal(draft.json.card, null);
+    assert.match(draft.json.cardNote, /^No Card link: no Card for Lahey\/HWL/);
+    assert.doesNotMatch(JSON.parse(calls[0].body).body.content, /Anura Connect Card/);
   } finally { server.close(); }
 });

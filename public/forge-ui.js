@@ -89,6 +89,7 @@ var _forge = {
   resumeConfirmed: false,
   resumeFileId: "",
   confirmSameClient: false,
+  confirmResumeChecked: false,
   toHits: [],
   ccHits: [],
 };
@@ -274,6 +275,7 @@ async function forgeOpen(id) {
   _forge.resumeConfirmed = false;
   _forge.resumeFileId = "";
   _forge.confirmSameClient = false;
+  _forge.confirmResumeChecked = false;
   window._forgeSelectId = id;
   if (typeof setHash === "function") setHash("forge/" + id);
   forgePaintQueue();
@@ -601,7 +603,7 @@ function forgeSyncCreate() {
 
 function forgeResumeChanged() {
   _forge.resumeConfirmed = false;
-  _forge.resumeFileId = forgeVal("forge-resume");
+  _forge.resumeFileId = forgeVal("forge-resume"); _forge.confirmResumeChecked = false;
   var note = document.getElementById("forge-resume-note");
   if (note) note.textContent = "Selection changed. Confirm the résumé again before creating the draft.";
   forgePreview();
@@ -617,7 +619,7 @@ function forgeConfirmResume() {
     forgePreview();
     return;
   }
-  _forge.resumeFileId = id;
+  _forge.resumeFileId = id; _forge.confirmResumeChecked = false;
   _forge.resumeConfirmed = true;
   var noteOk = document.getElementById("forge-resume-note");
   if (noteOk) noteOk.textContent = "Résumé confirmed.";
@@ -845,6 +847,7 @@ async function forgeCreate() {
       resumeFileId: _forge.resumeFileId,
       confirmAnother: !!f.confirmAnother,
       confirmSameClient: !!f.confirmSameClient,
+      confirmResumeChecked: !!_forge.confirmResumeChecked,
     });
     var cardBit = (r.card && r.card.url ? '<div style="margin-top:8px"><a href="' + forgeAttr(r.card.url) + '" target="_blank" rel="noopener" style="color:#176087;font-weight:700">Preview the client\'s Anura Connect Card</a> <span style="color:#64748b">(your views aren\'t counted)</span></div>' : "")
       + (r.cardNote ? '<div style="margin-top:6px;color:#92400e">' + esc(r.cardNote) + '</div>' : "");
@@ -862,7 +865,13 @@ async function forgeCreate() {
     }
   } catch (e) {
     if (forgeSignIn(e)) return;
-    if (e.body && e.body.code === "reference_not_anonymous") {
+    if (e.body && e.body.code === "resume_contact") {
+      if (result) result.innerHTML = '<div class="fg-flag alert"><b>Résumé blocked.</b><div style="margin-top:4px">' + esc(e.body.error || e.message) + '</div></div>';
+    } else if (e.body && e.body.code === "resume_unreadable") {
+      var looked = typeof confirm === "function" ? confirm((e.body.error || e.message) + "\n\nI checked it: no candidate email, phone or LinkedIn. Create the draft?") : false;
+      if (looked) { _forge.confirmResumeChecked = true; setTimeout(forgeCreate, 0); return; }
+      if (result) result.innerHTML = '<div class="fg-flag warn">' + esc(e.body.error || e.message) + '</div>';
+    } else if (e.body && e.body.code === "reference_not_anonymous") {
       if (result) result.innerHTML = '<div class="fg-flag alert">' + esc(e.body.error || e.message) + '</div>';
     } else if (e.body && (e.body.snippet || e.body.code === "bill_rate_mismatch" || e.body.code === "internal_leak")) forgeShowBlock(result, e);
     else if (e.body && e.body.code === "same_client_submitted") {
