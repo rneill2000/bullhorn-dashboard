@@ -568,6 +568,7 @@ function registerCard(app, deps) {
       hasPhoto: !!row.has_photo,
       hasResume: !!row.resume_file_id,
       highlight: (Array.isArray(row.highlights) && row.highlights[0] && row.highlights[0].quote) || "",
+      isNew: !!(row.created_at && now() - new Date(row.created_at).getTime() < 7 * 86400000),
     };
   }
 
@@ -766,7 +767,7 @@ function registerCard(app, deps) {
     const managerById = {};
     managers.forEach(function (m) { managerById[m.id] = m; });
     const roles = [], sourcing = [];
-    let candidateCount = 0;
+    let candidateCount = 0, newCount = 0, lastAddedMs = 0;
     for (const j of openJobs) {
       const rows = (byJob[j.id] || []).sort(function (a, b) { return Number(a.sub_added || 0) - Number(b.sub_added || 0); });
       if (!rows.length) { sourcing.push(j.title); continue; }
@@ -779,6 +780,8 @@ function registerCard(app, deps) {
         cands.push(sum);
       }
       candidateCount += cands.length;
+      cands.forEach(function (c) { if (c.isNew) newCount++; });
+      rows.forEach(function (row) { const t = new Date(row.created_at).getTime(); if (t > lastAddedMs) lastAddedMs = t; });
       const m = j.contact_id ? managerById[String(j.contact_id)] : null;
       roles.push({
         title: j.title || "Open role",
@@ -789,6 +792,7 @@ function registerCard(app, deps) {
       });
     }
     const consultants = settings && settings.show_consultants === false ? [] : await systemConsultants(clientId);
+    const lastAdded = lastAddedMs ? new Date(lastAddedMs).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" }) : "";
     return {
       status: 200,
       body: {
@@ -800,7 +804,7 @@ function registerCard(app, deps) {
           logoUrl: settings && settings.has_logo ? ctx.logoUrl : "",
           intro: (settings && settings.intro) || "",
         },
-        stats: { roles: roles.length, candidates: candidateCount, consultants: consultants.length },
+        stats: { roles: roles.length, candidates: candidateCount, consultants: consultants.length, newCount: newCount, lastAdded: lastAdded },
         roles: roles,
         sourcing: sourcing,
         managers: managers.map(function (m) { return { name: m.name, title: m.title, department: m.department, hiringFor: m.hiringFor }; }),

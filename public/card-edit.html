@@ -23,12 +23,13 @@ button{font:inherit;cursor:pointer}
 .top img{height:40px;width:auto}
 .saved{font-size:14px;color:var(--muted);min-height:1em}
 
-.page{max-width:1080px;margin:0 auto;padding:36px 24px 80px;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:48px;align-items:start}
+.page{max-width:1080px;margin:0 auto;padding:36px 24px 80px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,320px);gap:48px;align-items:start}
 .hello h1{font-family:var(--display);font-weight:800;font-size:30px;line-height:1.15;letter-spacing:-.02em;color:var(--navy)}
 .hello p{color:var(--muted);margin-top:8px;max-width:52ch}
 
 .progress{display:flex;gap:6px;margin:28px 0 14px}
-.progress button{flex:1;background:none;border:0;padding:0;text-align:left}
+.stepcount{display:none;font-size:14px;font-weight:700;color:var(--blue);margin:22px 0 -18px}
+.progress button{flex:1;background:none;border:0;padding:10px 0;margin:-10px 0;text-align:left;min-height:24px}
 .progress .bar{display:block;height:5px;border-radius:5px;background:var(--line);transition:background .2s}
 .progress .lbl{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-top:8px}
 .progress .done .bar{background:var(--sky)}
@@ -74,7 +75,7 @@ button{font:inherit;cursor:pointer}
 
 /* step 3: culture corner */
 .counter{font-size:14px;font-weight:600;color:var(--blue);margin-bottom:12px}
-.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tiles{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
 .tile{border:1px solid var(--line);background:var(--paper);border-radius:12px;padding:14px 16px;text-align:left;font-size:15px;font-weight:600;color:var(--ink);display:flex;justify-content:space-between;gap:10px;align-items:center;transition:border-color .15s,background .15s}
 .tile:hover{border-color:var(--sky);background:#F7FBFD}
 .tile .plus{font-family:var(--display);font-weight:700;color:var(--sky);font-size:20px;line-height:1}
@@ -84,7 +85,7 @@ button{font:inherit;cursor:pointer}
 .answer:nth-child(4n+3){border-top-color:var(--navy)}
 .answer .head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
 .answer .head b{font-family:var(--display);font-weight:600;font-size:15px;color:var(--navy)}
-.answer .rm{background:none;border:0;color:var(--muted);font-size:14px;text-decoration:underline}
+.answer .rm{background:none;border:0;color:var(--muted);font-size:14px;text-decoration:underline;min-height:32px;padding:0 6px}
 .answer .field{margin-bottom:8px}
 .answer textarea{background:var(--paper)}
 h3.minor{font-family:var(--display);font-weight:700;font-size:17px;color:var(--navy);margin:30px 0 4px}
@@ -94,21 +95,22 @@ h3.minor{font-family:var(--display);font-weight:700;font-size:17px;color:var(--n
 .chip:hover{border-style:solid;border-color:var(--sky)}
 .fact{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .fact .k{width:150px;flex-shrink:0;font-weight:700;font-size:15px}
-.fact input{flex:1;font:inherit;font-size:16px;padding:9px 12px;border:1px solid var(--line);border-radius:999px}
+.fact input{flex:1;min-width:0;font:inherit;font-size:16px;padding:9px 12px;border:1px solid var(--line);border-radius:999px}
 .fact input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 4px rgba(23,96,135,.12)}
-.fact .x{background:none;border:0;color:var(--muted);font-size:20px;line-height:1;padding:4px 8px}
+.fact .x{background:none;border:0;color:var(--muted);font-size:20px;line-height:1;min-width:36px;min-height:36px}
 
 /* step 4 + preview: the Card */
 .badge{background:var(--paper);border-radius:16px;box-shadow:0 28px 60px -28px rgba(7,24,42,.45),0 1px 0 var(--line);overflow:hidden;text-align:center}
 .badge .slotline{width:52px;height:8px;border-radius:8px;background:var(--fog);box-shadow:inset 0 1px 2px rgba(7,24,42,.2);margin:14px auto 0}
 .badge .face{padding:16px 22px 20px}
 .badge .bp{width:118px;height:140px;margin:0 auto;border-radius:12px;object-fit:cover;background:var(--fog);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:38px;color:var(--sky)}
-.badge h4{font-family:var(--display);font-weight:800;font-size:21px;letter-spacing:-.02em;color:var(--navy);margin-top:14px;line-height:1.15}
+.badge .nm{font-family:var(--display);font-weight:800;font-size:21px;letter-spacing:-.02em;color:var(--navy);margin-top:14px;line-height:1.15}
 .badge .hl{font-size:15px;color:var(--muted);margin-top:4px;min-height:1.2em}
 .badge .role{font-weight:700;color:var(--blue);font-size:15px;margin-top:10px}
 .badge .certs{font-size:14px}
 .badge .band{background:var(--navy);color:#fff;font-size:12px;padding:8px 22px;display:flex;justify-content:space-between}
-.badge .band span:last-child{color:var(--sky)}
+.badge .band span:last-child{color:#A9C7D6}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .pv-label{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px}
 .pv-extra{margin-top:16px}
 .pv-facts{display:flex;flex-wrap:wrap;gap:6px}
@@ -119,7 +121,7 @@ h3.minor{font-family:var(--display);font-weight:700;font-size:17px;color:var(--n
 .preview{position:sticky;top:24px}
 
 .review{display:grid;grid-template-columns:240px 1fr;gap:28px;align-items:start}
-.review .story h5{font-family:var(--display);font-weight:700;font-size:15px;color:var(--navy);margin:0 0 6px}
+.review .story h3{font-family:var(--display);font-weight:700;font-size:15px;color:var(--navy);margin:0 0 6px}
 .review .story > div{margin-bottom:18px}
 .review .story p{color:var(--ink)}
 .review .empty{color:#9AAAB6;font-style:italic}
@@ -135,15 +137,18 @@ h3.minor{font-family:var(--display);font-weight:700;font-size:17px;color:var(--n
 input[type=file]{position:absolute;left:-9999px}
 
 @media (max-width:900px){
-  .page{grid-template-columns:1fr;gap:24px;padding:24px 16px 60px}
+  .page{grid-template-columns:minmax(0,1fr);gap:24px;padding:24px 16px 60px}
   .preview{display:none}
   .step{padding:24px 20px 20px}
-  .tiles{grid-template-columns:1fr}
+  .tiles{grid-template-columns:minmax(0,1fr)}
   .review{grid-template-columns:1fr}
   .review .badge{max-width:300px;margin:0 auto}
   .fact .k{width:110px}
   .hello h1{font-size:25px}
-  .progress .lbl{font-size:12px}
+  .progress .lbl{display:none}
+  .stepcount{display:block}
+  .step .nav{position:sticky;bottom:0;background:var(--paper);margin:24px -20px -20px;padding:12px 20px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line);border-radius:0 0 18px 18px;z-index:5}
+  .step .nav .btn.primary{flex:1;max-width:260px}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -153,7 +158,7 @@ input[type=file]{position:absolute;left:-9999px}
   <img src="https://images.squarespace-cdn.com/content/v1/671fb0d9fec6997ddc5025cd/79107203-ad2e-4d39-96a6-5faa3f2f70bf/fulllogo_transparent_nobuffer.png" alt="Anura Connect">
   <span class="saved" id="saved" aria-live="polite"></span>
 </div></header>
-<div id="app"><p class="loading">Loading…</p></div>
+<main id="app"><p class="loading">Loading…</p></main>
 <script>
 (function () {
   "use strict";
@@ -162,6 +167,18 @@ input[type=file]{position:absolute;left:-9999px}
   var app = document.getElementById("app");
   var S = null, saveTimer = null, photoV = Date.now(), step = 1, openPrompts = [], openFacts = [];
   var STEPS = ["Photo", "About you", "Culture corner", "Review"];
+  var PROMPT_EX = {
+    outside: "e.g. Coaching my daughter's hockey team and losing at trivia night.",
+    team: "e.g. Asks the question everyone's thinking in the go-live huddle.",
+    why: "e.g. A small build change can save a nurse ten minutes every shift.",
+    golive: "e.g. 3 a.m., labels printing upside down, and a lab director who brought donuts anyway.",
+    goodat: "e.g. Reading a crowded whiteboard from across the room.",
+    askme: "e.g. The time I trained 40 super users in one weekend.",
+    saturday: "e.g. Farmers market, a long bike ride, and a Badgers game.",
+    advice: "e.g. Ask the person doing the work before you build anything.",
+    proud: "e.g. Cut our lab's specimen relabels in half.",
+    fun: "e.g. I've driven to every Big Ten stadium.",
+  };
   var EX = {
     headline: "e.g. Beaker analyst who's happiest at the lab bench",
     intro: "e.g. I build Epic the way the people using it actually work. My best fixes usually come from an afternoon next to a nurse or a tech, not a design session.",
@@ -218,8 +235,8 @@ input[type=file]{position:absolute;left:-9999px}
     opts = opts || {};
     var v = S.fields[f.key] || "";
     var input = f.max > 90
-      ? el("textarea", { id: "i-" + f.key, rows: opts.rows || (f.max > 400 ? "5" : "3"), maxlength: String(f.max), placeholder: opts.placeholder || "" }, [v])
-      : el("input", { id: "i-" + f.key, type: "text", maxlength: String(f.max), value: v, placeholder: opts.placeholder || "" });
+      ? el("textarea", { id: "i-" + f.key, rows: opts.rows || (f.max > 400 ? "5" : "3"), maxlength: String(f.max), placeholder: opts.placeholder || "", "aria-label": opts.aria || null }, [v])
+      : el("input", { id: "i-" + f.key, type: "text", maxlength: String(f.max), value: v, placeholder: opts.placeholder || "", "aria-label": opts.aria || null });
     var count = el("span", { class: "count", text: v.length + " / " + f.max });
     function upd() { count.textContent = input.value.length + " / " + f.max; count.classList.toggle("near", input.value.length > f.max * 0.8); }
     upd();
@@ -263,7 +280,7 @@ input[type=file]{position:absolute;left:-9999px}
 
   /* ── steps ── */
   function stepPhoto() {
-    var file = el("input", { type: "file", id: "file", accept: "image/jpeg,image/png,image/webp", onchange: function (e) { upload(e.target.files[0]); e.target.value = ""; } });
+    var file = el("input", { type: "file", id: "file", "aria-label": "Photo file", accept: "image/jpeg,image/png,image/webp", onchange: function (e) { upload(e.target.files[0]); e.target.value = ""; } });
     var mismatch = S.photoNote && /match/.test(S.photoNote);
     return [
       el("h2", { text: "Add your photo" }),
@@ -301,7 +318,7 @@ input[type=file]{position:absolute;left:-9999px}
         el("div", { class: "head" }, [el("b", { text: f.label }), el("button", { type: "button", class: "rm", text: "Remove", onclick: function () {
           S.fields[f.key] = ""; openPrompts = openPrompts.filter(function (k) { return k !== f.key; }); queue(); draw();
         } })]),
-        field(f, { noLabel: true, rows: "3" }),
+        field(f, { noLabel: true, rows: "3", aria: f.label, placeholder: PROMPT_EX[f.key] || "" }),
       ]);
     }).concat(left.map(function (f) {
       return el("button", { type: "button", class: "tile", disabled: shown.length >= max ? "" : null, onclick: function () {
@@ -355,8 +372,8 @@ input[type=file]{position:absolute;left:-9999px}
       el("div", { class: "body review" }, [
         badge(),
         el("div", { class: "story" }, [
-          el("div", {}, [el("h5", { text: "In your words" }), f.intro ? el("p", { text: f.intro }) : el("p", { class: "empty", text: "Not filled in yet" })]),
-          el("div", {}, [el("h5", { text: "Culture corner" }), answered.length ? el("div", { class: "grid" }, answered.map(function (p) {
+          el("div", {}, [el("h3", { text: "In your words" }), f.intro ? el("p", { text: f.intro }) : el("p", { class: "empty", text: "Not filled in yet" })]),
+          el("div", {}, [el("h3", { text: "Culture corner" }), answered.length ? el("div", { class: "grid" }, answered.map(function (p) {
             return el("div", { class: "pv-prompt" }, [el("div", { class: "q", text: p.label }), el("div", { text: f[p.key] })]);
           })) : el("p", { class: "empty", text: "No prompts picked yet" })]),
           factsEl(),
@@ -376,7 +393,7 @@ input[type=file]{position:absolute;left:-9999px}
     return el("div", { class: "badge" }, [
       el("div", { class: "slotline", "aria-hidden": "true" }),
       el("div", { class: "face" }, [ph,
-        el("h4", { text: c.name }),
+        el("p", { class: "nm", text: c.name }),
         el("p", { class: "hl", id: "pv-hl", text: S.fields.headline || "" }),
         c.epicRole ? el("p", { class: "role", text: c.epicRole }) : null,
         c.certs.length ? el("p", { class: "certs", text: c.certs.join(", ") }) : null,
@@ -421,14 +438,15 @@ input[type=file]{position:absolute;left:-9999px}
     }
     app.innerHTML = "";
     app.appendChild(el("div", { class: "page" }, [
-      el("main", {}, [
+      el("div", {}, [
         el("div", { class: "hello" }, [
           el("h1", { text: "Let's set up your Card, " + (c.firstName || "there") + "." }),
           el("p", { text: "It's the one-page profile hiring managers see when Anura puts you forward. About five minutes." }),
         ]),
-        el("nav", { class: "progress", "aria-label": "Steps" }, STEPS.map(function (s, i) {
+        el("p", { class: "stepcount", "aria-hidden": "true", text: "Step " + step + " of 4: " + STEPS[step - 1] }),
+        el("nav", { class: "progress", "aria-label": "Step " + step + " of 4" }, STEPS.map(function (s, i) {
           var n = i + 1;
-          return el("button", { type: "button", class: n < step ? "done" : (n === step ? "now" : ""), "aria-current": n === step ? "step" : null, onclick: function () { save(); go(n); } },
+          return el("button", { type: "button", "aria-label": "Step " + n + ": " + s, class: n < step ? "done" : (n === step ? "now" : ""), "aria-current": n === step ? "step" : null, onclick: function () { save(); go(n); } },
             [el("span", { class: "bar" }), el("span", { class: "lbl", text: s })]);
         })),
         el("section", { class: "step", "aria-label": STEPS[step - 1] }, body.concat([nav])),

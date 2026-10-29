@@ -47,7 +47,7 @@ a{color:var(--blue)}
 .contact .acts a.s{background:rgba(255,255,255,.1);color:#fff}
 .contact .acts a:only-child{grid-column:1/-1}
 
-main{padding:36px 0 70px}
+.content{padding-top:36px;padding-bottom:70px}
 .sec{margin-bottom:44px}
 .sec > h2{font-family:var(--display);font-weight:800;font-size:25px;letter-spacing:-.02em;color:var(--navy);margin-bottom:4px}
 .sec > .sub{color:var(--muted);margin-bottom:18px}
@@ -94,6 +94,12 @@ main{padding:36px 0 70px}
 .onsite li:last-child{border-bottom:0}
 .onsite .r{color:var(--muted)}
 
+.new{display:inline-block;margin-left:8px;font-family:var(--sans);font-size:11.5px;font-weight:700;color:#fff;background:var(--blue);border-radius:999px;padding:2px 8px;vertical-align:middle}
+.tally .fresh{background:var(--blue);color:#fff}.tally .fresh b{color:#fff}
+.updated{font-size:14px;color:var(--muted);margin-top:10px}
+.ask{display:inline-flex;align-items:center;justify-content:center;min-height:36px;margin-top:8px;font-size:15px;font-weight:700;text-decoration:none}
+.ask:hover{text-decoration:underline}
+.single .ask{flex:0 0 100%;justify-content:flex-start}
 .empty-state{background:var(--paper);border-radius:18px;padding:34px;text-align:center;color:var(--muted)}
 .empty-state b{display:block;font-family:var(--display);color:var(--navy);font-size:19px;margin-bottom:4px}
 .foot{text-align:center;color:var(--muted);font-size:14px;padding:10px 0 40px}
@@ -167,11 +173,18 @@ main{padding:36px 0 70px}
     ]);
   }
 
+  function interviewHref(c, d) {
+    var role = c.roleTitle || "";
+    var subject = "Interview: " + c.name + (role ? " for " + role : "");
+    var body = "Hi " + first(d.contact.name) + ",\n\nI'd like to interview " + c.name + (role ? " for the " + role + " role" : "") + ".\n\nTimes that work for me:\n\n\nThanks,";
+    return "mailto:" + encodeURIComponent(d.contact.email) + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+  }
+
   function candCol(c, d) {
     var ph = c.photoUrl ? el("img", { class: "ph", src: c.photoUrl, alt: "Photo of " + c.name, loading: "lazy" }) : el("div", { class: "ph", "aria-hidden": "true", text: ini(c.name) });
     var ask = "Ask " + first(d.contact.name);
     var body = [
-      el("h4", { text: c.name }),
+      el("h4", {}, [c.name, c.isNew ? el("span", { class: "new", text: "New" }) : null]),
       c.headline ? el("p", { class: "hl", text: c.headline }) : null,
       el("dl", { class: "facts" }, [
         el("dt", { text: "Epic" }), el("dd", { class: c.epicRole || c.certs.length ? "" : "q", text: c.epicRole || c.certs[0] || "See résumé" }),
@@ -185,7 +198,8 @@ main{padding:36px 0 70px}
       c.hasResume ? el("a", { class: "btn", href: c.href + "#resume", text: "Résumé" }) : null,
       el("a", { class: "btn p", href: c.href, text: "Open Card" }),
     ]);
-    return el("div", { class: "cand" }, [ph, el("div", { class: "body" }, body), go]);
+    var ask2 = d.contact.email ? el("a", { class: "ask", href: interviewHref(c, d), text: "Request an interview" }) : null;
+    return el("div", { class: "cand" }, [ph, el("div", { class: "body" }, body), go, ask2]);
   }
 
   function roleCard(r, d) {
@@ -196,7 +210,7 @@ main{padding:36px 0 70px}
         el("div", {}, [el("h3", { text: r.title }), meta ? el("p", { class: "meta", text: meta }) : null]),
         el("span", { class: "count", text: many ? plural(r.candidates.length, "candidate") + ", side by side" : "1 candidate" }),
       ]),
-      el("div", { class: "lineup" }, r.candidates.map(function (c) { return candCol(c, d); })),
+      el("div", { class: "lineup" }, r.candidates.map(function (c) { c.roleTitle = r.title; return candCol(c, d); })),
       many ? el("p", { class: "swipe", text: "Swipe to see all " + r.candidates.length }) : null,
     ]);
   }
@@ -214,27 +228,30 @@ main{padding:36px 0 70px}
     if (s.accent) applyAccent(s.accent);
     document.title = s.name + " | Your Epic candidates";
     app.innerHTML = "";
-    if (prev) app.appendChild(el("div", { class: "preview-bar" }, [el("b", { text: "Preview. " }), "This is what " + s.name + " sees. Your visits don't count as opens.", el("a", { href: "/cards?system=" + prev, text: "Back to settings" })]));
+    if (prev) app.appendChild(el("div", { class: "preview-bar", role: "region", "aria-label": "Recruiter preview" }, [el("b", { text: "Preview. " }), "This is what " + s.name + " sees. Your visits don't count as opens.", el("a", { href: "/cards?system=" + prev, text: "Back to settings" })]));
     app.appendChild(el("header", { class: "top" }, [el("div", { class: "wrap" }, [
       s.logoUrl ? el("img", { class: "sys-logo", src: s.logoUrl, alt: s.name }) : el("span", { class: "sys-word", text: s.name }),
       el("span", { class: "with" }, [el("span", { text: "with" }), el("img", { src: ANURA, alt: "Anura Connect" })]),
     ])]));
+    var main = el("main", { id: "main" }, []);
+    app.appendChild(main);
     var st = d.stats, bits = [];
     if (st.roles) bits.push(el("span", {}, [el("b", { text: String(st.roles) }), " open " + (st.roles === 1 ? "role" : "roles")]));
     if (st.candidates) bits.push(el("span", {}, [el("b", { text: String(st.candidates) }), " " + (st.candidates === 1 ? "candidate" : "candidates") + " to review"]));
+    if (st.newCount) bits.unshift(el("span", { class: "fresh" }, [el("b", { text: String(st.newCount) }), " new this week"]));
     if (st.consultants) bits.push(el("span", {}, [el("b", { text: String(st.consultants) }), " Anura " + (st.consultants === 1 ? "consultant" : "consultants") + " on site"]));
-    app.appendChild(el("section", { class: "hero" }, [el("div", { class: "wrap" }, [
+    main.appendChild(el("section", { class: "hero" }, [el("div", { class: "wrap" }, [
       el("div", {}, [
         el("p", { class: "hello", text: "Hi, " + s.name + " team" }),
         el("h1", { text: st.candidates ? "Your Epic candidates, all in one place." : "Your Anura Connect page." }),
         el("p", { class: "lead", text: s.intro || "Everyone we've put forward for your open roles, side by side, with résumés and references a click away. It updates as we send new people." }),
         bits.length ? el("div", { class: "tally" }, bits) : null,
+        st.lastAdded ? el("p", { class: "updated", text: "Last candidate added " + st.lastAdded + ". This page stays current." }) : null,
       ]),
       contactCard(d.contact),
     ])]));
 
-    var main = el("main", {}, []);
-    var wrap = el("div", { class: "wrap" });
+    var wrap = el("div", { class: "wrap content" });
     var rolesSec = el("section", { class: "sec", "aria-labelledby": "h-roles" }, [
       el("h2", { id: "h-roles", text: "Open roles" }),
       el("p", { class: "sub", text: "Tap a Card for the full story: why we picked them, references, and the résumé." }),
@@ -266,8 +283,7 @@ main{padding:36px 0 70px}
     ]));
 
     main.appendChild(wrap);
-    app.appendChild(main);
-    app.appendChild(el("p", { class: "foot" }, ["Prepared for " + s.name + " by", el("img", { src: ANURA, alt: "Anura Connect" })]));
+    app.appendChild(el("footer", { class: "foot" }, ["Prepared for " + s.name + " by", el("img", { src: ANURA, alt: "Anura Connect" })]));
   }
 
   fetch(api, { headers: { Accept: "application/json" } }).then(function (r) {

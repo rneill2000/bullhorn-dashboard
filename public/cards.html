@@ -59,7 +59,12 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
 .linkbox{background:var(--fog);border-radius:8px;padding:10px 12px;word-break:break-all;font-size:13px;margin:8px 0}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:11px 20px;border-radius:10px;display:none;box-shadow:0 10px 30px -10px rgba(0,0,0,.4)}
 .empty{color:var(--muted);padding:8px 0}
-.sys-head{display:flex;align-items:center;gap:16px;margin-bottom:6px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.mgr input[type=checkbox]{width:24px;height:24px}
+.liveform > summary{min-height:36px;line-height:20px}
+.tablewrap{overflow-x:auto;position:relative}
+header a{display:inline-flex;align-items:center;min-height:32px}
+.sys-head{display:flex;align-items:center;gap:16px;margin-bottom:6px;flex-wrap:wrap}
 .sys-head .logo{height:54px;max-width:200px;object-fit:contain}
 .sys-head .ph{width:54px;height:54px;border-radius:12px;background:var(--fog);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;color:var(--blue)}
 .swatch{display:flex;align-items:center;gap:10px}
@@ -77,13 +82,13 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
 .grp{font-family:var(--display);font-weight:700;font-size:15px;color:var(--navy);margin:16px 0 8px}
 .grp:first-child{margin-top:0}
 .more{margin:4px 0 12px}
-.more summary{cursor:pointer;color:var(--blue);font-weight:600;font-size:14px;margin-bottom:8px}
-@media (max-width:900px){.wrap{grid-template-columns:1fr;padding:18px 16px 60px}.grid2{grid-template-columns:1fr}.who{flex-wrap:wrap}.who .acts{margin-left:0}}
+.more summary{cursor:pointer;color:var(--blue);font-weight:600;font-size:14px;margin-bottom:8px;min-height:32px;display:flex;align-items:center}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr);padding:18px 16px 60px}.grid2{grid-template-columns:1fr}.who{flex-wrap:wrap}.who .acts{margin-left:0}}
 </style>
 </head>
 <body>
 <header><img src="/fulllogo.jpg" alt=""><h1>Candidate Cards</h1><a href="/">Back to dashboard</a></header>
-<div class="wrap">
+<main class="wrap">
   <div>
     <div class="panel">
       <h2>Find a candidate</h2>
@@ -103,7 +108,7 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
   <div>
     <div class="panel" id="detail"><h2>Recent Card links</h2><div id="recent" class="empty">Loading…</div></div>
   </div>
-</div>
+</main>
 <div class="toast" id="toast" role="status"></div>
 <script>
 (function () {
@@ -125,7 +130,7 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
 
   function linksTable(links, withCandidate) {
     if (!links.length) return '<p class="empty">No Card links yet. They are created when Submittal Forge drafts an email.</p>';
-    return '<table><thead><tr>' + (withCandidate ? '<th>Candidate</th>' : '') + '<th>Job</th><th>Sent to</th><th>Opens</th><th>Rate</th><th></th></tr></thead><tbody>' +
+    return '<div class="tablewrap"><table><thead><tr>' + (withCandidate ? '<th>Candidate</th>' : '') + '<th>Job</th><th>Sent to</th><th>Opens</th><th>Rate</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>' +
       links.map(function (l) {
         return '<tr>' + (withCandidate ? '<td><button class="btn" data-cand="' + l.candidateId + '">' + esc(l.candidateName) + '</button></td>' : '') +
           '<td>' + esc(l.jobTitle) + '<div class="muted">' + esc(l.clientName) + ' &middot; created ' + esc(when(l.createdAt)) + '</div></td>' +
@@ -139,7 +144,7 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
             l.references.map(function (r, i) {
               return '<div style="margin:6px 0"><b>' + esc([r.role, r.organization].filter(Boolean).join(", ")) + '</b> <button class="btn danger" data-refrm="' + l.id + ':' + i + '">Remove</button><div>' + esc(r.text) + '</div></div>';
             }).join("") + '</td></tr>' : '');
-      }).join("") + '</tbody></table>';
+      }).join("") + '</tbody></table></div>';
   }
 
   function bindLinkButtons(root, reload) {
@@ -381,14 +386,14 @@ td{padding:12px 10px;border-bottom:1px solid var(--fog);vertical-align:top}
         '</div><div>' +
         '<div class="fieldbox"><label for="sysName">Name on the page</label><input type="text" id="sysName" maxlength="120" value="' + esc(st.displayName) + '" placeholder="' + esc(d.client.name) + '"></div>' +
         '<div class="fieldbox"><label for="sysIntro">Welcome line <span class="muted">(optional)</span></label><textarea id="sysIntro" rows="3" maxlength="600" placeholder="Everyone we\'ve put forward for your open roles, side by side.">' + esc(st.intro) + '</textarea></div>' +
-        '<label class="check"><input type="checkbox" id="sysOnsite"' + (st.showConsultants ? " checked" : "") + '> Show Anura consultants on site</label>' +
+        '<label class="check"><input type="checkbox" id="sysOnsite" style="width:24px;height:24px"' + (st.showConsultants ? " checked" : "") + '> Show Anura consultants on site</label>' +
         '</div></div>';
       h += '<h3>Managers we work with</h3><p class="muted" style="margin-bottom:8px">Pulled from Bullhorn: contacts on our jobs here. Untick to hide, edit a title if Bullhorn\'s is wrong. Emails and phones never show.</p>' +
         '<div id="mgrList">' + (d.managers.length ? d.managers.map(function (m) {
           return '<div class="mgr"><input type="checkbox" data-mgr="' + esc(m.id) + '" checked aria-label="Show ' + esc(m.name) + '"><div class="n"><b>' + esc(m.name) + '</b><span class="muted">' + esc(m.department || "") + (m.hiringFor.length ? (m.department ? ", " : "") + "hiring " + esc(m.hiringFor.join(", ")) : "") + '</span></div>' +
             '<input type="text" data-title="' + esc(m.id) + '" maxlength="120" value="' + esc(m.title) + '" aria-label="Title"></div>';
         }).join("") : '<p class="empty">No hiring managers on Anura jobs here yet.</p>') + '</div>' +
-        '<div class="row" style="margin-top:8px"><select id="mgrAdd" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px"><option value="">Add someone else from ' + esc(name) + '…</option>' +
+        '<div class="row" style="margin-top:8px"><select id="mgrAdd" aria-label="Add a manager" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px"><option value="">Add someone else from ' + esc(name) + '…</option>' +
         d.contacts.filter(function (c) { return shownIds.indexOf(c.id) < 0; }).map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.name) + (c.title ? " (" + esc(c.title) + ")" : "") + (c.hidden ? " [hidden]" : "") + '</option>'; }).join("") + '</select></div>';
       h += '<div class="row" style="margin-top:18px"><button class="btn primary" id="sysSave">Save</button><span class="muted" id="sysStatus"></span></div>';
       h += '<h3>Client link</h3><p class="muted">One link for everyone at ' + esc(name) + '. It shows open roles here, nothing from other clients. Turn it off anytime.</p><div id="sysLinkOut"></div>' +

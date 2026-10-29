@@ -40,7 +40,7 @@ img{display:block}
 .tabs button{font:inherit;font-size:15px;font-weight:600;color:var(--muted);background:none;border:0;padding:10px 14px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-1px}
 .tabs button[aria-selected="true"]{color:var(--navy);border-bottom-color:var(--blue)}
 
-main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
+.main-in{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
 
 /* The badge — the one loud thing on the page. */
 .layout{display:grid;grid-template-columns:300px 1fr;gap:40px;align-items:start}
@@ -65,7 +65,8 @@ main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
 .btn.plain{background:var(--paper);color:var(--blue);border-color:var(--line)}
 .btn.plain:hover{border-color:var(--sky)}
 .badge .band{background:var(--navy);color:#fff;font-size:12px;letter-spacing:.04em;padding:8px 26px;display:flex;justify-content:space-between}
-.badge .band span:last-child{color:var(--sky)}
+.badge .band span:last-child{color:#A9C7D6}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
 .story section{padding:0 0 34px;margin-bottom:34px;border-bottom:1px solid var(--line)}
 .story section:last-child{border-bottom:0;margin-bottom:0}
@@ -103,7 +104,10 @@ main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
 .docs li:last-child{border-bottom:0}
 .doc-kind{font-size:12px;font-weight:600;color:var(--blue);background:#E7F1F6;border-radius:6px;padding:3px 8px;white-space:nowrap}
 .doc-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.doc-acts{display:flex;gap:14px;font-size:14px;font-weight:600}
+.doc-acts{display:flex;gap:6px;font-size:14px;font-weight:600}
+.doc-acts a{display:inline-flex;align-items:center;min-height:36px;padding:0 10px;border-radius:8px}
+.doc-acts a:hover{background:var(--fog)}
+.new{display:inline-block;margin-left:8px;font-family:var(--sans);font-size:11.5px;font-weight:700;letter-spacing:.02em;color:#fff;background:var(--blue);border-radius:999px;padding:2px 8px;vertical-align:middle}
 .compare .standout{font-size:14px;font-style:italic;color:var(--navy);margin-top:6px;max-width:34ch}
 .resume-frame{width:100%;height:880px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
 
@@ -125,11 +129,11 @@ main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
 
 .contact{max-width:1120px;margin:0 auto;padding:0 24px 56px}
 .contact-inner{background:var(--navy);color:#fff;border-radius:16px;padding:26px 28px;display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}
-.contact h4{font-family:var(--display);font-weight:700;font-size:22px;letter-spacing:-.01em}
+.contact h2{font-family:var(--display);font-weight:700;font-size:22px;letter-spacing:-.01em}
 .contact p{color:#C9DCE6;font-size:15px;margin-top:4px}
 .contact p a{color:#fff}
 .contact .reach{display:flex;flex-wrap:wrap;gap:4px 18px}
-.contact .reach a{white-space:nowrap}
+.contact .reach a{white-space:nowrap;display:inline-flex;align-items:center;min-height:32px}
 .contact .btn.primary{background:#fff;color:var(--navy)}
 .contact .btn.primary:hover{background:var(--fog)}
 
@@ -173,14 +177,14 @@ body.editing .editor{transform:none}
 .editor .chip{font:inherit;font-size:13px;background:var(--fog);border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:6px 11px;cursor:pointer}
 .editor .chip:hover{border-color:var(--sky);background:#fff}
 .editor select.pick{width:100%;margin-top:10px;font:inherit;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
-.editor .linkish{background:none;border:0;color:#B42318;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.editor .linkish{min-height:32px;padding:0 6px;background:none;border:0;color:#B42318;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
 .editor footer{padding:14px 22px;border-top:1px solid var(--line);display:flex;gap:12px;align-items:center;background:#F7FAFB}
 .editor footer .status{font-size:13px;color:var(--muted);flex:1}
 .editor footer .status.bad{color:#B42318}
 .editor .locked{font-size:13px;color:var(--muted);background:var(--fog);border-radius:8px;padding:10px 12px;margin-top:12px}
 
 @media (max-width:860px){
-  .layout{grid-template-columns:1fr;gap:28px}
+  .layout{grid-template-columns:minmax(0,1fr);gap:28px}
   .badge{position:static;max-width:420px;margin:0 auto;width:100%}
   .culture,.prompts{grid-template-columns:1fr}
   .highlights blockquote{font-size:20px}
@@ -195,7 +199,7 @@ body.editing .editor{transform:none}
   .top .shared{display:none}
 }
 @media (max-width:480px){
-  .top-inner,.context,main,.contact{padding-left:16px;padding-right:16px}
+  .top-inner,.context,.main-in,.contact{padding-left:16px;padding-right:16px}
 }
 @media print{
   .top,.tabs,.contact,.badge .actions,.resume-frame{display:none}
@@ -215,7 +219,7 @@ body.editing .editor{transform:none}
     <div class="shared" id="shared"></div>
   </div>
 </header>
-<div id="app"><p class="loading">Loading…</p></div>
+<main id="app"><p class="loading">Loading…</p></main>
 
 <script>
 (function () {
@@ -255,7 +259,8 @@ body.editing .editor{transform:none}
   function contactFirst() { return first(data.contact.name); }
   function interviewHref(c) {
     var subject = "Interview: " + c.name + (data.job.title ? " for " + data.job.title : "");
-    return "mailto:" + encodeURIComponent(data.contact.email || "") + "?subject=" + encodeURIComponent(subject);
+    var body = "Hi " + contactFirst() + ",\n\nI'd like to interview " + c.name + (data.job.title ? " for the " + data.job.title + " role" : "") + ".\n\nTimes that work for me:\n\n\nThanks,";
+    return "mailto:" + encodeURIComponent(data.contact.email || "") + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
   }
 
   function seen(page) {
@@ -369,7 +374,7 @@ body.editing .editor{transform:none}
   function compareView() {
     var rows = data.candidates.map(function (c) {
       return el("tr", {}, [
-        el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name", text: c.name }), c.headline ? el("div", { class: "sub", text: c.headline }) : null, c.highlight ? el("div", { class: "standout", text: "“" + c.highlight + "”" }) : null])])]),
+        el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name" }, [c.name, c.isNew ? el("span", { class: "new", text: "New" }) : null]), c.headline ? el("div", { class: "sub", text: c.headline }) : null, c.highlight ? el("div", { class: "standout", text: "“" + c.highlight + "”" }) : null])])]),
         el("td", {}, [el("div", { text: c.epicRole || "—" }), c.certs.length ? el("div", { class: "sub", text: c.certs.join(", ") }) : null]),
         el("td", { class: "nowrap", "data-label": "Available", text: c.availability || "Ask " + contactFirst() }),
         el("td", { "data-label": "Location", text: c.location || "Ask " + contactFirst() }),
@@ -379,7 +384,7 @@ body.editing .editor{transform:none}
     });
     return el("div", {}, [
       el("div", { class: "compare" }, [el("table", {}, [
-        el("thead", {}, [el("tr", {}, ["Candidate", "Epic", "Available", "Location", "Bill rate", ""].map(function (h) { return el("th", { scope: "col", text: h }); }))]),
+        el("thead", {}, [el("tr", {}, ["Candidate", "Epic", "Available", "Location", "Bill rate", "Actions"].map(function (h, i) { return el("th", { scope: "col" }, [i === 5 ? el("span", { class: "sr-only", text: h }) : h]); }))]),
         el("tbody", {}, rows),
       ])]),
       el("p", { class: "compare-note", text: "Everyone Anura Connect has sent for this role, in the order we sent them. Rates are checked against our records each time you open this page." }),
@@ -403,14 +408,14 @@ body.editing .editor{transform:none}
     app.appendChild(el("div", { class: "context" }, [
       sysb && sysb.homeUrl ? el("a", { class: "back", href: sysb.homeUrl, text: "All roles at " + sysb.name }) : null,
       h1, tabs]));
-    var main = el("main");
+    var main = el("div", { class: "main-in" });
     if (view === "compare") main.appendChild(compareView());
     else main.appendChild(el("div", { class: "layout" }, [badge(c), story(c)]));
     app.appendChild(main);
     var ct = data.contact;
     app.appendChild(el("div", { class: "contact" }, [el("div", { class: "contact-inner" }, [
       el("div", {}, [
-        el("h4", { text: "Questions about " + (view === "compare" ? "any of them" : first(c.name)) + "?" }),
+        el("h2", { text: "Questions about " + (view === "compare" ? "any of them" : first(c.name)) + "?" }),
         el("p", { text: ct.name + (ct.title ? ", " + ct.title : "") }),
         el("p", { class: "reach" }, [
           ct.phone ? el("a", { href: "tel:" + ct.phone.replace(/[^\d+]/g, ""), text: ct.phone }) : null,
@@ -440,11 +445,11 @@ body.editing .editor{transform:none}
   }
 
   /* ── recruiter edit mode (preview pages only) ── */
-  var edit = null, editDirty = false;
+  var edit = null, editDirty = false, fieldSeq = 0;
 
   function recruiterBar() {
     if (document.querySelector(".preview-bar")) return;
-    var bar = el("div", { class: "preview-bar" }, [
+    var bar = el("div", { class: "preview-bar", role: "region", "aria-label": "Recruiter preview" }, [
       el("span", {}, [el("b", { text: "Preview" }), " This is exactly what the client sees. Your visits don't count as opens."]),
       el("span", { class: "acts" }, [
         el("a", { class: "btn plain", href: "/cards", text: "Back to Cards" }),
@@ -479,16 +484,17 @@ body.editing .editor{transform:none}
 
   function field(label, value, onInput, opts) {
     opts = opts || {};
-    var input = opts.area ? el("textarea", { rows: String(opts.rows || 3), maxlength: opts.max ? String(opts.max) : null }, [value || ""]) : el("input", { type: "text", value: value || "", maxlength: opts.max ? String(opts.max) : null });
+    var fid = "ed-" + (++fieldSeq);
+    var input = opts.area ? el("textarea", { id: fid, rows: String(opts.rows || 3), maxlength: opts.max ? String(opts.max) : null }, [value || ""]) : el("input", { id: fid, type: "text", value: value || "", maxlength: opts.max ? String(opts.max) : null });
     input.addEventListener("input", function () { onInput(input.value); editDirty = true; setEditStatus("Unsaved changes"); syncPreview(); });
-    return el("div", {}, [el("label", { text: label }), input]);
+    return el("div", {}, [el("label", { for: fid, text: label }), input]);
   }
 
   function setEditStatus(t, bad) { var n = document.getElementById("edit-status"); if (n) { n.textContent = t; n.className = "status" + (bad ? " bad" : ""); } }
 
   function photoBlock() {
     var img = edit.hasPhoto ? el("img", { src: "/api/cards/candidate/" + edit.candidateId + "/photo?v=" + Date.now(), alt: "" }) : el("div", { class: "initials", text: initials(data.card.name) });
-    var file = el("input", { type: "file", accept: "image/jpeg,image/png,image/webp", style: "display:none", onchange: function (e) { uploadPhoto(e.target.files[0]); } });
+    var file = el("input", { type: "file", "aria-label": "Photo file", accept: "image/jpeg,image/png,image/webp", style: "display:none", onchange: function (e) { uploadPhoto(e.target.files[0]); } });
     return el("div", { class: "ph" }, [img, el("div", {}, [
       el("div", { class: "btns" }, [
         el("button", { class: "btn plain", type: "button", text: edit.hasPhoto ? "Replace photo" : "Add photo", onclick: function () { file.click(); } }), file,
@@ -592,7 +598,7 @@ body.editing .editor{transform:none}
         isResume ? null : field("Label", d.kind, function (v) { d.kind = v; }, { max: 40 }),
       ]);
     });
-    var pick = el("select", { class: "pick" }, [el("option", { value: "", text: edit.files ? "Add a document from Bullhorn…" : "Loading Bullhorn files…" })].concat((edit.files || []).filter(function (f) {
+    var pick = el("select", { class: "pick", "aria-label": "Add a document from Bullhorn" }, [el("option", { value: "", text: edit.files ? "Add a document from Bullhorn…" : "Loading Bullhorn files…" })].concat((edit.files || []).filter(function (f) {
       return f.allowed && !edit.documents.some(function (d) { return String(d.fileId) === String(f.id); });
     }).map(function (f) { return el("option", { value: f.id, text: f.name + (f.type ? " (" + f.type + ")" : "") }); })));
     pick.addEventListener("change", function () {
