@@ -42,6 +42,10 @@ a{color:var(--blue)}
 .contact .k{font-size:13px;color:#A9C7D6}
 .contact .n{font-family:var(--display);font-weight:700;font-size:19px;line-height:1.2}
 .contact .t{font-size:14px;color:#C9DCE6}
+.contact .reach{display:flex;flex-direction:column;gap:2px;margin-top:14px;font-size:15px}
+.contact .reach a{color:#fff;text-decoration:none;display:inline-flex;align-items:center;min-height:28px;word-break:break-all}
+.contact .reach a:first-child{font-family:var(--display);font-weight:700;font-size:18px;letter-spacing:.01em}
+.contact .reach a:hover{text-decoration:underline}
 .contact .acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
 .contact .acts a{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px}
 .contact .acts a.p{background:#fff;color:var(--navy)}
@@ -202,9 +206,13 @@ a{color:var(--blue)}
         el("div", { class: "n", text: c.name }),
         c.title ? el("div", { class: "t", text: c.title }) : null,
       ])]),
+      (c.phone || c.email) ? el("div", { class: "reach" }, [
+        c.phone ? el("a", { href: tel, text: c.phone, "aria-label": "Call " + c.name + " at " + c.phone }) : null,
+        c.email ? el("a", { href: "mailto:" + c.email, text: c.email }) : null,
+      ]) : null,
       el("div", { class: "acts" }, [
         c.email ? el("a", { class: "p", href: "mailto:" + c.email, text: "Email " + first(c.name) }) : null,
-        tel ? el("a", { class: "s", href: tel, text: "Call" }) : null,
+        tel ? el("a", { class: "s", href: tel, text: "Call " + first(c.name) }) : null,
       ]),
     ]);
   }

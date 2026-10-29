@@ -187,6 +187,16 @@ function registerDemo(app, deps) {
    * Routes for one flavor of the demo. page = "/demo" or "/demo/b/:token"; api = "/api/demo" or "/api/demo/b/:token".
    * brandFor(req) → { name, accent, logo: () => {type, buffer}|null, location, consultants } or null (closed).
    */
+  /** Peter's real title, phone and email from the dashboard's team records when available. */
+  async function contactFor() {
+    if (!db) return CONTACT;
+    try {
+      const u = await db.getOne("SELECT name, email, phone, mobile, occupation FROM corporate_users WHERE LOWER(email) = $1 LIMIT 1", [CONTACT.email]);
+      if (!u) return CONTACT;
+      return Object.assign({}, CONTACT, { title: u.occupation || CONTACT.title, phone: u.phone || u.mobile || "" });
+    } catch (e) { return CONTACT; }
+  }
+
   function mount(page, api, brandFor) {
     function paths(req) {
       const t = req.params.token ? "/b/" + req.params.token : "";
@@ -195,13 +205,13 @@ function registerDemo(app, deps) {
     async function brand(req, res) {
       const b = await brandFor(req);
       if (!b) { res.status(404).json({ state: "missing" }); return null; }
-      return b;
+      return Object.assign({}, b, { contact: await contactFor() });
     }
     function cardView(req, b, pid) {
       const p = BY_ID[pid] || PEOPLE[0];
       const ps = paths(req);
       return {
-        state: "active", demo: true, contact: CONTACT, job: { title: JOB.title, clientName: b.name }, sent: p.id,
+        state: "active", demo: true, contact: b.contact || CONTACT, job: { title: JOB.title, clientName: b.name }, sent: p.id,
         candidates: PEOPLE.map(summary), card: full(p), viewer: { name: MANAGER.name, known: true }, passReasons: PASS_REASONS,
         system: { name: b.name, accent: b.accent, logoUrl: b.hasLogo ? ps.api + "/logo" : "", homeUrl: ps.page },
       };
@@ -225,7 +235,7 @@ function registerDemo(app, deps) {
           viewer: { name: MANAGER.name, known: true },
           managers: [],
           consultants: b.consultants,
-          contact: CONTACT,
+          contact: b.contact || CONTACT,
         });
       } catch (e) { res.status(500).json({ error: "The demo didn't load." }); }
     });

@@ -850,6 +850,8 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       const cardv = await req(h.port, "GET", "/api/demo/b/" + T + "/card/mialopezdemo");
       assert.equal(cardv.json.system.homeUrl, "/demo/b/" + T);
       assert.equal(cardv.json.contact.photoUrl, "https://www.anuraconnect.com/assets/team/peter-oppermann.jpg");
+      assert.equal(cardv.json.contact.phone, "608-555-0199", "the account manager's real number from the team records");
+      assert.equal(v.json.contact.phone, "608-555-0199");
       const fb = await req(h.port, "POST", "/api/demo/b/" + T + "/card/mialopezdemo/feedback/mialopezdemo", { body: { action: "interview" } });
       assert.equal(fb.json.demo, true);
       assert.equal((await req(h.port, "GET", "/api/demo/b/bcdfghjkmnpqrstvwxzbcdfghjkmnpq")).status, 404, "unknown token");
