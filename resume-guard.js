@@ -11,7 +11,7 @@
 const INTERNAL_DOMAINS = ["anuraconnect.com"];
 
 /** "enforce" blocks and holds files back; "audit" only records. RESUME_GUARD overrides the default. */
-const DEFAULT_MODE = "audit";
+const DEFAULT_MODE = "enforce"; // audit run 2026-10-29: 43 of 43 Anura résumés clean
 function mode() { return process.env.RESUME_GUARD === "enforce" || process.env.RESUME_GUARD === "audit" ? process.env.RESUME_GUARD : DEFAULT_MODE; }
 function enforcing() { return mode() === "enforce"; }
 
