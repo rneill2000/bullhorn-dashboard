@@ -272,10 +272,10 @@ input[type=file]{position:absolute;left:-9999px}
         el("div", { class: "photo-step" }, [
           photoEl("slot"),
           el("div", { class: "photo-acts" }, [
-            S.linkedinEnabled ? el("a", { class: "btn primary", href: "/card-edit/" + token + "/linkedin", text: "Use my LinkedIn photo" }) : null,
-            el("button", { type: "button", class: "btn" + (S.linkedinEnabled ? "" : " primary"), text: S.hasPhoto ? "Upload a different photo" : "Upload a photo", onclick: function () { $("file").click(); } }), file,
+            el("button", { type: "button", class: "btn primary", text: S.hasPhoto ? "Upload a different photo" : "Upload a photo", onclick: function () { $("file").click(); } }), file,
+            S.linkedinEnabled ? el("a", { class: "btn", href: "/card-edit/" + token + "/linkedin", text: "Use my LinkedIn photo" }) : null,
             S.hasPhoto ? el("button", { type: "button", class: "btn text", text: "Remove photo", onclick: removePhoto }) : null,
-            S.linkedinEnabled ? el("p", { class: "fine", text: "LinkedIn sends us your profile photo and nothing else." }) : null,
+            S.linkedinEnabled ? el("p", { class: "fine", text: "LinkedIn shares only a small version, so a photo from your phone will look sharper." }) : null,
           ]),
         ]),
         mismatch ? el("div", { class: "notice warn", text: "That photo came from a LinkedIn account with a different name. If it isn't you, remove it and try again." }) : null,
