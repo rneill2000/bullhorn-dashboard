@@ -48,7 +48,8 @@ const LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" width
 
 const PEOPLE = [
   {
-    id: "jackcorbelld", name: "Jack Corbell", headline: "Beaker analyst who's happiest at the lab bench",
+    id: "jackcorbelld", healthSystems: [{ name: "Riverside Health", role: "Beaker Analyst", from: 2023, to: "Present", viaAnura: true }, { name: "Northfield Medical Center", role: "Beaker CP Analyst", from: 2020, to: 2023 }, { name: "St. Agnes Regional", role: "Lab Systems Analyst", from: 2017, to: 2020 }], formerEpic: false,
+    name: "Jack Corbell", headline: "Beaker analyst who's happiest at the lab bench",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology", "Beaker Anatomic Pathology"],
     availability: "Nov 18", location: "Madison, WI (hybrid)", rate: "$185/hr", isNew: false,
     photo: portrait({ bg: "#CFE3EC", skin: "#F1C7A5", skinShade: "#DFAA86", hair: "#6B4A2F", style: "short", shirt: "#176087" }),
@@ -74,11 +75,12 @@ const PEOPLE = [
     resume: ["JACK CORBELL", "Epic Beaker Analyst | Beaker CP and AP certified", "", "SUMMARY", "Eight years building and supporting Epic Beaker for academic and community labs.", "Two CP go-lives as build lead; AP optimization; specimen tracking redesign.", "", "EXPERIENCE", "Riverside Health, Beaker Analyst (Anura Connect consultant), 2023-2026", "  Rebuilt specimen tracking six weeks ahead of cutover; trained 40 super users.", "Northfield Medical Center, Beaker CP Analyst, 2020-2023", "  Led CP validation, finished two weeks early; built 300+ result components.", "St. Agnes Regional, Lab Systems Analyst, 2017-2020", "  Sunquest to Beaker conversion; instrument interfaces.", "", "CERTIFICATIONS", "Epic Beaker Clinical Pathology; Epic Beaker Anatomic Pathology", "", "Presented by Anura Connect"],
   },
   {
-    id: "mialopezdemo", name: "Mia Lopez", headline: "CP build lead for a nine-hospital system",
+    id: "mialopezdemo", healthSystems: [{ name: "Prairie State Health", role: "Beaker CP Build Lead", from: 2022, to: "Present" }, { name: "Gulf Coast Medical", role: "Beaker Analyst", from: 2019, to: 2022 }, { name: "Lakeview Academic Medical Center", role: "Go-live support (with Epic)", from: 2018, to: 2018 }], formerEpic: true,
+    name: "Mia Lopez", headline: "CP build lead for a nine-hospital system",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology"],
     availability: "Dec 2", location: "Remote (Central)", rate: "$172/hr", isNew: true,
     photo: portrait({ bg: "#F3E1D6", skin: "#C98E64", skinShade: "#B07650", hair: "#2B1D17", style: "long", shirt: "#2E8B83" }),
-    whyMe: "Mia ran CP build for a nine-hospital system on a single Beaker instance, including the standardization work most teams put off until after go-live.\n\nShe's the person you want if your labs do things nine different ways today. Her references call out how she gets lab directors to agree.",
+    whyMe: "Mia spent three years at Epic in Technical Services, then ran CP build for a nine-hospital system on a single Beaker instance, including the standardization work most teams put off until after go-live.\n\nShe's the person you want if your labs do things nine different ways today. Her references call out how she gets lab directors to agree.",
     intro: "Standardizing a lab is mostly listening. I like the meeting where everyone finally agrees on one way to do it.",
     culture: [
       { prompt: "Outside of work, you'll find me…", text: "Training for my third half marathon, slowly." },
@@ -94,7 +96,8 @@ const PEOPLE = [
     resume: ["MIA LOPEZ", "Epic Beaker CP Build Lead", "", "SUMMARY", "Seven years of Beaker CP build; multi-site standardization on one instance.", "", "EXPERIENCE", "Prairie State Health, Beaker CP Build Lead, 2022-2026", "  Standardized CP build across nine hospitals; 1,200 tests consolidated to 640.", "Gulf Coast Medical, Beaker Analyst, 2019-2022", "  Microbiology and blood bank build; reference lab interfaces.", "", "CERTIFICATIONS", "Epic Beaker Clinical Pathology", "", "Presented by Anura Connect"],
   },
   {
-    id: "darnellprice", name: "Darnell Price", headline: "Beaker plus Cupid, comfortable in both labs",
+    id: "darnellprice", healthSystems: [{ name: "Lakeview Academic Medical Center", role: "Senior Clinical Systems Analyst", from: 2019, to: "Present" }, { name: "Metro West Hospital", role: "Lab Systems Analyst", from: 2016, to: 2019 }], formerEpic: false,
+    name: "Darnell Price", headline: "Beaker plus Cupid, comfortable in both labs",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology", "Cupid"],
     availability: "2 weeks", location: "Chicago, IL", rate: "$165/hr", isNew: true,
     photo: portrait({ bg: "#DCE5EC", skin: "#8A5A3C", skinShade: "#734A30", hair: "#1B1412", style: "crop", shirt: "#4A5866", beard: true, glasses: true }),
@@ -118,13 +121,16 @@ PEOPLE.forEach(function (p) { BY_ID[p.id] = p; });
 
 function summary(p) {
   return { id: p.id, name: p.name, headline: p.headline, epicRole: p.epicRole, certs: p.certs, availability: p.availability, location: p.location, rate: p.rate,
-    hasPhoto: true, hasResume: true, highlight: p.highlights[0] ? p.highlights[0].quote : "", isNew: p.isNew, feedback: null };
+    hasPhoto: true, hasResume: true, highlight: p.highlights[0] ? p.highlights[0].quote : "", isNew: p.isNew, feedback: null,
+    formerEpic: !!p.formerEpic, systemsCount: p.healthSystems.length };
 }
 function full(p) {
   return Object.assign(summary(p), {
     whyMe: p.whyMe, intro: p.intro, culture: p.culture, facts: p.facts, highlights: p.highlights,
     documents: [{ index: 0, name: p.name + " Résumé.pdf", kind: "Résumé", viewable: true }],
     references: p.references, resumeName: p.name + " Résumé.pdf",
+    healthSystems: p.healthSystems, formerEpic: !!p.formerEpic,
+    wouldRehire: p.references.filter(function (r) { return /yes/i.test(r.rehire || ""); }).length,
   });
 }
 
@@ -258,7 +264,9 @@ function registerDemo(app, deps) {
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
       res.setHeader("Content-Disposition", (req.query.download ? "attachment" : "inline") + "; filename=\"" + p.name.replace(/[^\w ]/g, "") + " Resume.pdf\"");
-      res.send(resumePdf(p.resume));
+      let pdf = null;
+    try { pdf = require("fs").readFileSync(path.join(__dirname, "demo-assets", p.id + ".pdf")); } catch (e) { pdf = resumePdf(p.resume); }
+    res.send(pdf);
     }
     app.get(api + "/card/:pid/resume/:p", sendResume);
     app.get(api + "/card/:pid/doc/:p/:index", sendResume);

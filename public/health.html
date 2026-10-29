@@ -70,6 +70,11 @@ a{color:var(--blue)}
 .facts dt{color:var(--muted)}
 .facts dd{font-weight:700;text-align:right}
 .facts dd.q{font-weight:400;color:var(--muted)}
+.creds{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.cert{display:inline-flex;align-items:center;gap:5px;background:#E8F5EE;color:#14532D;border-radius:999px;padding:3px 10px 3px 5px;font-size:13px;font-weight:700}
+.cert::before{content:"✓";display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#1F7A55;color:#fff;font-size:10px}
+.exepic{display:inline-flex;align-items:center;gap:5px;background:var(--navy);color:#fff;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.exepic::before{content:"★";color:#F5C451}
 .quote{margin-top:14px;font-size:15px;font-style:italic;color:var(--navy);border-left:3px solid var(--accent);padding-left:10px}
 .cand .go{display:flex;gap:8px;margin-top:auto;padding-top:18px}
 .btn{flex:1;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:10px;font-weight:700;font-size:15px;text-decoration:none;border:1px solid var(--line);color:var(--blue);background:var(--paper)}
@@ -199,8 +204,10 @@ a{color:var(--blue)}
     var body = [
       el("h4", {}, [c.name, c.feedback ? el("span", { class: "pill " + c.feedback.action, text: c.feedback.action === "interview" ? "Interview requested" : "Passed" }) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]),
       c.headline ? el("p", { class: "hl", text: c.headline }) : null,
+      (c.certs.length || c.formerEpic) ? el("div", { class: "creds", "aria-label": "Credentials" }, (c.formerEpic ? [el("span", { class: "exepic", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "cert", text: x }); }))) : null,
       el("dl", { class: "facts" }, [
         el("dt", { text: "Epic" }), el("dd", { class: c.epicRole || c.certs.length ? "" : "q", text: c.epicRole || c.certs[0] || "See résumé" }),
+        c.systemsCount ? el("dt", { text: "Worked at" }) : null, c.systemsCount ? el("dd", { text: c.systemsCount + (c.systemsCount === 1 ? " health system" : " health systems") }) : null,
         el("dt", { text: "Available" }), el("dd", { class: c.availability ? "" : "q", text: c.availability || ask }),
         el("dt", { text: "Location" }), el("dd", { class: c.location ? "" : "q", text: c.location || ask }),
         el("dt", { text: "Rate" }), el("dd", { class: c.rate ? "" : "q", text: c.rate || ask }),

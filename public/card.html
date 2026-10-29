@@ -52,8 +52,29 @@ img{display:block}
 .badge h2{font-family:var(--display);font-weight:800;font-size:25px;line-height:1.15;margin-top:16px;letter-spacing:-.02em;color:var(--navy)}
 .badge .headline{font-size:14px;color:var(--muted);margin-top:6px}
 .badge .role{margin-top:14px;font-weight:600;color:var(--blue);font-size:15px}
-.badge .certs{list-style:none;margin-top:6px;font-size:13px;color:var(--ink)}
-.badge .certs li{padding:2px 0}
+.badge .certs{list-style:none;margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.badge .certs li{display:inline-flex;align-items:center;gap:6px;background:#E8F5EE;color:#14532D;border-radius:999px;padding:4px 10px 4px 6px;font-size:12.5px;font-weight:700;line-height:1.25;text-align:left}
+.badge .certs li::before{content:"✓";display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#1F7A55;color:#fff;font-size:10px;flex-shrink:0}
+.ribbon{display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:var(--navy);color:#fff;font-family:var(--display);font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;padding:5px 12px;border-radius:999px}
+.ribbon::before{content:"★";color:#F5C451}
+/* Selling points: a quick strip of proof, then where they've worked */
+.proof{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.proof .p{background:var(--paper);border-radius:14px;padding:16px 18px;box-shadow:0 1px 0 var(--line)}
+.proof .n{font-family:var(--display);font-weight:800;font-size:30px;line-height:1;color:var(--navy);letter-spacing:-.02em}
+.proof .n.star{color:var(--blue)}
+.proof .l{font-size:14px;color:var(--muted);margin-top:6px;line-height:1.35}
+.worked{list-style:none;position:relative;padding-left:26px}
+.worked::before{content:"";position:absolute;left:7px;top:8px;bottom:8px;width:2px;background:var(--line)}
+.worked li{position:relative;padding:0 0 18px}
+.worked li:last-child{padding-bottom:0}
+.worked li::before{content:"";position:absolute;left:-24px;top:6px;width:12px;height:12px;border-radius:50%;background:var(--paper);border:3px solid var(--sky)}
+.worked li:first-child::before{background:var(--sky)}
+.worked .org{font-family:var(--display);font-weight:700;font-size:18px;color:var(--navy);line-height:1.25}
+.worked .meta{font-size:14px;color:var(--muted);margin-top:2px}
+.worked .tag{display:inline-block;margin-left:8px;font-family:var(--sans);font-size:11.5px;font-weight:700;color:var(--blue);background:#E7F1F6;border-radius:999px;padding:2px 8px;vertical-align:middle}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.chip-c{display:inline-block;background:#E8F5EE;color:#14532D;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700}
+.chip-e{display:inline-block;background:var(--navy);color:#fff;border-radius:999px;padding:2px 8px;font-size:11.5px;font-weight:700;letter-spacing:.03em}
 .facts{margin:20px 26px 0;border-top:1px solid var(--line);padding-top:14px;display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
 .facts dt{color:var(--muted)}
 .facts dd{font-weight:600;text-align:right}
@@ -472,6 +493,7 @@ body.editing .editor{transform:none}
         photo(c, "photo"),
         el("h2", { text: c.name }),
         c.headline ? el("p", { class: "headline", text: c.headline }) : null,
+        c.formerEpic ? el("span", { class: "ribbon", text: "Former Epic" }) : null,
         c.epicRole ? el("p", { class: "role", text: c.epicRole }) : null,
         c.certs.length ? el("ul", { class: "certs", "aria-label": "Epic certifications" }, c.certs.map(function (x) { return el("li", { text: x }); })) : null,
       ]),
@@ -484,6 +506,14 @@ body.editing .editor{transform:none}
   function story(c) {
     var name = first(c.name);
     var parts = [];
+    var proof = [];
+    if (c.certs.length) proof.push([String(c.certs.length), "Epic " + (c.certs.length === 1 ? "certification" : "certifications")]);
+    if ((c.healthSystems || []).length) proof.push([String(c.healthSystems.length), (c.healthSystems.length === 1 ? "health system" : "health systems") + " worked at"]);
+    if (c.formerEpic) proof.push(["★", "Former Epic employee", true]);
+    if ((c.references || []).length && c.wouldRehire) proof.push([c.wouldRehire + " of " + c.references.length, (c.references.length === 1 ? "reference" : "references") + " would rehire"]);
+    if (proof.length >= 2) parts.push(el("section", { "aria-label": name + " at a glance" }, [el("div", { class: "proof" }, proof.map(function (x) {
+      return el("div", { class: "p" }, [el("div", { class: "n" + (x[2] ? " star" : ""), text: x[0] }), el("div", { class: "l", text: x[1] })]);
+    }))]));
     if (c.whyMe) parts.push(el("section", {}, [el("h3", { text: "Why " + name }), el("div", { class: "prose" }, paragraphs(c.whyMe))]));
     if ((c.highlights || []).length) parts.push(el("section", { class: "highlights" }, [
       el("h3", { text: "What people who've worked with " + name + " say" }),
@@ -493,6 +523,17 @@ body.editing .editor{transform:none}
         el("figcaption", { text: [h.role, h.organization].filter(Boolean).join(", ") || "Former manager" }),
       ]);
     }))));
+    if ((c.healthSystems || []).length) parts.push(el("section", {}, [
+      el("h3", { text: "Where " + name + " has worked" }),
+      el("ul", { class: "worked" }, c.healthSystems.map(function (h) {
+        var yrs = h.from ? (h.from + (h.to && h.to !== h.from ? "–" + h.to : (h.to ? "" : ""))) : (h.to ? String(h.to) : "");
+        return el("li", {}, [
+          el("div", { class: "org" }, [h.name, h.viaAnura ? el("span", { class: "tag", text: "With Anura" }) : null]),
+          (h.role || yrs) ? el("div", { class: "meta", text: [h.role, yrs].filter(Boolean).join(" · ") }) : null,
+        ]);
+      })),
+      c.formerEpic ? el("p", { class: "meta", style: "margin-top:14px;font-size:15px;color:var(--ink)" }, [el("b", { text: "Former Epic. " }), name + " knows the software from the inside."]) : null,
+    ]));
     if (c.intro) parts.push(el("section", {}, [el("h3", { text: "In " + name + "'s words" }), el("div", { class: "prose" }, paragraphs(c.intro))]));
     if ((c.culture || []).length || (c.facts || []).length) parts.push(el("section", { class: "corner" }, [
       el("h3", { text: "Culture corner" }),
@@ -543,7 +584,9 @@ body.editing .editor{transform:none}
     var rows = data.candidates.map(function (c) {
       return el("tr", {}, [
         el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name" }, [c.name, c.feedback ? pill(c.feedback) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]), c.headline ? el("div", { class: "sub", text: c.headline }) : null, c.highlight ? el("div", { class: "standout", text: "“" + c.highlight + "”" }) : null])])]),
-        el("td", {}, [el("div", { text: c.epicRole || "—" }), c.certs.length ? el("div", { class: "sub", text: c.certs.join(", ") }) : null]),
+        el("td", {}, [el("div", { text: c.epicRole || "—" }),
+          (c.certs.length || c.formerEpic) ? el("div", { class: "chips" }, (c.formerEpic ? [el("span", { class: "chip-e", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "chip-c", text: "✓ " + x }); }))) : null,
+          c.systemsCount ? el("div", { class: "sub", text: c.systemsCount + (c.systemsCount === 1 ? " health system" : " health systems") }) : null]),
         el("td", { class: "nowrap", "data-label": "Available", text: c.availability || "Ask " + contactFirst() }),
         el("td", { "data-label": "Location", text: c.location || "Ask " + contactFirst() }),
         el("td", { class: "rate", "data-label": "Bill rate", text: c.rate || "Ask " + contactFirst() }),

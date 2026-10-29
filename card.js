@@ -278,6 +278,53 @@ function formatMoney(amount) {
   return "$" + (Math.round(n * 100) % 100 === 0 ? String(Math.round(n)) : n.toFixed(2)) + "/hr";
 }
 
+/* ── career: health systems worked at, and former Epic ─────────────────────── */
+const EPIC_EMPLOYER = /^\s*epic(\s+systems)?(\s+corp(oration)?)?(\s*,?\s*inc\.?)?\s*$/i;
+const HEALTH_ORG = /health|hospital|medical|medicine|clinic|children'?s|healthcare|\bcare\b|regional|memorial|baptist|methodist|presbyterian|adventist|lutheran|mercy|kaiser|mayo|providence|ascension|trinity|intermountain|banner|sutter|geisinger|ochsner|atrium|novant|advocate|beaumont|cedars|sinai|langone|hopkins|sanford|essentia|gundersen|marshfield|froedtert|aurora|bellin|thedacare|allina|fairview|spectrum|corewell|henry ford|uchealth|ucsf|ucla|uc davis|ohsu|vanderbilt|duke|emory|yale|penn medicine|nyu|montefiore|northwell|hackensack|christus|hca\b|tenet|chop\b|nationwide|cincinnati|lurie|seattle|valley|samaritan|saint|\bst\.? /i;
+function yearOf(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") { const d = new Date(v); return isFinite(d.getTime()) ? d.getUTCFullYear() : null; }
+  const m = String(v).match(/(19|20)\d{2}/);
+  return m ? Number(m[0]) : null;
+}
+/**
+ * work: Bullhorn CandidateWorkHistory rows; placed: Anura placements [{client, start, end}].
+ * Returns { healthSystems: [{name, role, from, to, viaAnura}], formerEpic }.
+ */
+function careerFrom(work, placed) {
+  const out = [];
+  let formerEpic = false;
+  function add(name, role, from, to, viaAnura) {
+    const n = String(name || "").replace(/\s+/g, " ").trim();
+    if (!n || n.length > 90) return;
+    const key = n.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const had = out.filter(function (x) { return x.key === key; })[0];
+    if (had) {
+      if (viaAnura) had.viaAnura = true;
+      if (from && (!had.from || from < had.from)) had.from = from;
+      if (to === "Present" || (to && had.to !== "Present" && (!had.to || to > had.to))) had.to = to;
+      if (!had.role && role) had.role = role;
+      return;
+    }
+    out.push({ key: key, name: n, role: String(role || "").trim().slice(0, 80), from: from, to: to, viaAnura: !!viaAnura });
+  }
+  (work || []).forEach(function (w) {
+    const company = w.companyName || w.company || "";
+    if (EPIC_EMPLOYER.test(company)) { formerEpic = true; return; }
+    if (!HEALTH_ORG.test(company)) return;
+    const from = yearOf(w.startDate) || yearOf(w.comments);
+    const endRaw = w.endDate;
+    const to = endRaw ? yearOf(endRaw) : (/present|current/i.test(String(w.comments || "")) || !w.startDate ? null : "Present");
+    add(company, w.title, from, to, false);
+  });
+  (placed || []).forEach(function (p) { add(niceName(p.client || ""), p.role || "", yearOf(p.start), p.end && p.end < Date.now() ? yearOf(p.end) : "Present", true); });
+  out.sort(function (a, b) {
+    const ta = a.to === "Present" ? 9999 : (a.to || a.from || 0), tb = b.to === "Present" ? 9999 : (b.to || b.from || 0);
+    return tb - ta;
+  });
+  return { healthSystems: out.slice(0, 10).map(function (x) { return { name: x.name, role: x.role, from: x.from || null, to: x.to || null, viaAnura: x.viaAnura }; }), formerEpic: formerEpic };
+}
+
 function certList(row) {
   const out = [];
   [row && row.custom_text1, row && row.custom_text2].forEach(function (v) {
@@ -362,6 +409,7 @@ function registerCard(app, deps) {
   const publicOrigin = deps.publicOrigin || function () { return "https://dashboard.anuraconnect.com"; };
   const verifyBill = deps.verifyBill || null; // (submissionId) → { amount, source }; throws when Bullhorn can't be read
   const getFile = deps.getFile || null; // (entity, entityId, fileId) → { buffer, name, contentType }
+  const fetchWorkHistory = deps.workHistory || null; // (candidateId) → Bullhorn CandidateWorkHistory rows
   const pagesDir = deps.pagesDir || path.join(__dirname, "public");
   const leakCheck = deps.findInternalLeak || require("./forge").findInternalLeak;
   const guard = require("./resume-guard");
@@ -415,6 +463,8 @@ function registerCard(app, deps) {
           "via TEXT, link_id INTEGER, contact_id INTEGER, by_name TEXT, by_email TEXT, action TEXT NOT NULL, slots JSONB NOT NULL DEFAULT '[]'::jsonb, tz TEXT, reason TEXT, note TEXT, " +
           "created_at TIMESTAMPTZ NOT NULL DEFAULT now())",
         "CREATE INDEX IF NOT EXISTS card_feedback_sub ON card_feedback (submission_id, created_at)",
+        // Bullhorn work history snapshot per candidate (refreshed daily) for "where they've worked".
+        "CREATE TABLE IF NOT EXISTS card_work_history (candidate_id INTEGER PRIMARY KEY, rows JSONB NOT NULL DEFAULT '[]'::jsonb, fetched_at TIMESTAMPTZ NOT NULL DEFAULT now())",
         // Demo links in a client's branding with made-up candidates (card-demo.js).
         "CREATE TABLE IF NOT EXISTS card_system_demos (id SERIAL PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, client_id INTEGER NOT NULL, created_by TEXT, " +
           "created_at TIMESTAMPTZ NOT NULL DEFAULT now(), revoked_at TIMESTAMPTZ)",
@@ -760,7 +810,10 @@ function registerCard(app, deps) {
 
   async function summaryFor(row, rate) {
     const pf = profileFields(row);
+    const career = await careerFor(row.candidate_id);
     return {
+      formerEpic: career.formerEpic,
+      systemsCount: career.healthSystems.length,
       id: row.public_id,
       name: displayName(row),
       headline: pf.headline || "",
@@ -774,6 +827,41 @@ function registerCard(app, deps) {
       highlight: (Array.isArray(row.highlights) && row.highlights[0] && row.highlights[0].quote) || "",
       isNew: !!(row.created_at && now() - new Date(row.created_at).getTime() < 7 * 86400000),
     };
+  }
+
+  /** Career for a candidate: cached Bullhorn work history (refreshed daily, never blocks long) + Anura placements. */
+  const careerInFlight = new Map();
+  async function careerFor(candidateId) {
+    let cached = null;
+    try { cached = await db.getOne("SELECT rows, fetched_at FROM card_work_history WHERE candidate_id = $1", [candidateId]); } catch (e) { cached = null; }
+    const stale = !cached || now() - new Date(cached.fetched_at).getTime() > 86400000;
+    let work = cached ? (Array.isArray(cached.rows) ? cached.rows : []) : [];
+    if (stale && fetchWorkHistory) {
+      let p = careerInFlight.get(candidateId);
+      if (!p) {
+        p = Promise.resolve().then(function () { return fetchWorkHistory(candidateId); }).then(function (rows) {
+          const keep = (Array.isArray(rows) ? rows : []).slice(0, 40).map(function (w) {
+            return { companyName: w.companyName || "", title: w.title || "", startDate: w.startDate || null, endDate: w.endDate || null, comments: String(w.comments || "").slice(0, 200) };
+          });
+          return db.query("INSERT INTO card_work_history (candidate_id, rows, fetched_at) VALUES ($1,$2::jsonb,now()) ON CONFLICT (candidate_id) DO UPDATE SET rows = EXCLUDED.rows, fetched_at = now()",
+            [candidateId, JSON.stringify(keep)]).then(function () { return keep; });
+        }).catch(function (e) { log("[Card] work history " + candidateId + ": " + e.message); return null; })
+          .finally(function () { careerInFlight.delete(candidateId); });
+        careerInFlight.set(candidateId, p);
+      }
+      if (!cached) {
+        const fresh = await Promise.race([p, new Promise(function (r) { setTimeout(function () { r(null); }, 4000); })]);
+        if (fresh) work = fresh;
+      }
+    }
+    let placed = [];
+    try {
+      placed = (await db.getAll("SELECT p.client_name, cl.name AS cl_name, p.job_title, p.date_begin, p.date_end, p.status FROM placements p LEFT JOIN clients cl ON cl.id = p.client_id " +
+        "WHERE p.candidate_id = $1 AND p.is_deleted IS NOT TRUE ORDER BY p.date_begin DESC NULLS LAST LIMIT 20", [candidateId]))
+        .filter(function (p) { return !/cancel|fell|declin|withdr/i.test(String(p.status || "")); })
+        .map(function (p) { return { client: p.cl_name || p.client_name, role: p.job_title, start: ms(p.date_begin), end: ms(p.date_end) }; });
+    } catch (e) { placed = []; }
+    return careerFrom(work, placed);
   }
 
   async function fullCard(row, opts) {
@@ -791,6 +879,7 @@ function registerCard(app, deps) {
       return { index: i, fileId: String(d.fileId), name: d.name || "Document", kind: d.kind || "", viewable: docExt(d.name) === "pdf" || !!DOC_TYPES[docExt(d.name)] };
     }).filter(function (d) { return held.indexOf(d.fileId) < 0; }).map(function (d) { delete d.fileId; return d; });
     const base = await summaryFor(row, rate);
+    const career = await careerFor(row.candidate_id);
     return Object.assign(base, {
       whyMe: row.why_me || "",
       intro: pf.intro || "",
@@ -802,6 +891,9 @@ function registerCard(app, deps) {
         return { role: r.role || "", organization: r.organization || "", relationship: r.relationship || "", rehire: r.rehire || "", text: r.text || "" };
       }),
       resumeName: base.hasResume ? (row.resume_name || "Résumé.pdf") : "",
+      healthSystems: career.healthSystems,
+      formerEpic: career.formerEpic,
+      wouldRehire: refs.filter(function (r) { return /yes|would|absolutely|definitely/i.test(String(r.rehire || "")); }).length,
     });
   }
 
@@ -2363,6 +2455,7 @@ function registerCard(app, deps) {
 module.exports = registerCard;
 module.exports.makeToken = makeToken;
 module.exports.teamPhoto = teamPhoto;
+module.exports.careerFrom = careerFrom;
 module.exports.hashToken = hashToken;
 module.exports.validToken = validToken;
 module.exports.jobIsActive = jobIsActive;

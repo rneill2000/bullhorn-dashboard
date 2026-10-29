@@ -164,3 +164,4 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K38 | Logo from a web link: https only, public addresses only (re-checked on redirects), images only | card.test.js |
 | K39 | Demo link in a client's branding: their name/logo/color, made-up candidates, no consultants, nothing real, revocable | card.test.js |
 | K40 | Anura contact photo URL from anuraconnect.com/about by name (aliases; none for "Anura Connect") | card.test.js |
+| K41 | Career: health systems from Bullhorn work history + Anura placements (merged, newest first, consulting firms left out); Former Epic only from Epic itself | card.test.js |

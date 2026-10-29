@@ -11806,6 +11806,11 @@ const cardsApi = require("./card")(app, {
   getUser: getUser,
   notifier: notifier,
   getFile: filesArchive.getFile,
+  // Bullhorn work history: where a candidate has worked, for the Card's "health systems" and Former Epic.
+  workHistory: async function (candidateId) {
+    const r = await bhFetch("query/CandidateWorkHistory", { where: "candidate.id=" + Number(candidateId), fields: "id,companyName,title,startDate,endDate,comments", count: 50 });
+    return (r && r.data) || [];
+  },
   verifyBill: function (submissionId) { return forgeApi.verifyBillForSubmission(submissionId); },
   publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; },
 });

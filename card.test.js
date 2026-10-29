@@ -955,6 +955,21 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
   }
 });
 
+test("K41 career: health systems from work history and Anura placements, Former Epic from an Epic stint", function () {
+  const c = card.careerFrom([
+    { companyName: "Epic Systems Corporation", title: "Technical Services", startDate: Date.UTC(2015, 0, 1), endDate: Date.UTC(2018, 0, 1) },
+    { companyName: "Nordic Consulting", title: "Beaker Analyst", startDate: Date.UTC(2018, 0, 1), endDate: Date.UTC(2020, 0, 1) },
+    { companyName: "UW Health", title: "Beaker Lead", startDate: Date.UTC(2020, 0, 1), endDate: null },
+    { companyName: "Mayo Clinic", title: "Analyst", comments: "2019 - 2020", startDate: null },
+  ], [{ client: "UW HEALTH", role: "Beaker Analyst", start: Date.UTC(2021, 0, 1), end: null }]);
+  assert.equal(c.formerEpic, true);
+  assert.deepEqual(c.healthSystems.map(function (h) { return h.name; }), ["UW Health", "Mayo Clinic"], "consulting firms and Epic aren't health systems; duplicates merge");
+  assert.equal(c.healthSystems[0].viaAnura, true);
+  assert.equal(c.healthSystems[0].to, "Present");
+  assert.equal(c.healthSystems[1].from, 2019);
+  assert.equal(card.careerFrom([{ companyName: "Epic Health Partners Hospital" }], []).formerEpic, false, "only Epic itself counts");
+});
+
 test("K40 Anura contact photos come from anuraconnect.com/about", function () {
   assert.equal(card.teamPhoto("Peter Oppermann"), "https://www.anuraconnect.com/assets/team/peter-oppermann.jpg");
   assert.equal(card.teamPhoto("Jen Hemming"), "https://www.anuraconnect.com/assets/team/jennifer-hemming.jpg");
