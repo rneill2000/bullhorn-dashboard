@@ -1353,6 +1353,14 @@ function registerCard(app, deps) {
         rows = await db.getAll("SELECT DISTINCT ON (resume_file_id) candidate_id, candidate_name, client_name, resume_file_id, created_at FROM submittal_forge_drafts " +
           "WHERE COALESCE(resume_file_id, '') <> '' AND candidate_id IS NOT NULL ORDER BY resume_file_id, created_at DESC", []);
       } catch (e) { rows = []; }
+      if (req.query.source === "files") {
+        // Anura-formatted résumés in Bullhorn, newest first: the template every client résumé uses.
+        try {
+          rows = await db.getAll("SELECT f.entity_id AS candidate_id, c.name AS candidate_name, '' AS client_name, f.id::text AS resume_file_id, f.date_added AS created_at " +
+            "FROM crm.file_attachment f LEFT JOIN candidates c ON c.id = f.entity_id WHERE f.entity = 'Candidate' AND f.is_deleted IS NOT TRUE " +
+            "AND f.name ILIKE 'Anura Connect%' AND f.name ILIKE '%.pdf' ORDER BY f.date_added DESC NULLS LAST LIMIT $1", [limit]);
+        } catch (e) { rows = []; }
+      }
       rows = rows.sort(function (a, b) { return ms(b.created_at) - ms(a.created_at); }).slice(0, limit);
       const out = [];
       for (const r of rows) {

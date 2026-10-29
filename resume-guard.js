@@ -54,7 +54,9 @@ function contactHits(text, who, allow) {
   (t.match(EMAIL_RE) || []).forEach(function (raw) {
     const e = raw.replace(/\s+/g, "").replace(/^[._%+-]+|[.]+$/g, "");
     const domain = e.split("@")[1].toLowerCase();
-    if (domains.some(function (d) { return domain === d || domain.endsWith("." + d); })) return;
+    // PDF text often runs the next word on ("hello@anuraconnect.comANURACONNECT.COM"), so an internal
+    // domain followed by more letters still counts as internal.
+    if (domains.some(function (d) { return domain === d || domain.endsWith("." + d) || domain.indexOf(d) === 0; })) return;
     add("email", e, ownEmails.indexOf(e.toLowerCase()) >= 0);
   });
 

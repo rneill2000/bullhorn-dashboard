@@ -18,6 +18,11 @@ test("RG2 Anura's own email and numbers pass; dates, years and IDs don't look li
   assert.deepEqual(g.contactHits(text, WHO, ALLOW), []);
 });
 
+test("RG2b run-on PDF text after an Anura email still passes", function () {
+  assert.deepEqual(g.contactHits("hello@anuraconnect.comANURACONNECT.COM", WHO, ALLOW), []);
+  assert.equal(g.contactHits("jack.corbell@gmail.comLinkedIn", WHO, ALLOW).length, 1);
+});
+
 test("RG3 a referee's email or any other number is caught too", function () {
   const hits = g.contactHits("References: Dana Ruiz, dana.ruiz@uwhealth.org, (312) 555-0144", WHO, ALLOW);
   assert.deepEqual(hits.map(function (h) { return h.kind; }), ["email", "phone"]);
