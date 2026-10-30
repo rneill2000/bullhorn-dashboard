@@ -162,6 +162,10 @@ img{display:block}
 .contact .reach a{white-space:nowrap;display:inline-flex;align-items:center;min-height:32px}
 .contact .btn.primary{background:#fff;color:var(--navy)}
 .contact-who{display:flex;gap:18px;align-items:center}
+.contact-acts{display:flex;gap:10px;flex-wrap:wrap}
+.contact .btn.txt{background:transparent;color:#fff;border-color:rgba(255,255,255,.45);display:inline-flex;align-items:center;gap:8px}
+.contact .btn.txt:hover{background:rgba(255,255,255,.12)}
+.contact .btn.txt::before{content:"";width:18px;height:18px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'/%3E%3C/svg%3E") center/contain no-repeat}
 .contact-face{width:72px;height:72px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.25);flex-shrink:0;background:#1d3a55}
 .contact-face.ini{display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:24px;color:#fff;background:var(--blue)}
 .top .shared .by{display:inline-flex;align-items:center;gap:10px}
@@ -328,6 +332,12 @@ body.editing .editor{transform:none}
   }
   /* "Beaker Clinical Pathology" → "Beaker Clinical Pathology Certified" (unless it already says so). */
   function certified(x) { return /certif/i.test(x) ? x : x + " Certified"; }
+  /* One tap to text: sms: with the message started. "?&body=" works on both iPhone and Android. */
+  function smsHref(num, body) {
+    var digits = String(num || "").replace(/[^\d+]/g, "");
+    if (digits.replace(/\D/g, "").length < 10) return "";
+    return "sms:" + digits + "?&body=" + encodeURIComponent(body || "");
+  }
   function contactFirst() { return first(data.contact.name); }
   /* The Anura contact's real headshot (anuraconnect.com/about), initials if there isn't one. */
   function face(ct, cls) {
@@ -660,7 +670,10 @@ body.editing .editor{transform:none}
           ct.email ? el("a", { href: "mailto:" + ct.email, text: ct.email }) : null,
         ]),
       ])]),
-      view === "compare" || c.feedback ? null : el("button", { class: "btn primary", type: "button", text: "Interview " + first(c.name), onclick: function () { decide(c, "interview"); } }),
+      el("div", { class: "contact-acts" }, [
+        smsHref(ct.textPhone || ct.phone) ? el("a", { class: "btn primary txt", href: smsHref(ct.textPhone || ct.phone, "Hi " + first(ct.name) + ", " + (data.viewer && data.viewer.known ? "it's " + first(data.viewer.name) + ". " : "") + "Question about " + (view === "compare" ? "the " + job + " candidates" : c.name + " for " + job) + ": "), text: "Text " + first(ct.name), "aria-label": "Text " + ct.name }) : null,
+        view === "compare" || c.feedback ? null : el("button", { class: "btn primary", type: "button", text: "Interview " + first(c.name), onclick: function () { decide(c, "interview"); } }),
+      ]),
     ])]));
     document.title = (view === "compare" ? "Candidates for " + job : c.name) + " | Anura Connect";
     if (hash === "interview" && !c.feedback) { setTimeout(function () { decide(c, "interview"); }, 50); history.replaceState(null, "", location.pathname + location.search); }

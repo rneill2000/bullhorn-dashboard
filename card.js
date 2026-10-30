@@ -1059,7 +1059,7 @@ function registerCard(app, deps) {
 
   function contactOf(link) {
     const r = link && link.recruiter ? (typeof link.recruiter === "string" ? JSON.parse(link.recruiter) : link.recruiter) : {};
-    return { name: r.name || "Anura Connect", title: r.title || "", phone: r.phone || "", email: r.email || "", photoUrl: teamPhoto(r.name) };
+    return { name: r.name || "Anura Connect", title: r.title || "", phone: r.phone || "", textPhone: r.mobile || r.phone || "", email: r.email || "", photoUrl: teamPhoto(r.name) };
   }
 
   async function publicView(token, otherId, opts) {
@@ -1213,7 +1213,8 @@ function registerCard(app, deps) {
     if (c && (c.cu_email || c.owner_email)) {
       const n = niceName(c.cu_name || c.owner_name || "");
       const email = c.cu_email || c.owner_email || "";
-      return { name: n, title: c.occupation || "", phone: c.phone || c.mobile || await forgePhone(c.owner_id, email), email: email, photoUrl: teamPhoto(n) };
+      const phone = c.phone || c.mobile || await forgePhone(c.owner_id, email);
+      return { name: n, title: c.occupation || "", phone: phone, textPhone: c.mobile || phone, email: email, photoUrl: teamPhoto(n) };
     }
     const l = await db.getOne("SELECT recruiter FROM card_links WHERE client_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1", [clientId]);
     return l ? contactOf(l) : { name: "Anura Connect", title: "", phone: "", email: "" };

@@ -201,7 +201,7 @@ function registerDemo(app, deps) {
           phone = f ? f.phone : "";
         } catch (e) { phone = ""; }
       }
-      return Object.assign({}, CONTACT, { title: (u && u.occupation) || CONTACT.title, phone: phone });
+      return Object.assign({}, CONTACT, { title: (u && u.occupation) || CONTACT.title, phone: phone, textPhone: (u && u.mobile) || phone });
     } catch (e) { return CONTACT; }
   }
 
