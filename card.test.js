@@ -827,6 +827,21 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       await req(h.port, "POST", "/api/cards/links/" + m.id + "/revoke", { headers: rec, body: {} });
     });
 
+    await t.test("K54 the candidate isn't asked for a LinkedIn link we already have", async function () {
+      process.env.RESUME_TOOL_API_KEY = "k".repeat(64);
+      try {
+        await h.db.query("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS description TEXT, ADD COLUMN IF NOT EXISTS raw_json JSONB, ADD COLUMN IF NOT EXISTS skill_list TEXT");
+        const c = (await h.db.query("SELECT last_name, description FROM candidates WHERE id = 1")).rows[0];
+        const slug = String(c.last_name || "x").toLowerCase().replace(/[^a-z]/g, "") + "-epic";
+        await h.db.query("UPDATE candidates SET description = COALESCE(description, '') || ' linkedin.com/in/" + slug + "' WHERE id = 1");
+        const ok = await req(h.port, "POST", "/api/card-integration/edit-link", { headers: { authorization: "Bearer " + "k".repeat(64) }, body: { bullhorn_candidate_id: 1 } });
+        const tok = ok.json.url.split("/card-edit/")[1];
+        const got = (await req(h.port, "GET", "/api/card-edit/" + tok)).json;
+        assert.equal(got.known.linkedin, "https://www.linkedin.com/in/" + slug);
+        await h.db.query("UPDATE candidates SET description = $1 WHERE id = 1", [c.description]);
+      } finally { delete process.env.RESUME_TOOL_API_KEY; }
+    });
+
     await t.test("K52 the résumé tool gets a candidate's Card setup link with the shared key", async function () {
       const url = "/api/card-integration/edit-link";
       delete process.env.RESUME_TOOL_API_KEY;

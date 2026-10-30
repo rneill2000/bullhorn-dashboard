@@ -1698,8 +1698,12 @@ function registerCard(app, deps) {
       const live = await profileFor(link.candidate_id);
       await db.query("UPDATE card_edit_links SET last_used_at = now() WHERE id = $1", [link.id]);
       const photo = draft && draft.photo_changed ? !!draft.has_photo : !!(live && live.has_photo);
+      // What we already have (résumé tool, then Bullhorn), so the candidate isn't asked to paste it again.
+      let knownLinkedin = "";
+      try { knownLinkedin = (await extrasFor({ candidate_id: link.candidate_id }, {})).linkedin || ""; } catch (e) { knownLinkedin = ""; }
       res.json({
         state: "active",
+        known: { linkedin: knownLinkedin },
         candidate: {
           firstName: niceName(cand && cand.first_name),
           name: personName(cand),

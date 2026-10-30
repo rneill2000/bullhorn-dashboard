@@ -177,3 +177,4 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K51 | Hide a submittal from the client (Card, comparison, health page) and show it again; Placed shows as Hired | card.test.js |
 | K52 | Résumé tool gets a candidate's Card setup link with the shared key (503 unset, 401 wrong key, 404 unknown candidate) | card.test.js |
 | K53 | Bullhorn relay for the résumé tool: shared key, allowlisted reads and PDF upload only, dashboard token, one re-sign-in on 401 | bh-relay.test.js |
+| K54 | Candidate Card edit page shows the LinkedIn link already on file (résumé tool or Bullhorn) instead of asking for it | card.test.js |

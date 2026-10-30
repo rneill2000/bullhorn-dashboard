@@ -151,6 +151,9 @@ input[type=file]{position:absolute;left:-9999px}
   .step .nav .btn.primary{flex:1;max-width:260px}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+  .known { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; padding: 10px 12px; border: 1px solid var(--line, #d6dee5); border-radius: 10px; background: var(--soft, #f4f8fa); }
+  .known .tick { color: #1a7f4b; font-weight: 700; }
+  .linkish { background: none; border: 0; padding: 0; color: var(--blue, #176087); text-decoration: underline; cursor: pointer; font: inherit; }
 </style>
 </head>
 <body>
@@ -307,7 +310,23 @@ input[type=file]{position:absolute;left:-9999px}
     return [
       el("h2", { text: "Introduce yourself" }),
       el("p", { class: "sub", text: "Two short things a hiring manager reads first. Write it the way you'd say it." }),
-      el("div", { class: "body" }, a.map(function (f) { return field(f, { placeholder: EX[f.key] || "", rows: f.key === "intro" ? "5" : null }); })),
+      el("div", { class: "body" }, a.map(function (f) {
+        // Already on file (résumé or Bullhorn): show it, don't ask for it. They can still change it.
+        var known = f.key === "linkedin" && !S.fields.linkedin && S.known && S.known.linkedin;
+        if (known) {
+          var holder = el("div", { class: "field", id: "w-linkedin" });
+          var change = el("button", { type: "button", class: "linkish", text: "Change" });
+          change.addEventListener("click", function () { holder.replaceWith(field(f, { placeholder: EX[f.key] || "" })); var i = $("i-linkedin"); if (i) { i.value = S.known.linkedin; i.focus(); } });
+          holder.appendChild(el("label", { text: f.label }));
+          holder.appendChild(el("div", { class: "known" }, [
+            el("span", { class: "tick", "aria-hidden": "true", text: "\u2713" }),
+            el("span", { text: S.known.linkedin.replace(/^https:\/\/www\./, "") + " (already on file) " }),
+            change,
+          ]));
+          return holder;
+        }
+        return field(f, { placeholder: EX[f.key] || "", rows: f.key === "intro" ? "5" : null });
+      })),
     ];
   }
   function stepCulture() {
