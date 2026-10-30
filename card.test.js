@@ -752,6 +752,15 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.deepEqual(r.json.card.references, [], "a reference the recruiter removed stays off after a redraft");
     });
 
+    await t.test("K48 résumés side by side: the PDF viewer is served same-origin, nothing else from that path", async function () {
+      const js = await req(h.port, "GET", "/card-assets/pdf.min.js");
+      assert.equal(js.status, 200);
+      assert.match(js.headers["content-type"], /javascript/);
+      assert.equal((await req(h.port, "GET", "/card-assets/pdf.worker.min.js")).status, 200);
+      assert.equal((await req(h.port, "GET", "/card-assets/..%2Fpackage.json")).status, 404);
+      assert.equal((await req(h.port, "GET", "/card-assets/pdf.js")).status, 404);
+    });
+
     await t.test("K18 public pages are served with a strict CSP and the recruiter page is not public", async function () {
       const page = await req(h.port, "GET", "/card/" + J);
       assert.equal(page.status, 200);

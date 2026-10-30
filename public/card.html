@@ -37,7 +37,8 @@ img{display:block}
 .context h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,3.2vw,34px);line-height:1.15;letter-spacing:-.02em;color:var(--navy)}
 .context h1 span{color:var(--blue)}
 .tabs{display:flex;gap:4px;margin-top:18px;border-bottom:1px solid var(--line)}
-.tabs button{font:inherit;font-size:15px;font-weight:600;color:var(--muted);background:none;border:0;padding:10px 14px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-1px}
+.tabs{overflow-x:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}
+.tabs button{white-space:nowrap;flex-shrink:0;font:inherit;font-size:15px;font-weight:600;color:var(--muted);background:none;border:0;padding:10px 14px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-1px}
 .tabs button[aria-selected="true"]{color:var(--navy);border-bottom-color:var(--blue)}
 
 .main-in{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
@@ -137,6 +138,33 @@ img{display:block}
 .compare .standout{font-size:14px;font-style:italic;color:var(--navy);margin-top:6px;max-width:34ch}
 .resume-frame{width:100%;height:880px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
 
+/* Résumés side by side */
+.rs-pick{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px}
+.rs-lbl{font-size:14px;color:var(--muted);margin-right:4px}
+.rs-chip{font:inherit;font-size:14px;font-weight:600;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:999px;padding:7px 14px;cursor:pointer;min-height:36px}
+.rs-chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.rs-grid{display:grid;gap:16px;align-items:start}
+.rs-grid.rs-n2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.rs-grid.rs-n3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.rs-grid.rs-n1{grid-template-columns:minmax(0,760px)}
+.rs-col{background:var(--paper);border-radius:14px;box-shadow:0 1px 0 var(--line);overflow:hidden}
+.rs-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper);border-bottom:1px solid var(--line)}
+.rs-face{width:36px;height:42px;border-radius:7px;object-fit:cover;background:var(--fog);flex-shrink:0;font-size:14px}
+.rs-who{display:flex;flex-direction:column;min-width:0;flex:1}
+.rs-who b{font-family:var(--display);font-size:15px;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rs-who span{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rs-acts{display:flex;gap:2px;font-size:13px;font-weight:600}
+.rs-acts a{display:inline-flex;align-items:center;min-height:32px;padding:0 8px;border-radius:7px}
+.rs-acts a:hover{background:var(--fog)}
+.rs-doc{background:#E9EEF2;padding:10px;display:grid;gap:10px;min-height:300px}
+.rs-page{width:100%;height:auto;display:block;background:#fff;box-shadow:0 1px 3px rgba(7,24,42,.18);cursor:zoom-in}
+.rs-wait{font-size:14px;color:var(--muted);padding:20px 6px;text-align:center}
+@media (max-width:860px){
+  .rs-grid.rs-n2,.rs-grid.rs-n3{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .rs-head{flex-wrap:wrap;padding:8px}
+  .rs-acts{width:100%}
+  .rs-doc{padding:6px;gap:6px}
+}
 .compare{background:var(--paper);border-radius:16px;box-shadow:0 1px 0 var(--line);overflow:hidden}
 .compare table{width:100%;border-collapse:collapse;font-size:15px}
 .compare th{text-align:left;font-size:13px;font-weight:600;color:var(--muted);padding:14px 18px;border-bottom:1px solid var(--line);background:#F7FAFB}
@@ -616,6 +644,83 @@ body.editing .editor{transform:none}
     return el("div", { class: "story" }, parts);
   }
 
+  /* ── Résumés side by side: the actual résumés in columns, drawn with PDF.js so every device shows the
+     same thing, page 1 next to page 1. Pick up to 3 (2 on a phone). One scroll moves them together. ── */
+  var pdfjsReady = null, resumePick = null;
+  function loadPdfJs() {
+    if (pdfjsReady) return pdfjsReady;
+    pdfjsReady = new Promise(function (resolve, reject) {
+      var sc = document.createElement("script");
+      sc.src = "/card-assets/pdf.min.js";
+      sc.onload = function () { window.pdfjsLib.GlobalWorkerOptions.workerSrc = "/card-assets/pdf.worker.min.js"; resolve(window.pdfjsLib); };
+      sc.onerror = function () { pdfjsReady = null; reject(new Error("viewer")); };
+      document.head.appendChild(sc);
+    });
+    return pdfjsReady;
+  }
+  function drawResume(url, box) {
+    box.innerHTML = "";
+    box.appendChild(el("p", { class: "rs-wait", text: "Loading résumé…" }));
+    loadPdfJs().then(function (lib) {
+      return lib.getDocument({ url: url, isEvalSupported: false, disableFontFace: false }).promise;
+    }).then(function (pdf) {
+      box.innerHTML = "";
+      var n = Math.min(pdf.numPages, 6), chain = Promise.resolve();
+      for (var i = 1; i <= n; i++) (function (i) {
+        chain = chain.then(function () { return pdf.getPage(i); }).then(function (page) {
+          var w = box.clientWidth || 320, base = page.getViewport({ scale: 1 });
+          var scale = w / base.width, dpr = Math.min(window.devicePixelRatio || 1, 2);
+          var vp = page.getViewport({ scale: scale * dpr });
+          var cv = el("canvas", { class: "rs-page", width: String(Math.floor(vp.width)), height: String(Math.floor(vp.height)), role: "img", "aria-label": "Page " + i });
+          cv.title = "Open full size";
+          cv.addEventListener("click", function () { window.open(url, "_blank", "noopener"); });
+          box.appendChild(cv);
+          return page.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise;
+        });
+      })(i);
+      return chain.then(function () { if (pdf.numPages > n) box.appendChild(el("p", { class: "rs-wait", text: "First " + n + " pages shown. Download for the rest." })); });
+    }).catch(function () {
+      box.innerHTML = "";
+      box.appendChild(el("p", { class: "rs-wait", text: "This résumé didn't load here. Use Download." }));
+    });
+  }
+  function resumesView(list) {
+    var max = window.matchMedia("(max-width: 860px)").matches ? 2 : 3;
+    if (!resumePick) resumePick = list.slice(0, max).map(function (x) { return x.id; });
+    resumePick = resumePick.filter(function (id) { return list.some(function (x) { return x.id === id; }); }).slice(0, max);
+    var picker = el("div", { class: "rs-pick", role: "group", "aria-label": "Choose résumés to compare" }, [el("span", { class: "rs-lbl", text: "Compare:" })].concat(list.map(function (x) {
+      var on = resumePick.indexOf(x.id) >= 0;
+      return el("button", { type: "button", class: "rs-chip" + (on ? " on" : ""), "aria-pressed": String(on), text: x.name, onclick: function () {
+        var i = resumePick.indexOf(x.id);
+        if (i >= 0) { if (resumePick.length > 1) resumePick.splice(i, 1); }
+        else { resumePick.push(x.id); if (resumePick.length > max) resumePick.shift(); }
+        render();
+      } });
+    })));
+    var chosen = resumePick.map(function (id) { return list.filter(function (x) { return x.id === id; })[0]; });
+    var cols = chosen.map(function (x) {
+      var box = el("div", { class: "rs-doc" });
+      var col = el("section", { class: "rs-col", "aria-label": x.name + " résumé" }, [
+        el("header", { class: "rs-head" }, [
+          photo(x, "rs-face"),
+          el("div", { class: "rs-who" }, [el("b", { text: x.name }), el("span", { text: [x.epicRole, x.rate].filter(Boolean).join(" · ") })]),
+          el("span", { class: "rs-acts" }, [
+            el("a", { href: "#c=" + x.id, text: "Card" }),
+            el("a", { href: api + "/resume/" + x.id + "?download=1", text: "Download" }),
+          ]),
+        ]),
+        box,
+      ]);
+      setTimeout(function () { drawResume(api + "/resume/" + x.id, box); }, 0);
+      return col;
+    });
+    return el("div", {}, [
+      list.length > max ? picker : null,
+      el("div", { class: "rs-grid rs-n" + chosen.length }, cols),
+      el("p", { class: "compare-note", text: "Each column is the résumé as we sent it. Scroll once to move through them together." }),
+    ]);
+  }
+
   function compareView() {
     var rows = data.candidates.map(function (c) {
       return el("tr", {}, [
@@ -641,16 +746,18 @@ body.editing .editor{transform:none}
 
   function render() {
     var hash = location.hash.slice(1);
-    var view = hash === "compare" ? "compare" : "card";
+    var view = hash === "compare" ? "compare" : (hash === "resumes" ? "resumes" : "card");
+    var withResume = data.candidates.filter(function (x) { return x.hasResume; });
     var c = data.card;
     app.innerHTML = "";
     var job = data.job.title ? data.job.title : "this role";
-    var h1 = el("h1", {}, view === "compare"
-      ? ["Candidates for " + job + (data.job.clientName ? " at " + data.job.clientName : "")]
+    var h1 = el("h1", {}, view === "compare" || view === "resumes"
+      ? [(view === "resumes" ? "Résumés for " : "Candidates for ") + job + (data.job.clientName ? " at " + data.job.clientName : "")]
       : [c.name + " for " + job]);
     var tabs = el("div", { class: "tabs", role: "tablist" }, [
       el("button", { role: "tab", "aria-selected": String(view === "card"), text: first(c.name) + "'s Card", onclick: function () { location.hash = c.id === data.sent ? "" : "c=" + c.id; } }),
       data.candidates.length > 1 ? el("button", { role: "tab", "aria-selected": String(view === "compare"), text: "Compare all " + data.candidates.length, onclick: function () { location.hash = "compare"; } }) : null,
+      withResume.length > 1 ? el("button", { role: "tab", "aria-selected": String(view === "resumes"), text: "Résumés side by side", onclick: function () { location.hash = "resumes"; } }) : null,
     ]);
     var sysb = data.system;
     app.appendChild(el("div", { class: "context" }, [
@@ -658,12 +765,13 @@ body.editing .editor{transform:none}
       h1, tabs]));
     var main = el("div", { class: "main-in" });
     if (view === "compare") main.appendChild(compareView());
+    else if (view === "resumes") main.appendChild(resumesView(withResume));
     else main.appendChild(el("div", { class: "layout" }, [badge(c), story(c)]));
     app.appendChild(main);
     var ct = data.contact;
     app.appendChild(el("div", { class: "contact" }, [el("div", { class: "contact-inner" }, [
       el("div", { class: "contact-who" }, [face(ct, "contact-face"), el("div", {}, [
-        el("h2", { text: "Questions about " + (view === "compare" ? "any of them" : first(c.name)) + "?" }),
+        el("h2", { text: "Questions about " + (view !== "card" ? "any of them" : first(c.name)) + "?" }),
         el("p", { text: ct.name + (ct.title ? ", " + ct.title : "") }),
         el("p", { class: "reach" }, [
           ct.phone ? el("a", { href: "tel:" + ct.phone.replace(/[^\d+]/g, ""), text: ct.phone }) : null,
@@ -671,11 +779,11 @@ body.editing .editor{transform:none}
         ]),
       ])]),
       el("div", { class: "contact-acts" }, [
-        smsHref(ct.textPhone || ct.phone) ? el("a", { class: "btn primary txt", href: smsHref(ct.textPhone || ct.phone, "Hi " + first(ct.name) + ", " + (data.viewer && data.viewer.known ? "it's " + first(data.viewer.name) + ". " : "") + "Question about " + (view === "compare" ? "the " + job + " candidates" : c.name + " for " + job) + ": "), text: "Text " + first(ct.name), "aria-label": "Text " + ct.name }) : null,
-        view === "compare" || c.feedback ? null : el("button", { class: "btn primary", type: "button", text: "Interview " + first(c.name), onclick: function () { decide(c, "interview"); } }),
+        smsHref(ct.textPhone || ct.phone) ? el("a", { class: "btn primary txt", href: smsHref(ct.textPhone || ct.phone, "Hi " + first(ct.name) + ", " + (data.viewer && data.viewer.known ? "it's " + first(data.viewer.name) + ". " : "") + "Question about " + (view !== "card" ? "the " + job + " candidates" : c.name + " for " + job) + ": "), text: "Text " + first(ct.name), "aria-label": "Text " + ct.name }) : null,
+        view !== "card" || c.feedback ? null : el("button", { class: "btn primary", type: "button", text: "Interview " + first(c.name), onclick: function () { decide(c, "interview"); } }),
       ]),
     ])]));
-    document.title = (view === "compare" ? "Candidates for " + job : c.name) + " | Anura Connect";
+    document.title = (view === "compare" ? "Candidates for " + job : view === "resumes" ? "Résumés for " + job : c.name) + " | Anura Connect";
     if (hash === "interview" && !c.feedback) { setTimeout(function () { decide(c, "interview"); }, 50); history.replaceState(null, "", location.pathname + location.search); }
     if (hash === "resume") {
       var target = document.getElementById("resume");
@@ -975,6 +1083,7 @@ body.editing .editor{transform:none}
     if (!data || data.state !== "active") return load();
     var hash = location.hash.slice(1);
     if (hash === "compare") { render(); seen("compare"); return; }
+    if (hash === "resumes") { render(); seen("resumes"); return; }
     if (hash === "resume" || hash === "interview") { render(); return; }
     var other = (hash.match(/^c=([a-z]+)$/) || [])[1];
     if ((other || data.sent) !== data.card.id) load(); else render();

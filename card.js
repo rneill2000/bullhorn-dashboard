@@ -2227,6 +2227,17 @@ function registerCard(app, deps) {
     };
   }
 
+  /* PDF.js (already a dependency) for the side-by-side résumé view: two fixed files, same origin, so the page's CSP holds. */
+  const PDFJS = { "pdf.min.js": "pdf.min.js", "pdf.worker.min.js": "pdf.worker.min.js" };
+  app.get("/card-assets/:file", function (req, res) {
+    const f = PDFJS[req.params.file];
+    if (!f) return res.status(404).end();
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.type("application/javascript");
+    res.sendFile(path.join(path.dirname(require.resolve("pdfjs-dist/package.json")), "legacy", "build", f));
+  });
+
   app.get("/h/:token", limiter, function (req, res) {
     setPublicHeaders(res, { page: true });
     res.sendFile(path.join(pagesDir, "health.html"));

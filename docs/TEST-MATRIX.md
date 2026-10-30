@@ -171,3 +171,4 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K45 | Bullhorn → Cards: a résumé with contact info is left off the auto Card | forge.test.js |
 | K46 | Client decisions → Bullhorn: note linked to the job, stage moves forward only, Undo restores, passed candidates stay visible as Passed | card.test.js |
 | K47 | Daily digest: client activity on Cards (decisions with Bullhorn stage, Cards opened, health system pages), scoped to the recipient's jobs | digest.test.js |
+| K48 | Résumés side by side: PDF viewer files served same-origin (two fixed files only) | card.test.js |

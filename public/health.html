@@ -64,6 +64,10 @@ a{color:var(--blue)}
 .role-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;padding:20px 24px 16px;border-bottom:1px solid var(--fog);flex-wrap:wrap}
 .role-head h3{font-family:var(--display);font-weight:700;font-size:21px;color:var(--navy);letter-spacing:-.01em}
 .role-head .meta{font-size:15px;color:var(--muted);margin-top:2px}
+.head-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.cmp{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--paper);color:var(--blue);font-size:14px;font-weight:700;text-decoration:none}
+.cmp::before{content:"";width:14px;height:14px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 4h8v16H3zM13 4h8v16h-8z'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 4h8v16H3zM13 4h8v16h-8z'/%3E%3C/svg%3E") center/contain no-repeat}
+.cmp:hover{border-color:var(--sky)}
 .count{font-size:14px;font-weight:700;color:var(--blue);background:var(--accent-soft);padding:5px 12px;border-radius:999px;white-space:nowrap}
 
 .lineup{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(250px,1fr);gap:0;overflow-x:auto;scroll-snap-type:x mandatory}
@@ -265,13 +269,22 @@ a{color:var(--blue)}
     return el("div", { class: cls }, [ph, el("div", { class: "body" }, body), go, ask2]);
   }
 
+  function resumesLink(r) {
+    var withR = r.candidates.filter(function (c) { return c.hasResume; });
+    if (withR.length < 2) return null;
+    return el("a", { class: "cmp", href: withR[0].href + "#resumes", text: "Compare résumés" });
+  }
+
   function roleCard(r, d) {
     var many = r.candidates.length > 1;
     var meta = [r.manager ? "Hiring manager: " + r.manager.name + (r.manager.title ? ", " + r.manager.title : "") : null, r.location || null].filter(Boolean).join(". ");
     return el("article", { class: "role" + (many ? "" : " single") }, [
       el("div", { class: "role-head" }, [
         el("div", {}, [el("h3", { text: r.title }), meta ? el("p", { class: "meta", text: meta }) : null]),
-        el("span", { class: "count", text: many ? plural(r.candidates.length, "candidate") + ", side by side" : "1 candidate" }),
+        el("div", { class: "head-acts" }, [
+          resumesLink(r),
+          el("span", { class: "count", text: many ? plural(r.candidates.length, "candidate") + ", side by side" : "1 candidate" }),
+        ]),
       ]),
       el("div", { class: "lineup" }, r.candidates.map(function (c) { c.roleTitle = r.title; return candCol(c, d, many); })),
       many ? el("p", { class: "swipe", text: "Swipe to see all " + r.candidates.length }) : null,
