@@ -174,3 +174,4 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K48 | Résumés side by side: PDF viewer files served same-origin (two fixed files only) | card.test.js |
 | K49 | Setup check: team mobile/phone/title/photo, clients with open jobs and no owner, résumé tool connection | card.test.js |
 | K50 | Account manager = client company owner in Bullhorn (cached daily, falls back to open-job owner); team mobiles drive Text; no placeholder photo | card.test.js |
+| K51 | Hide a submittal from the client (Card, comparison, health page) and show it again; Placed shows as Hired | card.test.js |

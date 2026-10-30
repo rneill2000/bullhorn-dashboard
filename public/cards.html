@@ -144,7 +144,8 @@ header a{display:inline-flex;align-items:center;min-height:32px}
           '<td><span class="pill ' + l.state + '">' + l.state + '</span>' +
           (l.feedback ? '<div style="margin-top:4px;font-size:13px">' + fbText(l.feedback) + '</div>' : '') +
           (l.held && l.held.length && l.state === "active" ? '<div class="muted" style="color:#9a3412;margin-top:4px">Held back from the client: ' + esc(l.held.join(", ")) + '. It has contact info or is a scan. Upload a clean PDF to Bullhorn.</div>' : '') +
-          (l.state === "active" ? '<div class="row" style="margin-top:6px"><a class="btn" href="/cards/preview/' + l.id + '" target="_blank" rel="noopener">Preview as client</a><button class="btn" data-rate="' + l.id + '">Use Bullhorn rate</button><button class="btn danger" title="Pulls this candidate from the client\'s Card and comparison" data-revoke="' + l.id + '">Turn off</button></div>' : '') +
+          (l.state === "active" ? '<div class="row" style="margin-top:6px"><a class="btn" href="/cards/preview/' + l.id + '" target="_blank" rel="noopener">Preview as client</a><button class="btn" data-rate="' + l.id + '">Use Bullhorn rate</button><button class="btn danger" title="Takes this candidate off the client\'s Card, comparison and health system page. You can show them again." data-revoke="' + l.id + '">Hide from client</button></div>' : '') +
+          (l.state === "revoked" && l.hiddenBy ? '<div class="muted" style="margin-top:6px">Hidden by ' + esc(l.hiddenBy) + ' <button class="btn" data-restore="' + l.id + '">Show again</button></div>' : '') +
           '</td></tr>' +
           (!withCandidate && l.references && l.references.length && l.state === "active" ? '<tr><td colspan="5" style="background:#f8fafc"><div class="muted" style="margin-bottom:4px">References on this Card</div>' +
             l.references.map(function (r, i) {
@@ -157,8 +158,13 @@ header a{display:inline-flex;align-items:center;min-height:32px}
     root.querySelectorAll("[data-cand]").forEach(function (b) { b.onclick = function () { openCandidate(b.getAttribute("data-cand")); }; });
     root.querySelectorAll("[data-revoke]").forEach(function (b) {
       b.onclick = function () {
-        if (!confirm("Turn off this link? The client will see that the Card is closed.")) return;
-        call("POST", "/api/cards/links/" + b.getAttribute("data-revoke") + "/revoke").then(function () { toast("Link turned off"); reload(); }).catch(function (e) { toast(e.message); });
+        if (!confirm("Hide this candidate from the client? They come off the Card, the comparison and the health system page. You can show them again.")) return;
+        call("POST", "/api/cards/links/" + b.getAttribute("data-revoke") + "/revoke").then(function () { toast("Hidden from the client. Show again anytime."); reload(); }).catch(function (e) { toast(e.message); });
+      };
+    });
+    root.querySelectorAll("[data-restore]").forEach(function (b) {
+      b.onclick = function () {
+        call("POST", "/api/cards/links/" + b.getAttribute("data-restore") + "/restore").then(function () { toast("Back on the client's pages"); reload(); }).catch(function (e) { toast(e.message); });
       };
     });
     root.querySelectorAll("[data-refrm]").forEach(function (b) {

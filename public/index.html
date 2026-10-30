@@ -1367,12 +1367,18 @@ function detectFileTag(f) {
   return null;
 }
 
+/* Hide a submittal from the client (or show it again) right from the candidate page. */
+function cardHide(linkId, candidateId, hide) {
+  if (hide && !confirm("Hide this candidate from the client? They come off the Card, the comparison and the health system page. You can show them again.")) return;
+  apiFetch("cards/links/" + linkId + (hide ? "/revoke" : "/restore"), { method: "POST", body: {} }).then(function () { loadCandidateCards(candidateId); }).catch(function (e) { alert(e.message); });
+}
+
 /* Anura Connect Cards for this candidate: where they've been sent, opens, and what the client decided. */
 function loadCandidateCards(candidateId) {
   apiFetch("cards/candidate/" + candidateId).then(function (d) {
     var el = document.getElementById("detail-cards");
     if (!el) return;
-    var links = (d.links || []).filter(function (l) { return l.state !== "revoked"; });
+    var links = (d.links || []).filter(function (l) { return l.state !== "revoked" || l.hiddenBy; });
     var h = '<h4>Anura Connect Cards <a href="/cards?candidate=' + candidateId + '" style="font-size:12px;font-weight:600;margin-left:8px;color:#176087">Open in Cards</a></h4>';
     if (!links.length) {
       h += '<div style="color:#94a3b8;font-size:13px">No Card yet. One is made when this candidate is sent to a client (Submittal Forge or a client-submitted status in Bullhorn).</div>';
@@ -1384,7 +1390,8 @@ function loadCandidateCards(candidateId) {
           : '<b>Passed</b>' + (fb.by ? " by " + esc(fb.by) : "") + (fb.reason ? " (" + esc(fb.reason) + ")" : ""));
         return '<div style="padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px">' +
           '<div><b>' + esc(l.jobTitle || "") + '</b> <span style="color:#64748b">' + esc(l.clientName || "") + '</span>' +
-          (l.state === "active" ? ' <a href="/cards/preview/' + l.id + '" target="_blank" rel="noopener" style="margin-left:6px;color:#176087">Preview</a>' : ' <span style="color:#94a3b8">(' + esc(l.state) + ')</span>') + '</div>' +
+          (l.state === "active" ? ' <a href="/cards/preview/' + l.id + '" target="_blank" rel="noopener" style="margin-left:6px;color:#176087">Preview</a> <button onclick="cardHide(' + l.id + ',' + candidateId + ',true)" style="margin-left:6px;background:none;border:0;color:#b91c1c;font-weight:600;cursor:pointer;font-size:12px">Hide from client</button>'
+            : (l.hiddenBy ? ' <span style="color:#94a3b8">(hidden)</span> <button onclick="cardHide(' + l.id + ',' + candidateId + ',false)" style="margin-left:6px;background:none;border:0;color:#176087;font-weight:600;cursor:pointer;font-size:12px">Show again</button>' : ' <span style="color:#94a3b8">(' + esc(l.state) + ')</span>')) + '</div>' +
           '<div style="color:#64748b">' + (l.views || 0) + ' client open' + (l.views === 1 ? "" : "s") + (l.lastViewedAt ? ", last " + esc(new Date(l.lastViewedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })) : "") + (dec ? " · " + dec : "") + '</div></div>';
       }).join("");
     }

@@ -821,6 +821,13 @@ body.editing .editor{transform:none}
       el("span", {}, [el("b", { text: "Preview" }), " This is exactly what the client sees. Your visits don't count as opens."]),
       el("span", { class: "acts" }, [
         el("a", { class: "btn plain", href: "/cards", text: "Back to Cards" }),
+        el("button", { class: "btn plain", type: "button", text: "Hide from client", onclick: function () {
+          if (!confirm("Hide " + data.card.name + " from the client? They come off the Card, the comparison and the health system page. You can show them again from Cards.")) return;
+          fetch("/api/cards/links/" + previewId + "/revoke", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) {
+            if (!r.ok) throw new Error();
+            location.href = "/cards?candidate=" + (data.editable && data.editable.candidateId ? data.editable.candidateId : "");
+          }).catch(function () { alertBar("That didn't save. Try again."); });
+        } }),
         data.editable ? el("button", { class: "btn primary", type: "button", text: "Edit this Card", onclick: openEditor }) : null,
       ]),
     ]);

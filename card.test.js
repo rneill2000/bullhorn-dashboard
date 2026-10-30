@@ -805,6 +805,28 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal(card.teamPhoto("Blair Settles"), "", "no placeholder photo for Blair");
     });
 
+    await t.test("K51 account managers hide a submittal from the client and show it again; Hired shows to the client", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      await h.db.query("INSERT INTO candidates (id, first_name, last_name, name, email, custom_text1, custom_text2, custom_text5, owner_id, date_last_modified) VALUES (9, 'Rae', 'Ito', 'Rae Ito', 'r9@x.com', 'Beaker CP', '', 'Beaker Analyst', 5, 1) ON CONFLICT (id) DO NOTHING");
+      await h.db.query("INSERT INTO submissions VALUES (19, 'Client Submission', 4, false) ON CONFLICT (id) DO UPDATE SET status = 'Client Submission'");
+      h.rates[19] = { amount: 150 };
+      const m = await h.mint({ submissionId: 19, candidateId: 9, candidateName: "Rae Ito", billRate: "$150/hr" });
+      const names = async function () { return (await req(h.port, "GET", "/api/card-public/" + J)).json.candidates.map(function (c) { return c.name; }); };
+      assert.ok((await names()).indexOf("Rae Ito") >= 0);
+      await req(h.port, "POST", "/api/cards/links/" + m.id + "/revoke", { headers: rec, body: {} });
+      assert.equal((await names()).indexOf("Rae Ito"), -1, "hidden from the comparison");
+      assert.equal((await req(h.port, "GET", "/card/" + m.url.split("/card/")[1])).status, 200);
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + m.url.split("/card/")[1])).json.state, "revoked", "her own link shows closed");
+      const cand = await req(h.port, "GET", "/api/cards/candidate/9", { headers: rec });
+      assert.equal(cand.json.links[0].hiddenBy, "ben@anuraconnect.com");
+      await req(h.port, "POST", "/api/cards/links/" + m.id + "/restore", { headers: rec, body: {} });
+      assert.ok((await names()).indexOf("Rae Ito") >= 0, "shown again");
+      await h.db.query("UPDATE submissions SET status = 'Placed' WHERE id = 19");
+      const rae = (await req(h.port, "GET", "/api/card-public/" + J)).json.candidates.filter(function (c) { return c.name === "Rae Ito"; })[0];
+      assert.equal(rae.stage, "Hired");
+      await req(h.port, "POST", "/api/cards/links/" + m.id + "/revoke", { headers: rec, body: {} });
+    });
+
     await t.test("K18 public pages are served with a strict CSP and the recruiter page is not public", async function () {
       const page = await req(h.port, "GET", "/card/" + J);
       assert.equal(page.status, 200);

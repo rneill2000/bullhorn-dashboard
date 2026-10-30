@@ -350,7 +350,7 @@ function careerFrom(work, placed) {
 /** Where the submission stands in Bullhorn, in words a client reads. "" while it's just submitted. */
 function stageOf(status) {
   const st = String(status || "").toLowerCase();
-  if (/placed/.test(st)) return "Placed";
+  if (/placed/.test(st)) return "Hired";
   if (/offer/.test(st) && !/reject|declin/.test(st)) return "Offer out";
   if (/interview/.test(st)) return "Interviewing";
   return "";
@@ -1950,6 +1950,7 @@ function registerCard(app, deps) {
       billDisplay: l.bill_display || "",
       feedback: l.fb_action && l.fb_action !== "reopen" ? { action: l.fb_action, by: l.fb_by || "", at: l.fb_at, reason: l.fb_reason || "", times: (Array.isArray(l.fb_slots) ? l.fb_slots : []).map(function (x) { return fmtSlot(x, l.fb_tz); }) } : null,
       held: (Array.isArray(l.docs) ? l.docs : []).filter(function (d) { return heldIds(l).indexOf(String(d.fileId)) >= 0; }).map(function (d) { return d.name || "Document"; }),
+      hiddenBy: l.revoked_at && !/draft failed/.test(String(l.revoked_by || "")) ? (l.revoked_by || "") : "",
       state: l.revoked_at ? "revoked" : (jobIsActive({ status: l.job_status, is_open: l.is_open, is_deleted: l.is_deleted }) ? "active" : "expired"),
     };
   }
@@ -2117,6 +2118,18 @@ function registerCard(app, deps) {
       await db.query("UPDATE card_links SET revoked_at = now(), revoked_by = $2 WHERE submission_id = $1 AND revoked_at IS NULL", [link.submission_id, who(req)]);
       rateCache.delete(String(link.submission_id));
       res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  /** Undo "Hide from client": a submission an account manager hid comes back (never one a failed draft turned off). */
+  app.post("/api/cards/links/:linkId/restore", async function (req, res) {
+    try {
+      await needDb();
+      const link = await db.getOne("SELECT submission_id FROM card_links WHERE id = $1", [digitsId(req.params.linkId)]);
+      if (!link) return res.status(404).json({ error: "Link not found." });
+      const r = await db.query("UPDATE card_links SET revoked_at = NULL, revoked_by = NULL WHERE submission_id = $1 AND revoked_at IS NOT NULL AND COALESCE(revoked_by, '') NOT LIKE '%draft failed%'", [link.submission_id]);
+      rateCache.delete(String(link.submission_id));
+      res.json({ ok: true, restored: r && r.rowCount != null ? r.rowCount : undefined });
     } catch (e) { fail(res, e); }
   });
 
