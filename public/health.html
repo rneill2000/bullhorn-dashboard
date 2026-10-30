@@ -46,7 +46,8 @@ a{color:var(--blue)}
 .contact .reach a{color:#fff;text-decoration:none;display:inline-flex;align-items:center;min-height:28px;word-break:break-all}
 .contact .reach a:first-child{font-family:var(--display);font-weight:700;font-size:18px;letter-spacing:.01em}
 .contact .reach a:hover{text-decoration:underline}
-.contact .acts a.txt{grid-column:1/-1;gap:8px}
+.contact .acts a.top{grid-column:1/-1}
+.contact .acts a.txt{gap:8px}
 .contact .acts a.txt::before{content:"";width:18px;height:18px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'/%3E%3C/svg%3E") center/contain no-repeat}
 .contact .acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
 .contact .acts a{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px}
@@ -226,9 +227,9 @@ a{color:var(--blue)}
         c.email ? el("a", { href: "mailto:" + c.email, text: c.email }) : null,
       ]) : null,
       el("div", { class: "acts" }, [
-        smsHref(c.textPhone || c.phone) ? el("a", { class: "p txt", href: smsHref(c.textPhone || c.phone, textOpener(c, d)), text: "Text " + first(c.name), "aria-label": "Text " + c.name }) : null,
-        tel ? el("a", { class: "s", href: tel, text: "Call" }) : null,
-        c.email ? el("a", { class: smsHref(c.textPhone || c.phone) ? "s" : "p", href: "mailto:" + c.email, text: smsHref(c.textPhone || c.phone) ? "Email" : "Email " + first(c.name) }) : null,
+        c.email ? el("a", { class: "p top", href: "mailto:" + c.email, text: "Email " + first(c.name) }) : null,
+        smsHref(c.textPhone || c.phone) ? el("a", { class: "s txt", href: smsHref(c.textPhone || c.phone, textOpener(c, d)), text: "Text", "aria-label": "Text " + c.name }) : null,
+        tel ? el("a", { class: "s", href: tel, text: "Call", "aria-label": "Call " + c.name }) : null,
       ]),
     ]);
   }
