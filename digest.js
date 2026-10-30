@@ -30,7 +30,7 @@ module.exports = function registerDigest(app, deps) {
       const oldest = Math.max.apply(null, jobs.map(function (j) { return Math.max.apply(null, j.candidates.map(function (x) { return x.daysWaiting || 0; })); }));
       return Object.assign({}, c, { jobs: jobs, count: count, oldest: oldest });
     }).filter(Boolean).sort(function (a, b) { return b.oldest - a.oldest || b.count - a.count; });
-    return { generatedAt: d.generatedAt, totalCandidates: clients.reduce(function (n, c) { return n + c.count; }, 0), clients: clients, forOwner: ownerName };
+    return { generatedAt: d.generatedAt, totalCandidates: clients.reduce(function (n, c) { return n + c.count; }, 0), clients: clients, forOwner: ownerName, cards: cardsFor(d.cards, ownerName) };
   }
   const SEND_HOUR_CT = 7;
   const DASH = "https://dashboard.anuraconnect.com";
@@ -103,13 +103,66 @@ module.exports = function registerDigest(app, deps) {
     });
     const out = Object.values(clients).map(function (c) { c.jobs = Object.values(c.jobs); c.count = c.jobs.reduce(function (n, j) { return n + j.candidates.length; }, 0); c.oldest = Math.max.apply(null, c.jobs.map(function (j) { return Math.max.apply(null, j.candidates.map(function (x) { return x.daysWaiting || 0; })); })); return c; })
       .sort(function (a, b) { return b.oldest - a.oldest || b.count - a.count; });
-    const digest = { generatedAt: new Date().toISOString(), totalCandidates: rows.length, clients: out };
+    const digest = { generatedAt: new Date().toISOString(), totalCandidates: rows.length, clients: out, cards: await cardActivity() };
     try {
       await require("./linkedin-graph").decorateDigest(db, digest);
     } catch (liErr) {
       console.log("[Digest] linkedin warmth:", liErr.message);
     }
     return digest;
+  }
+
+  /**
+   * What clients did on Anura Connect Cards since the last weekday digest (Monday covers the weekend):
+   * interview / pass decisions, and Cards or health system pages they opened.
+   */
+  async function cardActivity() {
+    const hours = chicagoNow().getDay() === 1 ? 72 : 24;
+    const out = { hours: hours, decisions: [], opened: [], pages: [] };
+    try {
+      out.decisions = await db.getAll(
+        "SELECT DISTINCT ON (f.submission_id) f.action, f.by_name, f.reason, f.created_at, f.bh_new_status, l.candidate_id, l.candidate_name, l.job_title, l.client_name, j.owner_name AS job_owner " +
+        "FROM card_feedback f JOIN LATERAL (SELECT candidate_id, candidate_name, job_title, client_name, job_id FROM card_links WHERE submission_id = f.submission_id ORDER BY id DESC LIMIT 1) l ON true " +
+        "LEFT JOIN jobs j ON j.id = l.job_id WHERE f.created_at > now() - ($1 || ' hours')::interval ORDER BY f.submission_id, f.created_at DESC", [String(hours)]);
+      out.decisions = out.decisions.filter(function (x) { return x.action !== "reopen"; });
+      out.opened = await db.getAll(
+        "SELECT l.candidate_id, l.candidate_name, l.job_title, l.client_name, j.owner_name AS job_owner, count(v.id)::int AS opens, max(v.viewed_at) AS last_at " +
+        "FROM card_views v JOIN card_links l ON l.id = v.link_id LEFT JOIN jobs j ON j.id = l.job_id " +
+        "WHERE v.viewed_at > now() - ($1 || ' hours')::interval GROUP BY 1,2,3,4,5 ORDER BY max(v.viewed_at) DESC LIMIT 40", [String(hours)]);
+      out.pages = await db.getAll(
+        "SELECT c.name AS client_name, cc.first_name, cc.last_name, sl.last_viewed_at FROM card_system_links sl JOIN clients c ON c.id = sl.client_id " +
+        "LEFT JOIN client_contacts cc ON cc.id = sl.contact_id WHERE sl.revoked_at IS NULL AND sl.last_viewed_at > now() - ($1 || ' hours')::interval ORDER BY sl.last_viewed_at DESC LIMIT 20", [String(hours)]);
+    } catch (e) { /* Cards tables not created yet */ }
+    return out;
+  }
+
+  function cardsFor(cards, ownerName) {
+    if (!cards || !ownerName) return cards;
+    const mine = function (x) { return String(x.job_owner || "").trim().toLowerCase() === ownerName.toLowerCase(); };
+    return { hours: cards.hours, decisions: cards.decisions.filter(mine), opened: cards.opened.filter(mine), pages: [] };
+  }
+
+  function renderCards(c) {
+    if (!c || (!c.decisions.length && !c.opened.length && !c.pages.length)) return "";
+    const when = c.hours > 24 ? "since Friday" : "in the last day";
+    let h = "<div style=\"margin:0 0 20px;padding:14px 16px;background:#F2F6F9;border-radius:10px\"><div style=\"font-size:15px;font-weight:700;color:#0A2239\">Client activity on Cards " + when + "</div>";
+    c.decisions.forEach(function (x) {
+      const what = x.action === "interview" ? "<b style=\"color:#14532D\">wants to interview</b>" : "<b>passed on</b>";
+      h += "<div style=\"font-size:14px;margin-top:8px\">" + esc(x.by_name || "The client") + " (" + esc(x.client_name || "") + ") " + what + " <a href=\"" + DASH + "/cards?candidate=" + x.candidate_id + "\" style=\"color:#176087\">" + esc(x.candidate_name) + "</a> for " + esc(x.job_title || "") +
+        (x.reason ? " <span style=\"color:#64748b\">(" + esc(x.reason) + ")</span>" : "") + (x.bh_new_status ? " <span style=\"color:#64748b\">\u00b7 Bullhorn: " + esc(x.bh_new_status) + "</span>" : "") + "</div>";
+    });
+    if (c.opened.length) {
+      h += "<div style=\"font-size:13px;color:#64748b;margin-top:10px\">Cards opened: " + c.opened.map(function (x) {
+        return "<a href=\"" + DASH + "/cards?candidate=" + x.candidate_id + "\" style=\"color:#176087;text-decoration:none\">" + esc(x.candidate_name) + "</a> (" + esc(x.client_name || "") + (x.opens > 1 ? ", " + x.opens + "\u00d7" : "") + ")";
+      }).join(", ") + "</div>";
+    }
+    if (c.pages.length) {
+      h += "<div style=\"font-size:13px;color:#64748b;margin-top:6px\">Health system pages opened: " + c.pages.map(function (x) {
+        const who = ((x.first_name || "") + " " + (x.last_name || "")).trim();
+        return esc(x.client_name) + (who ? " (" + esc(who) + ")" : "");
+      }).join(", ") + "</div>";
+    }
+    return h + "</div>";
   }
 
   function render(d) {
@@ -119,6 +172,7 @@ module.exports = function registerDigest(app, deps) {
     let h = "<div style=\"" + sty.body + "\">";
     h += "<div style=\"" + sty.h + "\"><div style=\"font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#bcd3e0\">Anura Connect</div><div style=\"font-size:20px;font-weight:700;margin-top:4px\">Ready to submit \u2014 " + esc(dateStr) + esc(scope) + "</div></div>";
     h += "<div style=\"background:#fff;border:1px solid #e2e8f0;border-top:0;border-radius:0 0 10px 10px;padding:20px 24px\">";
+    h += renderCards(d.cards);
     if (!d.clients.length) {
       h += "<p style=\"font-size:15px\">Nothing waiting" + (d.forOwner ? " on your jobs" : "") + ". Every internally submitted candidate has been sent to the client.</p>";
     } else {
@@ -175,7 +229,8 @@ module.exports = function registerDigest(app, deps) {
         const nm = names[to];
         if (!nm) { console.log("[Digest] no Bullhorn user for", to, "\u2014 skipped"); results.push({ to: to, skipped: "no Bullhorn user with that email" }); continue; }
         d = filterForOwner(all, nm); scoped = true;
-        if (!d.clients.length) { results.push({ to: to, skipped: "nothing waiting on their jobs" }); continue; } // no noise for owners with nothing waiting
+        const cardNews = d.cards && (d.cards.decisions.length || d.cards.opened.length);
+        if (!d.clients.length && !cardNews) { results.push({ to: to, skipped: "nothing waiting on their jobs" }); continue; } // no noise for owners with nothing waiting
       }
       const html = render(d);
       const subject = d.clients.length ? "Ready to submit: " + d.totalCandidates + " candidate" + (d.totalCandidates === 1 ? "" : "s") + " at " + d.clients.length + " client" + (d.clients.length === 1 ? "" : "s") + (scoped ? " (your jobs)" : "") : "Ready to submit: nothing waiting";

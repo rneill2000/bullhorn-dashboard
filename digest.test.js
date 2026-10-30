@@ -137,3 +137,34 @@ test("digest still flags bill rate and Why Me when the note has neither", async 
     server.close();
   }
 });
+
+test("K47 digest shows client activity on Cards: decisions, Cards opened, health system pages", async function () {
+  const app = express();
+  registerDigest(app, {
+    db: {
+      ready: true,
+      getAll: async function (sql) {
+        if (/FROM card_feedback/.test(sql)) return [{ action: "interview", by_name: "Dana Ruiz", client_name: "UW Health", candidate_id: 1, candidate_name: "Jack Corbell", job_title: "Beaker Analyst", job_owner: "Rachel Neill", bh_new_status: "First Interview" }];
+        if (/FROM card_views/.test(sql)) return [{ candidate_id: 2, candidate_name: "Mia Lopez", client_name: "UW Health", job_owner: "Rachel Neill", opens: 3 }];
+        if (/FROM card_system_links/.test(sql)) return [{ client_name: "UW Health", first_name: "Dana", last_name: "Ruiz" }];
+        return [];
+      },
+      getOne: async function () { return null; },
+      query: async function () { return { rows: [] }; },
+    },
+    graphFetch: async function () { return {}; },
+    outlookUsers: function () { return {}; },
+    getUser: function () { return null; },
+    bhFetchAll: async function () { return { data: [] }; },
+  });
+  const server = await listen(app);
+  try {
+    const r = await req(server.address().port, "/api/digest/ready-to-submit/preview");
+    assert.equal(r.status, 200);
+    assert.match(r.text, /Client activity on Cards/);
+    assert.match(r.text, /Dana Ruiz \(UW Health\) <b[^>]*>wants to interview<\/b> <a[^>]*>Jack Corbell<\/a>/);
+    assert.match(r.text, /Bullhorn: First Interview/);
+    assert.match(r.text, /Mia Lopez<\/a> \(UW Health, 3×\)/);
+    assert.match(r.text, /Health system pages opened: UW Health \(Dana Ruiz\)/);
+  } finally { server.close(); }
+});

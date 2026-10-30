@@ -1062,6 +1062,7 @@ function openDetail(candidateId, candidateData) {
       loadSubmissions(candidateId);
       loadPipelineStats(candidateId);
       loadCandidateFiles(candidateId);
+      loadCandidateCards(candidateId);
       loadCandidateRefs(candidateId, d.references || []);
       loadEmailHistory(candidateId, d.emails || []);
     }).catch(function(e) {
@@ -1364,6 +1365,34 @@ function detectFileTag(f) {
   if (all.indexOf("reference") !== -1 || all.indexOf("ref ") !== -1 || all.indexOf("refs") !== -1) return { tag: "References", color: "#d97706", bg: "#fffbeb" };
   if (all.indexOf("resume") !== -1 || all.indexOf("cv ") !== -1 || all.indexOf("cv.") !== -1 || type.indexOf("resume") !== -1 || ft.indexOf("resume") !== -1) return { tag: "Original Resume", color: "#16a34a", bg: "#f0fdf4" };
   return null;
+}
+
+/* Anura Connect Cards for this candidate: where they've been sent, opens, and what the client decided. */
+function loadCandidateCards(candidateId) {
+  apiFetch("cards/candidate/" + candidateId).then(function (d) {
+    var el = document.getElementById("detail-cards");
+    if (!el) return;
+    var links = (d.links || []).filter(function (l) { return l.state !== "revoked"; });
+    var h = '<h4>Anura Connect Cards <a href="/cards?candidate=' + candidateId + '" style="font-size:12px;font-weight:600;margin-left:8px;color:#176087">Open in Cards</a></h4>';
+    if (!links.length) {
+      h += '<div style="color:#94a3b8;font-size:13px">No Card yet. One is made when this candidate is sent to a client (Submittal Forge or a client-submitted status in Bullhorn).</div>';
+    } else {
+      h += links.map(function (l) {
+        var fb = l.feedback;
+        var dec = !fb ? "" : (fb.action === "interview"
+          ? '<span style="color:#14532d;font-weight:700">Interview requested</span>' + (fb.by ? " by " + esc(fb.by) : "") + (fb.times && fb.times.length ? ": " + fb.times.map(esc).join("; ") : "")
+          : '<b>Passed</b>' + (fb.by ? " by " + esc(fb.by) : "") + (fb.reason ? " (" + esc(fb.reason) + ")" : ""));
+        return '<div style="padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px">' +
+          '<div><b>' + esc(l.jobTitle || "") + '</b> <span style="color:#64748b">' + esc(l.clientName || "") + '</span>' +
+          (l.state === "active" ? ' <a href="/cards/preview/' + l.id + '" target="_blank" rel="noopener" style="margin-left:6px;color:#176087">Preview</a>' : ' <span style="color:#94a3b8">(' + esc(l.state) + ')</span>') + '</div>' +
+          '<div style="color:#64748b">' + (l.views || 0) + ' client open' + (l.views === 1 ? "" : "s") + (l.lastViewedAt ? ", last " + esc(new Date(l.lastViewedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })) : "") + (dec ? " · " + dec : "") + '</div></div>';
+      }).join("");
+    }
+    el.innerHTML = h;
+  }).catch(function () {
+    var el = document.getElementById("detail-cards");
+    if (el) el.innerHTML = '<h4>Anura Connect Cards</h4><div style="color:#94a3b8;font-size:13px">Cards didn\'t load.</div>';
+  });
 }
 
 function loadCandidateFiles(candidateId) {
@@ -3076,6 +3105,9 @@ function renderDetailContent(c) {
 
   // ── PIPELINE STATS (loaded async) ──
   h += '<div class="detail-section" id="detail-pipeline"><h4>Pipeline Activity</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading stats…</div></div>';
+
+  // ── ANURA CONNECT CARDS (loaded async) ──
+  h += '<div class="detail-section" id="detail-cards"><h4>Anura Connect Cards</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading Cards…</div></div>';
 
   // ── FILES & RESUME (loaded async) ──
   h += '<div class="detail-section" id="detail-files"><h4>Files & Resume</h4><div style="color:#94a3b8;font-size:13px"><span class="loading-spinner"></span> Loading files…</div></div>';
