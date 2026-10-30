@@ -11814,6 +11814,12 @@ const cardsApi = require("./card")(app, {
   verifyBill: function (submissionId) { return forgeApi.verifyBillForSubmission(submissionId); },
   // Client Interview / Pass on a Card: note + submission status in Bullhorn, written as the service user.
   bhWrite: bhWriteAsService,
+  // The client company's owner in Bullhorn (the clients sync doesn't carry it).
+  clientOwner: async function (clientId) {
+    const r = await bhFetch("entity/ClientCorporation/" + Number(clientId), { fields: "id,owners(id,firstName,lastName,email)" });
+    const owners = r && r.data && r.data.owners && Array.isArray(r.data.owners.data) ? r.data.owners.data : [];
+    return owners.length ? owners[0].id : null;
+  },
   // The résumé tool's curated profile (same key as its PDF export). Off until RESUME_TOOL_API_KEY is set here.
   resumeProfile: async function (candidateId) {
     const key = String(process.env.RESUME_TOOL_API_KEY || "").trim();

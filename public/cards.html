@@ -198,12 +198,23 @@ header a{display:inline-flex;align-items:center;min-height:32px}
       var rt = d.resumeTool || {};
       h += rt.status === "connected" ? ok("Résumé tool connected") : todo("Résumé tool: " + esc(rt.status) + ". Set the same <code>RESUME_TOOL_API_KEY</code> on both Railway services.");
       var people = (d.team || []).filter(function (u) { return u.missing.length; });
-      h += people.length ? people.map(function (u) { return todo("<b>" + esc(u.name) + "</b> needs " + esc(u.missing.join(", ")) + (u.missing.some(function (m) { return /mobile|phone|title/.test(m); }) ? " <span class='muted'>(Bullhorn user record)</span>" : "")); }).join("") : ok("Team contacts complete");
+      h += people.length ? people.map(function (u) {
+        var needsMobile = u.missing.some(function (m) { return /mobile/.test(m); });
+        var rest = u.missing.filter(function (m) { return !/mobile|phone \(for Call\)/.test(m); });
+        return todo("<b>" + esc(u.name) + "</b> needs " + esc(u.missing.join(", ")) + (rest.some(function (m) { return /title/.test(m); }) ? " <span class='muted'>(title: Bullhorn user record)</span>" : "") +
+          (needsMobile ? '<div class="row" style="margin-top:6px"><label class="sr-only" for="mob-' + esc(u.email) + '">Mobile for ' + esc(u.name) + '</label><input type="tel" id="mob-' + esc(u.email) + '" data-mobname="' + esc(u.name) + '" placeholder="Mobile number" style="flex:1;min-width:0;padding:7px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px;min-height:34px"><button class="btn" data-mobsave="' + esc(u.email) + '">Save</button></div>' : ""));
+      }).join("") : ok("Team contacts complete");
       var cl = d.clientsNoOwner || [];
       h += cl.length ? todo(cl.length + " client" + (cl.length === 1 ? "" : "s") + " with open jobs and no owner in Bullhorn: " + cl.slice(0, 12).map(function (c) { return esc(c.name) + " (" + c.openJobs + ")"; }).join(", ") + (cl.length > 12 ? "…" : "")) : ok("Every client with open jobs has an owner");
       var created = (d.sync || []).filter(function (x) { return x.kind === "created"; })[0];
       h += ok((d.cards ? d.cards.live : 0) + " live Cards" + (d.cards && d.cards.fromBullhorn ? ", " + d.cards.fromBullhorn + " from Bullhorn" : "") + (created ? "" : ". Bullhorn sync hasn't created any yet"));
       $("setup").innerHTML = h + '</ul>';
+      $("setup").querySelectorAll("[data-mobsave]").forEach(function (b) {
+        b.onclick = function () {
+          var inp = document.getElementById("mob-" + b.getAttribute("data-mobsave"));
+          call("PUT", "/api/cards/team-contacts", { name: inp.getAttribute("data-mobname"), mobile: inp.value }).then(function () { toast("Saved. Text and Call use it now."); setupCheck(); }).catch(function (e) { toast(errorText(e)); });
+        };
+      });
     }).catch(function (e) { $("setup").textContent = e.message; });
   }
   setupCheck();

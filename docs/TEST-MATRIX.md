@@ -173,3 +173,4 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K47 | Daily digest: client activity on Cards (decisions with Bullhorn stage, Cards opened, health system pages), scoped to the recipient's jobs | digest.test.js |
 | K48 | Résumés side by side: PDF viewer files served same-origin (two fixed files only) | card.test.js |
 | K49 | Setup check: team mobile/phone/title/photo, clients with open jobs and no owner, résumé tool connection | card.test.js |
+| K50 | Account manager = client company owner in Bullhorn (cached daily, falls back to open-job owner); team mobiles drive Text; no placeholder photo | card.test.js |

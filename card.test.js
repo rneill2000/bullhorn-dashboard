@@ -218,9 +218,11 @@ async function harness() {
   const net = { calls: [], handler: null };
   const files = {};
   const bh = [];
+  const owners = {};
   const api = card(app, {
     fetch: async function (url, opts) { net.calls.push(String(url)); return net.handler(String(url), opts || {}); },
     db: db,
+    clientOwner: async function (clientId) { return owners[clientId] != null ? owners[clientId] : null; },
     bhWrite: async function (endpoint, body, method) { bh.push({ endpoint: endpoint, body: body, method: method }); return { changedEntityId: 9000 + bh.length }; },
     lookup: async function (host) {
       if (host === "www.client.example") return [{ address: "93.184.216.34" }];
@@ -257,7 +259,7 @@ async function harness() {
     await pool.query("DROP SCHEMA " + schema + " CASCADE");
     await pool.end();
   }
-  return { db: db, port: port, mint: mint, tok: tok, sent: sent, rates: rates, api: api, close: close, net: net, files: files, bh: bh };
+  return { db: db, port: port, mint: mint, tok: tok, sent: sent, rates: rates, api: api, close: close, net: net, files: files, bh: bh, owners: owners };
 }
 
 test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_URL to run" }, async function (t) {
@@ -775,10 +777,32 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal(r.json.resumeTool.status, "key not set on the résumé tool");
       const peter = r.json.team.filter(function (u) { return u.name === "Peter Oppermann"; })[0];
       assert.ok(peter, JSON.stringify(r.json.team));
-      assert.deepEqual(peter.missing, ["mobile (for Text)"], "has phone, title and photo");
+      assert.deepEqual(peter.missing, [], "phone, title, photo, and his mobile from the team list");
+      assert.equal(peter.mobile, "414-587-8240");
       const ben = r.json.team.filter(function (u) { return u.name === "Ben Gray"; })[0];
       assert.ok(ben.missing.indexOf("photo on anuraconnect.com/about") >= 0);
       assert.deepEqual(r.json.clientsNoOwner.map(function (c) { return c.name; }), ["Owner-less Health"]);
+    });
+
+    await t.test("K50 account manager = the client company's owner in Bullhorn; team mobiles drive Text", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      // Owner-less Health has no owner in the synced table; Bullhorn says Ben (id 5) owns it.
+      h.owners[902] = 5;
+      await h.db.query("DELETE FROM card_client_owners WHERE client_id = 902");
+      let v = await req(h.port, "GET", "/api/cards/systems/902/view", { headers: rec });
+      assert.equal(v.json.contact.name, "Ben Gray");
+      assert.equal(v.json.contact.email, "ben@anuraconnect.com");
+      // Peter's mobile from the team list is what Text uses.
+      v = await req(h.port, "GET", "/api/cards/systems/900/view", { headers: rec });
+      assert.equal(v.json.contact.name, "Peter Oppermann");
+      assert.equal(v.json.contact.textPhone, "414-587-8240");
+      // Setting a mobile on the Cards page.
+      let r = await req(h.port, "PUT", "/api/cards/team-contacts", { headers: rec, body: { name: "Ben Gray", mobile: "608-555-0177" } });
+      assert.equal(r.status, 200, r.text);
+      assert.equal((await req(h.port, "PUT", "/api/cards/team-contacts", { headers: rec, body: { name: "Ben Gray", mobile: "555" } })).status, 400);
+      v = await req(h.port, "GET", "/api/cards/systems/902/view", { headers: rec });
+      assert.equal(v.json.contact.textPhone, "608-555-0177");
+      assert.equal(card.teamPhoto("Blair Settles"), "", "no placeholder photo for Blair");
     });
 
     await t.test("K18 public pages are served with a strict CSP and the recruiter page is not public", async function () {
@@ -975,7 +999,11 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal(v.json.contact.phone, "608-555-0199", "Bullhorn number wins");
       await h.db.query("UPDATE corporate_users SET phone = NULL WHERE id = 6");
       v = await req(h.port, "GET", "/api/cards/systems/900/view", { headers: rec });
-      assert.equal(v.json.contact.phone, "(608) 555-7777", "falls back to the Forge signature");
+      assert.equal(v.json.contact.phone, "414-587-8240", "the team mobile comes next");
+      await req(h.port, "PUT", "/api/cards/team-contacts", { headers: rec, body: { name: "Peter Oppermann", mobile: "" } });
+      v = await req(h.port, "GET", "/api/cards/systems/900/view", { headers: rec });
+      assert.equal(v.json.contact.phone, "(608) 555-7777", "then the Forge signature");
+      await req(h.port, "PUT", "/api/cards/team-contacts", { headers: rec, body: { name: "Peter Oppermann", mobile: "414-587-8240" } });
       await h.db.query("UPDATE corporate_users SET phone = '608-555-0199' WHERE id = 6");
     });
 

@@ -382,14 +382,27 @@ function setPublicHeaders(res, opts) {
 
 /* Anura team headshots live on anuraconnect.com/about: /assets/team/first-last.jpg. A name with no
    photo there just falls back to initials on the page. */
+/* Team mobile numbers for Text / Call on client pages, kept in the dashboard (Bullhorn doesn't let other
+   tools edit staff records). Seeded once; edits on the Cards page's Setup check win after that. */
+const TEAM_MOBILES = [
+  ["Rachel Neill", "608-609-5300"],
+  ["Peter Oppermann", "414-587-8240"],
+  ["Blair Settles", "(210) 288-1505"],
+  ["Melissa Alfiero", "612-710-5361"],
+];
+function nameKey(n) { return String(n || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim(); }
+
 const TEAM_PHOTO_BASE = "https://www.anuraconnect.com/assets/team/";
 const TEAM_PHOTO_ALIASES = { "jen-hemming": "jennifer-hemming" };
+// On the About page without a real photo yet: show initials instead of a placeholder.
+const TEAM_NO_PHOTO = ["blair-settles"];
 function teamPhoto(name) {
   const n = String(name || "").trim();
   if (!n || /^anura connect$/i.test(n)) return "";
   const parts = n.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z\s-]/g, "").split(/\s+/).filter(Boolean);
   if (parts.length < 2) return "";
   const key = parts[0] + "-" + parts[parts.length - 1];
+  if (TEAM_NO_PHOTO.indexOf(key) >= 0) return "";
   return TEAM_PHOTO_BASE + (TEAM_PHOTO_ALIASES[key] || key) + ".jpg";
 }
 
@@ -441,6 +454,7 @@ function registerCard(app, deps) {
   const verifyBill = deps.verifyBill || null; // (submissionId) → { amount, source }; throws when Bullhorn can't be read
   const getFile = deps.getFile || null; // (entity, entityId, fileId) → { buffer, name, contentType }
   const fetchWorkHistory = deps.workHistory || null; // (candidateId) → Bullhorn CandidateWorkHistory rows
+  const fetchClientOwner = deps.clientOwner || null; // (clientId) → Bullhorn CorporateUser id that owns the company, or null
   const fetchResumeProfile = deps.resumeProfile || null; // (candidateId) → résumé tool profile JSON, or null when none
   const bhWrite = deps.bhWrite || null; // Bullhorn writes as the service user (client decisions)
   const pagesDir = deps.pagesDir || path.join(__dirname, "public");
@@ -505,11 +519,20 @@ function registerCard(app, deps) {
         "ALTER TABLE card_feedback ADD COLUMN IF NOT EXISTS bh_new_status TEXT",
         "ALTER TABLE card_feedback ADD COLUMN IF NOT EXISTS bh_note_id INTEGER",
         "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS source TEXT",
+        // The client company's owner in Bullhorn (the sync doesn't carry it), refreshed daily.
+        "CREATE TABLE IF NOT EXISTS card_client_owners (client_id INTEGER PRIMARY KEY, user_id INTEGER, fetched_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+        "CREATE TABLE IF NOT EXISTS card_team_contacts (name_key TEXT PRIMARY KEY, name TEXT NOT NULL, mobile TEXT, updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())",
         // Demo links in a client's branding with made-up candidates (card-demo.js).
         "CREATE TABLE IF NOT EXISTS card_system_demos (id SERIAL PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, client_id INTEGER NOT NULL, created_by TEXT, " +
           "created_at TIMESTAMPTZ NOT NULL DEFAULT now(), revoked_at TIMESTAMPTZ)",
       ];
       ready = stmts.reduce(function (p, sql) { return p.then(function () { return db.query(sql); }); }, Promise.resolve())
+        .then(function () {
+          return TEAM_MOBILES.reduce(function (p, t) {
+            return p.then(function () { return db.query("INSERT INTO card_team_contacts (name_key, name, mobile, updated_by) VALUES ($1,$2,$3,'seed') ON CONFLICT (name_key) DO NOTHING", [nameKey(t[0]), t[0], t[1]]); });
+          }, Promise.resolve());
+        })
+        .then(function () { return loadTeam(); })
         .then(function () { return true; })
         .catch(function (e) { ready = null; throw e; });
     }
@@ -1057,9 +1080,24 @@ function registerCard(app, deps) {
     });
   }
 
+  // Team mobiles (card_team_contacts), cached and refreshed every few minutes.
+  let teamMobiles = {};
+  async function loadTeam() {
+    try {
+      const rows = await db.getAll("SELECT name_key, mobile FROM card_team_contacts WHERE COALESCE(mobile, '') <> ''");
+      const m = {};
+      rows.forEach(function (r) { m[r.name_key] = r.mobile; });
+      teamMobiles = m;
+    } catch (e) { /* keep the last list */ }
+  }
+  const teamTimer = setInterval(function () { if (db && db.ready) loadTeam(); }, 5 * 60 * 1000);
+  if (teamTimer.unref) teamTimer.unref();
+  function teamMobile(name) { return teamMobiles[nameKey(name)] || ""; }
+
   function contactOf(link) {
     const r = link && link.recruiter ? (typeof link.recruiter === "string" ? JSON.parse(link.recruiter) : link.recruiter) : {};
-    return { name: r.name || "Anura Connect", title: r.title || "", phone: r.phone || "", textPhone: r.mobile || r.phone || "", email: r.email || "", photoUrl: teamPhoto(r.name) };
+    const mob = teamMobile(r.name);
+    return { name: r.name || "Anura Connect", title: r.title || "", phone: r.phone || mob || "", textPhone: mob || r.mobile || r.phone || "", email: r.email || "", photoUrl: teamPhoto(r.name) };
   }
 
   async function publicView(token, otherId, opts) {
@@ -1208,13 +1246,34 @@ function registerCard(app, deps) {
     } catch (e) { return ""; }
   }
 
+  /** Who owns this client company in Bullhorn: the company's owner (cached a day), else the owner of most of its open jobs. */
+  async function clientOwnerId(clientId) {
+    let cached = null;
+    try { cached = await db.getOne("SELECT user_id, fetched_at FROM card_client_owners WHERE client_id = $1", [clientId]); } catch (e) { cached = null; }
+    if (fetchClientOwner && (!cached || now() - new Date(cached.fetched_at).getTime() > 86400000)) {
+      try {
+        const id = await Promise.race([fetchClientOwner(clientId), new Promise(function (r) { setTimeout(function () { r(undefined); }, 4000); })]);
+        if (id !== undefined) {
+          await db.query("INSERT INTO card_client_owners (client_id, user_id, fetched_at) VALUES ($1,$2,now()) ON CONFLICT (client_id) DO UPDATE SET user_id = EXCLUDED.user_id, fetched_at = now()", [clientId, id || null]);
+          cached = { user_id: id || null };
+        }
+      } catch (e) { log("[Card] client owner " + clientId + ": " + e.message); }
+    }
+    if (cached && cached.user_id) return cached.user_id;
+    const j = await db.getOne("SELECT owner_id FROM jobs WHERE client_id = $1 AND is_deleted IS NOT TRUE AND owner_id IS NOT NULL AND status IN ('Accepting Candidates','Open') GROUP BY owner_id ORDER BY count(*) DESC LIMIT 1", [clientId]).catch(function () { return null; });
+    return j ? j.owner_id : null;
+  }
+
   async function accountLead(clientId) {
-    const c = await db.getOne("SELECT cl.owner_id, cl.owner_name, cl.owner_email, cu.email AS cu_email, cu.phone, cu.mobile, cu.name AS cu_name, cu.occupation FROM clients cl LEFT JOIN corporate_users cu ON cu.id = cl.owner_id WHERE cl.id = $1", [clientId]);
+    const ownerId = await clientOwnerId(clientId);
+    const c = await db.getOne("SELECT COALESCE($2::int, cl.owner_id) AS owner_id, cl.owner_name, cl.owner_email, cu.email AS cu_email, cu.phone, cu.mobile, cu.name AS cu_name, cu.occupation " +
+      "FROM clients cl LEFT JOIN corporate_users cu ON cu.id = COALESCE($2::int, cl.owner_id) WHERE cl.id = $1", [clientId, ownerId]);
     if (c && (c.cu_email || c.owner_email)) {
       const n = niceName(c.cu_name || c.owner_name || "");
       const email = c.cu_email || c.owner_email || "";
-      const phone = c.phone || c.mobile || await forgePhone(c.owner_id, email);
-      return { name: n, title: c.occupation || "", phone: phone, textPhone: c.mobile || phone, email: email, photoUrl: teamPhoto(n) };
+      const mob = teamMobile(n);
+      const phone = c.phone || c.mobile || mob || await forgePhone(c.owner_id, email);
+      return { name: n, title: c.occupation || "", phone: phone, textPhone: mob || c.mobile || phone, email: email, photoUrl: teamPhoto(n) };
     }
     const l = await db.getOne("SELECT recruiter FROM card_links WHERE client_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1", [clientId]);
     return l ? contactOf(l) : { name: "Anura Connect", title: "", phone: "", email: "" };
@@ -1783,6 +1842,20 @@ function registerCard(app, deps) {
    * Team mobiles and titles (Text / Call buttons), team photos on anuraconnect.com, clients with open jobs
    * and no owner in Bullhorn (no account manager on their page), the résumé tool connection, the Bullhorn sync.
    */
+  app.put("/api/cards/team-contacts", async function (req, res) {
+    try {
+      await needDb();
+      const name = cleanFieldValue(req.body && req.body.name).slice(0, 80);
+      const mobile = cleanFieldValue(req.body && req.body.mobile).slice(0, 30);
+      if (!name) return res.status(400).json({ error: "Name is required." });
+      if (mobile && String(mobile).replace(/\D/g, "").length < 10) return res.status(400).json({ error: "Use a full 10-digit number." });
+      await db.query("INSERT INTO card_team_contacts (name_key, name, mobile, updated_by, updated_at) VALUES ($1,$2,$3,$4,now()) ON CONFLICT (name_key) DO UPDATE SET mobile = EXCLUDED.mobile, updated_by = EXCLUDED.updated_by, updated_at = now()",
+        [nameKey(name), name, mobile || null, who(req)]);
+      await loadTeam();
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
   app.get("/api/cards/setup-check", async function (req, res) {
     try {
       await needDb();
@@ -1807,13 +1880,19 @@ function registerCard(app, deps) {
         const url = teamPhoto(nm);
         if (url) { try { const r = await (deps.fetch || fetch)(url, { method: "HEAD", signal: AbortSignal.timeout(4000) }); photo = r.ok; } catch (e) { photo = false; } }
         const fp = await forgePhone(u.id, u.email);
-        out.team.push({ name: nm, email: u.email, mobile: u.mobile || "", phone: u.phone || fp || "", title: u.occupation || "", photo: photo,
-          missing: [!u.mobile ? "mobile (for Text)" : "", !(u.phone || u.mobile || fp) ? "phone (for Call)" : "", !u.occupation ? "title" : "", !photo ? "photo on anuraconnect.com/about" : ""].filter(Boolean) });
+        const mob = teamMobile(nm) || u.mobile || "";
+        out.team.push({ name: nm, email: u.email, mobile: mob, phone: u.phone || mob || fp || "", title: u.occupation || "", photo: photo,
+          missing: [!mob ? "mobile (for Text)" : "", !(u.phone || mob || fp) ? "phone (for Call)" : "", !u.occupation ? "title" : "", !photo ? "photo on anuraconnect.com/about" : ""].filter(Boolean) });
       }
       // Clients with open jobs and no owner
-      out.clientsNoOwner = (await db.getAll(
+      const withJobs = await db.getAll(
         "SELECT c.id, c.name, count(j.id)::int AS open_jobs FROM clients c JOIN jobs j ON j.client_id = c.id AND j.is_deleted IS NOT TRUE AND j.status IN ('Accepting Candidates','Open') " +
-        "WHERE c.owner_id IS NULL AND COALESCE(c.owner_email, '') = '' GROUP BY c.id, c.name ORDER BY count(j.id) DESC, c.name LIMIT 40")).map(function (c) { return { id: c.id, name: c.name, openJobs: c.open_jobs }; });
+        "GROUP BY c.id, c.name ORDER BY count(j.id) DESC, c.name LIMIT 80");
+      out.clientsNoOwner = [];
+      for (const c of withJobs) {
+        const lead = await accountLead(c.id);
+        if (!lead.email) out.clientsNoOwner.push({ id: c.id, name: c.name, openJobs: c.open_jobs });
+      }
       // Bullhorn → Cards sync
       try {
         const sync = await db.getAll("SELECT split_part(result, ':', 1) AS kind, count(*)::int AS n, max(attempted_at) AS last FROM card_auto_attempts GROUP BY 1");

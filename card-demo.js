@@ -192,7 +192,9 @@ function registerDemo(app, deps) {
     if (!db) return CONTACT;
     try {
       const u = await db.getOne("SELECT id, name, email, phone, mobile, occupation FROM corporate_users WHERE LOWER(email) = $1 LIMIT 1", [CONTACT.email]);
-      let phone = u ? (u.phone || u.mobile || "") : "";
+      let teamMob = "";
+      try { const t = await db.getOne("SELECT mobile FROM card_team_contacts WHERE name_key = 'peter oppermann'"); teamMob = (t && t.mobile) || ""; } catch (e) { teamMob = ""; }
+      let phone = u ? (u.phone || u.mobile || teamMob || "") : teamMob;
       if (!phone) {
         // The phone Peter saved in his Submittal Forge signature.
         const keys = ["email:" + CONTACT.email].concat(u && u.id != null ? ["bh:" + u.id] : []);
@@ -202,7 +204,7 @@ function registerDemo(app, deps) {
         } catch (e) { phone = ""; }
       }
       // Demo only: until Peter's real number is on file, show the made-up 555 number (reserved for fiction).
-      return Object.assign({}, CONTACT, { title: (u && u.occupation) || CONTACT.title, phone: phone || CONTACT.phone, textPhone: (u && u.mobile) || phone || CONTACT.textPhone });
+      return Object.assign({}, CONTACT, { title: (u && u.occupation) || CONTACT.title, phone: phone || CONTACT.phone, textPhone: teamMob || (u && u.mobile) || phone || CONTACT.textPhone });
     } catch (e) { return CONTACT; }
   }
 
