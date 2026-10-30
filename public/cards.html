@@ -101,6 +101,10 @@ header a{display:inline-flex;align-items:center;min-height:32px}
       <ul class="list" id="sresults"></ul>
     </div>
     <div class="panel">
+      <h2>Setup check</h2>
+      <div id="setup" class="muted">Checking…</div>
+    </div>
+    <div class="panel">
       <h2>Waiting for your review</h2>
       <ul class="list" id="pending"><li class="empty">Loading…</li></ul>
     </div>
@@ -186,6 +190,23 @@ header a{display:inline-flex;align-items:center;min-height:32px}
   }
 
   var freshLink = null, freshDemo = null;
+  function setupCheck() {
+    call("GET", "/api/cards/setup-check").then(function (d) {
+      var ok = function (t) { return '<li style="display:block"><span style="color:#166534;font-weight:700">✓</span> ' + t + '</li>'; };
+      var todo = function (t) { return '<li style="display:block"><span style="color:#b45309;font-weight:700">!</span> ' + t + '</li>'; };
+      var h = '<ul class="list">';
+      var rt = d.resumeTool || {};
+      h += rt.status === "connected" ? ok("Résumé tool connected") : todo("Résumé tool: " + esc(rt.status) + ". Set the same <code>RESUME_TOOL_API_KEY</code> on both Railway services.");
+      var people = (d.team || []).filter(function (u) { return u.missing.length; });
+      h += people.length ? people.map(function (u) { return todo("<b>" + esc(u.name) + "</b> needs " + esc(u.missing.join(", ")) + (u.missing.some(function (m) { return /mobile|phone|title/.test(m); }) ? " <span class='muted'>(Bullhorn user record)</span>" : "")); }).join("") : ok("Team contacts complete");
+      var cl = d.clientsNoOwner || [];
+      h += cl.length ? todo(cl.length + " client" + (cl.length === 1 ? "" : "s") + " with open jobs and no owner in Bullhorn: " + cl.slice(0, 12).map(function (c) { return esc(c.name) + " (" + c.openJobs + ")"; }).join(", ") + (cl.length > 12 ? "…" : "")) : ok("Every client with open jobs has an owner");
+      var created = (d.sync || []).filter(function (x) { return x.kind === "created"; })[0];
+      h += ok((d.cards ? d.cards.live : 0) + " live Cards" + (d.cards && d.cards.fromBullhorn ? ", " + d.cards.fromBullhorn + " from Bullhorn" : "") + (created ? "" : ". Bullhorn sync hasn't created any yet"));
+      $("setup").innerHTML = h + '</ul>';
+    }).catch(function (e) { $("setup").textContent = e.message; });
+  }
+  setupCheck();
   function overview() {
     call("GET", "/api/cards/overview").then(function (o) {
       $("pending").innerHTML = o.pending.length ? o.pending.map(function (p) {

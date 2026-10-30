@@ -1778,6 +1778,53 @@ function registerCard(app, deps) {
   });
 
   /** What the résumé check finds on recent Forge résumés and Card documents. Recruiter-only. */
+  /**
+   * Setup check: what's missing for Cards to look complete. Recruiter-only.
+   * Team mobiles and titles (Text / Call buttons), team photos on anuraconnect.com, clients with open jobs
+   * and no owner in Bullhorn (no account manager on their page), the résumé tool connection, the Bullhorn sync.
+   */
+  app.get("/api/cards/setup-check", async function (req, res) {
+    try {
+      await needDb();
+      const out = {};
+      // Résumé tool
+      const key = String(process.env.RESUME_TOOL_API_KEY || "").trim();
+      out.resumeTool = { keyHere: !!key, status: "unknown" };
+      try {
+        const base = process.env.RESUME_TOOL_PROFILE_URL || "https://resumetool.anuraconnect.com/api/export/profile/";
+        const r = await (deps.fetch || fetch)(base + "?bullhorn_candidate_id=1", { headers: key ? { Authorization: "Bearer " + key } : {}, signal: AbortSignal.timeout(6000) });
+        out.resumeTool.status = r.status === 503 ? "key not set on the résumé tool" : r.status === 401 ? (key ? "keys don't match" : "key not set here") : (r.status === 404 || r.status === 200 || r.status === 409) ? "connected" : "HTTP " + r.status;
+      } catch (e) { out.resumeTool.status = "unreachable"; }
+      // Team: who's on client pages (client owners and recent Card senders)
+      const team = await db.getAll(
+        "SELECT DISTINCT cu.id, cu.name, cu.first_name, cu.last_name, cu.email, cu.phone, cu.mobile, cu.occupation FROM corporate_users cu " +
+        "WHERE cu.is_deleted IS NOT TRUE AND LOWER(cu.email) LIKE '%@anuraconnect.com' AND (cu.id IN (SELECT owner_id FROM clients WHERE owner_id IS NOT NULL) " +
+        "OR LOWER(cu.email) IN (SELECT LOWER(recruiter->>'email') FROM card_links WHERE recruiter->>'email' IS NOT NULL)) ORDER BY cu.name");
+      out.team = [];
+      for (const u of team) {
+        const nm = niceName(u.name || ((u.first_name || "") + " " + (u.last_name || "")));
+        let photo = false;
+        const url = teamPhoto(nm);
+        if (url) { try { const r = await (deps.fetch || fetch)(url, { method: "HEAD", signal: AbortSignal.timeout(4000) }); photo = r.ok; } catch (e) { photo = false; } }
+        const fp = await forgePhone(u.id, u.email);
+        out.team.push({ name: nm, email: u.email, mobile: u.mobile || "", phone: u.phone || fp || "", title: u.occupation || "", photo: photo,
+          missing: [!u.mobile ? "mobile (for Text)" : "", !(u.phone || u.mobile || fp) ? "phone (for Call)" : "", !u.occupation ? "title" : "", !photo ? "photo on anuraconnect.com/about" : ""].filter(Boolean) });
+      }
+      // Clients with open jobs and no owner
+      out.clientsNoOwner = (await db.getAll(
+        "SELECT c.id, c.name, count(j.id)::int AS open_jobs FROM clients c JOIN jobs j ON j.client_id = c.id AND j.is_deleted IS NOT TRUE AND j.status IN ('Accepting Candidates','Open') " +
+        "WHERE c.owner_id IS NULL AND COALESCE(c.owner_email, '') = '' GROUP BY c.id, c.name ORDER BY count(j.id) DESC, c.name LIMIT 40")).map(function (c) { return { id: c.id, name: c.name, openJobs: c.open_jobs }; });
+      // Bullhorn → Cards sync
+      try {
+        const sync = await db.getAll("SELECT split_part(result, ':', 1) AS kind, count(*)::int AS n, max(attempted_at) AS last FROM card_auto_attempts GROUP BY 1");
+        out.sync = sync.map(function (x) { return { kind: x.kind, count: x.n, last: x.last }; });
+      } catch (e) { out.sync = []; }
+      const links = await db.getOne("SELECT count(*)::int AS n, count(*) FILTER (WHERE source = 'bullhorn')::int AS auto FROM card_links WHERE revoked_at IS NULL");
+      out.cards = { live: links ? links.n : 0, fromBullhorn: links ? links.auto : 0 };
+      res.json(out);
+    } catch (e) { fail(res, e); }
+  });
+
   app.get("/api/cards/resume-audit", async function (req, res) {
     try {
       await needDb();

@@ -761,6 +761,26 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal((await req(h.port, "GET", "/card-assets/pdf.js")).status, 404);
     });
 
+    await t.test("K49 setup check: team contacts, photos, clients without an owner, résumé tool", async function () {
+      const rec = { "x-test-user": "ben@anuraconnect.com" };
+      h.net.handler = async function (url) {
+        if (/resumetool/.test(url)) return { ok: false, status: 503, headers: { get: function () { return null; } } };
+        return { ok: /peter-oppermann/.test(url), status: /peter-oppermann/.test(url) ? 200 : 404, headers: { get: function () { return null; } } };
+      };
+      await h.db.query("INSERT INTO clients VALUES (902, 'Owner-less Health', 'X', 'WI', null, null, null, 'Active', 1) ON CONFLICT (id) DO NOTHING");
+      await h.db.query("INSERT INTO jobs (id, title, status, is_open, is_deleted, client_id, raw_json, date_added) VALUES (950, 'Willow Analyst', 'Accepting Candidates', true, false, 902, null, 1) ON CONFLICT (id) DO NOTHING");
+      await h.db.query("ALTER TABLE corporate_users ADD COLUMN IF NOT EXISTS first_name TEXT, ADD COLUMN IF NOT EXISTS last_name TEXT, ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN");
+      const r = await req(h.port, "GET", "/api/cards/setup-check", { headers: rec });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.resumeTool.status, "key not set on the résumé tool");
+      const peter = r.json.team.filter(function (u) { return u.name === "Peter Oppermann"; })[0];
+      assert.ok(peter, JSON.stringify(r.json.team));
+      assert.deepEqual(peter.missing, ["mobile (for Text)"], "has phone, title and photo");
+      const ben = r.json.team.filter(function (u) { return u.name === "Ben Gray"; })[0];
+      assert.ok(ben.missing.indexOf("photo on anuraconnect.com/about") >= 0);
+      assert.deepEqual(r.json.clientsNoOwner.map(function (c) { return c.name; }), ["Owner-less Health"]);
+    });
+
     await t.test("K18 public pages are served with a strict CSP and the recruiter page is not public", async function () {
       const page = await req(h.port, "GET", "/card/" + J);
       assert.equal(page.status, 200);
