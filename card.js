@@ -347,6 +347,15 @@ function careerFrom(work, placed) {
   return { healthSystems: out.slice(0, 10).map(function (x) { return { name: x.name, role: x.role, from: x.from || null, to: x.to || null, viaAnura: x.viaAnura }; }), formerEpic: formerEpic };
 }
 
+/** Where the submission stands in Bullhorn, in words a client reads. "" while it's just submitted. */
+function stageOf(status) {
+  const st = String(status || "").toLowerCase();
+  if (/placed/.test(st)) return "Placed";
+  if (/offer/.test(st) && !/reject|declin/.test(st)) return "Offer out";
+  if (/interview/.test(st)) return "Interviewing";
+  return "";
+}
+
 function certList(row) {
   const out = [];
   [row && row.custom_text1, row && row.custom_text2].forEach(function (v) {
@@ -432,6 +441,8 @@ function registerCard(app, deps) {
   const verifyBill = deps.verifyBill || null; // (submissionId) → { amount, source }; throws when Bullhorn can't be read
   const getFile = deps.getFile || null; // (entity, entityId, fileId) → { buffer, name, contentType }
   const fetchWorkHistory = deps.workHistory || null; // (candidateId) → Bullhorn CandidateWorkHistory rows
+  const fetchResumeProfile = deps.resumeProfile || null; // (candidateId) → résumé tool profile JSON, or null when none
+  const bhWrite = deps.bhWrite || null; // Bullhorn writes as the service user (client decisions)
   const pagesDir = deps.pagesDir || path.join(__dirname, "public");
   const leakCheck = deps.findInternalLeak || require("./forge").findInternalLeak;
   const guard = require("./resume-guard");
@@ -487,6 +498,13 @@ function registerCard(app, deps) {
         "CREATE INDEX IF NOT EXISTS card_feedback_sub ON card_feedback (submission_id, created_at)",
         // Bullhorn work history snapshot per candidate (refreshed daily) for "where they've worked".
         "CREATE TABLE IF NOT EXISTS card_work_history (candidate_id INTEGER PRIMARY KEY, rows JSONB NOT NULL DEFAULT '[]'::jsonb, fetched_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+        // The résumé tool's curated profile per candidate (refreshed every few hours).
+        "CREATE TABLE IF NOT EXISTS card_resume_profiles (candidate_id INTEGER PRIMARY KEY, data JSONB, fetched_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+        // What a client decision did in Bullhorn, so Undo can put the status back.
+        "ALTER TABLE card_feedback ADD COLUMN IF NOT EXISTS bh_prev_status TEXT",
+        "ALTER TABLE card_feedback ADD COLUMN IF NOT EXISTS bh_new_status TEXT",
+        "ALTER TABLE card_feedback ADD COLUMN IF NOT EXISTS bh_note_id INTEGER",
+        "ALTER TABLE card_links ADD COLUMN IF NOT EXISTS source TEXT",
         // Demo links in a client's branding with made-up candidates (card-demo.js).
         "CREATE TABLE IF NOT EXISTS card_system_demos (id SERIAL PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, client_id INTEGER NOT NULL, created_by TEXT, " +
           "created_at TIMESTAMPTZ NOT NULL DEFAULT now(), revoked_at TIMESTAMPTZ)",
@@ -633,11 +651,54 @@ function registerCard(app, deps) {
       "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14) RETURNING *",
       [row.submission_id, row.candidate_id, row.job_id, row.client_id, ctx.via, ctx.linkId || null, viewer.contactId || null, name || viewer.name || "", viewer.email || "",
         action, JSON.stringify(slots), tz, reason, note]);
-    notifyFeedback(row, f).catch(function (e) { log("[Card] feedback alert failed: " + e.message); });
+    // Bullhorn first (note + status), then the email says what changed there.
+    Promise.resolve().then(function () { return bullhornDecision(row, f); })
+      .catch(function (e) { log("[Card] Bullhorn update failed for submission " + row.submission_id + ": " + e.message); return { failed: true }; })
+      .then(function (bh) { return notifyFeedback(row, f, bh); })
+      .catch(function (e) { log("[Card] feedback alert failed: " + e.message); });
     return { saved: true, feedback: action === "reopen" ? null : feedbackOut(f) };
   }
 
-  async function notifyFeedback(row, f) {
+  /**
+   * A client decision lands in Bullhorn: a note on the candidate (linked to the job), and the submission
+   * moves stage when it's safe. Interview: Client Submission → First Interview (never backward).
+   * Pass: → Client Rejected unless already at offer or placed. Undo: back to the status we replaced.
+   */
+  async function bullhornDecision(row, f) {
+    if (!bhWrite) return null;
+    const sub = await db.getOne("SELECT status FROM submissions WHERE id = $1", [row.submission_id]);
+    const cur = String((sub && sub.status) || "");
+    let next = null;
+    if (f.action === "interview" && /^client submission$/i.test(cur.trim())) next = "First Interview";
+    if (f.action === "pass" && /client submission|interview/i.test(cur) && !/reject|offer|placed/i.test(cur)) next = "Client Rejected";
+    if (f.action === "reopen") {
+      const last = await db.getOne("SELECT bh_prev_status, bh_new_status FROM card_feedback WHERE submission_id = $1 AND id <> $2 AND bh_new_status IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 1", [row.submission_id, f.id]);
+      if (last && last.bh_prev_status && String(last.bh_new_status).toLowerCase() === cur.toLowerCase()) next = last.bh_prev_status;
+    }
+    const who = f.by_name || "The client";
+    const where = row.client_name ? " (" + row.client_name + ")" : "";
+    const cand = row.candidate_name || "the candidate";
+    const times = (Array.isArray(f.slots) ? f.slots : []).map(function (x) { return fmtSlot(x, f.tz); }).filter(Boolean);
+    let text;
+    if (f.action === "interview") text = who + where + " requested an interview with " + cand + " for " + (row.job_title || "the role") + " on the Anura Connect Card." + (times.length ? " Times offered: " + times.join("; ") + "." : " No times picked yet.");
+    else if (f.action === "pass") text = who + where + " passed on " + cand + " for " + (row.job_title || "the role") + " on the Anura Connect Card. Reason: " + (f.reason || "not given") + ".";
+    else text = who + where + " took back their decision on " + cand + " for " + (row.job_title || "the role") + " on the Anura Connect Card.";
+    if (f.note) text += " Their note: " + f.note;
+    if (next) text += " Submission moved from " + cur + " to " + next + ".";
+    let noteId = null;
+    const note = await bhWrite("entity/Note", { personReference: { id: Number(row.candidate_id) }, action: "Other", comments: text, dateAdded: now() }, "PUT");
+    noteId = note && (note.changedEntityId || note.id) || null;
+    if (noteId && row.job_id) { try { await bhWrite("entity/Note/" + noteId + "/jobOrders/" + row.job_id, {}, "PUT"); } catch (e) { /* the note still stands on the candidate */ } }
+    if (next) {
+      await bhWrite("entity/JobSubmission/" + row.submission_id, { status: next }, "POST");
+      try { await db.query("UPDATE submissions SET status = $1, date_last_modified = $2 WHERE id = $3", [next, now(), row.submission_id]); }
+      catch (e) { try { await db.query("UPDATE submissions SET status = $1 WHERE id = $2", [next, row.submission_id]); } catch (e2) { /* the next sync catches it */ } }
+    }
+    await db.query("UPDATE card_feedback SET bh_prev_status = $2, bh_new_status = $3, bh_note_id = $4 WHERE id = $1", [f.id, next ? cur : null, next, noteId]);
+    return { noteId: noteId, from: cur, to: next };
+  }
+
+  async function notifyFeedback(row, f, bh) {
     if (!notifier) return;
     const rec = contactOf(row);
     const lead = await accountLead(row.client_id);
@@ -655,17 +716,19 @@ function registerCard(app, deps) {
       title = who + " wants to interview " + cand;
       subject = "Interview request: " + cand + " (" + (row.client_name || "") + ")";
       rows = [["Job", row.job_title], ["Client", row.client_name], ["Times", times || "None picked. Reach out to schedule."], ["Note", f.note], ["From", who + (f.by_email ? " <" + f.by_email + ">" : "")],
-        ["Next step", "Confirm a time with the candidate and the client, then update the submission in Bullhorn."]];
+        ["Next step", "Confirm a time with the candidate and the client."]];
     } else if (f.action === "pass") {
       title = who + " passed on " + cand;
       subject = "Passed: " + cand + " (" + (row.client_name || "") + ")";
       rows = [["Job", row.job_title], ["Client", row.client_name], ["Reason", f.reason], ["Note", f.note], ["From", who + (f.by_email ? " <" + f.by_email + ">" : "")],
-        ["Next step", "Update the submission in Bullhorn and let the candidate know."]];
+        ["Next step", "Let the candidate know."]];
     } else {
       title = who + " reopened " + cand;
       subject = "Reopened: " + cand + " (" + (row.client_name || "") + ")";
       rows = [["Job", row.job_title], ["Client", row.client_name], ["What changed", "They took back their earlier decision. The candidate is back under review."]];
     }
+    const bhLine = !bh ? "" : (bh.failed ? "Couldn't update Bullhorn. Update the submission yourself." : (bh.to ? "Note added. Submission moved from " + bh.from + " to " + bh.to + "." : "Note added. Status unchanged (" + (bh.from || "unknown") + ")."));
+    if (bhLine) rows.splice(rows.length - 1, 0, ["Bullhorn", bhLine]);
     await notifier.send({ to: to.map(function (e) { return { email: e }; }), subject: subject, html: notifier.card(title, rows, publicOrigin() + "/cards?candidate=" + row.candidate_id, "Open Cards"), fromEmail: to[0] });
   }
 
@@ -752,6 +815,16 @@ function registerCard(app, deps) {
     return { state: "active", link: link, job: job };
   }
 
+  /** Submissions the client passed on from a Card: Bullhorn says Client Rejected, but the client should still see them (and Undo). */
+  async function passedOnCard(rows) {
+    const rejected = rows.filter(function (r) { return /reject/i.test(String(r.sub_status || "")); }).map(function (r) { return r.submission_id; });
+    const out = {};
+    if (!rejected.length) return out;
+    const fb = await latestFeedback(rejected);
+    rejected.forEach(function (id) { if (fb[String(id)] && fb[String(id)].action === "pass") out[id] = true; });
+    return out;
+  }
+
   /** The newest live link per candidate for this job at this client. */
   async function siblings(link) {
     const rows = await db.getAll(
@@ -761,8 +834,9 @@ function registerCard(app, deps) {
       "LEFT JOIN candidates c ON c.id = l.candidate_id LEFT JOIN card_profiles p ON p.candidate_id = l.candidate_id " +
       "WHERE l.job_id = $1 AND l.client_id = $2 AND l.revoked_at IS NULL " +
       "ORDER BY l.candidate_id, l.created_at DESC", [link.job_id, link.client_id]);
+    const passed = await passedOnCard(rows);
     return rows.filter(function (r) {
-      return r.candidate_id === link.candidate_id || submissionShown(r.sub_status);
+      return r.candidate_id === link.candidate_id || submissionShown(r.sub_status) || passed[r.submission_id];
     }).sort(function (a, b) { return Number(a.sub_added || 0) - Number(b.sub_added || 0); });
   }
 
@@ -838,7 +912,8 @@ function registerCard(app, deps) {
         "(SELECT string_agg(DISTINCT m[1], ' ') FROM regexp_matches(COALESCE(raw_json::text, '') || ' ' || COALESCE(description, ''), 'linkedin\\.com/in/([A-Za-z0-9_%-]{2,100})', 'gi') AS m) AS li " +
         "FROM candidates WHERE id = $1", [row.candidate_id]);
     } catch (e) { c = null; }
-    let linkedin = normalizeLinkedIn(pf.linkedin);
+    const rp = await resumeProfileFor(row.candidate_id);
+    let linkedin = normalizeLinkedIn(pf.linkedin) || normalizeLinkedIn(rp && rp.linkedin);
     if (!linkedin && c && c.li) {
       // Use the Bullhorn link only when it's clearly theirs: their name is in it, or it's the only one on the record.
       const slugs = String(c.li).split(/\s+/).filter(Boolean);
@@ -847,24 +922,28 @@ function registerCard(app, deps) {
       const pick = mine.length ? mine[0] : (slugs.length === 1 ? slugs[0] : "");
       if (pick) linkedin = normalizeLinkedIn("linkedin.com/in/" + pick);
     }
-    const skills = skillChips(pf.skills || (c && c.skill_list) || "");
-    return { linkedin: linkedin, skills: skills };
+    const rpSkills = rp && Array.isArray(rp.skills) ? rp.skills.reduce(function (a, g) { return a.concat(Array.isArray(g.items) ? g.items : []); }, []).join(", ") : "";
+    const skills = skillChips(pf.skills || rpSkills || (c && c.skill_list) || "");
+    return { linkedin: linkedin, skills: skills, resume: rp || null };
   }
 
   async function summaryFor(row, rate) {
     const pf = profileFields(row);
     const career = await careerFor(row.candidate_id);
     const extras = await extrasFor(row, pf);
+    const rp = extras.resume;
     return {
       linkedin: extras.linkedin,
       skills: extras.skills,
+      stage: stageOf(row.sub_status),
       formerEpic: career.formerEpic,
       systemsCount: career.healthSystems.length,
       id: row.public_id,
       name: displayName(row),
-      headline: pf.headline || "",
+      headline: pf.headline || (rp && rp.title) || "",
       epicRole: cleanRole(row.custom_text5),
-      certs: certList(row),
+      // Bullhorn's certifications; when Bullhorn has none, the résumé tool's Epic experience (certifications, not proficiencies).
+      certs: certList(row).length ? certList(row) : (rp && Array.isArray(rp.epic_experience) ? rp.epic_experience.filter(function (x) { return !/proficien/i.test(x); }).slice(0, 6) : []),
       availability: row.availability || "",
       location: row.location || "",
       rate: rate.display,
@@ -873,6 +952,31 @@ function registerCard(app, deps) {
       highlight: (Array.isArray(row.highlights) && row.highlights[0] && row.highlights[0].quote) || "",
       isNew: !!(row.created_at && now() - new Date(row.created_at).getTime() < 7 * 86400000),
     };
+  }
+
+  /** The résumé tool's curated profile (intro, Epic experience, Former Epic, skills, roles…), cached; never blocks long. */
+  const resumeInFlight = new Map();
+  async function resumeProfileFor(candidateId) {
+    if (!fetchResumeProfile) return null;
+    let cached = null;
+    try { cached = await db.getOne("SELECT data, fetched_at FROM card_resume_profiles WHERE candidate_id = $1", [candidateId]); } catch (e) { cached = null; }
+    const stale = !cached || now() - new Date(cached.fetched_at).getTime() > 6 * 3600000;
+    if (stale) {
+      let p = resumeInFlight.get(candidateId);
+      if (!p) {
+        p = Promise.resolve().then(function () { return fetchResumeProfile(candidateId); }).then(function (data) {
+          return db.query("INSERT INTO card_resume_profiles (candidate_id, data, fetched_at) VALUES ($1,$2::jsonb,now()) ON CONFLICT (candidate_id) DO UPDATE SET data = EXCLUDED.data, fetched_at = now()",
+            [candidateId, data ? JSON.stringify(data) : null]).then(function () { return data || null; });
+        }).catch(function (e) { log("[Card] resume profile " + candidateId + ": " + e.message); return undefined; })
+          .finally(function () { resumeInFlight.delete(candidateId); });
+        resumeInFlight.set(candidateId, p);
+      }
+      if (!cached) {
+        const fresh = await Promise.race([p, new Promise(function (r) { setTimeout(function () { r(undefined); }, 4000); })]);
+        return fresh || null;
+      }
+    }
+    return cached ? cached.data : null;
   }
 
   /** Career for a candidate: cached Bullhorn work history (refreshed daily, never blocks long) + Anura placements. */
@@ -907,7 +1011,14 @@ function registerCard(app, deps) {
         .filter(function (p) { return !/cancel|fell|declin|withdr/i.test(String(p.status || "")); })
         .map(function (p) { return { client: p.cl_name || p.client_name, role: p.job_title, start: ms(p.date_begin), end: ms(p.date_end) }; });
     } catch (e) { placed = []; }
-    return careerFrom(work, placed);
+    const rp = await resumeProfileFor(candidateId);
+    const fromResume = (rp && Array.isArray(rp.roles) ? rp.roles : []).map(function (r) {
+      const end = String(r.end || "");
+      return { companyName: r.company || "", title: r.title || "", startDate: r.start || null, endDate: /present|current/i.test(end) ? null : (end || null), comments: "" };
+    });
+    const career = careerFrom(work.concat(fromResume), placed);
+    if (rp && rp.former_epic) career.formerEpic = true;
+    return career;
   }
 
   async function fullCard(row, opts) {
@@ -926,9 +1037,12 @@ function registerCard(app, deps) {
     }).filter(function (d) { return held.indexOf(d.fileId) < 0; }).map(function (d) { delete d.fileId; return d; });
     const base = await summaryFor(row, rate);
     const career = await careerFor(row.candidate_id);
+    const rp = await resumeProfileFor(row.candidate_id);
     return Object.assign(base, {
       whyMe: row.why_me || "",
-      intro: pf.intro || "",
+      intro: pf.intro || (rp && rp.intro) || "",
+      funFacts: rp && Array.isArray(rp.fun_facts) ? rp.fun_facts.slice(0, 6) : [],
+      education: rp && Array.isArray(rp.education) ? rp.education.filter(function (e) { return e.degree || e.school; }).slice(0, 3) : [],
       culture: culture,
       facts: facts,
       highlights: highlights,
@@ -1124,7 +1238,8 @@ function registerCard(app, deps) {
       "LEFT JOIN candidates c ON c.id = l.candidate_id LEFT JOIN card_profiles p ON p.candidate_id = l.candidate_id " +
       "WHERE l.client_id = $1 AND l.revoked_at IS NULL ORDER BY l.job_id, l.candidate_id, l.created_at DESC", [clientId]);
     const byJob = {};
-    links.filter(function (l) { return submissionShown(l.sub_status); }).forEach(function (l) { (byJob[l.job_id] = byJob[l.job_id] || []).push(l); });
+    const passedSys = await passedOnCard(links);
+    links.filter(function (l) { return submissionShown(l.sub_status) || passedSys[l.submission_id]; }).forEach(function (l) { (byJob[l.job_id] = byJob[l.job_id] || []).push(l); });
     const managers = await systemManagers(clientId, settings, openJobs);
     const managerById = {};
     managers.forEach(function (m) { managerById[m.id] = m; });
@@ -1201,7 +1316,8 @@ function registerCard(app, deps) {
     const r = await judgeLink(link);
     if (r.state !== "active") return null;
     const sub = await db.getOne("SELECT status FROM submissions WHERE id = $1", [link.submission_id]);
-    if (!sub || !submissionShown(sub.status)) return null;
+    if (!sub) return null;
+    if (!submissionShown(sub.status) && !(await passedOnCard([{ submission_id: link.submission_id, sub_status: sub.status }]))[link.submission_id]) return null;
     return r;
   }
 
@@ -1403,7 +1519,7 @@ function registerCard(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
-  const feedbackLimiter = makeLimiter(20);
+  const feedbackLimiter = makeLimiter(Number(process.env.CARD_FEEDBACK_RATE_LIMIT || 20));
   app.post("/api/card-public/:token/feedback/:pid", feedbackLimiter, async function (req, res) {
     setPublicHeaders(res);
     try {
@@ -2512,6 +2628,7 @@ module.exports = registerCard;
 module.exports.makeToken = makeToken;
 module.exports.teamPhoto = teamPhoto;
 module.exports.careerFrom = careerFrom;
+module.exports.stageOf = stageOf;
 module.exports.normalizeLinkedIn = normalizeLinkedIn;
 module.exports.skillChips = skillChips;
 module.exports.hashToken = hashToken;

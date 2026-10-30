@@ -123,6 +123,7 @@ a{color:var(--blue)}
 .single .ask{flex:0 0 100%;justify-content:flex-start}
 .pill{display:inline-block;margin-left:8px;font-family:var(--sans);font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 8px;vertical-align:middle}
 .pill.interview{background:#E8F5EE;color:#14532D}
+.pill.stage{background:var(--navy);color:#fff}
 .pill.pass{background:var(--fog);color:var(--muted);border:1px solid var(--line)}
 .cand.passed .ph,.cand.passed h4,.cand.passed .facts{opacity:.55}
 .fbline{font-size:14px;color:#14532D;margin-top:10px}
@@ -223,7 +224,7 @@ a{color:var(--blue)}
     var ph = c.photoUrl ? el("img", { class: "ph", src: c.photoUrl, alt: "Photo of " + c.name, loading: "lazy" }) : el("div", { class: "ph", "aria-hidden": "true", text: ini(c.name) });
     var ask = "Ask " + first(d.contact.name);
     var body = [
-      el("h4", {}, [c.name, c.linkedin ? el("a", { class: "lin", href: c.linkedin, target: "_blank", rel: "noopener noreferrer", text: "in", "aria-label": c.name + " on LinkedIn (opens in a new tab)", title: "LinkedIn profile" }) : null, c.feedback ? el("span", { class: "pill " + c.feedback.action, text: c.feedback.action === "interview" ? "Interview requested" : "Passed" }) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]),
+      el("h4", {}, [c.name, c.linkedin ? el("a", { class: "lin", href: c.linkedin, target: "_blank", rel: "noopener noreferrer", text: "in", "aria-label": c.name + " on LinkedIn (opens in a new tab)", title: "LinkedIn profile" }) : null, c.stage ? el("span", { class: "pill stage", text: c.stage }) : c.feedback ? el("span", { class: "pill " + c.feedback.action, text: c.feedback.action === "interview" ? "Interview requested" : "Passed" }) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]),
       c.headline ? el("p", { class: "hl", text: c.headline }) : el("p", { class: "hl", "aria-hidden": "true" }),
       (c.certs.length || c.formerEpic) ? el("div", { class: "creds", "aria-label": "Credentials" }, (c.formerEpic ? [el("span", { class: "exepic", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "cert", text: certified(x) }); }))) : el("div", { class: "creds", "aria-hidden": "true" }),
       (c.skills || []).length ? el("div", { class: "skl", "aria-label": "Epic skills" }, c.skills.slice(0, 4).map(function (x) { return el("span", { text: x }); }).concat(c.skills.length > 4 ? [el("span", { class: "more", text: "+" + (c.skills.length - 4) + " more" })] : [])) : el("div", { class: "skl", "aria-hidden": "true" }),

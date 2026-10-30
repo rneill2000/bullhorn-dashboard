@@ -3225,7 +3225,110 @@ function registerForge(app, deps) {
     });
   }
 
-  return { verifyBillForSubmission: verifyBillForSubmission };
+  /* ── Bullhorn → Cards ──────────────────────────────────────────────────
+     A submission can reach the client without Forge (moved in Bullhorn, or sent another way).
+     Every few minutes, any submission at a client-facing status with no Card gets one, built from
+     the same pieces and guards as a Forge draft: Why Me / availability / location as Forge reads them
+     (internal language left out), the bill rate checked against Bullhorn, the client's résumé PDF
+     (contact-info check), the recruiter who submitted it. References stay off until a recruiter
+     picks them on the Cards page. VMS clients never get one (card.js refuses). */
+  const AUTO_STATUSES = CLIENT_FACING_STATUSES.filter(function (st) { return !/reject|declin|withdr/i.test(st); }).map(function (st) { return st.toLowerCase(); });
+
+  async function senderProfile(rec) {
+    if (!rec) return { name: "Anura Connect", title: "", phone: "", email: "" };
+    let saved = null, corp = null;
+    try { saved = await db.getOne("SELECT name, title, phone FROM submittal_forge_profiles WHERE user_key = ANY($1::text[]) ORDER BY updated_at DESC NULLS LAST LIMIT 1", [["bh:" + rec.id, "email:" + String(rec.email || "").toLowerCase()]]); } catch (e) { saved = null; }
+    try { corp = await db.getOne("SELECT occupation, phone, mobile FROM corporate_users WHERE id = $1", [rec.id]); } catch (e) { corp = null; }
+    return {
+      name: (saved && saved.name) || rec.name || "Anura Connect",
+      title: (saved && saved.title) || (corp && corp.occupation) || "",
+      phone: (saved && saved.phone) || (corp && (corp.phone || corp.mobile)) || "",
+      email: rec.email || "",
+    };
+  }
+
+  async function autoCard(submissionId) {
+    if (!cards || typeof cards.mintClientLink !== "function") return { skipped: "cards off" };
+    const row = await loadBundle(submissionId);
+    const notesBy = await loadNotesForCandidates([row.candidate_id]);
+    const clientNames = await loadClientNames();
+    const draft = project(row, Date.now(), notesBy[String(row.candidate_id)] || [], clientNames);
+    if (!draft.job.clientId) return { skipped: "no client" };
+    const names = internalFirstNames(await loadInternalUsers());
+    const ctx = { clientName: draft.job.clientName, jobTitle: draft.job.title, clients: clientNames };
+    function clean(text) { return text && !findInternalLeak([text], names, ctx) ? text : ""; }
+    let billRate = draft.billRate || "";
+    if (bhFetch) {
+      try {
+        const live = await liveBill(submissionId, draft.job.id, { candidateId: draft.candidate.id, jobTitle: draft.job.title, clientName: draft.job.clientName, submittedAt: row.date_added, pay: row.pay_rate || row.sub_custom_pay });
+        if (live && live.amount != null && ratesDiffer(billRate, live.amount)) billRate = formatRate(live.amount);
+      } catch (e) { /* the Card checks the rate live on every view anyway */ }
+    }
+    let resumeFileId = "", resumeName = "";
+    try {
+      const files = await listCandidateFiles(draft.candidate.id);
+      const pick = publicFiles(files, draft.candidate.id, draft.job.clientName, null).suggestedId;
+      if (pick) {
+        const dl = await downloadCandidateFile(draft.candidate.id, pick);
+        const buf = dl && dl.buffer ? dl.buffer : Buffer.alloc(0);
+        const rctx = await resumeGuard.loadContext(db, draft.candidate.id);
+        const check = await resumeGuard.checkResume(buf, rctx.who, rctx.allow);
+        if (check.ok) { resumeFileId = String(pick); resumeName = (dl && dl.name) || "Resume.pdf"; }
+      }
+    } catch (e) { /* no résumé on the Card; the recruiter can add one */ }
+    const rec = await senderProfile(await recruiterFor(row));
+    const contact = draft.job.reportingContact && draft.job.reportingContact.email ? draft.job.reportingContact.email : "";
+    const card = await cards.mintClientLink({
+      submissionId: submissionId, candidateId: draft.candidate.id, candidateName: draft.candidate.name,
+      jobId: draft.job.id, jobTitle: draft.job.title, clientId: draft.job.clientId, clientName: draft.job.clientName,
+      contactEmail: contact, whyMe: clean(draft.whyMe), availability: clean(draft.availability), location: clean(draft.location),
+      billRate: billRate, billAmount: moneyNumber(billRate), resumeFileId: resumeFileId || null, resumeName: resumeName,
+      references: [], highlights: [], recruiter: rec, createdBy: rec.email || "bullhorn-sync",
+    });
+    try { await db.query("UPDATE card_links SET source = 'bullhorn' WHERE id = $1", [card.id]); } catch (e) { /* label only */ }
+    return { created: card.id };
+  }
+
+  async function syncCardsFromBullhorn() {
+    if (!db || !db.ready || !cards || typeof cards.ensureTables !== "function") return { checked: 0 };
+    await cards.ensureTables();
+    await db.query("CREATE TABLE IF NOT EXISTS card_auto_attempts (submission_id INTEGER PRIMARY KEY, result TEXT, attempted_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+    const since = Date.now() - 21 * 86400000;
+    const rows = await db.getAll(
+      "SELECT s.id FROM submissions s JOIN jobs j ON j.id = s.job_id " +
+      "WHERE s.is_deleted IS NOT TRUE AND j.is_deleted IS NOT TRUE AND j.status IN ('Accepting Candidates','Open') " +
+      "AND LOWER(TRIM(s.status)) = ANY($1::text[]) AND COALESCE(s.date_last_modified, s.date_added, 0) >= $2 " +
+      "AND NOT EXISTS (SELECT 1 FROM card_links l WHERE l.submission_id = s.id) " +
+      "AND NOT EXISTS (SELECT 1 FROM card_auto_attempts a WHERE a.submission_id = s.id AND (a.result LIKE 'skip:%' OR a.attempted_at > now() - interval '6 hours')) " +
+      "ORDER BY COALESCE(s.date_last_modified, s.date_added) DESC LIMIT 15", [AUTO_STATUSES, since]);
+    let made = 0;
+    for (const r of rows) {
+      let result;
+      try {
+        const out = await autoCard(r.id);
+        result = out.created ? "created:" + out.created : "skip:" + (out.skipped || "");
+        if (out.created) made++;
+      } catch (e) {
+        result = e && e.code === "vms" ? "skip:vms" : "error:" + String(e && e.message || e).slice(0, 200);
+      }
+      await db.query("INSERT INTO card_auto_attempts (submission_id, result, attempted_at) VALUES ($1,$2,now()) ON CONFLICT (submission_id) DO UPDATE SET result = EXCLUDED.result, attempted_at = now()", [r.id, result]);
+    }
+    if (made) console.log("[Cards] " + made + " Card(s) created from Bullhorn submissions");
+    return { checked: rows.length, created: made };
+  }
+
+  if (cards && deps.autoSync !== false) {
+    const timer = setInterval(function () { syncCardsFromBullhorn().catch(function (e) { console.log("[Cards] Bullhorn sync failed: " + e.message); }); }, 10 * 60 * 1000);
+    if (timer.unref) timer.unref();
+    const first = setTimeout(function () { syncCardsFromBullhorn().catch(function (e) { console.log("[Cards] Bullhorn sync failed: " + e.message); }); }, 90 * 1000);
+    if (first.unref) first.unref();
+  }
+
+  app.post("/api/cards/sync-from-bullhorn", async function (req, res) {
+    try { res.json(await syncCardsFromBullhorn()); } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  });
+
+  return { verifyBillForSubmission: verifyBillForSubmission, autoCard: autoCard, syncCardsFromBullhorn: syncCardsFromBullhorn };
 }
 
 module.exports = registerForge;

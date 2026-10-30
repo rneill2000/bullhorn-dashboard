@@ -2438,3 +2438,40 @@ test("K33 a VMS client gets the email without a Card, and it says why", async fu
     assert.doesNotMatch(JSON.parse(calls[0].body).body.content, /Anura Connect Card/);
   } finally { server.close(); }
 });
+
+test("K44 Bullhorn → Cards: a client-facing submission with no Card gets one, built with Forge's guards", async function () {
+  const minted = [];
+  const calls = [];
+  const app = cardForgeApp({
+    ensureTables: async function () { return true; },
+    mintClientLink: async function (o) { minted.push(o); return { id: 501, url: "https://dashboard.anuraconnect.com/card/bcdfghjkmnpqrstvwxzbcdfghjkmnpqr" }; },
+  }, calls);
+  const server = await listen(app);
+  try {
+    const r = await req(server.address().port, "POST", "/api/cards/sync-from-bullhorn", {});
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.created, 1);
+    assert.equal(minted.length, 1);
+    const m = minted[0];
+    assert.equal(m.submissionId, 42);
+    assert.deepEqual(m.references, [], "references wait for a recruiter to pick them");
+    assert.equal(m.resumeFileId, "9", "the client's résumé PDF, checked for contact info");
+    assert.equal(m.billAmount, 185, "rate checked against Bullhorn");
+    assert.equal(calls.length, 0, "no Outlook draft, no email");
+    assert.doesNotMatch(JSON.stringify(m), /\$95|pay rate/i, "pay never goes to the Card");
+  } finally { server.close(); }
+});
+
+test("K45 Bullhorn → Cards: a contact-info résumé is left off the auto Card", async function () {
+  const minted = [];
+  const app = cardForgeApp({
+    ensureTables: async function () { return true; },
+    mintClientLink: async function (o) { minted.push(o); return { id: 502, url: "https://dashboard.anuraconnect.com/card/bcdfghjkmnpqrstvwxzbcdfghjkmnpqr" }; },
+  }, [], textPdf("Jack Corbell\njack.corbell@gmail.com"));
+  const server = await listen(app);
+  try {
+    await req(server.address().port, "POST", "/api/cards/sync-from-bullhorn", {});
+    assert.equal(minted.length, 1);
+    assert.equal(minted[0].resumeFileId, null);
+  } finally { server.close(); }
+});

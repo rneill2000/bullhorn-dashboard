@@ -5,6 +5,8 @@
  * (CI starts a postgres service; locally any throwaway database works). Each run uses its own schema.
  */
 process.env.RESUME_GUARD = "enforce";
+process.env.CARD_RATE_LIMIT = "100000";
+process.env.CARD_FEEDBACK_RATE_LIMIT = "100000";
 const { textPdf } = require("./test-pdf");
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -215,9 +217,11 @@ async function harness() {
   app.use(express.json());
   const net = { calls: [], handler: null };
   const files = {};
+  const bh = [];
   const api = card(app, {
     fetch: async function (url, opts) { net.calls.push(String(url)); return net.handler(String(url), opts || {}); },
     db: db,
+    bhWrite: async function (endpoint, body, method) { bh.push({ endpoint: endpoint, body: body, method: method }); return { changedEntityId: 9000 + bh.length }; },
     lookup: async function (host) {
       if (host === "www.client.example") return [{ address: "93.184.216.34" }];
       if (host === "intranet.example") return [{ address: "10.1.2.3" }];
@@ -253,7 +257,7 @@ async function harness() {
     await pool.query("DROP SCHEMA " + schema + " CASCADE");
     await pool.end();
   }
-  return { db: db, port: port, mint: mint, tok: tok, sent: sent, rates: rates, api: api, close: close, net: net, files: files };
+  return { db: db, port: port, mint: mint, tok: tok, sent: sent, rates: rates, api: api, close: close, net: net, files: files, bh: bh };
 }
 
 test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_URL to run" }, async function (t) {
@@ -811,6 +815,55 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal(audit.json.mode, "enforce");
     });
 
+    await t.test("K46 client decisions land in Bullhorn: note + stage, never backward, Undo restores", async function () {
+      const settle = function () { return new Promise(function (r) { setTimeout(r, 120); }); };
+      // A fresh candidate on Jack's job, sent to the client.
+      await h.db.query("INSERT INTO candidates (id, first_name, last_name, name, email, custom_text1, custom_text2, custom_text5, owner_id, date_last_modified) VALUES (8, 'Mia', 'Lopez', 'Mia Lopez', 'm8@x.com', 'Beaker CP', '', 'Beaker Analyst', 5, 1) ON CONFLICT (id) DO NOTHING");
+      await h.db.query("INSERT INTO submissions VALUES (18, 'Client Submission', 3, false) ON CONFLICT (id) DO UPDATE SET status = 'Client Submission'");
+      const m8 = await h.mint({ submissionId: 18, candidateId: 8, candidateName: "Mia Lopez", billRate: "$150/hr" });
+      h.rates[18] = { amount: 150 };
+      const pid = m8.publicId;
+      await h.db.query("UPDATE card_feedback SET created_at = created_at - interval '1 minute'");
+      h.bh.length = 0; h.sent.length = 0;
+      let r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "interview", slots: [new Date(Date.now() + 2 * 86400000).toISOString()], tz: "America/Chicago" } });
+      assert.equal(r.status, 200, r.text);
+      await settle();
+      const note = h.bh.filter(function (c) { return c.endpoint === "entity/Note"; })[0];
+      assert.ok(note, "note written");
+      assert.equal(note.body.personReference.id, 8);
+      assert.match(note.body.comments, /requested an interview with Mia Lopez/);
+      assert.ok(h.bh.some(function (c) { return /^entity\/Note\/\d+\/jobOrders\/100$/.test(c.endpoint); }), "note linked to the job");
+      assert.deepEqual(h.bh.filter(function (c) { return c.endpoint === "entity/JobSubmission/18"; }).map(function (c) { return c.body.status; }), ["First Interview"]);
+      assert.equal((await h.db.getOne("SELECT status FROM submissions WHERE id = 18")).status, "First Interview");
+      assert.match(h.sent.filter(function (m) { return /Interview request/.test(m.subject); })[0].html, /moved from Client Submission to First Interview/);
+      await h.db.query("UPDATE card_feedback SET created_at = created_at - interval '1 minute'");
+      h.bh.length = 0;
+      r = await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "pass", reason: "Rate" } });
+      await settle();
+      assert.deepEqual(h.bh.filter(function (c) { return c.endpoint === "entity/JobSubmission/18"; }).map(function (c) { return c.body.status; }), ["Client Rejected"]);
+      const after = (await req(h.port, "GET", "/api/card-public/" + J)).json;
+      assert.equal(after.candidates.filter(function (c) { return c.id === pid; })[0].feedback.action, "pass", "still on the client's page, marked Passed");
+      await h.db.query("UPDATE card_feedback SET created_at = created_at - interval '1 minute'");
+      h.bh.length = 0;
+      await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "reopen" } });
+      await settle();
+      assert.deepEqual(h.bh.filter(function (c) { return c.endpoint === "entity/JobSubmission/18"; }).map(function (c) { return c.body.status; }), ["First Interview"], "Undo restores the stage it replaced");
+      // A later stage is never moved backward.
+      await h.db.query("UPDATE submissions SET status = 'Offer Out' WHERE id = 18");
+      await h.db.query("UPDATE card_feedback SET created_at = created_at - interval '1 minute'");
+      h.bh.length = 0;
+      await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "pass", reason: "Rate" } });
+      await settle();
+      assert.equal(h.bh.filter(function (c) { return c.endpoint === "entity/JobSubmission/18"; }).length, 0, "offer stage left alone");
+      assert.ok(h.bh.some(function (c) { return c.endpoint === "entity/Note"; }), "still noted");
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J)).json.candidates.filter(function (c) { return c.id === pid; })[0].stage, "Offer out");
+      await h.db.query("UPDATE submissions SET status = 'Client Submission' WHERE id = 18");
+      await h.db.query("UPDATE card_feedback SET created_at = created_at - interval '1 minute'");
+      await req(h.port, "POST", "/api/card-public/" + J + "/feedback/" + pid, { body: { action: "reopen" } });
+      await settle();
+      await h.db.query("UPDATE submissions SET status = 'Client Submission' WHERE id = 18");
+    });
+
     await t.test("K38 a logo from a web link: public https images only, redirects re-checked", async function () {
       const rec = { "x-test-user": "ben@anuraconnect.com" };
       const png = Buffer.alloc(40); Buffer.from([0x89, 0x50, 0x4e, 0x47]).copy(png);
@@ -945,7 +998,7 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal(r.json.feedback.by, "Dana Ruiz");
       await new Promise(function (res) { setTimeout(res, 50); });
       const mail = h.sent.filter(function (m) { return /^Interview request: Jack Corbell/.test(m.subject); });
-      assert.equal(mail.length, 1);
+      assert.equal(mail.length, 1, JSON.stringify(h.sent.map(function (m) { return m.subject + " -> " + m.to.map(function (x) { return x.email; }).join(","); })));
       assert.deepEqual(mail[0].to.map(function (x) { return x.email; }).sort(), ["ben@anuraconnect.com", "peter@anuraconnect.com"]);
       assert.match(mail[0].html, /Mornings are best/);
       assert.match(mail[0].html, /C[DS]T/, "times in the client's time zone");
@@ -981,6 +1034,7 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       r = await req(h.port, "POST", "/api/hs-public/" + T + "/card/" + hpid + "/feedback/" + hpid, { body: { action: "interview", name: "Chris Lab" } });
       assert.equal(r.status, 200, r.text);
       const hv2 = await req(h.port, "GET", "/api/hs-public/" + T);
+      assert.equal(hv2.status, 200, hv2.text);
       const jackCol = hv2.json.roles.filter(function (x) { return x.title === "Beaker Analyst"; })[0].candidates.filter(function (c) { return c.name === "Jack Corbell"; })[0];
       assert.equal(jackCol.feedback.by, "Chris Lab");
       assert.equal(hv2.json.stats.interviews, 1);

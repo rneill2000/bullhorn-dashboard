@@ -180,6 +180,11 @@ img{display:block}
 .status .again{background:none;border:0;padding:0;min-height:28px;margin-top:4px;font:inherit;font-weight:700;color:var(--blue);text-decoration:underline;cursor:pointer}
 .pill{display:inline-block;margin-left:8px;font-family:var(--sans);font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 8px;vertical-align:middle}
 .pill.interview{background:#E8F5EE;color:#14532D}
+.pill.stage{background:var(--navy);color:#fff}
+.status.stage{background:var(--navy);color:#fff}
+.funlist{list-style:none;display:grid;gap:8px;margin-top:14px}
+.funlist li{background:var(--paper);border-radius:12px;padding:12px 16px;box-shadow:0 1px 0 var(--line);font-size:16px}
+.funlist li::before{content:"✦";color:var(--sky);margin-right:10px}
 .pill.pass{background:var(--fog);color:var(--muted);border:1px solid var(--line)}
 dialog.ask{margin:auto;border:0;border-radius:18px;padding:0;width:min(520px,calc(100% - 24px));max-height:calc(100% - 24px);box-shadow:0 40px 80px -30px rgba(7,24,42,.7);color:var(--ink)}
 dialog.ask::backdrop{background:rgba(10,34,57,.55)}
@@ -338,6 +343,10 @@ body.editing .editor{transform:none}
     if (isNaN(d)) return "";
     return d.toLocaleString("en-US", opts || { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   }
+  function stagePill(c) {
+    if (c.stage) return el("span", { class: "pill stage", text: c.stage });
+    return pill(c.feedback);
+  }
   function pill(fb) {
     if (!fb) return null;
     return el("span", { class: "pill " + fb.action, text: fb.action === "interview" ? "Interview requested" : "Passed" });
@@ -433,6 +442,10 @@ body.editing .editor{transform:none}
   }
   function statusBox(c) {
     var fb = c.feedback, name = first(c.name);
+    if (c.stage) return el("div", { class: "status stage", role: "status" }, [
+      el("b", { text: c.stage }),
+      el("span", { text: c.stage === "Placed" ? name + " is on your team." : c.stage === "Offer out" ? "An offer is out to " + name + "." : contactFirst() + " is coordinating interviews with " + name + "." }),
+    ]);
     if (!fb) return null;
     var by = fb.by ? fb.by.split(/\s+/)[0] : "";
     if (fb.action === "interview") {
@@ -544,9 +557,10 @@ body.editing .editor{transform:none}
         ]);
       })),
       c.formerEpic ? el("p", { class: "meta", style: "margin-top:14px;font-size:15px;color:var(--ink)" }, [el("b", { text: "Former Epic. " }), name + " knows the software from the inside."]) : null,
+      (c.education || []).length ? el("p", { class: "meta", style: "margin-top:8px;font-size:15px;color:var(--ink)" }, [el("b", { text: "Education. " }), c.education.map(function (e) { return [e.degree, e.school].filter(Boolean).join(", "); }).join("; ")]) : null,
     ]));
     if (c.intro) parts.push(el("section", {}, [el("h3", { text: "In " + name + "'s words" }), el("div", { class: "prose" }, paragraphs(c.intro))]));
-    if ((c.culture || []).length || (c.facts || []).length) parts.push(el("section", { class: "corner" }, [
+    if ((c.culture || []).length || (c.facts || []).length || (c.funFacts || []).length) parts.push(el("section", { class: "corner" }, [
       el("h3", { text: "Culture corner" }),
       (c.facts || []).length ? el("ul", { class: "facts-row", "aria-label": "Quick facts" }, c.facts.map(function (f) {
         return el("li", {}, [el("span", { class: "k", text: f.label }), el("span", { class: "v", text: f.value })]);
@@ -554,6 +568,7 @@ body.editing .editor{transform:none}
       (c.culture || []).length ? el("div", { class: "prompts" }, c.culture.map(function (x) {
         return el("div", { class: "prompt" }, [el("p", { class: "q", text: x.prompt }), el("p", { class: "a", text: x.text })]);
       })) : null,
+      (c.funFacts || []).length ? el("ul", { class: "funlist", "aria-label": "Fun facts" }, c.funFacts.map(function (x) { return el("li", { text: x }); })) : null,
     ]));
     var docs = c.documents || [];
     if (docs.length) {
@@ -594,7 +609,7 @@ body.editing .editor{transform:none}
   function compareView() {
     var rows = data.candidates.map(function (c) {
       return el("tr", {}, [
-        el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name" }, [c.name, c.feedback ? pill(c.feedback) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]), c.headline ? el("div", { class: "sub", text: c.headline }) : null, c.highlight ? el("div", { class: "standout", text: "“" + c.highlight + "”" }) : null])])]),
+        el("td", {}, [el("div", { class: "who" }, [photo(c, "mini"), el("div", {}, [el("div", { class: "name" }, [c.name, (c.stage || c.feedback) ? stagePill(c) : (c.isNew ? el("span", { class: "new", text: "New" }) : null)]), c.headline ? el("div", { class: "sub", text: c.headline }) : null, c.highlight ? el("div", { class: "standout", text: "“" + c.highlight + "”" }) : null])])]),
         el("td", {}, [el("div", { text: c.epicRole || "—" }),
           (c.skills || []).length ? el("div", { class: "sub", text: c.skills.slice(0, 4).join(" · ") + (c.skills.length > 4 ? " +" + (c.skills.length - 4) : "") }) : null,
           (c.certs.length || c.formerEpic) ? el("div", { class: "chips" }, (c.formerEpic ? [el("span", { class: "chip-e", text: "Former Epic" })] : []).concat(c.certs.map(function (x) { return el("span", { class: "chip-c", text: "✓ " + certified(x) }); }))) : null,
