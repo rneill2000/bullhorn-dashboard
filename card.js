@@ -1991,6 +1991,33 @@ function registerCard(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
+  /**
+   * The résumé tool asks for a candidate's Card setup link when a recruiter shares the résumé with the
+   * candidate, so the candidate gets one link: their résumé edits, then their Card (photo, culture corner).
+   * Server to server, same shared key as the résumé tool's own API (RESUME_TOOL_API_KEY). No login.
+   */
+  app.post("/api/card-integration/edit-link", async function (req, res) {
+    setPublicHeaders(res);
+    try {
+      const expected = String(process.env.RESUME_TOOL_API_KEY || "").trim();
+      if (!expected) return res.status(503).json({ error: "Not configured." });
+      const hdr = String(req.headers.authorization || "");
+      const given = hdr.toLowerCase().indexOf("bearer ") === 0 ? hdr.slice(7).trim() : String(req.headers["x-api-key"] || "").trim();
+      const a = Buffer.from(given), b = Buffer.from(expected);
+      if (!given || a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: "Unauthorized." });
+      await needDb();
+      const id = digitsId(String((req.body && (req.body.bullhorn_candidate_id || req.body.candidateId)) || ""));
+      const cand = id ? await candidateRow(id) : null;
+      if (!cand) return res.status(404).json({ error: "Candidate not found." });
+      const token = makeToken();
+      const expires = new Date(now() + EDIT_LINK_DAYS * 86400000);
+      const by = String((req.body && req.body.requested_by) || "resume tool").slice(0, 120);
+      await db.query("INSERT INTO card_edit_links (token_hash, candidate_id, created_by, created_by_name, expires_at) VALUES ($1,$2,$3,$4,$5)",
+        [hashToken(token), id, by, "Résumé tool", expires.toISOString()]);
+      res.json({ url: editUrl(token), expiresAt: expires.toISOString() });
+    } catch (e) { fail(res, e); }
+  });
+
   app.post("/api/cards/candidate/:id/edit-link", async function (req, res) {
     try {
       await needDb();

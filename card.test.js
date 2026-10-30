@@ -827,6 +827,23 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       await req(h.port, "POST", "/api/cards/links/" + m.id + "/revoke", { headers: rec, body: {} });
     });
 
+    await t.test("K52 the résumé tool gets a candidate's Card setup link with the shared key", async function () {
+      const url = "/api/card-integration/edit-link";
+      delete process.env.RESUME_TOOL_API_KEY;
+      assert.equal((await req(h.port, "POST", url, { body: { bullhorn_candidate_id: 1 } })).status, 503, "off until the key is set");
+      process.env.RESUME_TOOL_API_KEY = "k".repeat(64);
+      try {
+        assert.equal((await req(h.port, "POST", url, { body: { bullhorn_candidate_id: 1 } })).status, 401);
+        assert.equal((await req(h.port, "POST", url, { headers: { authorization: "Bearer wrong" }, body: { bullhorn_candidate_id: 1 } })).status, 401);
+        const ok = await req(h.port, "POST", url, { headers: { authorization: "Bearer " + "k".repeat(64) }, body: { bullhorn_candidate_id: 1, requested_by: "ben@anuraconnect.com" } });
+        assert.equal(ok.status, 200, ok.text);
+        assert.match(ok.json.url, /^https:\/\/dash\.test\/card-edit\/[a-z]{32}$/);
+        const tok = ok.json.url.split("/card-edit/")[1];
+        assert.equal((await req(h.port, "GET", "/api/card-edit/" + tok)).status, 200, "the link works");
+        assert.equal((await req(h.port, "POST", url, { headers: { "x-api-key": "k".repeat(64) }, body: { bullhorn_candidate_id: 99999 } })).status, 404);
+      } finally { delete process.env.RESUME_TOOL_API_KEY; }
+    });
+
     await t.test("K18 public pages are served with a strict CSP and the recruiter page is not public", async function () {
       const page = await req(h.port, "GET", "/card/" + J);
       assert.equal(page.status, 200);
