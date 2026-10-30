@@ -8,16 +8,16 @@
  * with its own session. One password, kept only on the dashboard.
  *
  * Only the calls the résumé tool needs are allowed:
- *   GET  search/Candidate, search/JobOrder, entity/JobOrder/<id>
+ *   GET  search/Candidate, query/Candidate (LinkedIn match), search/JobOrder, entity/JobOrder/<id>
  *   PUT  file/Candidate/<id>/raw   (body: the PDF, Content-Type application/pdf, ?name=<filename>)
  */
 const crypto = require("crypto");
 const express = require("express");
 
 const PREFIX = "/api/card-integration/bullhorn/";
-const GET_OK = [/^search\/Candidate$/, /^search\/JobOrder$/, /^entity\/JobOrder\/\d+$/];
+const GET_OK = [/^search\/Candidate$/, /^query\/Candidate$/, /^search\/JobOrder$/, /^entity\/JobOrder\/\d+$/];
 const FILE_OK = /^file\/Candidate\/(\d+)\/raw$/;
-const PASS_PARAMS = ["query", "fields", "count", "sort", "start", "fileType", "externalID"];
+const PASS_PARAMS = ["query", "where", "fields", "count", "sort", "start", "fileType", "externalID"];
 
 function keyOk(req) {
   const expected = String(process.env.RESUME_TOOL_API_KEY || "").trim();

@@ -49,10 +49,13 @@ test("K53 Bullhorn relay for the résumé tool", async function (t) {
   });
 
   await t.test("only the résumé tool's calls are allowed", async function () {
-    for (const p of ["entity/Candidate/1", "query/Placement?where=id>0", "search/ClientContact", "entity/JobOrder/abc"]) {
+    for (const p of ["entity/Candidate/1", "query/Placement?where=id>0", "query/ClientContact", "search/ClientContact", "entity/JobOrder/abc"]) {
       assert.equal((await fetch(h.base + p, { headers: auth })).status, 403, p);
     }
     assert.equal((await fetch(h.base + "entity/JobOrder/12", { headers: auth })).status, 200);
+    const li = await fetch(h.base + "query/Candidate?where=" + encodeURIComponent("companyURL LIKE '%jack-corbell%'") + "&fields=id", { headers: auth });
+    assert.equal(li.status, 200, "LinkedIn lookup");
+    assert.equal(new URL(calls[calls.length - 1].url).searchParams.get("where"), "companyURL LIKE '%jack-corbell%'");
     assert.equal((await fetch(h.base + "entity/JobOrder/12", { method: "PUT", headers: Object.assign({ "content-type": "application/pdf" }, auth), body: "%PDF-1.4" })).status, 403);
   });
 
