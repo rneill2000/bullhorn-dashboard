@@ -12,6 +12,26 @@ const JOB = { title: "Epic Beaker Analyst", clientName: "Lakeshore Health", loca
 const MANAGER = { name: "Dana Ruiz", title: "Director, Lab Applications" };
 const PASS_REASONS = ["Experience isn't the right fit", "Rate", "Availability", "Location", "We went another direction", "Something else"];
 
+/* Demo candidates show real Anura team headshots (with the team's OK) so the page looks like it will
+ * with real photos. Fetched once and cached; the illustration is the fallback if the site is down. */
+const realPhotoCache = {};
+async function sendPhoto(res, p) {
+  if (p.realPhoto) {
+    try {
+      let hit = realPhotoCache[p.id];
+      if (!hit || Date.now() - hit.at > 24 * 3600000) {
+        const r = await fetch(p.realPhoto, { signal: AbortSignal.timeout(8000) });
+        const type = r.headers.get("content-type") || "";
+        if (r.ok && /^image\/(jpeg|png|webp)/.test(type)) {
+          hit = realPhotoCache[p.id] = { at: Date.now(), type: type, buf: Buffer.from(await r.arrayBuffer()) };
+        }
+      }
+      if (hit) { res.setHeader("Cache-Control", "public, max-age=3600"); return res.type(hit.type).send(hit.buf); }
+    } catch (e) { /* fall back to the illustration */ }
+  }
+  res.type("image/svg+xml").send(p.photo);
+}
+
 /* ── illustrated portraits (SVG): friendly, clearly illustrations, no real faces ── */
 function portrait(o) {
   const hair = {
@@ -48,7 +68,7 @@ const LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" width
 
 const PEOPLE = [
   {
-    id: "jackcorbelld", skills: ["Beaker CP build", "Specimen tracking", "AP workflow", "Instrument interfaces", "Validation & testing", "Super-user training", "Go-live command center"], linkedin: "https://www.linkedin.com/",
+    id: "jackcorbelld", realPhoto: "https://www.anuraconnect.com/assets/team/ben-gray.jpg", skills: ["Beaker CP build", "Specimen tracking", "AP workflow", "Instrument interfaces", "Validation & testing", "Super-user training", "Go-live command center"], linkedin: "https://www.linkedin.com/",
     healthSystems: [{ name: "Riverside Health", role: "Beaker Analyst", from: 2023, to: "Present", viaAnura: true }, { name: "Northfield Medical Center", role: "Beaker CP Analyst", from: 2020, to: 2023 }, { name: "St. Agnes Regional", role: "Lab Systems Analyst", from: 2017, to: 2020 }], formerEpic: false,
     name: "Jack Corbell", headline: "Beaker analyst who's happiest at the lab bench",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology", "Beaker Anatomic Pathology"],
@@ -76,7 +96,7 @@ const PEOPLE = [
     resume: ["JACK CORBELL", "Epic Beaker Analyst | Beaker CP and AP certified", "", "SUMMARY", "Eight years building and supporting Epic Beaker for academic and community labs.", "Two CP go-lives as build lead; AP optimization; specimen tracking redesign.", "", "EXPERIENCE", "Riverside Health, Beaker Analyst (Anura Connect consultant), 2023-2026", "  Rebuilt specimen tracking six weeks ahead of cutover; trained 40 super users.", "Northfield Medical Center, Beaker CP Analyst, 2020-2023", "  Led CP validation, finished two weeks early; built 300+ result components.", "St. Agnes Regional, Lab Systems Analyst, 2017-2020", "  Sunquest to Beaker conversion; instrument interfaces.", "", "CERTIFICATIONS", "Epic Beaker Clinical Pathology; Epic Beaker Anatomic Pathology", "", "Presented by Anura Connect"],
   },
   {
-    id: "mialopezdemo", skills: ["Multi-site standardization", "Beaker CP build", "Microbiology", "Blood bank", "Reference lab interfaces", "Design sessions"], linkedin: "https://www.linkedin.com/",
+    id: "mialopezdemo", realPhoto: "https://www.anuraconnect.com/assets/team/rachel-neill.jpg", skills: ["Multi-site standardization", "Beaker CP build", "Microbiology", "Blood bank", "Reference lab interfaces", "Design sessions"], linkedin: "https://www.linkedin.com/",
     healthSystems: [{ name: "Prairie State Health", role: "Beaker CP Build Lead", from: 2022, to: "Present" }, { name: "Gulf Coast Medical", role: "Beaker Analyst", from: 2019, to: 2022 }, { name: "Lakeview Academic Medical Center", role: "Go-live support (with Epic)", from: 2018, to: 2018 }], formerEpic: true,
     name: "Mia Lopez", headline: "CP build lead for a nine-hospital system",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology"],
@@ -98,7 +118,7 @@ const PEOPLE = [
     resume: ["MIA LOPEZ", "Epic Beaker CP Build Lead", "", "SUMMARY", "Seven years of Beaker CP build; multi-site standardization on one instance.", "", "EXPERIENCE", "Prairie State Health, Beaker CP Build Lead, 2022-2026", "  Standardized CP build across nine hospitals; 1,200 tests consolidated to 640.", "Gulf Coast Medical, Beaker Analyst, 2019-2022", "  Microbiology and blood bank build; reference lab interfaces.", "", "CERTIFICATIONS", "Epic Beaker Clinical Pathology", "", "Presented by Anura Connect"],
   },
   {
-    id: "darnellprice", skills: ["Beaker CP", "Cupid", "Shared instruments", "Upgrades", "Downtime planning", "Post-live support"], linkedin: "https://www.linkedin.com/",
+    id: "darnellprice", realPhoto: "https://www.anuraconnect.com/assets/team/dan-neill.jpg", skills: ["Beaker CP", "Cupid", "Shared instruments", "Upgrades", "Downtime planning", "Post-live support"], linkedin: "https://www.linkedin.com/",
     healthSystems: [{ name: "Lakeview Academic Medical Center", role: "Senior Clinical Systems Analyst", from: 2019, to: "Present" }, { name: "Metro West Hospital", role: "Lab Systems Analyst", from: 2016, to: 2019 }], formerEpic: false,
     name: "Darnell Price", headline: "Beaker plus Cupid, comfortable in both labs",
     epicRole: "Beaker Analyst", certs: ["Beaker Clinical Pathology", "Cupid"],
@@ -263,7 +283,7 @@ function registerDemo(app, deps) {
       headers(res);
       const p = BY_ID[req.params.pid];
       if (!p) return res.status(404).end();
-      res.type("image/svg+xml").send(p.photo);
+      return sendPhoto(res, p);
     });
     app.post(api + "/seen", function (req, res) { headers(res); res.json({ counted: false, reason: "demo" }); });
 
@@ -280,7 +300,7 @@ function registerDemo(app, deps) {
       if (!BY_ID[req.params.other]) return res.status(404).json({ state: "missing" });
       const v = cardView(req, b, req.params.other); v.sent = req.params.pid; res.json(v);
     });
-    app.get(api + "/card/:pid/photo/:p", function (req, res) { headers(res); const p = BY_ID[req.params.p]; if (!p) return res.status(404).end(); res.type("image/svg+xml").send(p.photo); });
+    app.get(api + "/card/:pid/photo/:p", function (req, res) { headers(res); const p = BY_ID[req.params.p]; if (!p) return res.status(404).end(); return sendPhoto(res, p); });
     function sendResume(req, res) {
       headers(res);
       const p = BY_ID[req.params.p];
