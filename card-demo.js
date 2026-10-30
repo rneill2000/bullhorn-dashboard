@@ -6,7 +6,7 @@
  */
 const path = require("path");
 
-const CONTACT = { name: "Peter Oppermann", title: "VP, Client Success", phone: "", email: "peter@anuraconnect.com", photoUrl: "https://www.anuraconnect.com/assets/team/peter-oppermann.jpg" };
+const CONTACT = { name: "Peter Oppermann", title: "VP, Client Success", phone: "(608) 555-0199", textPhone: "(608) 555-0199", email: "peter@anuraconnect.com", photoUrl: "https://www.anuraconnect.com/assets/team/peter-oppermann.jpg" };
 const SYSTEM = { name: "Lakeshore Health", accent: "#007A5E", intro: "" };
 const JOB = { title: "Epic Beaker Analyst", clientName: "Lakeshore Health", location: "Milwaukee, WI" };
 const MANAGER = { name: "Dana Ruiz", title: "Director, Lab Applications" };
@@ -201,7 +201,8 @@ function registerDemo(app, deps) {
           phone = f ? f.phone : "";
         } catch (e) { phone = ""; }
       }
-      return Object.assign({}, CONTACT, { title: (u && u.occupation) || CONTACT.title, phone: phone, textPhone: (u && u.mobile) || phone });
+      // Demo only: until Peter's real number is on file, show the made-up 555 number (reserved for fiction).
+      return Object.assign({}, CONTACT, { title: (u && u.occupation) || CONTACT.title, phone: phone || CONTACT.phone, textPhone: (u && u.mobile) || phone || CONTACT.textPhone });
     } catch (e) { return CONTACT; }
   }
 
