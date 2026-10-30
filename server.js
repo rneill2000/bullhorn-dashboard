@@ -11801,6 +11801,7 @@ require("./capture")(app, { db: db, bhWrite: bhWrite, bhFetchAll: bhFetchAll, bh
 const filesArchive = require("./files").registerFiles(app, { db: db, bhFetch: bhFetch, authenticate: authenticate, getUser: getUser });
 const notifier = require("./notify").makeNotifier({ graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; } });
 let forgeApi = null;
+require("./bh-relay")(app, { authenticate: authenticate, resetSession: function () { session.expiresAt = 0; } });
 const cardsApi = require("./card")(app, {
   db: db,
   getUser: getUser,

@@ -175,3 +175,5 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K49 | Setup check: team mobile/phone/title/photo, clients with open jobs and no owner, résumé tool connection | card.test.js |
 | K50 | Account manager = client company owner in Bullhorn (cached daily, falls back to open-job owner); team mobiles drive Text; no placeholder photo | card.test.js |
 | K51 | Hide a submittal from the client (Card, comparison, health page) and show it again; Placed shows as Hired | card.test.js |
+| K52 | Résumé tool gets a candidate's Card setup link with the shared key (503 unset, 401 wrong key, 404 unknown candidate) | card.test.js |
+| K53 | Bullhorn relay for the résumé tool: shared key, allowlisted reads and PDF upload only, dashboard token, one re-sign-in on 401 | bh-relay.test.js |
