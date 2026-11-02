@@ -2462,6 +2462,22 @@ test("K44 Bullhorn → Cards: a client-facing submission with no Card gets one, 
   } finally { server.close(); }
 });
 
+test("K55 Bullhorn → Cards: a submission an account manager kept off the client's pages gets no Card", async function () {
+  const minted = [];
+  const app = cardForgeApp({
+    ensureTables: async function () { return true; },
+    isHeld: async function (id) { return id === 42; },
+    mintClientLink: async function (o) { minted.push(o); return { id: 503, url: "https://dashboard.anuraconnect.com/card/bcdfghjkmnpqrstvwxzbcdfghjkmnpqr" }; },
+  }, []);
+  const server = await listen(app);
+  try {
+    const r = await req(server.address().port, "POST", "/api/cards/sync-from-bullhorn", {});
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.created, 0);
+    assert.equal(minted.length, 0);
+  } finally { server.close(); }
+});
+
 test("K45 Bullhorn → Cards: a contact-info résumé is left off the auto Card", async function () {
   const minted = [];
   const app = cardForgeApp({

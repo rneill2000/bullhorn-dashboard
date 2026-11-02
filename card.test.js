@@ -830,6 +830,32 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       await req(h.port, "POST", "/api/cards/links/" + m.id + "/revoke", { headers: rec, body: {} });
     });
 
+    await t.test("K55 an account manager keeps a submission off the client's pages before a Card exists", async function () {
+      const rec = { "x-test-user": "peter@anuraconnect.com" };
+      await h.db.query("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS candidate_id INTEGER, ADD COLUMN IF NOT EXISTS job_id INTEGER");
+      await h.db.query("INSERT INTO submissions (id, status, date_added, is_deleted, candidate_id, job_id) VALUES (20, 'Internally Submitted', 9, false, 7, 100) ON CONFLICT (id) DO NOTHING");
+      let d = (await req(h.port, "GET", "/api/cards/candidate/7", { headers: rec })).json;
+      const p = d.pendingSubmissions.filter(function (x) { return x.submissionId === 20; })[0];
+      assert.ok(p, "listed before there is a Card");
+      assert.equal(p.jobTitle, "Beaker Analyst");
+      assert.equal(p.heldBy, "");
+      assert.equal((await req(h.port, "POST", "/api/cards/submissions/20/hide", { headers: rec, body: {} })).status, 200);
+      assert.equal(await h.api.isHeld(20), true, "the Bullhorn sync skips it");
+      d = (await req(h.port, "GET", "/api/cards/candidate/7", { headers: rec })).json;
+      assert.equal(d.pendingSubmissions.filter(function (x) { return x.submissionId === 20; })[0].heldBy, "peter@anuraconnect.com");
+      await req(h.port, "POST", "/api/cards/submissions/20/show", { headers: rec, body: {} });
+      assert.equal(await h.api.isHeld(20), false);
+      // Hiding a Card holds the submission too; Forge making a Card on purpose lifts it.
+      await req(h.port, "POST", "/api/cards/submissions/20/hide", { headers: rec, body: {} });
+      const m = await h.mint({ submissionId: 20, candidateId: 7, candidateName: "Kim Novak" });
+      assert.equal(await h.api.isHeld(20), false, "a deliberate Card lifts the hold");
+      await req(h.port, "POST", "/api/cards/links/" + m.id + "/revoke", { headers: rec, body: {} });
+      assert.equal(await h.api.isHeld(20), true, "Hide from client holds it");
+      await req(h.port, "POST", "/api/cards/links/" + m.id + "/restore", { headers: rec, body: {} });
+      assert.equal(await h.api.isHeld(20), false);
+      await req(h.port, "POST", "/api/cards/links/" + m.id + "/revoke", { headers: rec, body: {} });
+    });
+
     await t.test("K54 the candidate isn't asked for a LinkedIn link we already have", async function () {
       process.env.RESUME_TOOL_API_KEY = "k".repeat(64);
       try {

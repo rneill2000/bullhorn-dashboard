@@ -133,7 +133,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
   }
 
   function linksTable(links, withCandidate) {
-    if (!links.length) return '<p class="empty">No Card links yet. They are created when Submittal Forge drafts an email.</p>';
+    if (!links.length) return '<p class="empty">No Card links yet. One is made when the submission reaches Client Submitted in Bullhorn, or when Submittal Forge drafts the email.</p>';
     return '<div class="tablewrap"><table><thead><tr>' + (withCandidate ? '<th>Candidate</th>' : '') + '<th>Job</th><th>Sent to</th><th>Opens</th><th>Rate</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>' +
       links.map(function (l) {
         return '<tr>' + (withCandidate ? '<td><button class="btn" data-cand="' + l.candidateId + '">' + esc(l.candidateName) + '</button></td>' : '') +
@@ -280,7 +280,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
       var h = '<div class="who">' + (live.hasPhoto ? '<img class="photo" src="/api/cards/candidate/' + id + '/photo?v=' + Date.now() + '" alt="">' : '<div class="initials">' + esc((c.name || "?").split(/\s+/).map(function (x) { return x[0] || ""; }).slice(0, 2).join("")) + '</div>') +
         '<div><h2>' + esc(c.name) + '</h2><div class="sub">' + esc(c.epicRole) + (c.certs.length ? ", " + esc(c.certs.join(", ")) : "") + '</div></div>' +
         '<div class="acts">' + (activeLink ? '<a class="btn primary" href="/cards/preview/' + activeLink.id + '" target="_blank" rel="noopener">Open and edit Card</a>' : '') + '<button class="btn" id="back">All links</button></div></div>' +
-        (activeLink ? '' : '<p class="muted" style="margin-top:8px">No live client link yet. The Card opens for editing once Forge sends this candidate to a client. You can still set their photo and story below.</p>');
+        (activeLink ? '' : '<p class="muted" style="margin-top:8px">No live client link yet. One goes up when a submission reaches Client Submitted in Bullhorn. You can still set their photo and story below.</p>');
 
       if (pendingReview) {
         h += '<h3>Candidate sent changes ' + esc(when(draft.submittedAt)) + '</h3><div class="grid2"><div>' +
@@ -327,7 +327,21 @@ header a{display:inline-flex;align-items:center;min-height:32px}
         }).join("") + '</ul>' : '');
 
       h += '<h3>Client links</h3>' + linksTable(d.links, false);
+      var ps = d.pendingSubmissions || [];
+      if (ps.length) {
+        h += '<h3>Not on a Card yet</h3><p class="muted">A Card goes up on its own when the submission reaches Client Submitted in Bullhorn. Keep one off the client\'s pages ahead of time here.</p><ul class="list">' + ps.map(function (p) {
+          return '<li><div><b>' + esc(p.jobTitle) + '</b> <span class="muted">' + esc(p.clientName) + ' · ' + esc(p.status) + '</span>' +
+            (p.heldBy ? '<div class="muted">Kept off the client\'s pages by ' + esc(p.heldBy) + '</div>' : '') + '</div>' +
+            (p.heldBy ? '<button class="btn" data-subshow="' + p.submissionId + '">Allow on client page</button>' : '<button class="btn danger" data-subhide="' + p.submissionId + '">Keep off client page</button>') + '</li>';
+        }).join("") + '</ul>';
+      }
       $("detail").innerHTML = h;
+      $("detail").querySelectorAll("[data-subhide]").forEach(function (b) {
+        b.onclick = function () { call("POST", "/api/cards/submissions/" + b.getAttribute("data-subhide") + "/hide").then(function () { toast("Kept off the client's pages. No Card will go up."); openCandidate(id); }).catch(function (e) { toast(e.message); }); };
+      });
+      $("detail").querySelectorAll("[data-subshow]").forEach(function (b) {
+        b.onclick = function () { call("POST", "/api/cards/submissions/" + b.getAttribute("data-subshow") + "/show").then(function () { toast("Allowed. The Card goes up at Client Submitted."); openCandidate(id); }).catch(function (e) { toast(e.message); }); };
+      });
 
       $("back").onclick = function () { history.replaceState(null, "", "/cards"); overview(); };
       bindLinkButtons($("detail"), function () { openCandidate(id); });

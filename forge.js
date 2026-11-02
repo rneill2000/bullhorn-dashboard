@@ -3249,6 +3249,7 @@ function registerForge(app, deps) {
 
   async function autoCard(submissionId) {
     if (!cards || typeof cards.mintClientLink !== "function") return { skipped: "cards off" };
+    if (typeof cards.isHeld === "function" && await cards.isHeld(submissionId)) return { skipped: "hidden by account manager" };
     const row = await loadBundle(submissionId);
     const notesBy = await loadNotesForCandidates([row.candidate_id]);
     const clientNames = await loadClientNames();

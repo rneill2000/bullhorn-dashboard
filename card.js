@@ -510,6 +510,8 @@ function registerCard(app, deps) {
           "via TEXT, link_id INTEGER, contact_id INTEGER, by_name TEXT, by_email TEXT, action TEXT NOT NULL, slots JSONB NOT NULL DEFAULT '[]'::jsonb, tz TEXT, reason TEXT, note TEXT, " +
           "created_at TIMESTAMPTZ NOT NULL DEFAULT now())",
         "CREATE INDEX IF NOT EXISTS card_feedback_sub ON card_feedback (submission_id, created_at)",
+        // An account manager kept this submission off the client's pages, before or after a Card exists.
+        "CREATE TABLE IF NOT EXISTS card_holds (submission_id INTEGER PRIMARY KEY, held_by TEXT, held_at TIMESTAMPTZ NOT NULL DEFAULT now())",
         // Bullhorn work history snapshot per candidate (refreshed daily) for "where they've worked".
         "CREATE TABLE IF NOT EXISTS card_work_history (candidate_id INTEGER PRIMARY KEY, rows JSONB NOT NULL DEFAULT '[]'::jsonb, fetched_at TIMESTAMPTZ NOT NULL DEFAULT now())",
         // The résumé tool's curated profile per candidate (refreshed every few hours).
@@ -761,8 +763,28 @@ function registerCard(app, deps) {
   function editUrl(token) { return publicOrigin().replace(/\/$/, "") + "/card-edit/" + token; }
 
   /* ── minting (called by Forge once a draft passes every guard) ─────── */
+  async function isHeld(submissionId) {
+    await needDb();
+    try { return !!(await db.getOne("SELECT 1 AS x FROM card_holds WHERE submission_id = $1", [submissionId])); } catch (e) { return false; }
+  }
+  async function hold(submissionId, by) {
+    await db.query("INSERT INTO card_holds (submission_id, held_by) VALUES ($1,$2) ON CONFLICT (submission_id) DO UPDATE SET held_by = EXCLUDED.held_by, held_at = now()", [submissionId, by]);
+    await db.query("UPDATE card_links SET revoked_at = now(), revoked_by = $2 WHERE submission_id = $1 AND revoked_at IS NULL", [submissionId, by]);
+    rateCache.delete(String(submissionId));
+  }
+  async function unhold(submissionId) {
+    await db.query("DELETE FROM card_holds WHERE submission_id = $1", [submissionId]);
+    const r = await db.query("UPDATE card_links SET revoked_at = NULL, revoked_by = NULL WHERE submission_id = $1 AND revoked_at IS NOT NULL AND COALESCE(revoked_by, '') NOT LIKE '%draft failed%'", [submissionId]);
+    // Let the Bullhorn sync make the Card if there never was one.
+    try { await db.query("DELETE FROM card_auto_attempts WHERE submission_id = $1", [submissionId]); } catch (e) { /* no sync table yet */ }
+    rateCache.delete(String(submissionId));
+    return r && r.rowCount != null ? r.rowCount : 0;
+  }
+
   async function mintClientLink(o) {
     await needDb();
+    // Making a Card on purpose (Submittal Forge) is a decision to show it: it lifts an earlier hide.
+    try { await db.query("DELETE FROM card_holds WHERE submission_id = $1", [o && o.submissionId]); } catch (e) { /* table is made by ensureTables */ }
     if (!o || !o.submissionId || !o.candidateId || !o.jobId || !o.clientId) {
       throw Object.assign(new Error("A Card needs a submission, candidate, job and client."), { status: 400 });
     }
@@ -1985,7 +2007,18 @@ function registerCard(app, deps) {
         "SELECT l.*, j.status AS job_status, j.is_open, j.is_deleted, fb.* FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id LEFT JOIN LATERAL (SELECT action AS fb_action, by_name AS fb_by, created_at AS fb_at, reason AS fb_reason, slots AS fb_slots, tz AS fb_tz FROM card_feedback f WHERE f.submission_id = l.submission_id ORDER BY f.created_at DESC, f.id DESC LIMIT 1) fb ON true WHERE l.candidate_id = $1 ORDER BY l.created_at DESC LIMIT 40", [id]);
       const liveFields = jsonField(live && live.fields);
       const draftFields = jsonField(draft && draft.fields);
+      // Open submissions with no Card yet, so an account manager can keep one off the client's pages ahead of time.
+      let noCard = [];
+      try {
+        noCard = await db.getAll(
+          "SELECT s.id, s.status, j.title AS job_title, cl.name AS client_name, h.held_by, h.held_at FROM submissions s " +
+          "JOIN jobs j ON j.id = s.job_id LEFT JOIN clients cl ON cl.id = j.client_id LEFT JOIN card_holds h ON h.submission_id = s.id " +
+          "WHERE s.candidate_id = $1 AND s.is_deleted IS NOT TRUE AND j.is_deleted IS NOT TRUE AND j.status IN ('Accepting Candidates','Open') " +
+          "AND NOT EXISTS (SELECT 1 FROM card_links l WHERE l.submission_id = s.id) AND LOWER(COALESCE(s.status,'')) !~ '(reject|declin|withdr)' " +
+          "ORDER BY s.date_added DESC NULLS LAST LIMIT 20", [id]);
+      } catch (e) { noCard = []; }
       res.json({
+        pendingSubmissions: noCard.map(function (r) { return { submissionId: r.id, status: r.status || "", jobTitle: r.job_title || "", clientName: r.client_name || "", heldBy: r.held_by || "", heldAt: r.held_at || null }; }),
         candidate: { id: id, name: personName(cand), firstName: niceName(cand.first_name), email: cand.email || "", epicRole: cleanRole(cand.custom_text5), certs: certList(cand) },
         schema: schemaOut(),
         live: { fields: liveFields, hasPhoto: !!(live && live.has_photo), photoSource: live && live.photo_source || "", approvedBy: live && live.approved_by || "", approvedAt: live && live.approved_at || null, errors: errorsFor(liveFields) },
@@ -2147,8 +2180,7 @@ function registerCard(app, deps) {
       const link = await db.getOne("SELECT submission_id FROM card_links WHERE id = $1", [digitsId(req.params.linkId)]);
       if (!link) return res.status(404).json({ error: "Link not found." });
       // Every link for this submission: a candidate pulled from one hiring manager's view is pulled from the comparison too.
-      await db.query("UPDATE card_links SET revoked_at = now(), revoked_by = $2 WHERE submission_id = $1 AND revoked_at IS NULL", [link.submission_id, who(req)]);
-      rateCache.delete(String(link.submission_id));
+      await hold(link.submission_id, who(req));
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
@@ -2159,9 +2191,28 @@ function registerCard(app, deps) {
       await needDb();
       const link = await db.getOne("SELECT submission_id FROM card_links WHERE id = $1", [digitsId(req.params.linkId)]);
       if (!link) return res.status(404).json({ error: "Link not found." });
-      const r = await db.query("UPDATE card_links SET revoked_at = NULL, revoked_by = NULL WHERE submission_id = $1 AND revoked_at IS NOT NULL AND COALESCE(revoked_by, '') NOT LIKE '%draft failed%'", [link.submission_id]);
-      rateCache.delete(String(link.submission_id));
-      res.json({ ok: true, restored: r && r.rowCount != null ? r.rowCount : undefined });
+      const restored = await unhold(link.submission_id);
+      res.json({ ok: true, restored: restored });
+    } catch (e) { fail(res, e); }
+  });
+
+  /** Hide a submission from the client before a Card exists (or after). The Bullhorn sync won't make one while it's hidden. */
+  app.post("/api/cards/submissions/:id/hide", async function (req, res) {
+    try {
+      await needDb();
+      const id = digitsId(req.params.id);
+      if (!id) return res.status(400).json({ error: "Submission id is required." });
+      await hold(id, who(req));
+      res.json({ ok: true, held: true });
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/cards/submissions/:id/show", async function (req, res) {
+    try {
+      await needDb();
+      const id = digitsId(req.params.id);
+      if (!id) return res.status(400).json({ error: "Submission id is required." });
+      const restored = await unhold(id);
+      res.json({ ok: true, held: false, restored: restored });
     } catch (e) { fail(res, e); }
   });
 
@@ -2804,7 +2855,7 @@ function registerCard(app, deps) {
     };
   }
 
-  return { mintClientLink: mintClientLink, revokeLink: revokeLink, vmsFor: vmsFor, profileStatus: profileStatus, ensureTables: ensureTables, _rateCache: rateCache };
+  return { mintClientLink: mintClientLink, isHeld: isHeld, revokeLink: revokeLink, vmsFor: vmsFor, profileStatus: profileStatus, ensureTables: ensureTables, _rateCache: rateCache };
 }
 
 module.exports = registerCard;
