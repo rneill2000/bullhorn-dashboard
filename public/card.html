@@ -522,12 +522,14 @@ body.editing .editor{transform:none}
     var role = body.job && body.job.title ? "the " + body.job.title + " role" : "this role";
     var msg = body.state === "missing"
       ? "This link isn't valid. Check that the whole link was copied from the email."
-      : "This Card was shared for " + role + ", which is no longer open, so it has been closed.";
+      : body.state === "revoked"
+        ? "This Card for " + role + " isn't available anymore."
+        : "This Card was shared for " + role + ", which is no longer open, so it has been closed.";
     app.innerHTML = "";
     app.appendChild(el("div", { class: "closed" }, [
-      el("h1", { text: body.state === "missing" ? "Link not found" : "This Card is closed" }),
+      el("h1", { text: body.state === "missing" ? "Link not found" : body.state === "revoked" ? "This Card isn't available" : "This Card is closed" }),
       el("p", { text: msg }),
-      c.email ? el("p", {}, ["To see this candidate again, contact ", el("a", { href: "mailto:" + c.email, text: c.name || c.email }), c.phone ? " at " + c.phone : "", "."]) : null,
+      c.email ? el("p", {}, [body.state === "revoked" ? "Questions? Contact " : "To see this candidate again, contact ", el("a", { href: "mailto:" + c.email, text: c.name || c.email }), c.phone ? " at " + c.phone : "", "."]) : null,
     ]));
   }
 

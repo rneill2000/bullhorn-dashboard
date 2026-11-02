@@ -819,6 +819,9 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal((await req(h.port, "GET", "/api/card-public/" + m.url.split("/card/")[1])).json.state, "revoked", "her own link shows closed");
       const cand = await req(h.port, "GET", "/api/cards/candidate/9", { headers: rec });
       assert.equal(cand.json.links[0].hiddenBy, "ben@anuraconnect.com");
+      const ov = (await req(h.port, "GET", "/api/cards/overview", { headers: rec })).json.links.filter(function (l) { return l.id === m.id; })[0];
+      assert.equal(ov.hiddenBy, "ben@anuraconnect.com", "the Cards home page offers Show again");
+      assert.equal(ov.state, "revoked");
       await req(h.port, "POST", "/api/cards/links/" + m.id + "/restore", { headers: rec, body: {} });
       assert.ok((await names()).indexOf("Rae Ito") >= 0, "shown again");
       await h.db.query("UPDATE submissions SET status = 'Placed' WHERE id = 19");

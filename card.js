@@ -1822,7 +1822,8 @@ function registerCard(app, deps) {
         "LEFT JOIN candidates c ON c.id = d.candidate_id WHERE d.status = 'submitted' ORDER BY d.submitted_at ASC LIMIT 100");
       const links = await db.getAll(
         "SELECT l.id, l.candidate_id, l.candidate_name, l.job_id, l.job_title, l.client_name, l.contact_email, l.created_by, l.created_at, l.bill_display, l.refs, " +
-        "l.view_count, l.last_viewed_at, l.revoked_at, l.submission_id, j.status AS job_status, j.is_open, j.is_deleted, fb.* FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id " +
+        "l.view_count, l.last_viewed_at, l.revoked_at, l.revoked_by, l.docs, l.held_docs, l.submission_id, j.status AS job_status, j.is_open, j.is_deleted, cd.first_name AS cand_first, cd.last_name AS cand_last, fb.* FROM card_links l LEFT JOIN jobs j ON j.id = l.job_id " +
+        "LEFT JOIN candidates cd ON cd.id = l.candidate_id " +
         "LEFT JOIN LATERAL (SELECT action AS fb_action, by_name AS fb_by, created_at AS fb_at, reason AS fb_reason, slots AS fb_slots, tz AS fb_tz FROM card_feedback f WHERE f.submission_id = l.submission_id ORDER BY f.created_at DESC, f.id DESC LIMIT 1) fb ON true " +
         "ORDER BY COALESCE(l.last_viewed_at, l.created_at) DESC LIMIT 60");
       res.json({
@@ -1949,7 +1950,7 @@ function registerCard(app, deps) {
     const refs = Array.isArray(l.refs) ? l.refs : (l.refs ? JSON.parse(l.refs) : []);
     return {
       references: refs.map(function (r) { return { role: r.role || "", organization: r.organization || "", text: r.text || "" }; }),
-      id: l.id, candidateId: l.candidate_id, candidateName: l.candidate_name, jobId: l.job_id, jobTitle: l.job_title, clientName: l.client_name,
+      id: l.id, candidateId: l.candidate_id, candidateName: l.candidate_name || personName({ first_name: l.cand_first, last_name: l.cand_last }) || "", jobId: l.job_id, jobTitle: l.job_title, clientName: l.client_name,
       contactEmail: l.contact_email, createdBy: l.created_by, createdAt: l.created_at, views: l.view_count, lastViewedAt: l.last_viewed_at,
       billDisplay: l.bill_display || "",
       feedback: l.fb_action && l.fb_action !== "reopen" ? { action: l.fb_action, by: l.fb_by || "", at: l.fb_at, reason: l.fb_reason || "", times: (Array.isArray(l.fb_slots) ? l.fb_slots : []).map(function (x) { return fmtSlot(x, l.fb_tz); }) } : null,

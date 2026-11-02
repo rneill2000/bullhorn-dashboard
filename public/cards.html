@@ -141,7 +141,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
           '<td>' + esc(l.contactEmail || "—") + '</td>' +
           '<td>' + (l.views || 0) + (l.lastViewedAt ? '<div class="muted">last ' + esc(when(l.lastViewedAt)) + '</div>' : '') + '</td>' +
           '<td>' + esc(l.billDisplay || "—") + '</td>' +
-          '<td><span class="pill ' + l.state + '">' + l.state + '</span>' +
+          '<td><span class="pill ' + l.state + '">' + (l.state === "revoked" ? (l.hiddenBy ? "hidden" : "off") : l.state === "expired" ? "role closed" : l.state) + '</span>' +
           (l.feedback ? '<div style="margin-top:4px;font-size:13px">' + fbText(l.feedback) + '</div>' : '') +
           (l.held && l.held.length && l.state === "active" ? '<div class="muted" style="color:#9a3412;margin-top:4px">Held back from the client: ' + esc(l.held.join(", ")) + '. It has contact info or is a scan. Upload a clean PDF to Bullhorn.</div>' : '') +
           (l.state === "active" ? '<div class="row" style="margin-top:6px"><a class="btn" href="/cards/preview/' + l.id + '" target="_blank" rel="noopener">Preview as client</a><button class="btn" data-rate="' + l.id + '">Use Bullhorn rate</button><button class="btn danger" title="Takes this candidate off the client\'s Card, comparison and health system page. You can show them again." data-revoke="' + l.id + '">Hide from client</button></div>' : '') +
