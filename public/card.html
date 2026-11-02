@@ -228,6 +228,10 @@ dialog.ask label .opt{font-weight:400;color:var(--muted)}
 dialog.ask input,dialog.ask textarea{width:100%;font:inherit;font-size:16px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
 dialog.ask input:focus,dialog.ask textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(23,96,135,.15)}
 dialog.ask .slots{display:grid;gap:8px}
+dialog.ask .slot{display:grid;grid-template-columns:1fr 9.5em auto;gap:8px;align-items:center}
+dialog.ask select{width:100%;font:inherit;font-size:16px;padding:10px 8px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
+dialog.ask .slot .clr{border:0;background:none;color:var(--muted);font-size:20px;line-height:1;cursor:pointer;padding:4px 6px}
+dialog.ask .slot .clr[hidden]{display:inline-block;visibility:hidden}
 dialog.ask .reasons{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;border:0}
 dialog.ask .reasons label{margin:0;display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:15px;border:1px solid var(--line);border-radius:999px;padding:8px 14px;cursor:pointer;min-height:40px}
 dialog.ask .reasons input{width:18px;height:18px;margin:0;accent-color:var(--blue)}
@@ -389,6 +393,39 @@ body.editing .editor{transform:none}
     if (!fb) return null;
     return el("span", { class: "pill " + fb.action, text: fb.action === "interview" ? "Interview requested" : "Passed" });
   }
+  /* Interview times: a date plus a half-hour time, preset to the next round time. */
+  var HALF_HOURS = (function () { var out = []; for (var m = 7 * 60; m <= 19 * 60; m += 30) out.push(m); return out; })();
+  function hhmm(m) { var p = function (n) { return String(n).padStart(2, "0"); }; return p(Math.floor(m / 60)) + ":" + p(m % 60); }
+  function timeLabel(m) { var h = Math.floor(m / 60), mm = m % 60; return ((h + 11) % 12 + 1) + ":" + String(mm).padStart(2, "0") + (h < 12 ? " AM" : " PM"); }
+  function nextHalfHour(d) {
+    var m = d.getHours() * 60 + d.getMinutes();
+    m = Math.ceil((m + 1) / 30) * 30;
+    var lo = HALF_HOURS[0], hi = HALF_HOURS[HALF_HOURS.length - 1];
+    return m < lo || m > hi ? 10 * 60 : m;
+  }
+  function dateOnly(d) { var p = function (n) { return String(n).padStart(2, "0"); }; return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()); }
+  function slotRow(i, iso) {
+    var pre = iso ? new Date(iso) : null;
+    if (pre && isNaN(pre)) pre = null;
+    var preMin = pre ? pre.getHours() * 60 + pre.getMinutes() : nextHalfHour(new Date());
+    var date = el("input", { type: "date", id: "slot" + i, name: "slotDate", min: dateOnly(new Date()), value: pre ? dateOnly(pre) : "", "aria-label": "Day for option " + (i + 1) });
+    var opts = HALF_HOURS.slice();
+    if (opts.indexOf(preMin) < 0) { opts.push(preMin); opts.sort(function (a, b) { return a - b; }); }
+    var time = el("select", { name: "slotTime", "aria-label": "Time for option " + (i + 1) }, opts.map(function (m) {
+      return el("option", { value: hhmm(m), text: timeLabel(m), selected: m === preMin ? "selected" : null });
+    }));
+    var clr = el("button", { class: "clr", type: "button", "aria-label": "Clear option " + (i + 1), text: "×", hidden: pre ? null : "hidden" });
+    date.addEventListener("input", function () { clr.hidden = !date.value; });
+    clr.addEventListener("click", function () { date.value = ""; clr.hidden = true; date.focus(); });
+    return el("div", { class: "slot" }, [date, time, clr]);
+  }
+  function availLabel(v) {
+    v = String(v || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    var today = dateOnly(new Date());
+    if (v <= today) return "Immediately";
+    return new Date(v + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: v.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric", timeZone: "UTC" });
+  }
   function localInput(d) {
     var p = function (n) { return String(n).padStart(2, "0"); };
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
@@ -402,6 +439,8 @@ body.editing .editor{transform:none}
       .then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b.error || "That didn't save. Try again."); return b; }); });
   }
   function decide(c, mode) {
+    // Changing times starts from what they sent, so one moved slot doesn't wipe the others.
+    var prior = mode === "interview" && c.feedback && c.feedback.action === "interview" ? c.feedback : null;
     var old = document.querySelector("dialog.ask");
     if (old) old.remove();
     var name = first(c.name), contact = contactFirst();
@@ -411,16 +450,15 @@ body.editing .editor{transform:none}
       el("input", { id: "askName", name: "name", autocomplete: "name", required: "required", maxlength: "80" }),
     ]);
     var fields;
-    var min = localInput(new Date());
     if (mode === "interview") {
       fields = [
         el("label", { for: "slot0" }, ["Times that work for you ", el("span", { class: "opt", text: "(optional, up to 3)" })]),
-        el("div", { class: "slots" }, [0, 1, 2].map(function (i) {
-          return el("input", { type: "datetime-local", id: "slot" + i, name: "slot", min: min, step: "900", "aria-label": "Time option " + (i + 1) });
-        })),
-        el("p", { class: "lede", text: "Leave these blank and " + contact + " will reach out to schedule." }),
+        el("div", { class: "slots" }, [0, 1, 2].map(function (i) { return slotRow(i, prior && prior.slots ? prior.slots[i] : null); })),
+        el("p", { class: "lede", text: prior && (prior.slots || []).length
+          ? "Your earlier times are filled in. Change just the one that moved, or clear it with ×."
+          : "Pick a day; the time starts on the next half hour. Leave them blank and " + contact + " will reach out to schedule." }),
         el("label", { for: "askNote" }, ["Anything we should know? ", el("span", { class: "opt", text: "(optional)" })]),
-        el("textarea", { id: "askNote", name: "note", rows: "3", maxlength: "800", placeholder: "Video or on site, who else will join, what you'd like to dig into…" }),
+        el("textarea", { id: "askNote", name: "note", rows: "3", maxlength: "800", placeholder: "Video or on site, who else will join, what you'd like to dig into…" }, [prior && prior.note ? prior.note : ""]),
       ];
     } else {
       fields = [
@@ -431,7 +469,7 @@ body.editing .editor{transform:none}
         el("textarea", { id: "askNote", name: "note", rows: "3", maxlength: "800" }),
       ];
     }
-    var submit = el("button", { class: "btn primary", type: "submit", text: mode === "interview" ? "Send to " + contact : "Pass on " + name });
+    var submit = el("button", { class: "btn primary", type: "submit", text: mode === "interview" ? (prior ? "Send new times to " : "Send to ") + contact : "Pass on " + name });
     var form = el("form", { method: "dialog", novalidate: "novalidate" }, [
       el("h2", { id: "askTitle", text: mode === "interview" ? "Interview " + name : "Pass on " + name + "?" }),
       el("p", { class: "lede", text: mode === "interview"
@@ -451,8 +489,10 @@ body.editing .editor{transform:none}
         if (!body.name) { err.textContent = "Add your name so " + contact + " knows who to follow up with."; form.name.focus(); return; }
       }
       if (mode === "interview") {
-        body.slots = Array.prototype.map.call(form.querySelectorAll("input[name=slot]"), function (i) { return i.value; }).filter(Boolean)
-          .map(function (v) { return new Date(v).toISOString(); });
+        body.slots = Array.prototype.map.call(form.querySelectorAll(".slot"), function (row) {
+          var d = row.querySelector("input[name=slotDate]").value, t = row.querySelector("select[name=slotTime]").value;
+          return d && t ? new Date(d + "T" + t).toISOString() : "";
+        }).filter(Boolean);
       } else {
         var picked = form.querySelector("input[name=reason]:checked");
         if (!picked) { err.textContent = "Pick a reason."; return; }
@@ -470,7 +510,7 @@ body.editing .editor{transform:none}
         ]));
       }).catch(function (e) {
         err.textContent = e.message;
-        submit.disabled = false; submit.textContent = mode === "interview" ? "Send to " + contact : "Pass on " + name;
+        submit.disabled = false; submit.textContent = mode === "interview" ? (prior ? "Send new times to " : "Send to ") + contact : "Pass on " + name;
       });
     });
     document.body.appendChild(dlg);
@@ -480,6 +520,8 @@ body.editing .editor{transform:none}
   }
   function statusBox(c) {
     var fb = c.feedback, name = first(c.name);
+    // Their interview request moved Bullhorn to an interview stage: keep their times and Change times in view.
+    if (c.stage === "Interviewing" && fb && fb.action === "interview") c = Object.assign({}, c, { stage: "" });
     if (c.stage) return el("div", { class: "status stage", role: "status" }, [
       el("b", { text: c.stage }),
       el("span", { text: c.stage === "Placed" ? name + " is on your team." : c.stage === "Offer out" ? "An offer is out to " + name + "." : contactFirst() + " is coordinating interviews with " + name + "." }),
@@ -852,7 +894,7 @@ body.editing .editor{transform:none}
     var saved = (data.editable.documents || []).map(function (d) { return d.fileId; });
     c.documents = edit.documents.map(function (d, i) { return { index: saved.indexOf(d.fileId) >= 0 ? saved.indexOf(d.fileId) : i, name: d.name, kind: d.kind, viewable: saved.indexOf(d.fileId) >= 0 }; });
     if (c.highlights[0]) { var meH = data.candidates.filter(function (x) { return x.id === c.id; })[0]; if (meH) meH.highlight = c.highlights[0].quote; }
-    c.whyMe = edit.whyMe; c.availability = edit.availability; c.location = edit.location;
+    c.whyMe = edit.whyMe; c.availability = availLabel(edit.availability); c.location = edit.location;
     c.references = edit.references.map(function (r) { return { role: r.role, organization: r.organization, relationship: r.relationship, rehire: r.rehire, text: r.text }; });
     var me = data.candidates.filter(function (x) { return x.id === c.id; })[0];
     if (me) { me.headline = c.headline; me.availability = c.availability; me.location = c.location; }
@@ -862,9 +904,9 @@ body.editing .editor{transform:none}
   function field(label, value, onInput, opts) {
     opts = opts || {};
     var fid = "ed-" + (++fieldSeq);
-    var input = opts.area ? el("textarea", { id: fid, rows: String(opts.rows || 3), maxlength: opts.max ? String(opts.max) : null }, [value || ""]) : el("input", { id: fid, type: "text", value: value || "", maxlength: opts.max ? String(opts.max) : null });
+    var input = opts.area ? el("textarea", { id: fid, rows: String(opts.rows || 3), maxlength: opts.max ? String(opts.max) : null }, [value || ""]) : el("input", { id: fid, type: opts.type || "text", value: value || "", maxlength: opts.max ? String(opts.max) : null });
     input.addEventListener("input", function () { onInput(input.value); editDirty = true; setEditStatus("Unsaved changes"); syncPreview(); });
-    return el("div", {}, [el("label", { for: fid, text: label }), input]);
+    return el("div", {}, [el("label", { for: fid, text: label }), input, opts.hint ? el("p", { class: "note", text: opts.hint }) : null]);
   }
 
   function setEditStatus(t, bad) { var n = document.getElementById("edit-status"); if (n) { n.textContent = t; n.className = "status" + (bad ? " bad" : ""); } }
@@ -996,7 +1038,11 @@ body.editing .editor{transform:none}
       el("fieldset", {}, [
         el("legend", { text: "For this role" }),
         field("Why " + first, edit.whyMe, function (v) { edit.whyMe = v; }, { area: true, rows: 7, max: 3000 }),
-        field("Available", edit.availability, function (v) { edit.availability = v; }, { max: 80 }),
+        (function () {
+          var iso = /^\d{4}-\d{2}-\d{2}$/.test(edit.availability || "");
+          return field("Available from", iso ? edit.availability : "", function (v) { edit.availability = v; },
+            { type: "date", hint: !iso && edit.availability ? "Currently \"" + edit.availability + "\". Pick the date so it stays right next week." : "" });
+        })(),
         field("Location", edit.location, function (v) { edit.location = v; }, { max: 120 }),
         el("p", { class: "locked", text: "Bill rate, Epic role and certifications come from Bullhorn. Change them there and the Card follows." }),
       ]),

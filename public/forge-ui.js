@@ -370,7 +370,9 @@ function forgePaintDraft() {
     });
   }
   h += '<div class="fg-split">';
-  h += '<div><label class="fg-lab">Availability</label><input class="fg-in" id="forge-avail" value="' + forgeAttr(d.availability || "") + '" oninput="forgePreview()"></div>';
+  // A date, never "2 weeks": a timeframe means something different next week.
+  h += '<div><label class="fg-lab">Available from</label><input class="fg-in" type="date" id="forge-avail" value="' + forgeAttr(d.availabilityDate || "") + '" oninput="forgePreview()" onchange="forgePreview()">' +
+    (d.availability && !d.availabilityDate ? '<div style="font-size:12px;color:#9a3412;margin-top:4px">Bullhorn says "' + forgeAttr(d.availability) + '". Pick the date.</div>' : '') + '</div>';
   h += '<div><label class="fg-lab">Location</label><input class="fg-in" id="forge-loc" value="' + forgeAttr(d.location || "") + '" oninput="forgePreview()"></div>';
   h += '</div>';
   var source = d.billRateSource ? " · " + d.billRateSource : "";
@@ -429,6 +431,14 @@ function forgePaintDraft() {
 }
 
 function forgeVal(id) { var el = document.getElementById(id); return el ? el.value : ""; }
+/** "2026-11-18" → "Nov 18" ("Immediately" once it's today or past), the way the client reads it. */
+function forgeAvailLabel(v) {
+  v = String(v || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  var t = new Date(), today = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+  if (v <= today) return "Immediately";
+  return new Date(v + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: v.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric", timeZone: "UTC" });
+}
 
 function forgeRefBoxId(id) {
   return "forge-ref-quote-" + String(id || "").replace(/[^A-Za-z0-9_-]/g, "-");
@@ -575,7 +585,7 @@ function forgeEmailText(f) {
     var role = ref.role || "Former manager";
     if (quote) lines.push('Reference: "' + quote + '" (' + role + ')', "");
   });
-  lines.push("Availability: " + (f.availability || ""), "Location: " + (f.location || ""), "Bill rate: " + (f.billRate || ""), "");
+  lines.push("Availability: " + forgeAvailLabel(f.availability), "Location: " + (f.location || ""), "Bill rate: " + (f.billRate || ""), "");
   var sig = [f.signerName, f.signerTitle, f.signerPhone].filter(function (x) { return x && String(x).trim(); });
   lines.push(sig.length ? sig.join("\n") : "Anura Connect");
   return lines.join("\n");

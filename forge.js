@@ -598,6 +598,51 @@ function calendarAvailability(value, now) {
   return { text: fmtUtcDate(ms), fromField: true, passed: false };
 }
 
+/* Availability is always a date on what clients see: "2 weeks" means something different next week. */
+function centralToday(now) { return new Date(now || Date.now()).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }); }
+function addDaysIso(iso, n) { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+const MONTH_IX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11 };
+const NUM_WORD = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+function isoOk(y, m, d) {
+  const dt = new Date(Date.UTC(y, m, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m && dt.getUTCDate() === d ? dt.toISOString().slice(0, 10) : "";
+}
+/** A date for what a recruiter wrote ("Nov 18", "11/18", "2 weeks", "Immediately", "2026-11-18"), or "" when it isn't one. */
+function availabilityDate(text, now) {
+  const t = String(text == null ? "" : text).trim().toLowerCase();
+  if (!t) return "";
+  const today = centralToday(now);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return isoOk(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10));
+  if (/^(immediately|immediate|now|asap|today|right away|available( now| immediately)?)\b/.test(t)) return today;
+  let m = t.match(/\b(\d+|a|an|one|two|three|four|five|six)\s*(day|week|wk|month|mo)s?\b/);
+  if (m) {
+    const n = /^\d+$/.test(m[1]) ? +m[1] : NUM_WORD[m[1]];
+    const unit = m[2][0] === "d" ? 1 : m[2][0] === "w" ? 7 : 30;
+    if (n > 0 && n * unit <= 400) return addDaysIso(today, n * unit);
+  }
+  const ty = +today.slice(0, 4);
+  function withYear(mo, d, y) {
+    if (y) return isoOk(y < 100 ? 2000 + y : y, mo, d);
+    const iso = isoOk(ty, mo, d);
+    // No year: the next one coming up (a date more than a month back means next year).
+    return iso && iso < addDaysIso(today, -31) ? isoOk(ty + 1, mo, d) : iso;
+  }
+  m = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if (m) return withYear(+m[1] - 1, +m[2], m[3] ? +m[3] : 0);
+  m = t.match(/\b([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b/);
+  if (m && MONTH_IX[m[1].slice(0, m[1] === "sept" ? 4 : 3)] != null) return withYear(MONTH_IX[m[1].slice(0, m[1] === "sept" ? 4 : 3)], +m[2], m[3] ? +m[3] : 0);
+  return "";
+}
+/** "Immediately" once the date arrives, else "Nov 18" (with the year when it isn't this year). Anything else as written. */
+function availabilityLabel(value, now) {
+  const v = String(value == null ? "" : value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const today = centralToday(now);
+  if (v <= today) return "Immediately";
+  const d = new Date(v + "T12:00:00Z");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: v.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric", timeZone: "UTC" });
+}
+
 /** Comments, then customText12, then customDate2, then the candidate date. Date fields use the UTC calendar day. */
 function pickAvailability(parts, now) {
   const comment = clientFacingText(parts.commentAvail, parts);
@@ -2110,7 +2155,9 @@ function registerForge(app, deps) {
     }, now);
     const flags = facts.flags.concat(location.flags);
     if (avail.passed) flags.push({ level: "warn", code: "availability_passed", message: "Availability date has passed. Confirm." });
+    const availDate = availabilityDate(avail.text, now);
     if (!avail.text) flags.push({ level: "warn", code: "availability", message: "Availability is blank." });
+    else if (!availDate) flags.push({ level: "warn", code: "availability_not_date", message: "Availability \"" + avail.text + "\" isn't a date. Pick one." });
     if (!location.text) flags.push({ level: "warn", code: "location", message: "Location is blank." });
     const daysWaiting = daysSince(row.date_added, now);
     const subject = subjectFor(jobTitle, row.job_skills || "", name);
@@ -2155,6 +2202,7 @@ function registerForge(app, deps) {
       whyMe: why.text,
       whyMeSource: why.source,
       availability: avail.text,
+      availabilityDate: availDate,
       location: location.text,
       billRate: bill.billRate,
       billRateSource: bill.source === "withheld_pay" || bill.source === "missing" ? "" : bill.source,
@@ -2695,7 +2743,13 @@ function registerForge(app, deps) {
       const body = req.body || {};
       const candidateName = (body.candidateName || base.candidate.name || "").trim();
       const whyMe = body.whyMe != null ? String(body.whyMe) : base.whyMe;
-      const availability = body.availability != null ? String(body.availability) : base.availability;
+      // Dates only: the Forge form sends one; an older text answer is turned into one or refused.
+      const availRaw = body.availability != null ? String(body.availability) : (base.availabilityDate || base.availability);
+      const availabilityIso = availabilityDate(availRaw, now);
+      if (String(availRaw || "").trim() && !availabilityIso) {
+        return res.status(400).json({ error: "Availability has to be a date. Pick the day they can start.", code: "availability_not_date" });
+      }
+      const availability = availabilityLabel(availabilityIso, now);
       const location = body.location != null ? String(body.location) : base.location;
       const billRate = body.billRate != null ? String(body.billRate) : base.billRate;
       const subject = (body.subject || base.subject || "Consultant Resume").trim();
@@ -2866,7 +2920,7 @@ function registerForge(app, deps) {
             clientName: body.clientName || base.job.clientName,
             contactEmail: contactKey,
             whyMe: whyMe,
-            availability: availability,
+            availability: availabilityIso,
             location: location,
             billRate: billRate,
             billAmount: moneyNumber(billRate),
@@ -3282,7 +3336,7 @@ function registerForge(app, deps) {
     const card = await cards.mintClientLink({
       submissionId: submissionId, candidateId: draft.candidate.id, candidateName: draft.candidate.name,
       jobId: draft.job.id, jobTitle: draft.job.title, clientId: draft.job.clientId, clientName: draft.job.clientName,
-      contactEmail: contact, whyMe: clean(draft.whyMe), availability: clean(draft.availability), location: clean(draft.location),
+      contactEmail: contact, whyMe: clean(draft.whyMe), availability: availabilityDate(clean(draft.availability) || draft.availabilityDate) || "", location: clean(draft.location),
       billRate: billRate, billAmount: moneyNumber(billRate), resumeFileId: resumeFileId || null, resumeName: resumeName,
       references: [], highlights: [], recruiter: rec, createdBy: rec.email || "bullhorn-sync",
     });
@@ -3350,6 +3404,8 @@ module.exports.resolveClient = resolveClient;
 module.exports.missingChecklist = missingChecklist;
 module.exports.CLIENT_SUBMITTED_STATUS = CLIENT_SUBMITTED_STATUS;
 module.exports.CLIENT_FACING_STATUSES = CLIENT_FACING_STATUSES;
+module.exports.availabilityDate = availabilityDate;
+module.exports.availabilityLabel = availabilityLabel;
 module.exports.samePerson = samePerson;
 module.exports.buildSiblingView = buildSiblingView;
 module.exports.isClientSubmittedStatus = isClientSubmittedStatus;

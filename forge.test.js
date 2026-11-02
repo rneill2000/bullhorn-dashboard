@@ -2491,3 +2491,14 @@ test("K45 Bullhorn → Cards: a contact-info résumé is left off the auto Card"
     assert.equal(minted[0].resumeFileId, null);
   } finally { server.close(); }
 });
+
+test("K56 availability is a date: timeframes and written dates become one; the client reads Nov 18 or Immediately", function () {
+  const now = Date.parse("2026-11-02T20:00:00Z");
+  const cases = { "2 weeks": "2026-11-16", "two weeks notice": "2026-11-16", "Nov 18": "2026-11-18", "11/18": "2026-11-18", "November 18, 2026": "2026-11-18",
+    "Immediately": "2026-11-02", "ASAP": "2026-11-02", "2026-12-01": "2026-12-01", "Jan 5": "2027-01-05", "next month": "", "4/31": "", "": "" };
+  Object.keys(cases).forEach(function (t) { assert.equal(forge.availabilityDate(t, now), cases[t], t); });
+  assert.equal(forge.availabilityLabel("2026-11-18", now), "Nov 18");
+  assert.equal(forge.availabilityLabel("2027-01-05", now), "Jan 5, 2027");
+  assert.equal(forge.availabilityLabel("2026-10-01", now), "Immediately");
+  assert.equal(forge.availabilityLabel("2 weeks", now), "2 weeks", "an old text answer shows as written");
+});

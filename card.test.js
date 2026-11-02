@@ -609,6 +609,13 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
         r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: bad });
         assert.equal(r.status, 400, JSON.stringify(bad));
       }
+      // Availability is a date: stored as one, shown as "Dec 1"; a timeframe is refused.
+      assert.match((await h.db.getOne("SELECT availability FROM card_links WHERE id = $1", [link.id])).availability, /^\d{4}-12-01$/);
+      r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { availability: "a few weeks" } });
+      assert.equal(r.status, 400, "a timeframe isn't a date");
+      assert.match(r.json.error, /pick a date/i);
+      r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { availability: "2000-01-03" } });
+      assert.equal((await req(h.port, "GET", "/api/card-public/" + J)).json.card.availability, "Immediately", "a date that has passed reads Immediately");
       r = await req(h.port, "PUT", "/api/cards/links/" + link.id + "/content", { headers: rec, body: { references: [{ text: "a" + "b".repeat(30) }, { text: "invented reference text here" }] } });
       assert.equal(r.status, 400, "can't add references by hand");
       assert.equal((await req(h.port, "GET", "/api/card-public/" + J)).json.card.whyMe, "Two Beaker go-lives, both early.", "refused edits change nothing");

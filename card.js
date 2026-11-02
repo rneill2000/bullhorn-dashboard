@@ -705,7 +705,12 @@ function registerCard(app, deps) {
     const cand = row.candidate_name || "the candidate";
     const times = (Array.isArray(f.slots) ? f.slots : []).map(function (x) { return fmtSlot(x, f.tz); }).filter(Boolean);
     let text;
-    if (f.action === "interview") text = who + where + " requested an interview with " + cand + " for " + (row.job_title || "the role") + " on the Anura Connect Card." + (times.length ? " Times offered: " + times.join("; ") + "." : " No times picked yet.");
+    let changed = false;
+    if (f.action === "interview") {
+      try { const prev = await db.getOne("SELECT action FROM card_feedback WHERE submission_id = $1 AND id <> $2 ORDER BY created_at DESC, id DESC LIMIT 1", [row.submission_id, f.id]); changed = !!(prev && prev.action === "interview"); } catch (e) { changed = false; }
+    }
+    if (f.action === "interview" && changed) text = who + where + " changed the interview times for " + cand + " for " + (row.job_title || "the role") + " on the Anura Connect Card." + (times.length ? " Times now: " + times.join("; ") + "." : " They cleared their times; reach out to schedule.");
+    else if (f.action === "interview") text = who + where + " requested an interview with " + cand + " for " + (row.job_title || "the role") + " on the Anura Connect Card." + (times.length ? " Times offered: " + times.join("; ") + "." : " No times picked yet.");
     else if (f.action === "pass") text = who + where + " passed on " + cand + " for " + (row.job_title || "the role") + " on the Anura Connect Card. Reason: " + (f.reason || "not given") + ".";
     else text = who + where + " took back their decision on " + cand + " for " + (row.job_title || "the role") + " on the Anura Connect Card.";
     if (f.note) text += " Their note: " + f.note;
@@ -989,7 +994,7 @@ function registerCard(app, deps) {
       epicRole: cleanRole(row.custom_text5),
       // Bullhorn's certifications; when Bullhorn has none, the résumé tool's Epic experience (certifications, not proficiencies).
       certs: certList(row).length ? certList(row) : (rp && Array.isArray(rp.epic_experience) ? rp.epic_experience.filter(function (x) { return !/proficien/i.test(x); }).slice(0, 6) : []),
-      availability: row.availability || "",
+      availability: require("./forge").availabilityLabel(row.availability || ""),
       location: row.location || "",
       rate: rate.display,
       hasPhoto: !!row.has_photo,
@@ -2329,7 +2334,13 @@ function registerCard(app, deps) {
       const b = req.body || {};
       const errors = [];
       const whyMe = cleanFieldValue(b.whyMe != null ? b.whyMe : link.why_me);
-      const availability = cleanFieldValue(b.availability != null ? b.availability : link.availability);
+      // Dates only. A new value must be one; an old text answer can stay until someone changes it.
+      let availability = cleanFieldValue(b.availability != null ? b.availability : link.availability);
+      if (b.availability != null && availability && availability !== cleanFieldValue(link.availability)) {
+        const iso = require("./forge").availabilityDate(availability);
+        if (!iso) errors.push("Available: pick a date. A timeframe like \"2 weeks\" changes meaning from week to week.");
+        else availability = iso;
+      }
       const location = cleanFieldValue(b.location != null ? b.location : link.location);
       [["Why", whyMe, 3000], ["Available", availability, 80], ["Location", location, 120]].forEach(function (x) {
         const err = recruiterTextError(x[0], x[1], x[2]); if (err) errors.push(err);

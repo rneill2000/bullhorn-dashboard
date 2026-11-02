@@ -179,3 +179,4 @@ Route tests need Postgres: CI sets CARD_TEST_DATABASE_URL (postgres service in t
 | K53 | Bullhorn relay for the résumé tool: shared key, allowlisted reads and PDF upload only, dashboard token, one re-sign-in on 401 | bh-relay.test.js |
 | K54 | Candidate Card edit page shows the LinkedIn link already on file (résumé tool or Bullhorn) instead of asking for it | card.test.js |
 | K55 | Keep a submission off the client's pages before a Card exists (Bullhorn sync skips it); Hide holds it, Show again and a Forge Card lift it | card.test.js, forge.test.js |
+| K56 | Availability is a date: Forge and the Card editor take a date; timeframes are converted or refused; clients read "Nov 18" or "Immediately" | forge.test.js, card.test.js |
