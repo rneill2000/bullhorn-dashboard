@@ -383,7 +383,7 @@ body.editing .editor{transform:none}
   function when(iso, opts) {
     var d = new Date(iso);
     if (isNaN(d)) return "";
-    return d.toLocaleString("en-US", opts || { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    return d.toLocaleString("en-US", opts || { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   }
   function stagePill(c) {
     if (c.stage) return el("span", { class: "pill stage", text: c.stage });
@@ -419,6 +419,14 @@ body.editing .editor{transform:none}
     clr.addEventListener("click", function () { date.value = ""; clr.hidden = true; date.focus(); });
     return el("div", { class: "slot" }, [date, time, clr]);
   }
+  /** "Eastern Time" etc. for the viewer's own zone; times are sent with it and shown to Anura in it. */
+  function zoneName() {
+    try {
+      var parts = new Intl.DateTimeFormat("en-US", { timeZoneName: "long" }).formatToParts(new Date());
+      var n = (parts.filter(function (p) { return p.type === "timeZoneName"; })[0] || {}).value || "";
+      return n.replace(/ (Standard|Daylight) Time$/, " Time") || "your local time";
+    } catch (e) { return "your local time"; }
+  }
   function availLabel(v) {
     v = String(v || "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
@@ -452,7 +460,7 @@ body.editing .editor{transform:none}
     var fields;
     if (mode === "interview") {
       fields = [
-        el("label", { for: "slot0" }, ["Times that work for you ", el("span", { class: "opt", text: "(optional, up to 3)" })]),
+        el("label", { for: "slot0" }, ["Times that work for you ", el("span", { class: "opt", text: "(optional, up to 3, " + zoneName() + ")" })]),
         el("div", { class: "slots" }, [0, 1, 2].map(function (i) { return slotRow(i, prior && prior.slots ? prior.slots[i] : null); })),
         el("p", { class: "lede", text: prior && (prior.slots || []).length
           ? "Your earlier times are filled in. Change just the one that moved, or clear it with ×."
