@@ -527,6 +527,15 @@ function registerCard(app, deps) {
         // Demo links in a client's branding with made-up candidates (card-demo.js).
         "CREATE TABLE IF NOT EXISTS card_system_demos (id SERIAL PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, client_id INTEGER NOT NULL, created_by TEXT, " +
           "created_at TIMESTAMPTZ NOT NULL DEFAULT now(), revoked_at TIMESTAMPTZ)",
+        // Per-prospect demo links: a name, a 30-day expiry, opens. client_id null = the made-up Lakeshore Health.
+        "ALTER TABLE card_system_demos ALTER COLUMN client_id DROP NOT NULL",
+        "ALTER TABLE card_system_demos ADD COLUMN IF NOT EXISTS label TEXT",
+        "ALTER TABLE card_system_demos ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
+        "ALTER TABLE card_system_demos ADD COLUMN IF NOT EXISTS view_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE card_system_demos ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ",
+        "ALTER TABLE card_system_demos ADD COLUMN IF NOT EXISTS last_alert_at TIMESTAMPTZ",
+        // Links made before expiry existed get 30 days from now, so nothing already sent dies today.
+        "UPDATE card_system_demos SET expires_at = now() + interval '30 days' WHERE expires_at IS NULL AND revoked_at IS NULL",
       ];
       ready = stmts.reduce(function (p, sql) { return p.then(function () { return db.query(sql); }); }, Promise.resolve())
         .then(function () {
@@ -2669,8 +2678,8 @@ function registerCard(app, deps) {
             hidden: (cfg.hidden || []).map(String).indexOf(String(c.id)) >= 0 };
         }),
         titles: cfg.titles || {},
-        demos: (await db.getAll("SELECT id, created_by, created_at FROM card_system_demos WHERE client_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 10", [id]))
-          .map(function (x) { return { id: x.id, createdBy: x.created_by, createdAt: x.created_at }; }),
+        demos: (await db.getAll("SELECT id, label, created_by, created_at, expires_at, view_count, last_viewed_at FROM card_system_demos WHERE client_id = $1 AND revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 10", [id]))
+          .map(demoRow),
         links: links.map(function (l) { return { id: l.id, createdBy: l.created_by, createdAt: l.created_at, revoked: !!l.revoked_at, views: l.view_count, lastViewedAt: l.last_viewed_at,
           contactId: l.contact_id ? String(l.contact_id) : "", forName: l.contact_id ? personName(l) : "" }; }),
       });
@@ -2816,15 +2825,48 @@ function registerCard(app, deps) {
       res.json({ url: publicOrigin().replace(/\/$/, "") + "/h/" + token });
     } catch (e) { fail(res, e); }
   });
+  function demoRow(x) {
+    return { id: x.id, label: x.label || "", createdBy: x.created_by, createdAt: x.created_at, expiresAt: x.expires_at, views: x.view_count || 0, lastViewedAt: x.last_viewed_at };
+  }
+  function demoLabel(body) {
+    return String((body && body.label) || "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 80);
+  }
+  async function makeDemo(req, clientId) {
+    const token = makeToken();
+    await db.query("INSERT INTO card_system_demos (token_hash, client_id, created_by, label, expires_at) VALUES ($1,$2,$3,$4, now() + interval '30 days')",
+      [hashToken(token), clientId, who(req), demoLabel(req.body) || null]);
+    return publicOrigin().replace(/\/$/, "") + "/demo/b/" + token;
+  }
   app.post("/api/cards/systems/:clientId/demo-link", async function (req, res) {
     try {
       await needDb();
       const id = digitsId(req.params.clientId);
       const client = await db.getOne("SELECT id FROM clients WHERE id = $1", [id]);
       if (!client) return res.status(404).json({ error: "Client not found." });
-      const token = makeToken();
-      await db.query("INSERT INTO card_system_demos (token_hash, client_id, created_by) VALUES ($1,$2,$3)", [hashToken(token), id, who(req)]);
-      res.json({ url: publicOrigin().replace(/\/$/, "") + "/demo/b/" + token });
+      res.json({ url: await makeDemo(req, id) });
+    } catch (e) { fail(res, e); }
+  });
+  // Prospect demos: the made-up Lakeshore Health, one link per prospect.
+  app.get("/api/cards/demo-links", async function (req, res) {
+    try {
+      await needDb();
+      const rows = await db.getAll("SELECT id, label, created_by, created_at, expires_at, view_count, last_viewed_at FROM card_system_demos WHERE client_id IS NULL AND revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 50");
+      res.json({ demos: rows.map(demoRow) });
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/cards/demo-links", async function (req, res) {
+    try {
+      await needDb();
+      if (!demoLabel(req.body)) return res.status(400).json({ error: "Who is it for? Add a name so you know who opened it." });
+      res.json({ url: await makeDemo(req, null) });
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/cards/demo-links/:id/extend", async function (req, res) {
+    try {
+      await needDb();
+      const r = await db.getOne("UPDATE card_system_demos SET expires_at = GREATEST(expires_at, now()) + interval '30 days' WHERE id = $1 AND revoked_at IS NULL RETURNING expires_at", [digitsId(req.params.id)]);
+      if (!r) return res.status(404).json({ error: "That link is off." });
+      res.json({ ok: true, expiresAt: r.expires_at });
     } catch (e) { fail(res, e); }
   });
   app.post("/api/cards/demo-links/:id/revoke", async function (req, res) {
@@ -2878,6 +2920,8 @@ module.exports.normalizeLinkedIn = normalizeLinkedIn;
 module.exports.skillChips = skillChips;
 module.exports.hashToken = hashToken;
 module.exports.validToken = validToken;
+module.exports.makeLimiter = makeLimiter;
+module.exports.BOT_UA = BOT_UA;
 module.exports.jobIsActive = jobIsActive;
 module.exports.submissionHidden = submissionHidden;
 module.exports.submissionShown = submissionShown;

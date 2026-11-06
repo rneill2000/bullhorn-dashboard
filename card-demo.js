@@ -209,6 +209,7 @@ function headers(res, page) {
 function registerDemo(app, deps) {
   const pagesDir = (deps && deps.pagesDir) || path.join(__dirname, "public");
   const db = deps && deps.db;
+  const notifier = (deps && deps.notifier) || null;
 
   /**
    * Routes for one flavor of the demo. page = "/demo" or "/demo/b/:token"; api = "/api/demo" or "/api/demo/b/:token".
@@ -264,8 +265,9 @@ function registerDemo(app, deps) {
         const b = await brand(req, res); if (!b) return;
         const ps = paths(req);
         const cands = PEOPLE.map(function (p) { return Object.assign(summary(p), { href: ps.page + "/c/" + p.id, photoUrl: ps.api + "/photo/" + p.id }); });
+        if (b.onView) b.onView(req).catch(function () {});
         res.json({
-          state: "active", demo: true,
+          state: "active", demo: true, madeUpSystem: !!b.madeUp,
           system: { name: b.name, accent: b.accent, logoUrl: b.hasLogo ? ps.api + "/logo" : "", intro: "" },
           stats: { roles: 1, candidates: 3, consultants: b.consultants.length, newCount: 2, lastAdded: new Date(Date.now() - 86400000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" }), interviews: 0 },
           roles: [{ title: JOB.title, location: b.location, manager: MANAGER, compareHref: ps.page + "/c/" + PEOPLE[0].id + "#compare", candidates: cands }],
@@ -335,25 +337,56 @@ function registerDemo(app, deps) {
 
   // The open demo: Lakeshore Health, made up end to end.
   const LAKESHORE = {
-    name: SYSTEM.name, accent: SYSTEM.accent, hasLogo: true, location: JOB.location,
+    name: SYSTEM.name, accent: SYSTEM.accent, hasLogo: true, location: JOB.location, madeUp: true,
     logo: async function () { return { type: "image/svg+xml", buffer: Buffer.from(LOGO) }; },
     consultants: [{ name: "Teresa Holm", role: "Willow Inpatient Analyst", since: "Apr 2026" }, { name: "Omar Haddad", role: "Cadence Principal Trainer", since: "Aug 2026" }],
   };
+  // Team-only (behind the dashboard login, see server.js): the plain Lakeshore demo for previewing.
   mount("/demo", "/api/demo", async function () { return LAKESHORE; });
 
-  // A demo in a real client's branding (logo, name, color), made-up candidates. Private token link, made on the Cards page.
+  // Demo links: one per prospect, made on the Cards page. Long random token, 30-day expiry, opens tracked.
+  // client_id set = that client's logo, name and color; client_id null = Lakeshore Health. Candidates are always made up.
   if (db) {
     const card = require("./card");
     const ready = (deps && deps.ready) || function () { return Promise.resolve(true); };
+    const limiter = card.makeLimiter(Number(process.env.CARD_RATE_LIMIT || 120));
+    app.use("/demo/b/", limiter);
+    app.use("/api/demo/b/", limiter);
+
+    async function demoView(row, req) {
+      const ua = String(req.headers["user-agent"] || "");
+      if (!ua || card.BOT_UA.test(ua)) return;
+      const up = await db.getOne("UPDATE card_system_demos SET view_count = view_count + 1, last_viewed_at = now() WHERE id = $1 RETURNING view_count", [row.id]);
+      if (!notifier || !row.created_by || !/@/.test(row.created_by)) return;
+      // One alert a day per link, so a forwarded link doesn't flood anyone's inbox.
+      const claimed = await db.getOne("UPDATE card_system_demos SET last_alert_at = now() WHERE id = $1 AND (last_alert_at IS NULL OR last_alert_at < now() - interval '24 hours') RETURNING id", [row.id]);
+      if (!claimed) return;
+      const count = up ? up.view_count : 1;
+      const label = row.label || row.display_name || row.name || "A prospect";
+      const origin = ((deps && deps.publicOrigin && deps.publicOrigin()) || "https://dashboard.anuraconnect.com").replace(/\/$/, "");
+      await notifier.send({
+        to: [{ email: row.created_by }], fromEmail: row.created_by,
+        subject: label + " opened your Card demo",
+        html: notifier.card("Demo opened", [["For", label], ["Opens", String(count) + (count > 1 ? " (first alert today)" : "")],
+          ["Expires", row.expires_at ? new Date(row.expires_at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" }) : ""],
+          ["Next step", count > 5 ? "Lots of opens. It's being passed around, which is usually good. Turn it off on the Cards page if not." : "Good moment to follow up."]],
+          origin + "/cards", "Open Cards"),
+      });
+    }
+
     mount("/demo/b/:token", "/api/demo/b/:token", async function (req) {
       const tok = req.params.token;
       if (!card.validToken(tok)) return null;
       await ready();
       const row = await db.getOne(
-        "SELECT d.client_id, s.display_name, s.accent, (s.logo IS NOT NULL) AS has_logo, c.name, c.address_city, c.address_state FROM card_system_demos d " +
-        "JOIN clients c ON c.id = d.client_id LEFT JOIN card_systems s ON s.client_id = d.client_id WHERE d.token_hash = $1 AND d.revoked_at IS NULL", [card.hashToken(tok)]);
+        "SELECT d.id, d.client_id, d.label, d.created_by, d.expires_at, s.display_name, s.accent, (s.logo IS NOT NULL) AS has_logo, c.name, c.address_city, c.address_state FROM card_system_demos d " +
+        "LEFT JOIN clients c ON c.id = d.client_id LEFT JOIN card_systems s ON s.client_id = d.client_id " +
+        "WHERE d.token_hash = $1 AND d.revoked_at IS NULL AND (d.expires_at IS NULL OR d.expires_at > now()) AND (d.client_id IS NULL OR c.id IS NOT NULL)", [card.hashToken(tok)]);
       if (!row) return null;
+      const onView = function (r) { return demoView(row, r); };
+      if (row.client_id == null) return Object.assign({}, LAKESHORE, { onView: onView });
       return {
+        onView: onView,
         name: row.display_name || row.name || "Your health system",
         accent: /^#[0-9a-f]{6}$/i.test(row.accent || "") ? row.accent : "",
         hasLogo: !!row.has_logo,

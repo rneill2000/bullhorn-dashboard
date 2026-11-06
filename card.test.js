@@ -241,7 +241,7 @@ async function harness() {
     pagesDir: path.join(__dirname, "public"),
     log: function () {},
   });
-  require("./card-demo")(app, { db: db, ready: api.ensureTables, pagesDir: path.join(__dirname, "public") });
+  require("./card-demo")(app, { db: db, notifier: notifier, ready: api.ensureTables, pagesDir: path.join(__dirname, "public") });
   const server = await listen(app);
   const port = server.address().port;
   function mint(o) {
@@ -1055,6 +1055,44 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       await req(h.port, "POST", "/api/cards/demo-links/" + admin.json.demos[0].id + "/revoke", { headers: rec, body: {} });
       assert.equal((await req(h.port, "GET", "/api/demo/b/" + T)).status, 404, "turned off");
       assert.equal((await req(h.port, "GET", "/demo/b/" + T)).status, 200, "page shell; data says closed");
+    });
+
+    await t.test("K57 prospect demo links: named, made-up Lakeshore, opens counted with one alert a day, 30-day expiry, extend, turn off", async function () {
+      const rec = { "x-test-user": "peter@anuraconnect.com" };
+      assert.equal((await req(h.port, "POST", "/api/cards/demo-links", { headers: rec, body: { label: "  " } })).status, 400, "needs a name");
+      let r = await req(h.port, "POST", "/api/cards/demo-links", { headers: rec, body: { label: "Froedtert – Jane Doe" } });
+      assert.equal(r.status, 200, r.text);
+      const T = r.json.url.split("/demo/b/")[1];
+      assert.ok(card.validToken(T));
+      const before = h.sent.length;
+      const v = await req(h.port, "GET", "/api/demo/b/" + T);
+      assert.equal(v.status, 200, v.text);
+      assert.equal(v.json.madeUpSystem, true);
+      assert.equal(v.json.system.name, "Lakeshore Health");
+      assert.equal(v.headers["referrer-policy"], "no-referrer");
+      assert.match(v.headers["x-robots-tag"], /noindex/);
+      await req(h.port, "GET", "/api/demo/b/" + T);
+      await req(h.port, "GET", "/api/demo/b/" + T, { headers: { "User-Agent": "Mimecast URL scanner" } });
+      await new Promise(function (ok) { setTimeout(ok, 100); });
+      const alerts = h.sent.slice(before).filter(function (m) { return /opened your Card demo/.test(m.subject); });
+      assert.equal(alerts.length, 1, "one alert a day");
+      assert.equal(alerts[0].to[0].email, "peter@anuraconnect.com");
+      assert.match(alerts[0].subject, /^Froedtert – Jane Doe/);
+      let list = (await req(h.port, "GET", "/api/cards/demo-links", { headers: rec })).json.demos;
+      const row = list.filter(function (x) { return x.label === "Froedtert – Jane Doe"; })[0];
+      assert.equal(row.views, 2, "the scanner isn't an open");
+      const days = (Date.parse(row.expiresAt) - Date.now()) / 86400000;
+      assert.ok(days > 29.9 && days < 30.1, "30 days");
+      // Expired: dead link, gone from the list. Extend brings it back for 30 more days.
+      await h.db.query("UPDATE card_system_demos SET expires_at = now() - interval '1 minute' WHERE id = $1", [row.id]);
+      assert.equal((await req(h.port, "GET", "/api/demo/b/" + T)).status, 404, "expired");
+      assert.equal((await req(h.port, "GET", "/api/cards/demo-links", { headers: rec })).json.demos.filter(function (x) { return x.id === row.id; }).length, 0);
+      r = await req(h.port, "POST", "/api/cards/demo-links/" + row.id + "/extend", { headers: rec, body: {} });
+      assert.equal(r.status, 200, r.text);
+      assert.equal((await req(h.port, "GET", "/api/demo/b/" + T)).status, 200, "extended");
+      await req(h.port, "POST", "/api/cards/demo-links/" + row.id + "/revoke", { headers: rec, body: {} });
+      assert.equal((await req(h.port, "GET", "/api/demo/b/" + T)).status, 404, "turned off");
+      assert.equal((await req(h.port, "POST", "/api/cards/demo-links/" + row.id + "/extend", { headers: rec, body: {} })).status, 404, "can't revive a turned-off link");
     });
 
     await t.test("K42 LinkedIn and Epic skills: from Bullhorn unless the candidate or recruiter set them", async function () {

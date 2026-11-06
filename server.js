@@ -267,11 +267,11 @@ app.get("/auth/logout", async (req, res) => {
  * Everything requires a signed-in Bullhorn user except: the login flow, the candidate
  * submission portal (links are signed), inbound webhooks (token in URL), a bare health
  * check, and non-HTML static assets. Pages redirect to /login; API calls get a 401. */
-const PUBLIC_EXACT = new Set(["/login", "/health", "/portal", "/api/portal/config", "/api/portal/submit", "/favicon.ico", "/demo", "/api/demo"]);
+const PUBLIC_EXACT = new Set(["/login", "/health", "/portal", "/api/portal/config", "/api/portal/submit", "/favicon.ico"]);
 // /card/ and /card-edit/ are the Anura Connect Card: unguessable token links for clients and candidates (card.js).
 // /h/ is a health system page (card.js): one client, unguessable token.
-// /demo is the Card demo (card-demo.js): made-up health system and candidates, no data behind it.
-const PUBLIC_PREFIX = ["/auth/", "/api/dux-webhook/", "/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/", "/h/", "/api/hs-public/", "/demo/", "/api/demo/", "/card-assets/", "/api/card-integration/"];
+// /demo/b/ is a Card demo link (card-demo.js): made-up candidates, unguessable token, expires. Plain /demo is team-only.
+const PUBLIC_PREFIX = ["/auth/", "/api/dux-webhook/", "/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/", "/h/", "/api/hs-public/", "/demo/b/", "/api/demo/b/", "/card-assets/", "/api/card-integration/"];
 // Only real files in public/ (never /api/, never .html). See makePublicAssetCheck.
 const isPublicAsset = publicHost.makePublicAssetCheck(path.join(__dirname, "public"));
 function isPublicPath(p) {
@@ -11835,7 +11835,7 @@ const cardsApi = require("./card")(app, {
   },
   publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; },
 });
-require("./card-demo")(app, { pagesDir: path.join(__dirname, "public"), db: db, ready: function () { return cardsApi.ensureTables(); } });
+require("./card-demo")(app, { pagesDir: path.join(__dirname, "public"), db: db, notifier: notifier, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; }, ready: function () { return cardsApi.ensureTables(); } });
 forgeApi = require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate, notifier: notifier, cards: cardsApi, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; } });
 
 app.use(function (err, req, res, next) {
