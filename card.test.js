@@ -241,7 +241,7 @@ async function harness() {
     pagesDir: path.join(__dirname, "public"),
     log: function () {},
   });
-  require("./card-demo")(app, { db: db, notifier: notifier, ready: api.ensureTables, pagesDir: path.join(__dirname, "public") });
+  require("./card-demo")(app, { db: db, notifier: notifier, getUser: function (r) { return r.headers["x-test-user"] ? { email: r.headers["x-test-user"] } : null; }, ready: api.ensureTables, pagesDir: path.join(__dirname, "public") });
   const server = await listen(app);
   const port = server.address().port;
   function mint(o) {
@@ -1065,6 +1065,8 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       const T = r.json.url.split("/demo/b/")[1];
       assert.ok(card.validToken(T));
       const before = h.sent.length;
+      await req(h.port, "GET", "/api/demo/b/" + T, { headers: rec }); // Peter clicking Open: not an open, no email
+      assert.equal((await req(h.port, "GET", "/api/demo/b/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/photo/mialopezdemo")).status, 404, "photos need a live token");
       const v = await req(h.port, "GET", "/api/demo/b/" + T);
       assert.equal(v.status, 200, v.text);
       assert.equal(v.json.madeUpSystem, true);
@@ -1311,5 +1313,13 @@ test("K19 server: Card paths are public, the recruiter page is not", function ()
   ["/card/", "/card-edit/", "/api/card-public/", "/api/card-edit/", "/h/", "/api/hs-public/"].forEach(function (p) { assert.ok(prefixes.indexOf(p) >= 0, p); });
   ["/cards", "/cards/preview/12", "/api/cards/preview/12", "/cards/system/900/preview", "/api/cards/systems/900", "/api/cards/systems/900/view", "/api/cards/overview", "/api/cards/candidate/1/approve", "/api/cards/links/1/content"].forEach(function (p) {
     assert.ok(!prefixes.some(function (x) { return p.startsWith(x); }), p + " must stay behind login");
+  });
+  // The real gate: plain demo is team-only, demo links are public, dot-segment tricks never are.
+  const a = src.indexOf("const PUBLIC_EXACT"), b = src.indexOf('app.get("/login"');
+  const isPublicPath = new Function("publicHost", "path", "__dirname", src.slice(a, b) + ";return isPublicPath;")(require("./public-host"), path, __dirname);
+  ["/demo/b/abc", "/api/demo/b/abc", "/api/demo/b/abc/logo", "/h/abc", "/card/abc"].forEach(function (p) { assert.ok(isPublicPath(p), p + " is public"); });
+  ["/demo", "/demo/", "/demo/c/jackcorbelld", "/api/demo", "/api/demo/card/jackcorbelld", "/api/demo/photo/x", "/api/cards/demo-links",
+    "/demo/b/../../cards.html", "/demo/b/%2e%2e/%2e%2e/cards.html", "/demo/b/..", "/card/../index.html", "/h/%2E%2E/cards", "/demo/b/x%2f..%2fcards", "/h/x\\..\\cards"].forEach(function (p) {
+    assert.ok(!isPublicPath(p), p + " must stay behind login");
   });
 });

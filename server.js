@@ -275,6 +275,9 @@ const PUBLIC_PREFIX = ["/auth/", "/api/dux-webhook/", "/card/", "/card-edit/", "
 // Only real files in public/ (never /api/, never .html). See makePublicAssetCheck.
 const isPublicAsset = publicHost.makePublicAssetCheck(path.join(__dirname, "public"));
 function isPublicPath(p) {
+  // Dot segments and encoded slashes never count as public: express.static would resolve
+  // /demo/b/../../cards.html to a recruiter page after this check said yes.
+  if (/(^|\/)(\.|%2e){1,2}(\/|$)/i.test(p) || /%2f|%5c|\\/i.test(p)) return false;
   if (PUBLIC_EXACT.has(p)) return true;
   if (PUBLIC_PREFIX.some(function (x) { return p.startsWith(x); })) return true;
   if (isPublicAsset(p)) return true;
@@ -11835,7 +11838,7 @@ const cardsApi = require("./card")(app, {
   },
   publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; },
 });
-require("./card-demo")(app, { pagesDir: path.join(__dirname, "public"), db: db, notifier: notifier, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; }, ready: function () { return cardsApi.ensureTables(); } });
+require("./card-demo")(app, { pagesDir: path.join(__dirname, "public"), db: db, notifier: notifier, getUser: getUser, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; }, ready: function () { return cardsApi.ensureTables(); } });
 forgeApi = require("./forge")(app, { db: db, graphFetch: graphFetch, outlookUsers: function () { return _outlookUsers; }, getUser: getUser, bhFetch: bhFetch, bhWrite: bhWrite, authenticate: authenticate, notifier: notifier, cards: cardsApi, publicOrigin: function () { return publicHost.canonicalPublicOrigin() || "https://dashboard.anuraconnect.com"; } });
 
 app.use(function (err, req, res, next) {

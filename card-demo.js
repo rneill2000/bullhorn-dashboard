@@ -210,6 +210,7 @@ function registerDemo(app, deps) {
   const pagesDir = (deps && deps.pagesDir) || path.join(__dirname, "public");
   const db = deps && deps.db;
   const notifier = (deps && deps.notifier) || null;
+  const getUser = (deps && deps.getUser) || function () { return null; };
 
   /**
    * Routes for one flavor of the demo. page = "/demo" or "/demo/b/:token"; api = "/api/demo" or "/api/demo/b/:token".
@@ -288,8 +289,9 @@ function registerDemo(app, deps) {
         res.type(l.type).send(l.buffer);
       } catch (e) { res.status(500).end(); }
     });
-    app.get(api + "/photo/:pid", function (req, res) {
+    app.get(api + "/photo/:pid", async function (req, res) {
       headers(res);
+      if (!(await brand(req, res))) return;
       const p = BY_ID[req.params.pid];
       if (!p) return res.status(404).end();
       return sendPhoto(res, p);
@@ -309,9 +311,10 @@ function registerDemo(app, deps) {
       if (!BY_ID[req.params.other]) return res.status(404).json({ state: "missing" });
       const v = cardView(req, b, req.params.other); v.sent = req.params.pid; res.json(v);
     });
-    app.get(api + "/card/:pid/photo/:p", function (req, res) { headers(res); const p = BY_ID[req.params.p]; if (!p) return res.status(404).end(); return sendPhoto(res, p); });
-    function sendResume(req, res) {
+    app.get(api + "/card/:pid/photo/:p", async function (req, res) { headers(res); if (!(await brand(req, res))) return; const p = BY_ID[req.params.p]; if (!p) return res.status(404).end(); return sendPhoto(res, p); });
+    async function sendResume(req, res) {
       headers(res);
+      if (!(await brand(req, res))) return;
       const p = BY_ID[req.params.p];
       if (!p) return res.status(404).json({ error: "Résumé not available." });
       res.setHeader("Content-Type", "application/pdf");
@@ -356,6 +359,7 @@ function registerDemo(app, deps) {
     async function demoView(row, req) {
       const ua = String(req.headers["user-agent"] || "");
       if (!ua || card.BOT_UA.test(ua)) return;
+      if (getUser(req)) return; // Anura team clicking Open isn't a prospect opening it.
       const up = await db.getOne("UPDATE card_system_demos SET view_count = view_count + 1, last_viewed_at = now() WHERE id = $1 RETURNING view_count", [row.id]);
       if (!notifier || !row.created_by || !/@/.test(row.created_by)) return;
       // One alert a day per link, so a forwarded link doesn't flood anyone's inbox.
@@ -381,7 +385,7 @@ function registerDemo(app, deps) {
       const row = await db.getOne(
         "SELECT d.id, d.client_id, d.label, d.created_by, d.expires_at, s.display_name, s.accent, (s.logo IS NOT NULL) AS has_logo, c.name, c.address_city, c.address_state FROM card_system_demos d " +
         "LEFT JOIN clients c ON c.id = d.client_id LEFT JOIN card_systems s ON s.client_id = d.client_id " +
-        "WHERE d.token_hash = $1 AND d.revoked_at IS NULL AND (d.expires_at IS NULL OR d.expires_at > now()) AND (d.client_id IS NULL OR c.id IS NOT NULL)", [card.hashToken(tok)]);
+        "WHERE d.token_hash = $1 AND d.revoked_at IS NULL AND d.expires_at > now() AND (d.client_id IS NULL OR c.id IS NOT NULL)", [card.hashToken(tok)]);
       if (!row) return null;
       const onView = function (r) { return demoView(row, r); };
       if (row.client_id == null) return Object.assign({}, LAKESHORE, { onView: onView });
