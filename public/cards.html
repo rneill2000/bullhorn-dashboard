@@ -142,9 +142,11 @@ header a{display:inline-flex;align-items:center;min-height:32px}
   function day(d) { return d ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""; }
   function demoItems(list) {
     return list.map(function (x) {
-      return '<li><span><b>' + esc(x.label || "Demo link") + '</b> &middot; ' + esc(x.createdBy) + ' <span class="muted">' + (x.views || 0) + ' opens' +
-        (x.lastViewedAt ? ', last ' + esc(when(x.lastViewedAt)) : '') + ' &middot; expires ' + esc(day(x.expiresAt)) + '</span></span>' +
-        '<span><button class="btn" data-demoextend="' + x.id + '">+30 days</button> <button class="btn danger" data-demorevoke="' + x.id + '">Turn off</button></span></li>';
+      var by = String(x.createdBy || "").split("@")[0];
+      return '<li style="display:block"><div><b>' + esc(x.label || "Demo link") + '</b></div>' +
+        '<div class="muted" style="font-size:13px;margin:2px 0 6px">' + (x.views || 0) + (x.views === 1 ? ' open' : ' opens') +
+        (x.lastViewedAt ? ', last ' + esc(when(x.lastViewedAt)) : '') + ' &middot; expires ' + esc(day(x.expiresAt)) + (by ? ' &middot; ' + esc(by) : '') + '</div>' +
+        '<div class="row"><button class="btn" data-demoextend="' + x.id + '">+30 days</button><button class="btn danger" data-demorevoke="' + x.id + '">Turn off</button></div></li>';
     }).join("");
   }
   function wireDemoButtons(root, after) {
