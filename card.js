@@ -384,6 +384,9 @@ function setPublicHeaders(res, opts) {
    photo there just falls back to initials on the page. */
 /* Team mobile numbers for Text / Call on client pages, kept in the dashboard (Bullhorn doesn't let other
    tools edit staff records). Seeded once; edits on the Cards page's Setup check win after that. */
+// The one demo link that never expires (Lakeshore Health, all made up), so there's always something to paste.
+// Kept in plain text on purpose: nothing behind it is real, and the Cards page has to be able to show it again.
+const PERMANENT_DEMO_TOKEN = "cfdhhthcthjcdqhgssmgwrnqzxqcdfgq";
 const TEAM_MOBILES = [
   ["Rachel Neill", "608-609-5300"],
   ["Peter Oppermann", "414-587-8240"],
@@ -543,6 +546,8 @@ function registerCard(app, deps) {
             return p.then(function () { return db.query("INSERT INTO card_team_contacts (name_key, name, mobile, updated_by) VALUES ($1,$2,$3,'seed') ON CONFLICT (name_key) DO NOTHING", [nameKey(t[0]), t[0], t[1]]); });
           }, Promise.resolve());
         })
+        // DO NOTHING: if someone turns this link off, a restart must not turn it back on. No created_by = no open alerts.
+        .then(function () { return db.query("INSERT INTO card_system_demos (token_hash, client_id, created_by, label, expires_at) VALUES ($1, NULL, NULL, 'General demo', 'infinity') ON CONFLICT (token_hash) DO NOTHING", [hashToken(PERMANENT_DEMO_TOKEN)]); })
         .then(function () { return loadTeam(); })
         .then(function () { return true; })
         .catch(function (e) { ready = null; throw e; });
@@ -2826,7 +2831,8 @@ function registerCard(app, deps) {
     } catch (e) { fail(res, e); }
   });
   function demoRow(x) {
-    return { id: x.id, label: x.label || "", createdBy: x.created_by, createdAt: x.created_at, expiresAt: x.expires_at, views: x.view_count || 0, lastViewedAt: x.last_viewed_at };
+    const permanent = x.expires_at === Infinity;
+    return { id: x.id, label: x.label || "", createdBy: x.created_by, createdAt: x.created_at, expiresAt: permanent ? null : x.expires_at, permanent: permanent, url: permanent ? publicOrigin().replace(/\/$/, "") + "/demo/b/" + PERMANENT_DEMO_TOKEN : undefined, views: x.view_count || 0, lastViewedAt: x.last_viewed_at };
   }
   function demoLabel(body) {
     return String((body && body.label) || "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 80);
@@ -2850,7 +2856,7 @@ function registerCard(app, deps) {
   app.get("/api/cards/demo-links", async function (req, res) {
     try {
       await needDb();
-      const rows = await db.getAll("SELECT id, label, created_by, created_at, expires_at, view_count, last_viewed_at FROM card_system_demos WHERE client_id IS NULL AND revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 50");
+      const rows = await db.getAll("SELECT id, label, created_by, created_at, expires_at, view_count, last_viewed_at FROM card_system_demos WHERE client_id IS NULL AND revoked_at IS NULL AND expires_at > now() ORDER BY (expires_at = 'infinity') DESC, created_at DESC LIMIT 50");
       res.json({ demos: rows.map(demoRow) });
     } catch (e) { fail(res, e); }
   });
@@ -2913,6 +2919,7 @@ function registerCard(app, deps) {
 
 module.exports = registerCard;
 module.exports.makeToken = makeToken;
+module.exports.PERMANENT_DEMO_TOKEN = PERMANENT_DEMO_TOKEN;
 module.exports.teamPhoto = teamPhoto;
 module.exports.careerFrom = careerFrom;
 module.exports.stageOf = stageOf;

@@ -145,13 +145,13 @@ header a{display:inline-flex;align-items:center;min-height:32px}
       var by = String(x.createdBy || "").split("@")[0];
       return '<li style="display:block"><div><b>' + esc(x.label || "Demo link") + '</b></div>' +
         '<div class="muted" style="font-size:13px;margin:2px 0 6px">' + (x.views || 0) + (x.views === 1 ? ' open' : ' opens') +
-        (x.lastViewedAt ? ', last ' + esc(when(x.lastViewedAt)) : '') + ' &middot; expires ' + esc(day(x.expiresAt)) + (by ? ' &middot; ' + esc(by) : '') + '</div>' +
-        '<div class="row"><button class="btn" data-demoextend="' + x.id + '">+30 days</button><button class="btn danger" data-demorevoke="' + x.id + '">Turn off</button></div></li>';
+        (x.lastViewedAt ? ', last ' + esc(when(x.lastViewedAt)) : '') + (x.permanent ? ' &middot; never expires' : ' &middot; expires ' + esc(day(x.expiresAt))) + (by ? ' &middot; ' + esc(by) : '') + '</div>' +
+        '<div class="row">' + (x.permanent ? '<button class="btn" data-copy="' + esc(x.url) + '">Copy link</button>' : '<button class="btn" data-demoextend="' + x.id + '">+30 days</button>') + '<button class="btn danger" data-demorevoke="' + x.id + '"' + (x.permanent ? ' data-permanent' : '') + '>Turn off</button></div></li>';
     }).join("");
   }
   function wireDemoButtons(root, after) {
     root.querySelectorAll("[data-demorevoke]").forEach(function (b) {
-      b.onclick = function () { call("POST", "/api/cards/demo-links/" + b.getAttribute("data-demorevoke") + "/revoke").then(function () { toast("Demo link turned off"); after(); }).catch(function (e) { toast(e.message); }); };
+      b.onclick = function () { if (b.hasAttribute("data-permanent") && !window.confirm("Turn off the permanent demo link? Everyone who has it loses access, and it can't be turned back on from here.")) return; call("POST", "/api/cards/demo-links/" + b.getAttribute("data-demorevoke") + "/revoke").then(function () { toast("Demo link turned off"); after(); }).catch(function (e) { toast(e.message); }); };
     });
     root.querySelectorAll("[data-demoextend]").forEach(function (b) {
       b.onclick = function () { call("POST", "/api/cards/demo-links/" + b.getAttribute("data-demoextend") + "/extend").then(function (r) { toast("Now expires " + day(r.expiresAt)); after(); }).catch(function (e) { toast(e.message); }); };
@@ -166,7 +166,7 @@ header a{display:inline-flex;align-items:center;min-height:32px}
   function prospectDemos() {
     call("GET", "/api/cards/demo-links").then(function (r) {
       $("pdList").innerHTML = demoItems(r.demos);
-      wireDemoButtons($("pdList"), prospectDemos);
+      wireDemoButtons($("pdList"), prospectDemos); wireCopy($("pdList"));
     }).catch(function (e) { $("pdList").innerHTML = '<li class="empty">' + esc(e.message) + '</li>'; });
   }
   $("pdMk").onclick = function () {

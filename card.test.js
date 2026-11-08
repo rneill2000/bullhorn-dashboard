@@ -1097,6 +1097,39 @@ test("Card routes (Postgres)", { skip: DB_URL ? false : "set CARD_TEST_DATABASE_
       assert.equal((await req(h.port, "POST", "/api/cards/demo-links/" + row.id + "/extend", { headers: rec, body: {} })).status, 404, "can't revive a turned-off link");
     });
 
+    await t.test("K58 permanent demo link: opens with no login, never expires, no alert emails, listed first, stays off once turned off", async function () {
+      const rec = { "x-test-user": "peter@anuraconnect.com" };
+      const T = card.PERMANENT_DEMO_TOKEN;
+      assert.ok(card.validToken(T));
+      const before = h.sent.length;
+      const v = await req(h.port, "GET", "/api/demo/b/" + T);
+      assert.equal(v.status, 200, v.text);
+      assert.equal(v.json.system.name, "Lakeshore Health");
+      assert.equal(v.json.madeUpSystem, true);
+      assert.match(v.headers["x-robots-tag"], /noindex/);
+      await new Promise(function (ok) { setTimeout(ok, 100); });
+      assert.equal(h.sent.length, before, "no alert emails");
+      const row = (await req(h.port, "GET", "/api/cards/demo-links", { headers: rec })).json.demos[0];
+      assert.equal(row.permanent, true);
+      assert.equal(row.expiresAt, null);
+      assert.ok(row.url.endsWith("/demo/b/" + T), row.url);
+      assert.equal(row.views, 1);
+      // Only the permanent row exposes a link; prospect links stay hash-only.
+      const mk = await req(h.port, "POST", "/api/cards/demo-links", { headers: rec, body: { label: "K58 prospect" } });
+      const list = (await req(h.port, "GET", "/api/cards/demo-links", { headers: rec })).json.demos;
+      assert.equal(list[0].permanent, true, "pinned above newer links");
+      const other = list.filter(function (x) { return x.label === "K58 prospect"; })[0];
+      assert.equal(other.permanent, false);
+      assert.equal(other.url, undefined);
+      await req(h.port, "POST", "/api/cards/demo-links/" + other.id + "/revoke", { headers: rec, body: {} });
+      assert.ok(mk.json.url);
+      // Turning it off sticks, including through the startup seed.
+      await req(h.port, "POST", "/api/cards/demo-links/" + row.id + "/revoke", { headers: rec, body: {} });
+      assert.equal((await req(h.port, "GET", "/api/demo/b/" + T)).status, 404, "turned off");
+      await h.db.query("INSERT INTO card_system_demos (token_hash, client_id, created_by, label, expires_at) VALUES ($1, NULL, NULL, 'General demo', 'infinity') ON CONFLICT (token_hash) DO NOTHING", [card.hashToken(T)]);
+      assert.equal((await req(h.port, "GET", "/api/demo/b/" + T)).status, 404, "a restart doesn't turn it back on");
+    });
+
     await t.test("K42 LinkedIn and Epic skills: from Bullhorn unless the candidate or recruiter set them", async function () {
       await h.db.query("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS skill_list TEXT, ADD COLUMN IF NOT EXISTS raw_json JSONB, ADD COLUMN IF NOT EXISTS description TEXT");
       await h.db.query("UPDATE candidates SET skill_list = 'Epic Beaker CP; Cupid, epic beaker cp', raw_json = $1::jsonb, description = 'Refs: linkedin.com/in/dana-ruiz-uw' WHERE id = 1",
