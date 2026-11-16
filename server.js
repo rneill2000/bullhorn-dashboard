@@ -285,8 +285,19 @@ function isPublicPath(p) {
 }
 app.get("/login", function (req, res) { res.setHeader("Cache-Control", "no-store"); res.sendFile(path.join(__dirname, "public", "login.html")); });
 app.get("/health", function (req, res) { res.json({ ok: true }); });
+/* Read-only monitor access for the scheduled drift check. Off unless MONITOR_API_KEY is set
+ * in Railway. Only GETs to these four endpoints, with a matching X-Monitor-Key header. */
+const MONITOR_PATHS = new Set(["/api/status", "/api/stats", "/api/clients", "/api/placements"]);
+function isMonitorRequest(req) {
+  const key = process.env.MONITOR_API_KEY;
+  if (!key || req.method !== "GET" || !MONITOR_PATHS.has(req.path)) return false;
+  const got = Buffer.from(String(req.get("x-monitor-key") || ""));
+  const want = Buffer.from(key);
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
 app.use(function (req, res, next) {
   if (isPublicPath(req.path)) return next();
+  if (isMonitorRequest(req)) { res.setHeader("Cache-Control", "no-store"); return next(); }
   const u = getUser(req);
   if (u) { res.setHeader("Cache-Control", "no-store"); return next(); }
   if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Sign in required", login: "/login" });
