@@ -338,20 +338,32 @@ async function _doAuthenticate() {
     action: "Login",
   });
 
-  const authRes = await fetch(`${BH.authUrl}/authorize?${authParams}`, {
-    redirect: "manual", // Don't follow the redirect — we need the code from the Location header
-  });
-
-  // Bullhorn redirects to redirect_uri?code=xxx
-  const location = authRes.headers.get("location");
-  if (!location) {
-    const body = await authRes.text();
-    throw new Error(`Auth failed — no redirect. Status ${authRes.status}. Body: ${body.substring(0, 200)}`);
+  // Bullhorn may first redirect to a regional login server (e.g. auth-east). Follow those
+  // hops (max 3) and remember the host, because the code must be exchanged on that same host.
+  let authBase = BH.authUrl;
+  let location = null;
+  for (let hop = 0; hop < 3; hop++) {
+    const authRes = await fetch(`${authBase}/authorize?${authParams}`, {
+      redirect: "manual", // Don't follow the redirect — we need the code from the Location header
+    });
+    location = authRes.headers.get("location");
+    if (!location) {
+      const body = await authRes.text();
+      const invalid = /invalid credentials/i.test(body);
+      throw new Error(`Auth failed — no redirect. Status ${authRes.status}.` + (invalid ? " Bullhorn says: Invalid credentials." : ""));
+    }
+    if (/[?&]code=/.test(location)) break;
+    const regional = location.match(/^(https:\/\/[^/]+\.bullhornstaffing\.com\/oauth)\/authorize/i);
+    if (!regional) break;
+    authBase = regional[1];
+    console.log("[Bullhorn] Following regional login redirect to " + authBase);
   }
 
-  const codeMatch = location.match(/code=([^&]+)/);
+  // Bullhorn redirects to redirect_uri?code=xxx
+  const codeMatch = location.match(/[?&]code=([^&]+)/);
   if (!codeMatch) {
-    throw new Error(`Auth redirect missing code. Location: ${location}`);
+    // Never put the Location URL in the error: it contains the API password.
+    throw new Error(`Auth redirect missing code (redirected to ${location.split("?")[0]}).`);
   }
   const authCode = decodeURIComponent(codeMatch[1]);
   console.log("[Bullhorn] Got auth code");
@@ -364,7 +376,7 @@ async function _doAuthenticate() {
     client_secret: BH.clientSecret,
   });
 
-  const tokenRes = await fetch(`${BH.authUrl}/token`, {
+  const tokenRes = await fetch(`${authBase}/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: tokenParams.toString(),
@@ -386,7 +398,9 @@ async function _doAuthenticate() {
     ttl: "60", // 60 minutes
   });
 
-  const loginRes = await fetch(`${BH.restLoginUrl}?${loginParams}`, {
+  // REST login lives on the matching regional host (auth-east → rest-east).
+  const restLoginUrl = authBase.replace("://auth", "://rest").replace(/\/oauth$/, "/rest-services/login");
+  const loginRes = await fetch(`${restLoginUrl}?${loginParams}`, {
     method: "POST",
   });
 
@@ -394,6 +408,8 @@ async function _doAuthenticate() {
     const err = await loginRes.text();
     throw new Error(`REST login failed (${loginRes.status}): ${err}`);
   }
+  // Remember the regional hosts so SSO logins and token refreshes use them too.
+  if (authBase !== BH.authUrl) { BH.authUrl = authBase; BH.restLoginUrl = restLoginUrl; }
 
   const loginData = await loginRes.json();
   session.bhRestToken = loginData.BhRestToken;
